@@ -6,7 +6,7 @@
 |---|---|
 | Date | August 29, 2026 |
 | Status | Draft direction for review; no production, schema, roadmap, release, or marketing authority |
-| First decision requested | Accept the whole measurement-first staged program as the post-frontier direction and freeze the corrected Packet A benchmark contract now |
+| First decision requested | Accept the whole measurement-first staged program as the post-frontier direction and freeze the corrected Packet A specification now; defer benchmark-manifest freeze and execution until reproducibility and fixture gates pass |
 | Scope | Research and evidence work that keeps every proposed mechanism active while sequencing stronger authority and effects behind evidence |
 | Current boundary | The integrated capture/retrieval/setup/control/security milestone, replacement candidate, packaged ordinary-use journey, Wave 4 E–G product acceptance, and Phase 2 remain blocking product work |
 | Mapped decisions | [ADR-049](../DECISIONS.md#adr-049-retain-closure-and-observable-use-contracts-fill-core-semantics-then-test-prospective-memory) and [ADR-090](../DECISIONS.md#adr-090-adopt-zero-routine-friction-as-the-post-v1-product-direction) |
@@ -34,21 +34,28 @@ whether an authority-bound, lifecycle-aware system can reduce repeated context
 work and improve current authorized outcomes without increasing disclosure,
 staleness, wrong-project influence, or maintenance burden.
 
-No mechanism is removed from the program. The order is a research sequence:
+No mechanism is removed from the program. Two DAGs govern the work and must not
+be conflated:
 
 ~~~text
-active frontier and product acceptance
-  -> Packet A benchmark freeze (parallel, non-displacing)
-  -> M1 measurement and outcome spine
-  -> versioned working checkpoints and reconciliation
-  -> typed applicability and local use-time verification
-  -> semantic acknowledgement/challenge
-  -> prospective memory at an inert local ceiling
-  -> conditional failure memory
-  -> verified experience and procedures
-  -> consented design-partner evidence
-  -> stronger notification, action, and adaptive routing only after their gates
+PRODUCT DAG (canonical execution order)
+active frontier
+  -> ZF-015 versioned working checkpoints
+  -> ZF-016 working-state reconciliation
+  -> ZF-017 M1 memory-use and outcome ledger
+  -> ZF-018 shadow consolidation and prospective work
+  -> ZF-019 procedural-memory gates
+
+RESEARCH/EVIDENCE DAG (parallel, non-displacing)
+Packet A specification freeze || shadow M1 instrumentation || M3 closure oracle
+  -> fixture, authority, lifecycle, and reproducibility gates
+  -> evidence for the product DAG; never a product prerequisite or reorder
 ~~~
+
+The product DAG is canonical. The research/evidence DAG may prepare Packet A,
+shadow M1 instrumentation, and the distinct M3 closure oracle in parallel, but
+none of those parallel lanes becomes a product prerequisite or reorders
+ZF-015/016. Stronger effects remain behind their declared gates.
 
 The sequence is deliberately staged rather than semver-like. The research
 stages and workstreams map to the accepted product direction as follows:
@@ -56,7 +63,8 @@ stages and workstreams map to the accepted product direction as follows:
 | Research stage or workstream | Mechanisms kept active | Product and decision mapping | Initial disposition |
 |---|---|---|---|
 | Active frontier | Integrated capture/retrieval/setup/control/security milestone; replacement candidate; packaged ordinary-use journey; Wave 4 E–G product acceptance; Phase 2 | [Zero-Friction Execution Plan](../product/ZERO_FRICTION_EXECUTION_PLAN.md), [ADR-090](../DECISIONS.md#adr-090-adopt-zero-routine-friction-as-the-post-v1-product-direction) | Blocking product work; not displaced by this proposal |
-| Research Stage A — benchmark and measurement | Packet A, M1 transactions, outcome receipts, continuity-debt vector | [ZF-017](../product/ZERO_FRICTION_EXECUTION_PLAN.md#zf-017-memory-use-and-outcome-ledger), [ADR-049](../DECISIONS.md#adr-049-retain-closure-and-observable-use-contracts-fill-core-semantics-then-test-prospective-memory) | Packet A may run in parallel; all product behavior remains gated |
+| Research Stage A — specification and measurement | Packet A specification, M1 transactions, outcome receipts, continuity-debt vector | [ZF-017](../product/ZERO_FRICTION_EXECUTION_PLAN.md#zf-017-memory-use-and-outcome-ledger), [ADR-049](../DECISIONS.md#adr-049-retain-closure-and-observable-use-contracts-fill-core-semantics-then-test-prospective-memory) | Specification and shadow work may run in parallel; no product prerequisite |
+| Workstream A2 — M3 dependency-complete closure | Full-rebuild oracle, six-surface influence inventory, withdrawal-before-republication, optimized closure | [ZF-017](../product/ZERO_FRICTION_EXECUTION_PLAN.md#zf-017-memory-use-and-outcome-ledger), [ADR-049](../DECISIONS.md#adr-049-retain-closure-and-observable-use-contracts-fill-core-semantics-then-test-prospective-memory) | Active and distinct from M1; shadow-only until its own gates |
 | Workstream B — reliable working continuity | Versioned working checkpoints | [ZF-015](../product/ZERO_FRICTION_EXECUTION_PLAN.md#zf-015-versioned-working-checkpoints), [ADR-090](../DECISIONS.md#adr-090-adopt-zero-routine-friction-as-the-post-v1-product-direction) | Lab/shadow first; no hidden-state claim |
 | Workstream C — state reconciliation | Three-way reconciliation and bounded challenges | [ZF-016](../product/ZERO_FRICTION_EXECUTION_PLAN.md#zf-016-working-state-reconciliation), [ADR-049](../DECISIONS.md#adr-049-retain-closure-and-observable-use-contracts-fill-core-semantics-then-test-prospective-memory) | After checkpoint contracts and measurement |
 | Workstream D — applicability | Static typed applicability and local use-time warranties | [ZF-016](../product/ZERO_FRICTION_EXECUTION_PLAN.md#zf-016-working-state-reconciliation), [ZF-017](../product/ZERO_FRICTION_EXECUTION_PLAN.md#zf-017-memory-use-and-outcome-ledger), [ADR-049](../DECISIONS.md#adr-049-retain-closure-and-observable-use-contracts-fill-core-semantics-then-test-prospective-memory) | Local-only first; remote verification remains a later live hypothesis |
@@ -91,40 +99,45 @@ oracles, controls, and the benchmark contract while the frontier proceeds, but
 it is non-displacing: it cannot change the frontier, grant product acceptance,
 authorize a schema, or make a later workstream live.
 
-The dependency and evidence graph is:
+### 2.1 Product DAG
+
+The product DAG is the canonical execution-plan order and is not reordered by
+research preparation:
 
 ~~~text
-[integrated capture/retrieval/setup/control/security milestone]
-                         |
-                         v
-              [replacement candidate and
-             packaged ordinary-use journey]
-                         |
-                         v
-                  [Wave 4 E–G product
-                       acceptance]
-                         |
-                         v
-                     [Phase 2]
-                         |
-                         v
- [M1 + checkpoints + reconciliation + typed applicability evidence]
-                         |
-                         v
- [semantic acknowledgement/challenge + prospective + failure + experience]
-                         |
-                         v
-      [design partners, stronger notification/action, adaptive routing]
-
-[Packet A freeze] ------------------------------------^
-       parallel and non-displacing; no product behavior
+active frontier
+  -> ZF-015 versioned working checkpoints
+  -> ZF-016 working-state reconciliation
+  -> ZF-017 M1 memory-use and outcome ledger
+  -> ZF-018 shadow consolidation and prospective work
+  -> ZF-019 procedural-memory gates
 ~~~
 
-In plain terms, the active frontier is required for product progression. The
-measurement and continuity contracts are required for interpreting later
-benefit. Each stronger effect is required to clear the preceding authority,
-lifecycle, applicability, outcome, and safety evidence. Production behavior
-follows this DAG; a research label never bypasses it.
+This order binds product progression. M1 is the ledger named by ZF-017. M3 is
+an independent closure oracle and research workstream; it does not insert a
+new product prerequisite into this DAG.
+
+### 2.2 Research/evidence DAG
+
+Packet A specification freeze, shadow M1 instrumentation, and the distinct M3
+closure oracle may begin in parallel:
+
+~~~text
+[Packet A specification freeze] ----\
+[shadow M1 instrumentation] --------+--> [fixture and reproducibility gates]
+[M3 full-rebuild closure oracle] ---/                 |
+                                                     v
+                             [evidence for the product DAG]
+~~~
+
+These lanes are non-displacing. They do not become product prerequisites, do
+not authorize production behavior, and do not reorder ZF-015 or ZF-016. A
+later product stage may use their evidence only after the canonical product
+DAG reaches that stage and the relevant authority/lifecycle decision is made.
+
+In plain terms, the active frontier remains required for product progression.
+The research/evidence DAG makes later decisions interpretable, but a research
+label never bypasses the product DAG.
 
 ## 3. Evidence-bounded governing rules
 
@@ -158,9 +171,10 @@ Every workstream preserves these rules.
 9. **No raw or executable payloads.** Raw prompts, commands, imported/tool/
    model/provider prose, credentials, hidden reasoning, arbitrary scripts,
    executable predicates, and executable procedure payloads are prohibited.
-10. **Project identity is fail-closed.** Unresolved project identity is
-    abstention-only, short-lived, non-linkable, and cannot issue, write,
-    reconcile, or join across projects.
+10. **Project identity is fail-closed.** An unresolved project exists only as
+    a short-lived, non-linkable abstention observation. It is never an issued
+    artifact state and cannot assign, supply, issue, use, action, reconcile,
+    produce an outcome, or join across projects.
 11. **Hard failures do not average out.** Unauthorized influence, wrong-project
     context, stale protected action, duplicate execution, correction failure,
     secret persistence, or purge residue stops promotion.
@@ -203,9 +217,43 @@ The retained M1 sequence is:
 assigned -> supplied -> acknowledged -> observed_use -> action -> outcome
 ~~~
 
-The sequence is not shortened or renamed. Each transition has an explicit
-status and witness. A missing transition is unknown or abstention, not a
-successful use.
+The sequence is not shortened or renamed. The only permitted alternate edge is
+supplied -> observed_use when acknowledgement is absent and the use receipt
+meets the direct-observation rule below.
+
+Issuer authority is closed: only Core or a deterministic harness may issue or
+accept an M1 transition. Source adapters, clients, models, tools, and providers
+may contribute observation-only input; they are never truth authority or
+witness authority.
+
+The closed transition table is:
+
+| Transition | Required issuer | Required source/witness | Reject |
+|---|---|---|---|
+| assigned -> supplied | Core or deterministic harness | Core-issued projection with exact record/version, snapshot, policy, principal, predecessor, and dependency binding; witness is core_observed or deterministic_harness | Client/model/tool/provider assertion, missing binding, or a second idempotency key |
+| supplied -> acknowledged | Core or deterministic harness | A Core/harness receipt of a host acknowledgement; the host event remains untrusted observation input | A client assertion alone, prose echo, missing supplied receipt, or acknowledgement after invalidation |
+| acknowledged -> observed_use | Core or deterministic harness | Core/harness observation or independently_observed use tied to the exact supplied receipt | Self-attested use, untied use, stale generation, or an invalidated transaction |
+| supplied -> observed_use (acknowledgement absent) | Core or deterministic harness | Receipt-bound Core/harness or independently_observed use with acknowledgement=absent_or_unknown; no acknowledgement credit | Any client-only use claim, missing exact supply binding, or use after invalidation |
+| observed_use -> action | Core or deterministic harness | Core/harness or independently_observed bounded action envelope | Model/client/tool/provider success claim, unbounded command, missing target, or stale generation |
+| action -> outcome | Core or deterministic harness | Core, deterministic harness, or independently_observed oracle/outcome; user/client reports are source-only observations | Self-reported safety/success, missing oracle/witness, or outcome after invalidation |
+| any nonterminal state -> invalidated | Core or deterministic harness | Core lifecycle event with exact invalidation reason and dependency reference | Unauthenticated client/provider request, partial invalidation, or missing dependency closure |
+| invalidated -> any later state | None | None; invalidated is terminal | Always reject; no replay, acknowledgement, use, action, or outcome may follow |
+
+The exact witness classes are:
+
+~~~text
+core_observed
+deterministic_harness
+independently_observed
+untrusted_observation
+~~~
+
+Only the first three can satisfy a transition's witness requirement, and only
+Core or deterministic harness can issue the transition. untrusted_observation
+may explain an absent or disputed acknowledgement but can never close a
+transition, establish truth, establish safety, or establish success. A missing
+transition is unknown or abstention, except for the explicitly permitted
+receipt-bound supplied -> observed_use edge.
 
 Every M1 transaction binds:
 
@@ -243,17 +291,17 @@ The shapes below are contracts, not production schema authorization.
 ~~~text
 MemoryUseTransaction
   use_id: opaque identifier
-  status: assigned | supplied | acknowledged | observed_use | action | outcome
+  status: assigned | supplied | acknowledged | observed_use | action | outcome | invalidated
   record_refs: exact record_id + version pairs
   canonical_snapshot: exact snapshot_id + version
-  project_scope: exact project_id or unresolved-abstention code
+  project_scope: exact project_id
   policy_generation: exact generation
   principal_view_generation: exact generation
   predecessor: exact checkpoint/use identifier or none
   dependency_binding: exact or conservative typed dependency digest
-  issuer: Core | harness | typed source adapter
-  source: Core | typed client | typed host | deterministic fixture
-  witness: Core | harness | independently_observed | untrusted_client_report
+  issuer: Core | deterministic_harness
+  source: Core | typed_source_adapter | typed_client_observation | typed_host_observation | deterministic_fixture
+  witness: core_observed | deterministic_harness | independently_observed | untrusted_observation
   verification_strength: enum
   unknown_or_abstention: enum
   idempotency_key: opaque identifier
@@ -289,7 +337,7 @@ executable payload.
 ~~~text
 WorkingCheckpoint
   checkpoint_id + version: opaque identifier + monotonic version
-  project_id: exact identifier or unresolved-abstention code
+  project_id: exact identifier
   task_id: bounded task identity
   source_revision: exact source/repository/environment generation
   objective_code: closed user-declared objective code
@@ -313,15 +361,17 @@ ReconciliationArtifact
   field_classifications: current | displaced | uncertain | invalid | new | unavailable
   challenge_codes
   corrective_delta_codes
-  project_resolution: resolved | unresolved_abstention
+  project_resolution: resolved
   dependency_binding
   invalidation_state
   witness and verification strength
 ~~~
 
-An unresolved project cannot issue a checkpoint, write a record, reconcile
-state, or create a cross-project join. A short-lived unresolved observation may
-exist only to explain abstention and must be non-linkable.
+An unresolved project cannot appear in a checkpoint, transaction, receipt,
+reconciliation artifact, or any other issued artifact state. A short-lived
+unresolved observation may exist only to explain abstention, must be
+non-linkable, and cannot assign, supply, issue, use, action, reconcile, produce
+an outcome, or create a cross-project join.
 
 ## 5. Artifact contract matrix
 
@@ -344,6 +394,7 @@ known.
 | Artifact | Owner | Allowed provenance | Closed field types | Sensitivity | ACL |
 |---|---|---|---|---|---|
 | M1 memory-use transaction | Core or isolated harness | Canonical record/snapshot/policy plus typed host or harness event | Opaque IDs, versions, generations, enums, digests, bounded counts/times | S1–S2 | Core, exact principal view, isolated harness |
+| M3 closure/rebuild report | Core closure owner and independent full-rebuild oracle | Canonical dependency events, six-surface inventory, optimized rebuild, independently coded full rebuild | Surface IDs, dependency digests, disposition enums, equality booleans, bounded node counts, failure codes | S1–S2 | Core and isolated lab |
 | Observable outcome receipt | Core, deterministic harness, or independent observer | Oracle result, bounded action envelope, user correction code, independent observation | Opaque IDs, oracle versions, enums, pass/fail/unknown, bounded metrics | S1–S2 | Core, harness, authorized research reader |
 | Working checkpoint | Core-owned projection compiler | User-declared closed codes, current source facts, typed client observation | IDs, revisions, closed codes, enums, digests, expiry, provenance tuples | S2 | Core and authorized project principal |
 | Reconciliation artifact | Core | Checkpoint, current snapshot, typed client observation | IDs, field-class enums, challenge/delta codes, dependency digests | S2 | Core and exact project principal |
@@ -360,6 +411,7 @@ known.
 | Artifact | Retention | Ordinary deletion | Terminal purge | Dependency inventory | Rebuild | Backup/export/restore | Replication eligibility | Logs | External copies | Cost/support metrics |
 |---|---|---|---|---|---|---|---|---|---|---|
 | M1 memory-use transaction | Episode-bound and policy-bounded | Withdraw future influence; retain bounded tombstone | Destructive compaction, identity-generation barrier, no inspectable residue | Records, versions, snapshot, policy, principal, predecessor, projections, actions, outcomes | Deterministic replay from retained canonical event boundary | Encrypted, consented, exact-version export; restore rechecks purge barrier | Only signed ordered Core events with destination lifecycle support; never Relay canonization | Status transitions, conflicts, invalidations; no payload | None by default; consented aggregate only | Bytes, writes, replay time, closure fan-out, support incidents |
+| M3 closure/rebuild report | Frozen fixture and evidence-retention policy | Withdraw derived report influence; retain bounded failing-case disposition | Purge report, optimized/full outputs, inventory, and dependent summaries | All six surfaces, exact dependency edges/frontiers, lifecycle event, policy generation, rebuild inputs | Compare independent full rebuild with optimized rebuild; withdrawal precedes republication | Encrypted lab export with fixture and oracle digests; restore reruns exact-equality check | Research result may replicate only as signed de-identified evidence; never as live authority | Equality result, stale/purge/illegal-edge failures, node counts; no payload | No external copy unless consented aggregate report with deletion receipt | Evaluated nodes, rebuild time, fan-out, storage, support/review cost |
 | Observable outcome receipt | Episode and evidence-retention policy | Withdraw derived outcome influence; preserve unknown tombstone | Purge receipt and dependent reports/caches | Use, action, oracle, observer, correction, derived metrics | Recompute from action/oracle/observer inputs | Encrypted report export with redaction; restore verifies oracle and deletion state | Replicate only as signed evidence event; no provider-side deletion claim | Outcome status, oracle failures, missingness | No raw result or prose copy | Receipt latency, oracle cost, missing rate, review load |
 | Working checkpoint | Until close, expiry, ordinary delete, or project policy | Invalidate and exclude from issue; retain audit tombstone | Purge checkpoint and every derived reconciliation/handoff dependency | Source revision, project, task, artifacts, field witnesses, policy, issued projections | Recompile from source facts and user-declared codes | Participant-controlled encrypted export/restore with exact digest | Only within same authorized project scope and signed event order | Version, displacement, correction, expiry | No client transcript copy | Compile size, resume latency, invalidation fan-out, support recoveries |
 | Reconciliation artifact | Until the linked checkpoint/use episode closes | Invalidate classifications and corrective deltas | Purge artifact and issued handoff references | Checkpoint, current snapshot, observation, policy, challenge, issue | Rerun typed comparison from the three inputs | Export only as closed codes and refs; restore reruns dependency checks | Same-project signed event only; unresolved identity never replicates | Conflict, unknown, abstention, challenge outcome | No free-text copy | Reconciliation latency, conflict rate, unresolved rate |
@@ -410,7 +462,7 @@ contrast, or use a holdout result to set a threshold.
 
 ### 6.2 Confirmatory N and episode layout
 
-The proposed confirmatory sample is 384 paired episodes:
+The provisional planning layout is 384 paired episodes:
 
 - six task families: bug fix, refactor, release preparation,
   documentation/configuration, incident investigation, and cross-client
@@ -425,27 +477,58 @@ state, mutation schedule, oracle, tools, permission set, time budget, and
 predeclared seed. A pair is an episode-level comparison, not a claim that
 different model runs are identical.
 
-The confirmatory N is power-simulation-derived, not chosen after observing
-results. The frozen planning simulation uses 100,000 deterministic replicates,
+The confirmatory N must be power-simulation-derived, not chosen after observing
+results. The required simulation inputs are 100,000 deterministic replicates,
 seed 20260829, paired binary CAOS, a two-percentage-point noninferiority
-margin, a target detectable ten-percentage-point paired improvement, two-sided
-alpha 0.05, 90% power, Holm control across the two primary contrasts, and a
-15% allowance for predeclared nonrecoverable infrastructure loss. The smallest
-stratified N satisfying those parameters is 384 paired episodes. If the
-reproducible simulation does not yield that result, the manifest must record
-the derived N and Packet A is not frozen until the first decision is revisited.
+margin, a target detectable ten-percentage-point paired improvement, familywise
+alpha 0.05 with Holm control across the two primary contrasts, 90% power, and
+a 15% allowance for predeclared nonrecoverable infrastructure loss. N=384 is
+only the provisional planning value; if the reproducible simulation does not
+yield 384, the later manifest must record the derived N and the Packet A
+specification remains valid without freezing or executing the provisional N.
 
 ### 6.3 Required arms
 
-The benchmark includes all required controls:
+The benchmark includes the canonical strongest-baseline ladder from the
+Memory Evaluation Program and the controls already required here:
 
-1. no memory;
-2. a static task note;
-3. append-log/search;
-4. current retrieval;
-5. an optimized Project Context Capsule; and
-6. matched hybrids combining the capsule, checkpoint, reconciliation, and
-   the relevant mechanism under test.
+| Cell | Definition | If unavailable | Promotion use |
+|---|---|---|---|
+| NO_MEMORY (simple_no_memory) | No ATC memory or retained prior context | Always supported | Required floor |
+| STATIC_TASK_NOTE | Fixed task note with no adaptive memory | Always supported | Required simple control |
+| STATIC_PROFILE (simple_static_profile) | Frozen compact user/project/task profile with no adaptive updates | Explicitly UNSUPPORTED if a matched profile cannot be constructed | Canonical simple baseline |
+| APPEND_LOG_SEARCH (simple_append_log_search) | Append-only event log with exact/lexical search | Must be marked unsupported if the fixture cannot provide the same authorized log | Required retrieval control |
+| CURRENT_RETRIEVAL | Current authorized-record retrieval with lifecycle filtering | Must be marked unsupported if current retrieval cannot be isolated | Existing current-retrieval control |
+| SIMPLE_ATC_RETRIEVAL_V3 (simple_atc_retrieval_v3) | Current ATC authorized retrieval and set compilation | Explicitly UNSUPPORTED if the existing deterministic baseline cannot be isolated | Canonical existing deterministic baseline |
+| OPTIMIZED_CAPSULE | Best feasible Project Context Capsule under the frozen disclosure and token budget | Must be marked unsupported if capsule optimization cannot be reproduced | Primary continuity baseline |
+| LONG_CONTEXT_CONTROL (simple_long_context) | Full feasible authorized prior transcript or long-context control under matched model, context, latency, and cost budgets | Explicitly UNSUPPORTED; never imputed as pass or fail | Required canonical control when supported |
+| BEST_NON_ATC_HYBRID (hybrid_best_non_atc) | Best non-ATC combination of the eligible simple controls under the same budget | Explicitly UNSUPPORTED when no eligible hybrid can meet the boundary | Strongest non-ATC baseline |
+| COMPETITOR_MEM0 (competitor_mem0) | Individual pinned Mem0 adapter cell using only genuinely supported operations | Explicitly UNSUPPORTED with pinned revision and reason when the boundary cannot be met | No competitor cell supports promotion unless its boundary is met |
+| COMPETITOR_GRAPHITI (competitor_graphiti) | Individual pinned Graphiti adapter cell using only genuinely supported operations | Explicitly UNSUPPORTED with pinned revision and reason when the boundary cannot be met | No competitor cell supports promotion unless its boundary is met |
+| COMPETITOR_HINDSIGHT (competitor_hindsight) | Individual pinned Hindsight adapter cell using only genuinely supported operations | Explicitly UNSUPPORTED with pinned revision and reason when the boundary cannot be met | No competitor cell supports promotion unless its boundary is met |
+| COMPETITOR_LETTA (competitor_letta) | Individual pinned Letta adapter cell using only genuinely supported operations | Explicitly UNSUPPORTED with pinned revision and reason when the boundary cannot be met | No competitor cell supports promotion unless its boundary is met |
+| COMPETITOR_LANGMEM (competitor_langmem) | Individual pinned LangMem adapter cell using only genuinely supported operations | Explicitly UNSUPPORTED with pinned revision and reason when the boundary cannot be met | No competitor cell supports promotion unless its boundary is met |
+| MATCHED_HYBRIDS (hybrid_atc_governed and mechanism-specific) | Capsule plus checkpoint, reconciliation, M1, M3, or the mechanism under test with matched turns, total tokens, latency, tools, and permissions | Individual missing combinations remain explicit UNSUPPORTED | Mechanism comparisons |
+
+Required ablations are separate named cells, not silently folded into a
+winner: working checkpoints; episodic outcome records; temporal and relational
+projections; procedure distillation and retrieval; typed event activation;
+consequence contracts and checkpoint tokens; outcome dependency closure; the
+full ATC research stack; checkpoint without reconciliation; reconciliation
+without the M1 binding; M1 without dependency/invalidation closure; semantic
+acknowledgement/challenge versus its content-free placebo; prospective memory
+without negative guards, current-version reread, dependency closure, or action
+ceiling; Conditional Failure Memory without disconfirmation; static warranty
+without local use-time verification; M3 optimized rebuild versus independent
+full rebuild; Continuity Debt aggregate versus category vector; and procedures
+without applicability, rollback, or purge closure.
+
+Unsupported, blocked, skipped, not-exercised, and missing cells are retained
+with reason, denominator disposition, and capability boundary. They receive no
+promotion credit and cannot be used as an implicit favorable baseline.
+No result is promotable unless all applicable simple, individual competitor,
+hybrid, and ablation cells were attempted or explicitly reported as
+UNSUPPORTED with the reason and pinned boundary.
 
 The primary continuity contrast is the best checkpoint/reconciliation
 condition against the optimized capsule under matched turns, total context,
@@ -478,9 +561,37 @@ task oracle, currentness, authority, prerequisites, budget, and correction
 checkpoint must all pass. A missing outcome is missing. It is not success or
 failure after the fact.
 
-### 6.5 Failed-run, missingness, and inference rules
+### 6.5 Opportunity, abstention, and witness contract
 
-The manifest freezes these rules before any confirmatory result:
+Before any mechanism result is scored, a frozen mechanism-independent
+opportunity oracle must identify eligible positive and negative opportunities.
+It uses the same logical episode and source state for every arm, may abstain
+when the fixture cannot decide, and is not allowed to read a mechanism's
+prediction before assigning the opportunity. The minimum eligibility floors are:
+
+| Workstream | Positive opportunities | Negative opportunities | Opportunity coverage | Non-abstention |
+|---|---:|---:|---:|---:|
+| Prospective memory | 50 due/cue opportunities | 50 non-due/negative-control opportunities | At least 90% of eligible cue events | At least 90% of scored cue events |
+| Adaptive routing | 50 beneficial-route opportunities | 50 no-benefit or wrong-route opportunities | At least 90% of eligible route opportunities | At least 90% of scored route opportunities |
+| Continuity Debt | 100 independently adjudicated avoidable-debt opportunities | 100 independently adjudicated non-debt opportunities | At least 90% of eligible episode opportunities | At least 90% of scored episode opportunities |
+
+These are minimum evidence floors, not outcome credit. If a floor is missed,
+the stage is insufficiently exercised and cannot promote. Abstentions,
+unsupported cells, not-exercised cells, and missing witnesses receive no
+promotion credit and remain visible in the report. Usefulness and outcome
+utility are witnessed only by Core, the deterministic harness, or an
+independent oracle; a model, client, tool, provider, or participant assertion
+cannot close them.
+
+For every numerical gate, Packet A freezes the estimand, denominator,
+direction, confidence method or test, and missingness treatment before the
+episode is scored. No opportunity may be counted only because a mechanism
+claimed it, and no abstention may be relabeled as a correct suppression.
+
+### 6.6 Failed-run, missingness, and inference rules
+
+The frozen Packet A specification carries these rules; the later benchmark
+manifest must reproduce them before any confirmatory result:
 
 - a hard safety failure is a failure in the applicable safety denominator and
   stops the affected promotion decision;
@@ -506,30 +617,101 @@ Zero observed failures is not zero risk. The report must include the exact
 observed count, denominator, confidence bound, exposure, and unexercised
 surface for every safety claim.
 
-### 6.6 Exact freeze criterion
+### 6.7 Exact Packet A specification freeze now
 
-Packet A is frozen if and only if all of the following are true:
+The first decision freezes the Packet A specification, not a benchmark manifest
+and not an execution N. The specification is frozen if and only if:
 
-1. the manifest lists the 384 confirmatory episode IDs, six task families,
+1. the arm vocabulary, task families, mutation classes, oracle contracts,
+   budgets, permissions, and hard-safety rules are written and content-bound;
+2. the CAOS definition, every estimand, denominator, direction, confidence
+   method or test, multiplicity rule, and missing/failed-run disposition is
+   fixed before any confirmatory result;
+3. the calibration pilot is explicitly calibration-only and cannot alter the
+   confirmatory estimand, control set, holdout, or gate;
+4. the opportunity, abstention, witness, secret-refusal, idempotency,
+   conflict, invalidation, ordinary-deletion, terminal-purge, and rebuild
+   contracts are fixed;
+5. the power-simulation inputs and reproducibility record in Section 6.8 are
+   specified, including the script path, version, digest fields, input/output
+   manifest digests, seed, repetitions, joint distribution, allocation,
+   estimator, test, alpha, power, and multiplicity; and
+6. the specification digest is recorded without representing provisional N as
+   an executable or fixture-frozen sample.
+
+Packet A specification freeze is permitted now as a non-displacing research
+decision. It does not freeze fixture IDs, a benchmark manifest, a final N, or
+execution. Those require the later reproducibility and fixture gates.
+
+### 6.8 Power-derived N and later manifest freeze
+
+The provisional planning value is N=384 paired episodes. It becomes the final
+confirmatory N only if the exact reproducibility record below is independently
+run and reproduces 384. The specification must not claim that N=384 is frozen
+before that run.
+
+~~~text
+power_simulation_script_path: bench/memory_reliability_power_simulation.py
+power_simulation_script_version: packet-a-power-v1
+power_simulation_script_digest: required SHA-256 at manifest freeze
+input_manifest_paths:
+  - bench/memory_reliability_spec.json
+  - bench/memory_reliability_fixtures.json
+  - Packet A fixture/task manifest
+input_manifest_digest: required SHA-256 at manifest freeze
+output_manifest_digest: required SHA-256 emitted by the simulation
+simulation_seed: 20260829
+simulation_repetitions: 100000
+baseline_control_caos: 0.75
+alternative_caos: 0.85
+target_paired_effect: 0.10
+paired_joint_distribution:
+  control_0_alternative_0: 0.10
+  control_0_alternative_1: 0.15
+  control_1_alternative_0: 0.05
+  control_1_alternative_1: 0.70
+paired_correlation: 0.404226, derived from the frozen joint distribution
+stratum_weights: equal across six families, four repositories, four strata
+allocation: four repetitions per family/repository/stratum cell
+estimand: stratified paired CAOS difference, alternative minus control
+test_statistic: stratified paired difference with exact/randomization reference
+alpha: familywise 0.05 with Holm control over two primary contrasts
+directional_bound: one-sided 95% confidence bound for each promotion gate
+power_target: 0.90
+noninferiority_margin: -0.02 CAOS difference
+missing_and_failure_policy: Section 6.6, frozen before simulation
+provisional_confirmatory_N: 384 paired episodes
+final_confirmatory_N: unset until script, inputs, and output digest reproduce it
+~~~
+
+The script path is a required future reproducibility artifact; this proposal
+does not claim that the script has already been added or executed. The
+simulation must independently emit the paired joint-distribution check,
+stratum allocation, derived N, and output manifest digest. Any change to the
+script, version, input manifest, joint distribution, allocation, estimator,
+test, alpha, power, missingness rule, or seed creates a new specification
+version and leaves N provisional.
+
+The later benchmark-manifest freeze is permitted only when:
+
+1. the manifest lists the reproduced final N, episode IDs, six task families,
    four fixture repositories, four client/model-build strata, four repetitions,
-   reserve policy, and deterministic seeds;
-2. every arm, primary contrast, oracle, budget, permission set, and mutation
-   is versioned and content-digested;
-3. the power simulation is reproduced from seed 20260829 with its parameters,
-   100,000 replicates, and derived N recorded;
-4. CAOS, hard-safety gates, raw numerators/denominators, confidence methods,
-   Holm multiplicity control, and all missing/failed-run dispositions are
-   frozen;
-5. the calibration pilot is labeled calibration-only and its results cannot
-   alter the confirmatory estimand or holdout;
-6. pre-staging secret refusal, project ambiguity abstention, idempotency,
-   conflict, invalidation, ordinary deletion, terminal purge, and rebuild
-   checks pass on the declared fixture set; and
-7. the manifest digest is recorded before any confirmatory mechanism result is
+   reserve policy, and deterministic episode seeds;
+2. every arm, baseline/control, primary contrast, oracle, budget, permission
+   set, mutation, and required ablation is versioned and content-digested;
+3. the exact script path, version, script digest, input-manifest digest, and
+   output-manifest digest reproduce N=384 under the Section 6.8 inputs;
+4. calibration, fixture determinism, receipt completeness, oracle behavior,
+   secret refusal, project isolation, lifecycle cleanup, and budget gates pass;
+5. CAOS, hard-safety gates, raw numerators/denominators, confidence methods,
+   Holm multiplicity control, opportunity floors, and all missing/failed-run
+   dispositions are unchanged from the frozen specification; and
+6. the benchmark-manifest digest is recorded before any confirmatory result is
    read.
 
-This is the exact freeze criterion. Packet A may be frozen now as a contract;
-execution remains non-displacing research and cannot grant product acceptance.
+This distinction is binding: freeze the Packet A specification now; freeze
+and execute the benchmark manifest only after the reproducibility and fixture
+gates pass. Neither step grants product acceptance.
 
 ## 7. Staged mechanisms and falsifiable gates
 
@@ -548,11 +730,15 @@ unavailable classes. It never stores hidden reasoning or command text.
 
 **Promotion gate.** The frozen Packet A continuity contrast must have zero
 hard authorization, currentness, wrong-project, correction, secret, or purge
-failures; CAOS must be noninferior to the strongest simpler control within two
-percentage points; continuity debt must fall by at least 20% relative to the
-optimized capsule with the paired confidence bound recorded; first-action
-correctness must not decrease; and context must stay below the full-transcript
-control with no more than 25% extra over the capsule-only condition.
+failures. The preregistered one-sided 95% lower confidence bound for the CAOS
+difference must be at least negative two percentage points. The one-sided 95%
+lower confidence bound for the relative continuity-debt reduction, with the
+independent opportunity denominator fixed in Packet A, must be at least 20%.
+The one-sided 95% lower confidence bound for first-action correctness
+difference must be at least zero. The one-sided 95% upper confidence bound
+for context must remain below the full-transcript control and no more than
+25% above the capsule-only condition. Each estimand, denominator, and
+direction is frozen before the holdout is opened.
 
 **Next stage.** A separately authorized Core-owned checkpoint projection may
 cross a cooperating lifecycle-aware client boundary, with exact snapshot,
@@ -564,28 +750,99 @@ to the optimized capsule, increases context without measurable outcome value,
 or causes any hard lifecycle failure, retain only the smallest useful typed
 checkpoint or diagnostic vector and do not add richer state.
 
-### 7.2 External-state applicability and memory warranties
+### 7.2 M3 dependency-complete closure
+
+M3 is a dedicated active workstream and is distinct from M1. M1 measures the
+assignment-to-outcome chain; M3 proves that correction, deletion, policy
+change, and terminal purge withdraw every declared derived influence before
+anything is republished. Owner: Core closure/rebuild owner with the Memory Lab
+coordinator. Packet: Packet N — M3 closure oracle. Its authority ceiling is
+research-only: the optimizer may choose an evaluation order or repair plan in
+an isolated harness, but it may not create canonical records, issue context,
+publish a repaired surface, suppress an action, or become a live authority.
+
+**Stage 1 — isolated full-rebuild closure.** The frozen M3 fixture contains a
+complete inventory of six declared derived surfaces:
+
+1. retrieval selection;
+2. issued context;
+3. procedure;
+4. selection cache;
+5. working state; and
+6. use statistics.
+
+The independently coded full-rebuild oracle and the optimized affected-
+descendant rebuild run correction, scope narrowing, permission revocation,
+ordinary deletion, terminal purge, and policy-generation changes over chain,
+fan-out, fan-in, shared-descendant, illegal-cycle, and illegal-cross-scope
+topologies. Publication is withdrawn before republication. The fixture scans
+the complete six-surface inventory, including graph or dependency inventory,
+rather than checking only currently published artifacts.
+
+**Promotion gate.** The exact-equality closure gate requires byte-for-byte
+equality between optimized and full-rebuild outputs for every declared case,
+every six-surface artifact, every dependency disposition, and every terminal
+state. It also requires zero published stale descendants, zero terminal-purge
+residue, zero stale-writer acceptance, zero illegal-edge acceptance, zero
+ordinary-delete/purge conflation, zero fail-open or partial-repair publication,
+and complete six-surface inventory coverage of 1.0. The optimization test is
+the preregistered evaluated-node reduction in the declared synthetic control;
+the retained ADR-049 threshold is at least 0.99. These are deterministic tests,
+not point estimates: equality and all hard-safety counts must pass before the
+optimization result is considered.
+
+**Next stage.** After the isolated result is independently reproduced at L2,
+M3 may enter shadow integration with the M1 dependency and invalidation
+receipts when the canonical product DAG reaches ZF-017 and ZF-018. This is
+evidence for those stages, not a new product prerequisite and not a license to
+reorder ZF-015 or ZF-016. Any Core-owned live slice requires a separate
+decision, complete declared-surface inventory, withdrawal-before-republication,
+and the same full-rebuild equality oracle.
+
+**Kill/narrow rule.** If exact equality or complete inventory coverage fails,
+hold all optimized promotion and retain the full-rebuild oracle plus the
+minimal failing case as the active falsifier. If equality passes but the 0.99
+optimization threshold fails, kill only the optimization, retain the
+dependency-complete M3 closure contract, and use the full rebuild. If purge,
+stale-writer, illegal-edge, or fail-open behavior appears, narrow to an
+unoptimized isolated surface until the defect is closed. M3 remains active in
+each case; no negative result deletes the closure idea.
+
+### 7.3 External-state applicability and memory warranties
 
 Static applicability and use-time verification are separate artifacts.
 
-**Stage 1A — static typed applicability.** Core compiles a typed descriptor
-from authorized project, source, workspace, policy, and capability metadata.
-The descriptor is immutable and binds a record/version and snapshot through
-verification, issue, and use. It contains no executable predicate.
+**Stage 1A — static typed applicability, diagnostic-only.** Core compiles a
+typed descriptor from authorized project, source, workspace, policy, and
+capability metadata. The descriptor is immutable and binds a record/version
+and snapshot through any later verification, issue, and use. It contains no
+executable predicate and cannot by itself justify issue or use reliance.
 
-**Stage 1B — first live local verification.** Only Core-owned authorized
-workspace/local metadata may be read: bounded files or digests, repository and
-branch identity, branch lineage, lockfile/dependency generation, migration
-head, operating system/architecture, and declared capability. There is strict
-path containment, link/reparse refusal, bounded reads, no network,
-subprocess, hooks, ambient credentials, or unbounded filesystem walk. An
-unavailable result is portable as unavailable and never as verified.
+**Stage 1B — first live local verification, diagnostic-only.** Only Core-owned
+authorized workspace/local metadata may be read: bounded files or digests,
+repository and branch identity, branch lineage, lockfile/dependency
+generation, migration head, operating system/architecture, and declared
+capability. There is strict path containment, link/reparse refusal, bounded
+reads, no network, subprocess, hooks, ambient credentials, or unbounded
+filesystem walk. An unavailable result is portable as unavailable and never
+as verified. Stage 1 may annotate a lab result; it may not make any issue or
+use rely on the annotation.
 
-**Promotion gate.** Use-time local verification must prevent stale high-impact
-issue cases that static controls miss, with zero unauthorized reads, secret
-exposure, containment failures, or purge residue and no material false
-invalidation regression. Verification, issue, and use must share one immutable
-descriptor/snapshot binding.
+For any later issue or use reliance, Core must atomically bind the current
+Core generation, immutable descriptor, exact record/version, and snapshot,
+then recheck generation and state immediately at use. Any generation, state,
+descriptor, policy, project, or dependency change fails closed and prevents
+reliance. A client or source adapter cannot perform this recheck.
+
+**Promotion gate.** The preregistered stale-issue prevention estimand is the
+rate difference on eligible stale high-impact issue opportunities between
+local use-time verification and static typed applicability; its one-sided 95%
+lower confidence bound must be greater than zero. The false-invalidation
+estimand is the rate on eligible still-valid opportunities; its one-sided
+95% upper confidence bound must be at most two percentage points. There must
+also be zero unauthorized reads, secret exposure, containment failures, or
+purge residue, and every reliance must pass the atomic Core generation
+binding/recheck.
 
 **Next stage.** Remote verification remains active as a separate research
 stage. It requires a fresh threat model, endpoint allowlist, least-privilege
@@ -598,7 +855,7 @@ support burden, or false invalidation without preventing stale influence,
 narrow to static descriptors. Remote verification is not a reason to weaken
 the local boundary.
 
-### 7.3 Semantic acknowledgement/challenge
+### 7.4 Semantic acknowledgement/challenge
 
 The former name “Semantic Handoff Checksum” is retained only as historical
 provenance. The precise current name is **semantic acknowledgement/challenge**.
@@ -612,13 +869,22 @@ or uncertain field but may not echo prose, store durable authority, write
 canonical state, supply action input, or assert that the model understood.
 Compare with an optimized one-shot capsule under matched turns, total tokens,
 latency, model/client build, and tool budget.
+The placebo is the content-free matched extra-feedback-turn placebo: it
+receives the same number of turns, total-token
+budget, latency budget, and host opportunity, but contains no semantic field
+IDs, coverage codes, uncertainty codes, or prose. The placebo has no
+authority or side effect.
 
 **Promotion gate.** The acknowledgement/challenge must reduce early
 constraint/state errors by at least 20% relative to the ordinary optimized
-capsule, add no authority, privacy, project, correction, or purge failure,
-and keep acknowledgement overhead below 15% of total task context. Predictive
-value and corrective value are reported separately; self-report alone does not
-pass.
+capsule, with a preregistered one-sided 95% lower confidence bound for the
+relative reduction at least 20%. Its semantic-content benefit over the
+content-free placebo must have a one-sided 95% lower confidence bound greater
+than zero on the same eligible early-error estimand. The one-sided 95% upper
+confidence bound for acknowledgement overhead must be at most 15% of total
+task context. There must be no authority, privacy, project, correction, or
+purge failure. Report semantic-content benefit separately from generic
+feedback-turn benefit; self-report alone does not pass.
 
 **Next stage.** A gated richer-correction stage may issue a minimum corrective
 delta composed only of closed field IDs and correction codes. It must preserve
@@ -631,7 +897,7 @@ later behavior, becomes confident model self-report, or loses to a larger
 one-shot capsule at matched total context and latency, retain the ephemeral
 coverage/uncertainty diagnostic and do not add prose or durable state.
 
-### 7.4 Prospective memory
+### 7.5 Prospective memory
 
 Prospective memory remains an active path toward memory at the right moment.
 Its transaction binds exact supporting evidence versions, principal/project/
@@ -656,17 +922,20 @@ dependency closure, or action ceiling.
 
 1. the primary contrast against the deterministic scheduler is preregistered;
 2. recall is at least 0.80 and task-level blinded usefulness is at least 0.70,
-   each with its raw numerator/denominator and confidence bound;
-3. CAOS is noninferior to the strongest control within two percentage points;
-4. false alarms are at most 5% of eligible non-due opportunities, with the
-   bound reported;
+   with a preregistered one-sided 95% lower confidence bound at or above each
+   floor on the fixed positive-opportunity denominator;
+3. the one-sided 95% lower confidence bound for the CAOS difference is at
+   least negative two percentage points against the strongest control;
+4. the one-sided 95% upper confidence bound for false alarms is at most 5% of
+   eligible non-due opportunities;
 5. unauthorized, stale, deleted, purged, wrong-domain, duplicate, or
    unconfirmed-protected influence is zero;
-6. a paired scheduler benefit is present: at least a 5% relative improvement
-   on the preregistered outcome-utility endpoint and a 95% paired bound
-   excluding no benefit; and
+6. a paired scheduler benefit is present: the one-sided 95% lower confidence
+   bound for relative improvement on the preregistered outcome-utility
+   endpoint is at least 5%; and
 7. the result is not explained only by larger prompt exposure, latency, or
-   context.
+   context, and the fixed minimum opportunity coverage and non-abstention
+   floors in Section 6.5 are met.
 
 **Next stage.** A separately accepted notification-only path may create a
 user-visible notification receipt for an exact recipient and target. Later
@@ -679,7 +948,7 @@ or compiled mechanism. If false alarms, disclosure, duplicate issue, or
 correction/purge closure fail, return to inert local reference. No notification
 or action ceiling is silently inherited by a weaker stage.
 
-### 7.5 Conditional Failure Memory
+### 7.6 Conditional Failure Memory
 
 Conditional Failure Memory remains active but a failure never becomes an
 unconditional prohibition.
@@ -691,11 +960,16 @@ do-not-retry-while codes, expiry, correction, disconfirmation, and retirement.
 Stage 1 may warn or expose an advisory code; it cannot block a retry, alter a
 tool call, write a procedure, or trigger a protected action.
 
-**Promotion gate.** Advisory output must reduce repeated ineffective actions by
-at least 20% against raw failed-trajectory retrieval and simple error-signature
-deduplication, with no negative transfer, no wrong-project influence, no
-secret persistence, exact correction/purge closure, and valid-retry blocking
-within the frozen two-percentage-point noninferiority margin.
+**Promotion gate.** The preregistered repeated-ineffective-action estimand,
+whose denominator is the independently observed eligible retry opportunities,
+must fall by at least 20% against raw failed-trajectory retrieval and simple
+error-signature deduplication, with a one-sided 95% lower confidence bound for
+the relative reduction at least 20%. The one-sided 95% upper confidence bound
+for incorrectly blocked valid retries and negative transfer must be at most
+two percentage points. There must be no wrong-project influence, secret
+persistence, or correction/purge failure, and all usefulness and outcome
+utility must be witnessed by Core, the deterministic harness, or an
+independent oracle.
 
 **Next stage — automatic-suppression research.** Automatic suppression is
 allowed only after accepted L3 synchronous pre-effect capability,
@@ -709,7 +983,7 @@ survives correction, lacks independently witnessed state, or loses to exact
 signature deduplication. Retain the advisory-only form if it remains useful;
 otherwise retain only the typed failure evidence and its negative result.
 
-### 7.6 Continuity Debt Ledger
+### 7.7 Continuity Debt Ledger
 
 Continuity Debt remains an active diagnostic and possible product metric. It
 must distinguish work caused by a legitimate change from avoidable repetition.
@@ -736,15 +1010,18 @@ the number of events selected by the mechanism.
 **Promotion gate for an aggregate score.** Category vectors are always
 retained. An aggregate score is permitted only if weights and category
 definitions are preregistered before holdout evaluation and, on a held-out
-20% episode set, all of the following hold:
+20% episode set with the independent opportunity denominator fixed, all of the
+following hold:
 
 - out-of-sample CAOS prediction AUC is at least 0.70 with a bootstrap 95%
   lower bound of at least 0.65;
 - a one-standard-deviation lower debt value predicts better CAOS with an odds
   ratio of at most 0.80 and a 95% upper bound below 1.00;
-- the direction is consistent in at least five of six task families;
-- the aggregate adds predictive value over the category vector and strongest
-  simple control; and
+- a preregistered stratified permutation test rejects random directional
+  agreement across the six task families at one-sided alpha 0.05;
+- the one-sided 95% lower confidence bound for the aggregate's incremental
+  held-out AUC over the category vector and strongest simple control is
+  greater than zero; and
 - no hard authority, privacy, project, correction, or purge failure occurs.
 
 **Next stage.** If the gate passes, use the aggregate only as a bounded
@@ -757,7 +1034,7 @@ directions, weights dominate, opportunity attribution is not reliable, or the
 held-out gate fails. Retain the independently useful category vectors,
 abstention counts, and correction/verification/new-requirement distinctions.
 
-### 7.7 Verified experience and procedures
+### 7.8 Verified experience and procedures
 
 Verified experience and procedures remain active as outcome-bound candidates.
 A candidate contains accepted outcome evidence, typed applicability, positive
@@ -774,10 +1051,15 @@ rollback path.
 **Promotion gate.** Admission requires recurrence across distinct task
 identities or strong external verification, accepted observable outcomes,
 exact applicability boundaries, negative guards, correction and repair
-success, source/outcome/policy closure, and terminal-purge closure. It must
-reduce repeated ineffective actions without materially blocking valid retries
-after a state change and remain noninferior to static notes, raw trajectory
-retrieval, and simple error-signature deduplication.
+success, source/outcome/policy closure, and terminal-purge closure. The
+preregistered repeated-ineffective-action estimand must fall by at least 20%
+against static notes, raw trajectory retrieval, and simple error-signature
+deduplication, with a one-sided 95% lower confidence bound for the relative
+reduction at least 20%. The one-sided 95% upper confidence bound for
+incorrectly blocked valid retries must be at most two percentage points, and
+the one-sided 95% lower confidence bound for the CAOS difference must be at
+least negative two percentage points. All denominators and opportunity
+eligibility are frozen before evaluation.
 
 **Next stage.** A separately scoped procedure pilot may use verified
 reference/suggest/draft delivery and exact native confirmation. It may enter
@@ -791,16 +1073,20 @@ closed, or if the simpler control is noninferior. Preserve the accepted
 outcome evidence and typed failure result; do not turn a failed procedure into
 an unconditional prohibition.
 
-### 7.8 Design-partner validation
+### 7.9 Design-partner validation
 
 Design-partner work remains active as the route to L5 evidence, not as a
 shortcut to support or marketing claims.
 
-**Stage 1 — consented preparation.** Use two or three technically competent
-participants only after the relevant lab gates. Require explicit consent,
-exact candidate digest, declared artifact/capability pair, local-only default,
-participant-controlled export/deletion, attrition accounting, no raw text,
-no credentials, and inspectable structured reports.
+**Stage 1 — preparation-only.** Prepare consent materials, candidate-digest
+binding, local-only storage design, participant-controlled export/deletion,
+attrition rules, and inspectable structured reports. Do not recruit, collect
+participant data, grant external access, or execute an L5 study from this
+proposal. A separate explicit decision is required before any recruitment,
+participant collection, external access, or L5 execution. If that decision is
+made, the study uses two or three technically competent participants with
+explicit consent, exact candidate digest, declared artifact/capability pair,
+local-only default, no raw text, and no credentials.
 
 **Promotion gate.** The pilot must preregister task families, candidate
 digests, supported capabilities, attrition and missingness rules, and
@@ -817,7 +1103,7 @@ acceptance evidence.
 evidence fails, narrow the study or return to lab evidence. Do not discard the
 mechanism; retain its typed contract and record the disposition.
 
-### 7.9 Adaptive memory routing
+### 7.10 Adaptive memory routing
 
 Adaptive routing remains active after the earlier workstreams. It may compare
 exact current records, source-backed evidence, capsules, checkpoints, temporal
@@ -828,9 +1114,15 @@ source dereference.
 dependency-bound projections. No router may inspect unauthorized candidates,
 become a permission authority, or create a truth record.
 
-**Promotion gate.** A target-task router must beat the current lexical and
-capsule baseline on preregistered CAOS, disclosure, latency, and maintenance
-cost without hard lifecycle failures.
+**Promotion gate.** For the fixed target-task opportunity denominator, the
+router must beat the current lexical and capsule baseline on the preregistered
+CAOS estimand with a one-sided 95% lower confidence bound for improvement
+greater than zero. The one-sided 95% upper confidence bounds for disclosure,
+latency, and maintenance-cost differences must remain at or below their
+predeclared noninferiority margins. The minimum positive/negative opportunity,
+coverage, and non-abstention floors in Section 6.5 must be met; abstentions
+and unsupported cells receive no credit. There must be no hard lifecycle
+failures.
 
 **Next stage.** A separate graph, embedding, or learned-router cell may run
 only with an independent prior-art review, frozen task target, and exact
@@ -907,8 +1199,9 @@ active.
 | Workstream | Owner | Packet | Entry condition | Exit condition | Disposition |
 |---|---|---|---|---|---|
 | Active frontier | Product/release acceptance owner | Existing execution-plan gates | Current protected-main frontier and exact candidate requirements | Integrated milestone, replacement candidate, packaged journey, Wave 4 E–G acceptance, and Phase 2 are each accepted at their own gates | Blocking; unchanged |
-| Packet A benchmark | Memory Lab coordinator | Packet A | First decision accepts the frozen contract; no product dependency | Frozen digest, reproducible calibration, declared confirmatory N, or a recorded blocked result | Parallel, non-displacing |
+| Packet A benchmark | Memory Lab coordinator | Packet A | First decision accepts the frozen specification; no product dependency | Specification digest now; later manifest digest and final N only after independent reproducibility and fixture gates, or a recorded blocked result | Parallel, non-displacing |
 | M1 measurement spine | Core contract owner and Memory Lab coordinator | Packet C | Packet A freeze and artifact boundary review | Exact replay, outcome association, unknown/abstention, idempotency, conflict, invalidation, deletion, purge, rebuild, and secret refusal pass | Shadow/lab; no production data collection |
+| M3 dependency-complete closure | Core closure/rebuild owner and Memory Lab coordinator | Packet N | M3 field contract, six-surface inventory, and independent full-rebuild oracle specification | Six-surface inventory, withdrawal-before-republication, exact equality, hard-safety, and optimization tests pass or a bounded retain/hold/kill disposition is recorded | Active and distinct from M1; shadow-only |
 | Versioned checkpoints | Continuity contract owner | Packet D | M1 shape and typed field contract | Checkpoint compiles only observable state and survives restart, correction, abandonment, and purge tests | Active; mapped to ZF-015 |
 | Three-way reconciliation | Continuity contract owner | Packet E | Checkpoint plus current source snapshot plus client observation | Current/displaced/uncertain/invalid/new/unavailable classes are deterministic and no displaced action is resurrected | Active; mapped to ZF-016 |
 | Typed applicability | Applicability contract owner | Packet G | Reconciliation and dependency inventory | Static descriptor and local verification pass containment, unavailable, binding, and closure gates | Active; local-only first |
@@ -917,13 +1210,13 @@ active.
 | Conditional Failure Memory | Outcome-learning research owner | Packet I | Advisory receipts and allowlisted state | Advisory gate passes; L3 synchronous suppression research remains separate | Active; no Stage 1 blocking |
 | Continuity Debt Ledger | Evaluation owner | Packet B | Independent opportunity oracle and blinded omission protocol | Category vector is reliable; aggregate score only if exact held-out gate passes | Active; vector first |
 | Verified experience/procedures | Procedure contract owner | Packet J | Accepted outcome/applicability/closure evidence | Advisory candidate passes recurrence/verification, repair, rollback, and purge gates | Active; no autonomous effects |
-| Design partners | External-validation owner | Packet K | Relevant L4 evidence, consent materials, exact digest | L5 evidence is consented, local-first, de-identified, and attrition-bounded | Active; no broad claims |
+| Design partners | External-validation owner | Packet K | Relevant L4 evidence, consent materials, exact digest | L5 evidence is consented, local-first, de-identified, and attrition-bounded after a separate explicit decision | Active; preparation-only until separately authorized |
 | Caches and reports | Privacy/lifecycle owner | Packet L | Artifact matrix and dependency inventory | Rebuild, backup/export/restore, ordinary deletion, terminal purge, and external-copy closure pass | Cross-cutting; derived only |
 | Adaptive routing | Retrieval research owner | Packet M | Earlier workstreams and accepted simpler baselines | Target-task win with matched budgets and closure evidence | Active later stage; shadow first |
 
 ### 9.1 Packet coverage
 
-Packet A freezes the benchmark. Packet B produces debt vectors. Packet C
+Packet A freezes the specification. Packet B produces debt vectors. Packet C
 implements M1 shadow receipts. Packet D compiles checkpoints. Packet E performs
 three-way reconciliation. Packet F tests semantic acknowledgement/challenge.
 Packet G owns static applicability and bounded local warranties. Packet H keeps
@@ -931,7 +1224,10 @@ prospective memory and its notification path active. Packet I keeps Conditional
 Failure Memory active. Packet J keeps verified experience and procedures active.
 Packet K keeps design-partner evidence active. Packet L closes artifact
 retention, deletion, purge, rebuild, export, restore, replication, logging,
-and external-copy behavior. Packet M keeps adaptive routing active.
+and external-copy behavior. Packet M keeps adaptive routing active. Packet N
+keeps M3 dependency-complete closure, its independent full-rebuild oracle,
+six-surface inventory, withdrawal-before-republication, exact-equality gate,
+and optimization disposition active.
 
 Each packet must report entry, exit, evidence grade, unresolved unknowns,
 support/cost metrics, and disposition. A negative result narrows the stage; it
@@ -941,12 +1237,14 @@ does not delete the mechanism from the program.
 
 ### 10.1 Design-partner boundary
 
-The first L5 entry is two or three consented design partners using disposable
-or non-sensitive projects under an explicit experimental label. Reports may
-include only typed codes, exact artifact digests, bounded metrics, attrition,
-and participant-approved aggregate outcomes. No raw prompts, transcripts,
-commands, credentials, imported prose, or provider/model prose leave the
-local boundary.
+The potential first L5 entry is two or three consented design partners using
+disposable or non-sensitive projects under an explicit experimental label.
+That entry is preparation-only until a separate explicit decision authorizes
+recruitment, participant collection, external access, and L5 execution.
+Reports may include only typed codes, exact artifact digests, bounded metrics,
+attrition, and participant-approved aggregate outcomes. No raw prompts,
+transcripts, commands, credentials, imported prose, or provider/model prose
+leave the local boundary.
 
 The participant controls export and deletion. A deletion receipt covers local
 artifacts, reports, backups, restores, and any explicitly consented external
@@ -1032,14 +1330,20 @@ Reviewers should answer these questions against the frozen contracts:
 ## 13. Exact proposed first decision
 
 > Accept the whole measurement-first staged program as the post-frontier
-> direction and freeze the corrected Packet A benchmark contract now, while
-> keeping every later packet active and sequenced.
+> direction and freeze the corrected Packet A specification now, while
+> explicitly deferring benchmark-manifest freeze and execution until
+> independent reproducibility and fixture gates pass; keep every later packet
+> active and sequenced.
 
 Acceptance of this direction means:
 
 - the active frontier remains the blocking product path;
-- Packet A may freeze and run as non-displacing research;
-- M1, checkpoints, reconciliation, applicability, semantic
+- Packet A specification may freeze as non-displacing research, but its
+  benchmark manifest and execution N remain provisional until the independent
+  reproducibility and fixture gates pass;
+- Packet A and shadow M1/M3 research may run in parallel, but none is a product
+  prerequisite and neither reorders ZF-015 or ZF-016;
+- M1, M3 dependency-complete closure, checkpoints, reconciliation, applicability, semantic
   acknowledgement/challenge, prospective memory, Conditional Failure Memory,
   warranties, continuity debt, verified experience, procedures, design
   partners, and adaptive routing all remain active in the register;
