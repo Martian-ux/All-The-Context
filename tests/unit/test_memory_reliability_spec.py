@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Any
 
 import pytest
 
+import bench.packet_a_power_reference as power_reference
 import bench.validate_memory_reliability_spec as validator_module
 from bench.validate_memory_reliability_spec import (
     EXPECTED_PROVENANCE,
@@ -833,6 +835,10 @@ def test_packet_a_contract_source_digest_is_independent_and_bound() -> None:
     spec = _load(SPEC_PATH)
     expected = validator_module.EXPECTED_CONTRACT_SOURCE_SHA256
     assert validator_module._read_contract_source_digest() == expected
+    assert (
+        b"EXPECTED_CONTRACT_SOURCE_SHA256"
+        not in (ROOT / "bench" / "packet_a_contract.py").read_bytes()
+    )
     assert spec["packet_a"]["content_binding"]["contract_source_sha256"] == expected
     assert any(
         source["path"] == "bench/packet_a_contract.py" and source["sha256"] == expected
@@ -841,9 +847,33 @@ def test_packet_a_contract_source_digest_is_independent_and_bound() -> None:
 
     contract_source = (ROOT / "bench" / "packet_a_contract.py").read_bytes()
     tampered_source = contract_source.replace(
-        b"EXPECTED_BASE_CELL_COUNT", b"EXPECTED_BASE_CELL_COUNX", 1
+        b"EXPECTED_BASE_CELL_COUNT = 96", b"EXPECTED_BASE_CELL_COUNT = 97"
     )
+    for digest in (
+        validator_module.EXPECTED_CANONICAL_SPECIFICATION_DIGEST.encode(),
+        validator_module.EXPECTED_STRUCTURE_DIGEST.encode(),
+        validator_module.EXPECTED_NARRATIVE_SEMANTIC_DIGEST.encode(),
+    ):
+        tampered_source = tampered_source.replace(digest, b"0" * 64, 1)
     assert validator_module._compute_contract_source_digest(tampered_source) != expected
+
+    reference_expected = validator_module.EXPECTED_POWER_REFERENCE_SOURCE_SHA256
+    reference_source = (ROOT / "bench" / "packet_a_power_reference.py").read_bytes()
+    assert validator_module.hashlib.sha256(reference_source).hexdigest() == reference_expected
+    assert spec["packet_a"]["content_binding"]["power_reference_source_sha256"] == (
+        reference_expected
+    )
+    assert any(
+        source["path"] == "bench/packet_a_power_reference.py"
+        and source["sha256"] == reference_expected
+        for source in spec["packet_a"]["provenance"]["canonical_inputs"]
+    )
+    assert (
+        validator_module.hashlib.sha256(
+            reference_source.replace(b"POWER_REFERENCE_VERSION", b"POWER_REFERENCE_VERSIOX", 1)
+        ).hexdigest()
+        != reference_expected
+    )
 
 
 def test_packet_a_file_entrypoints_reject_virtual_and_subclassed_paths() -> None:
@@ -893,6 +923,221 @@ def test_packet_a_file_entrypoints_reject_virtual_and_subclassed_paths() -> None
         assert caught.value.__context__ is None
 
 
+def test_packet_a_read_limits_and_filesystem_identity_are_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload_path = tmp_path / "payload.bin"
+    payload_path.write_bytes(b"bounded")
+    invalid_limits: tuple[Any, ...] = (
+        True,
+        False,
+        0,
+        -1,
+        validator_module.MAX_INPUT_BYTES + 1,
+        10**10000,
+        1.0,
+        object(),
+    )
+    for maximum_bytes in invalid_limits:
+        with pytest.raises(SpecificationValidationError) as caught:
+            validator_module._read_bounded_file(payload_path, maximum_bytes=maximum_bytes)
+        assert str(caught.value) == "input size limit is invalid"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+
+    with pytest.raises(SpecificationValidationError, match="input exceeds byte limit"):
+        validator_module._read_bounded_file(payload_path, maximum_bytes=1)
+
+    hardlink_path = tmp_path / "hardlink.bin"
+    os.link(payload_path, hardlink_path)
+    with pytest.raises(SpecificationValidationError) as hardlink_error:
+        validator_module._read_bounded_file(hardlink_path)
+    assert str(hardlink_error.value) == "input file identity is not unique"
+    hardlink_path.unlink()
+
+    symlink_path = tmp_path / "symlink.bin"
+    try:
+        symlink_path.symlink_to(payload_path)
+    except OSError:
+        pass
+    else:
+        with pytest.raises(SpecificationValidationError) as symlink_error:
+            validator_module._read_bounded_file(symlink_path)
+        assert str(symlink_error.value) == "input path uses a link or reparse point"
+
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        pass
+    else:
+        with pytest.raises(SpecificationValidationError) as parent_link_error:
+            validator_module._read_bounded_file(linked_parent / payload_path.name)
+        assert str(parent_link_error.value) == "input path uses a link or reparse point"
+
+    directory_path = tmp_path / "directory-input"
+    directory_path.mkdir()
+    with pytest.raises(SpecificationValidationError) as special_file_error:
+        validator_module._read_bounded_file(directory_path)
+    assert str(special_file_error.value) == "input is not a regular file"
+
+    original_path_chain = validator_module._path_chain
+    path_chain_calls = 0
+    swap_call = 2
+
+    def swapped_path_chain(path: Path) -> Any:
+        nonlocal path_chain_calls
+        result = original_path_chain(path)
+        path_chain_calls += 1
+        if path_chain_calls == swap_call:
+            absolute, chain, metadata = result
+            changed_chain = list(chain)
+            changed_chain[-1] = (0,) * len(changed_chain[-1])
+            return absolute, tuple(changed_chain), metadata
+        return result
+
+    monkeypatch.setattr(validator_module, "_path_chain", swapped_path_chain)
+    with pytest.raises(SpecificationValidationError) as swap_error:
+        validator_module._read_bounded_file(payload_path)
+    assert str(swap_error.value) == "input changed during read"
+    assert swap_error.value.__cause__ is None
+    assert swap_error.value.__context__ is None
+
+    path_chain_calls = 0
+    swap_call = 3
+    with pytest.raises(SpecificationValidationError) as after_read_swap_error:
+        validator_module._read_bounded_file(payload_path)
+    assert str(after_read_swap_error.value) == "input changed during read"
+    assert after_read_swap_error.value.__cause__ is None
+    assert after_read_swap_error.value.__context__ is None
+
+
+def _traceback_local_reprs(error: BaseException) -> list[str]:
+    values: list[str] = []
+    seen: set[int] = set()
+    traceback = error.__traceback__
+    while traceback is not None:
+        for name, value in traceback.tb_frame.f_locals.items():
+            values.append(name)
+            pending = [value]
+            while pending:
+                current = pending.pop()
+                current_id = id(current)
+                if current_id in seen:
+                    continue
+                seen.add(current_id)
+                try:
+                    values.append(repr(current))
+                except Exception:
+                    values.append("<unrepresentable>")
+                if isinstance(current, dict):
+                    pending.extend(current.keys())
+                    pending.extend(current.values())
+                elif isinstance(current, (list, tuple, set, frozenset)):
+                    pending.extend(current)
+        traceback = traceback.tb_next
+    return values
+
+
+def _capture_malformed_traceback() -> BaseException:
+    payload = b'{"TRACEBACK_JSON_CANARY":'
+    try:
+        validator_module._parse_bounded_json_bytes(payload)
+    except BaseException as error:
+        del payload
+        return error
+    raise AssertionError("malformed input unexpectedly parsed")
+
+
+def _capture_duplicate_traceback() -> BaseException:
+    payload = b'{"DUPLICATE_KEY_CANARY":1,"DUPLICATE_KEY_CANARY":2}'
+    try:
+        validator_module._parse_bounded_json_bytes(payload)
+    except BaseException as error:
+        del payload
+        return error
+    raise AssertionError("duplicate input unexpectedly parsed")
+
+
+def _capture_oversize_traceback() -> BaseException:
+    payload = b"OVERSIZE_BYTES_CANARY" + b"x" * validator_module.MAX_INPUT_BYTES
+    try:
+        validator_module._parse_bounded_json_bytes(payload)
+    except BaseException as error:
+        del payload
+        return error
+    raise AssertionError("oversize input unexpectedly parsed")
+
+
+def _capture_missing_path_traceback() -> BaseException:
+    path = Path("MISSING_PATH_CANARY.json")
+    try:
+        validator_module.load_json_document(path)
+    except BaseException as error:
+        del path
+        return error
+    raise AssertionError("missing path unexpectedly loaded")
+
+
+def _capture_invalid_utf8_traceback() -> BaseException:
+    payload = b"INVALID_UTF8_CANARY\xff"
+    try:
+        compute_narrative_semantic_digest(payload, specification_digest="0" * 64)
+    except BaseException as error:
+        del payload
+        return error
+    raise AssertionError("invalid UTF-8 unexpectedly parsed")
+
+
+def _capture_candidate_traceback() -> BaseException:
+    candidate = _load(SPEC_PATH)
+    candidate["packet_a"]["power_simulation"]["derived_n"] = "TRACEBACK_CANDIDATE_CANARY"
+    try:
+        validate_spec(candidate, require_golden_digest=False, validate_narrative=False)
+    except BaseException as error:
+        del candidate
+        return error
+    raise AssertionError("invalid candidate unexpectedly validated")
+
+
+def _capture_missing_narrative_traceback() -> BaseException:
+    candidate = _load(SPEC_PATH)
+    root = Path("NARRATIVE_ROOT_CANARY")
+    try:
+        validator_module._validate_narrative(candidate["packet_a"], root)
+    except BaseException as error:
+        del candidate
+        del root
+        return error
+    raise AssertionError("missing narrative unexpectedly validated")
+
+
+def test_packet_a_public_failures_have_no_raw_traceback_locals_or_paths() -> None:
+    failures = (
+        _capture_malformed_traceback(),
+        _capture_duplicate_traceback(),
+        _capture_oversize_traceback(),
+        _capture_missing_path_traceback(),
+        _capture_invalid_utf8_traceback(),
+        _capture_candidate_traceback(),
+        _capture_missing_narrative_traceback(),
+    )
+    canaries = (
+        "TRACEBACK_JSON_CANARY",
+        "DUPLICATE_KEY_CANARY",
+        "OVERSIZE_BYTES_CANARY",
+        "MISSING_PATH_CANARY",
+        "INVALID_UTF8_CANARY",
+        "TRACEBACK_CANDIDATE_CANARY",
+        "NARRATIVE_ROOT_CANARY",
+    )
+    for error, canary in zip(failures, canaries, strict=True):
+        assert canary not in str(error)
+        assert error.__cause__ is None
+        assert error.__context__ is None
+        assert all(canary not in text for text in _traceback_local_reprs(error))
+
+
 def test_packet_a_file_and_encoding_failures_have_no_exception_graph_leak() -> None:
     malformed = b'{"JSON_DOC_SENTINEL":'
     with pytest.raises(SpecificationValidationError) as caught:
@@ -919,9 +1164,7 @@ def test_packet_a_file_and_encoding_failures_have_no_exception_graph_leak() -> N
 def test_packet_a_power_method_and_closed_stopping_policy_are_frozen() -> None:
     spec = _load(SPEC_PATH)
     power = spec["packet_a"]["power_simulation"]
-    assert power["computation_method"]["algorithm"] == (
-        "deterministic_paired_bernoulli_monte_carlo"
-    )
+    assert power["computation_method"]["algorithm"] == ("deterministic_counter_stream_monte_carlo")
     assert power["computation_method"]["candidate_n_grid"] == (
         "complete_balanced_multiples_of_96_from_384_through_9600_inclusive"
     )
@@ -984,6 +1227,97 @@ def test_packet_a_power_method_and_closed_stopping_policy_are_frozen() -> None:
                 require_golden_digest=False,
                 validate_narrative=False,
             )
+
+
+def test_packet_a_power_reference_has_golden_vectors_axes_and_exact_decisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = _load(SPEC_PATH)
+    method = spec["packet_a"]["power_simulation"]["computation_method"]["reference_method_contract"]
+    assert method == validator_module.EXPECTED_POWER_COMPUTATION_METHOD
+    for vector in method["golden_counter_vectors"]:
+        arguments = (
+            vector["simulation_seed"],
+            vector["replicate_index"],
+            vector["candidate_n"],
+            vector["resample_index"],
+            vector["episode_index"],
+            vector["draw_kind"],
+        )
+        assert power_reference.counter_digest(*arguments) == vector["digest"]
+        assert power_reference.counter_uniform(*arguments) == vector["uniform"]
+
+    utility = method["primary_contrast_methods"]["PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY"]
+    assert utility["matrix_axes"] == {
+        "rows": "control_utility",
+        "columns": "alternative_utility",
+        "order": [0.0, 0.25, 0.5, 0.75, 1.0],
+    }
+    matrix = utility_matrix = utility["joint_distribution"]
+    levels = utility["matrix_axes"]["order"]
+    control_mean = sum(sum(row) * levels[index] for index, row in enumerate(matrix))
+    alternative_mean = sum(
+        sum(matrix[row][column] for row in range(len(matrix))) * levels[column]
+        for column in range(len(levels))
+    )
+    assert control_mean == 0.83
+    assert alternative_mean == 0.895
+    assert tuple(tuple(row) for row in utility_matrix) == power_reference.UTILITY_JOINT_MATRIX
+
+    assert power_reference.episode_cell_index(0, 384) == 0
+    assert power_reference.episode_cell_index(95, 384) == 95
+    assert power_reference.episode_cell_index(96, 384) == 0
+    assert power_reference.cell_coordinates(95) == (5, 3, 3)
+    assert power_reference.candidate_n_grid() == tuple(range(384, 9601, 96))
+    assert power_reference.holm_adjusted_p_values((0.01, 0.01)) == (0.02, 0.02)
+
+    evaluated_candidates: list[int] = []
+
+    def fake_candidate_power(seed: int, candidate_n: int) -> tuple[float, float, float]:
+        del seed
+        evaluated_candidates.append(candidate_n)
+        return (0.9, 0.9, 0.9) if candidate_n == 384 else (0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(power_reference, "estimate_candidate_power", fake_candidate_power)
+    assert power_reference.select_derived_n(20260829) == 384
+    assert evaluated_candidates == list(power_reference.candidate_n_grid())
+
+    caos_observations = (
+        power_reference.PairObservation(0, power_reference.VALID_STATUS, 0, 1),
+        power_reference.PairObservation(0, power_reference.VALID_STATUS, 1, 0),
+        power_reference.PairObservation(1, power_reference.VALID_STATUS, 0, 0),
+    )
+    assert power_reference.exact_paired_binary_pvalue(caos_observations) == 0.75
+    utility_observations = (
+        power_reference.PairObservation(0, power_reference.VALID_STATUS, 0.5, 0.75),
+        power_reference.PairObservation(1, power_reference.LOST_STATUS, 0.75, 1.0),
+    )
+    assert power_reference.relative_utility_effect(utility_observations) == 0.5
+    missing_observations = (
+        power_reference.PairObservation(0, power_reference.MISSING_STATUS, 0.5, 0.75),
+    )
+    assert power_reference.relative_utility_effect(missing_observations) is None
+
+    transposed = deepcopy(spec)
+    utility_contract = transposed["packet_a"]["power_simulation"]["computation_method"][
+        "reference_method_contract"
+    ]["primary_contrast_methods"]["PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY"]
+    transposed_matrix = utility_contract["matrix_axes"]
+    assert transposed_matrix["rows"] == "control_utility"
+    joint_distribution = utility_contract
+    transposed_distribution = [
+        [joint_distribution["joint_distribution"][row][column] for row in range(5)]
+        for column in range(5)
+    ]
+    transposed["packet_a"]["power_simulation"]["computation_method"]["reference_method_contract"][
+        "primary_contrast_methods"
+    ]["PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY"]["joint_distribution"] = transposed_distribution
+    with pytest.raises(SpecificationValidationError):
+        validate_spec(
+            with_recomputed_digest(transposed),
+            require_golden_digest=False,
+            validate_narrative=False,
+        )
 
 
 def test_packet_a_digest_drift_is_rejected_separately_from_semantic_validation() -> None:

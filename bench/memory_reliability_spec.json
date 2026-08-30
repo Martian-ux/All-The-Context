@@ -2978,8 +2978,8 @@
       "individual_proportions": "Wilson_bounds",
       "paired_differences": "exact_paired_or_stratified_bootstrap_bounds",
       "deterministic_safety": "exact_one_sided_95_percent_Clopper_Pearson_upper_bound",
-      "primary_binary_test": "stratified_paired_difference_with_exact_or_randomization_reference",
-      "primary_binary_interval": "paired_or_stratified_bootstrap",
+      "primary_binary_test": "exact_conditional_paired_sign_test",
+      "primary_binary_interval": "stratified_paired_percentile_bootstrap",
       "multiplicity": "Holm_control_across_two_primary_contrasts",
       "secondary_measures": "exploratory_labeled",
       "raw_numerator_and_denominator_required": true,
@@ -3005,12 +3005,13 @@
       "simulation_seed": 20260829,
       "simulation_repetitions": 100000,
       "computation_method": {
-        "algorithm": "deterministic_paired_bernoulli_monte_carlo",
+        "algorithm": "deterministic_counter_stream_monte_carlo",
         "randomness": "sha256_counter_stream_v1",
         "counter_inputs": [
           "simulation_seed",
           "replicate_index",
           "candidate_n",
+          "resample_index",
           "episode_index",
           "draw_kind"
         ],
@@ -3018,13 +3019,243 @@
         "joint_draw": "one_uniform_draw_and_left_closed_cumulative_joint_distribution_in_declared_key_order",
         "infrastructure_loss_draw": "independent_uniform_draw_per_paired_episode_loss_if_draw_is_less_than_allowance_and_episode_remains_in_denominator",
         "candidate_n_grid": "complete_balanced_multiples_of_96_from_384_through_9600_inclusive",
+        "reference_method_contract": {
+          "algorithm": "deterministic_counter_stream_monte_carlo",
+          "randomness": "sha256_counter_stream_v1",
+          "reference_implementation_path": "bench/packet_a_power_reference.py",
+          "reference_implementation_version": "packet-a-power-reference-v1",
+          "reference_implementation_sha256": "747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500",
+          "reference_functions": {
+            "replicate": "simulate_replicate",
+            "candidate_power": "estimate_candidate_power",
+            "derived_n_selection": "select_derived_n"
+          },
+          "counter_serialization": {
+            "domain_separator": "ATC-PACKET-A-POWER",
+            "version": 1,
+            "field_order": [
+              "simulation_seed",
+              "replicate_index",
+              "candidate_n",
+              "resample_index",
+              "episode_index",
+              "draw_kind"
+            ],
+            "integer_fields": [
+              "simulation_seed",
+              "replicate_index",
+              "candidate_n",
+              "resample_index",
+              "episode_index"
+            ],
+            "integer_range": "0..2^64-1",
+            "integer_encoding": "unsigned_64_bit_big_endian",
+            "domain_encoding": "ASCII_bytes_followed_by_one_unsigned_8_bit_version_byte",
+            "field_name_encoding": "ASCII_with_unsigned_16_bit_big_endian_length",
+            "value_encoding": "type_tag_then_unsigned_32_bit_big_endian_length_then_bytes",
+            "field_type_tags": {
+              "integer": "I",
+              "draw_kind": "S"
+            },
+            "field_delimiter_hex": "1e",
+            "value_delimiter_hex": "1f",
+            "draw_kind_encoding": "ASCII_with_no_normalization",
+            "draw_kind_values": [
+              "paired_outcome",
+              "utility_pair",
+              "infrastructure_loss",
+              "permutation_sign",
+              "bootstrap_resample"
+            ],
+            "uniform_mapping": "first_53_bits_of_sha256_divided_by_2^53"
+          },
+          "golden_counter_vectors": [
+            {
+              "simulation_seed": 20260829,
+              "replicate_index": 0,
+              "candidate_n": 384,
+              "resample_index": 0,
+              "episode_index": 0,
+              "draw_kind": "paired_outcome",
+              "digest": "1f57cfb0b0974be16a83161e2d49eb007e09711ec7a79d886680677e8fbbfba5",
+              "uniform": 0.12243364394870782
+            },
+            {
+              "simulation_seed": 20260829,
+              "replicate_index": 7,
+              "candidate_n": 768,
+              "resample_index": 0,
+              "episode_index": 95,
+              "draw_kind": "utility_pair",
+              "digest": "0fedd092cd4d69cdb8cf94c9ac48d8e2627e3b01f7badf5acbccce9009651816",
+              "uniform": 0.06222251495392117
+            },
+            {
+              "simulation_seed": 20260829,
+              "replicate_index": 7,
+              "candidate_n": 768,
+              "resample_index": 0,
+              "episode_index": 95,
+              "draw_kind": "infrastructure_loss",
+              "digest": "303c9cc941a7351c8078a177bd0840ff49046d2a55de750653abd770a2484143",
+              "uniform": 0.18842487252700546
+            },
+            {
+              "simulation_seed": 20260829,
+              "replicate_index": 7,
+              "candidate_n": 768,
+              "resample_index": 3,
+              "episode_index": 12,
+              "draw_kind": "permutation_sign",
+              "digest": "8f45a742e3862fd6bba60010aea541f787e9da6091392490255fb293919f9ff4",
+              "uniform": 0.5596565759947444
+            },
+            {
+              "simulation_seed": 20260829,
+              "replicate_index": 7,
+              "candidate_n": 768,
+              "resample_index": 9,
+              "episode_index": 12,
+              "draw_kind": "bootstrap_resample",
+              "digest": "c5fb6dc08f44b3778eed22948ab67bab2f172494c6300d621f0c58d06b90debb",
+              "uniform": 0.7733677477947534
+            }
+          ],
+          "episode_mapping": {
+            "cell_count": 96,
+            "cell_index_formula": "16*task_family_index + 4*repository_index + stratum_index",
+            "task_family_index_range": "0..5",
+            "repository_index_range": "0..3",
+            "stratum_index_range": "0..3",
+            "episode_cell_formula": "episode_index modulo 96",
+            "candidate_n_grid": "384,480,576,...,9600 inclusive",
+            "balanced_cell_requirement": true,
+            "cell_order": "task_family_then_repository_then_client_model_stratum"
+          },
+          "loss_and_missing_disposition": {
+            "loss_draw_kind": "infrastructure_loss",
+            "loss_rule": "uniform_draw_less_than_0.15",
+            "lost_pair": "append_zero_zero_pair_to_both_contrasts_and_retain_denominator",
+            "missing_pair": "exclude_from_estimator_test_and_bootstrap_and_force_non_pass",
+            "invalid_pair": "exclude_from_estimator_test_and_bootstrap_and_force_non_pass",
+            "imputation": "forbidden"
+          },
+          "primary_contrast_methods": {
+            "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": {
+              "outcome_type": "paired_binary",
+              "joint_distribution_order": [
+                "control_0_alternative_0",
+                "control_0_alternative_1",
+                "control_1_alternative_0",
+                "control_1_alternative_1"
+              ],
+              "statistic": "mean(alternative-control) over VALID and LOST_ZERO_PAIRS",
+              "null": "mean_difference_less_than_or_equal_to_zero",
+              "alternative": "mean_difference_at_least_0.10",
+              "test": {
+                "method": "exact_conditional_paired_sign_test",
+                "stratification": "cell_index_blocks_with_equal_pair_weights_and_convolved_block_counts",
+                "discordant_pair": "difference_is_not_zero",
+                "tie_rule": "zero_difference_is_omitted_from_sign_count",
+                "randomization": "each_discordant_pair_sign_is_independently_uniform_over_plus_or_minus_one",
+                "p_value": "inclusive_upper_tail_sum_binomial_counts_from_observed_positive_through_m",
+                "tie_comparison": "positive_discordant_count_greater_than_or_equal_to_observed"
+              },
+              "interval": {
+                "method": "stratified_paired_percentile_bootstrap",
+                "resampling_unit": "complete_paired_episode_within_cell",
+                "replicates": 10000,
+                "quantile": "q=0.05; position=(B-1)*q; linear_interpolation_between_adjacent_order_statistics",
+                "bootstrap_counter_episode_index": "zero_based_output_ordinal_within_cell",
+                "zero_valid_pairs": "lower_bound_unset_and_contrast_non_pass",
+                "missing_or_invalid": "exclude_and_contrast_non_pass",
+                "lost": "zero_pair_included_and_denominator_retained"
+              },
+              "resampling_counter_inputs": [
+                "simulation_seed",
+                "replicate_index",
+                "candidate_n",
+                "resample_index",
+                "episode_index",
+                "draw_kind"
+              ],
+              "decision": "holm_adjusted_p_at_most_0.05_and_lower_bound_greater_than_-0.02_and_at_least_0.10"
+            },
+            "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": {
+              "outcome_type": "paired_bounded_five_level_utility",
+            "matrix_axes": {
+              "rows": "control_utility",
+              "columns": "alternative_utility",
+              "order": [0.0, 0.25, 0.5, 0.75, 1.0]
+            },
+            "joint_distribution": [
+              [0.008, 0.002, 0.0, 0.0, 0.0],
+              [0.002, 0.018, 0.02, 0.0, 0.0],
+              [0.0, 0.005, 0.04, 0.075, 0.0],
+              [0.0, 0.0, 0.005, 0.1, 0.175],
+              [0.0, 0.0, 0.0, 0.0, 0.55]
+            ],
+            "joint_distribution_sum_required": 1.0,
+            "control_mean": 0.83,
+            "alternative_mean": 0.895,
+            "target_relative_effect": 0.05,
+            "sampling_input": "one_counter_stream_draw_per_episode_using_left_closed_cumulative_row_major_25_cell_matrix",
+              "statistic": "mean(alternative-control) divided by mean(control)",
+              "null": "relative_effect_less_than_or_equal_to_zero",
+              "alternative": "relative_effect_at_least_0.05",
+              "test": {
+                "method": "studentized_paired_sign_flip_test",
+                "replicates": 10000,
+                "studentization": "mean(difference) divided by sample_sd(difference)/sqrt(n)",
+                "sign_rule": "uniform_at_least_0.5_maps_to_positive_else_negative",
+                "p_value": "(1+inclusive_exceedance_count)/(R+1)",
+                "tie_comparison": "permuted_statistic_greater_than_or_equal_to_observed_statistic",
+                "permutation_counter_episode_index": "zero_based_usable_pair_ordinal_after_missing_or_invalid_exclusion",
+                "zero_variance": "positive_mean_is_positive_infinity_zero_mean_is_zero_negative_mean_is_negative_infinity"
+              },
+              "interval": {
+                "method": "stratified_paired_percentile_bootstrap_relative_effect",
+                "resampling_unit": "complete_paired_episode_within_cell",
+                "replicates": 10000,
+                "quantile": "q=0.05; position=(B-1)*q; linear_interpolation_between_adjacent_order_statistics",
+                "bootstrap_counter_episode_index": "zero_based_output_ordinal_within_cell",
+                "control_mean_zero": "lower_bound_unset_and_contrast_non_pass",
+                "missing_or_invalid": "exclude_and_contrast_non_pass",
+                "lost": "zero_pair_included_and_denominator_retained"
+              },
+              "resampling_counter_inputs": [
+                "simulation_seed",
+                "replicate_index",
+                "candidate_n",
+                "resample_index",
+                "episode_index",
+                "draw_kind"
+              ],
+              "decision": "holm_adjusted_p_at_most_0.05_and_lower_bound_at_least_0.05"
+            }
+          },
+          "holm_rule": {
+            "family": [
+              "PRIMARY_CONTINUITY_CAOS_DIFFERENCE",
+              "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY"
+            ],
+            "alpha": 0.05,
+            "ordering": "ascending_raw_p_value_with_declared_family_order_tie_break",
+            "adjustment": "max_prefix_min_1_m_minus_rank_plus_1_times_raw_p",
+            "joint_pass": "both_adjusted_p_values_at_most_0.05_and_both_contrast_decisions_pass",
+            "caos_conjunction": "lower_bound_greater_than_-0.02_AND_lower_bound_at_least_0.10"
+          },
+          "power_estimator": "per_contrast_rejection_rate_under_its_frozen_method_and_joint_Holm_pass_rate_for_both_primary_contrasts",
+          "selection_rule": "smallest_candidate_n_for_which_each_declared_primary_contrast_has_estimated_power_at_least_0.90_and_joint_Holm_pass_rate_is_reported",
+          "no_result_fallback": "if_no_candidate_meets_target_derived_n_remains_unset_and_no_receipt_is_emitted"
+        },
         "primary_contrast_methods": {
           "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": {
             "outcome_type": "paired_binary",
             "sampling_input": "paired_joint_distribution",
             "estimator": "mean_alternative_minus_control_CAOS_difference",
-            "test": "stratified_paired_difference_with_exact_randomization_reference",
-            "interval": "one_sided_95_percent_exact_paired_or_stratified_bootstrap",
+            "test": "exact_conditional_paired_sign_test",
+            "interval": "stratified_paired_percentile_bootstrap",
             "target_effect": 0.1,
             "power_event": "Holm_adjusted_primary_CAOS_contrast_clears_noninferiority_margin_and_target_effect"
           },
@@ -3044,8 +3275,8 @@
             "alternative_mean": 0.895,
             "target_relative_effect": 0.05,
             "estimator": "mean_paired_utility_difference_divided_by_control_utility_mean",
-            "test": "studentized_paired_permutation_test_with_10000_counter_stream_sign_flips",
-            "interval": "one_sided_95_percent_paired_percentile_bootstrap_with_10000_counter_stream_resamples",
+            "test": "studentized_paired_sign_flip_test",
+            "interval": "stratified_paired_percentile_bootstrap_relative_effect",
             "resampling_counter_inputs": [
               "simulation_seed",
               "replicate_index",
@@ -3089,7 +3320,7 @@
       "stratum_weights": "equal across six families, four repositories, and four client/model strata",
       "allocation": "final_N_is_rounded_up_to_a_complete_balanced_multiple_of_96_and_repetitions_are_final_N_divided_by_96",
       "estimand": "stratified paired CAOS difference, alternative minus control",
-      "test_statistic": "stratified paired difference with exact_or_randomization_reference",
+      "test_statistic": "exact_conditional_paired_sign_test_for_CAOS_and_studentized_paired_sign_flip_test_for_utility",
       "alpha": "familywise 0.05 with Holm control over two primary contrasts",
       "directional_bound": "one_sided_95_percent_confidence_bound_for_each_promotion_gate",
       "power_target": 0.9,
@@ -3225,7 +3456,7 @@
         {
           "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
           "role": "Packet A section 6 and non-displacing boundary",
-          "sha256": "f4f18ef1ed814f7d08c5e10d73a743c305889c627b495d972b0b03caec9ee245"
+          "sha256": "42f0ad040588a144e4fa81d9b51f594796cda1644278bb336d599494312e3b0e"
         },
         {
           "path": "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -3260,7 +3491,12 @@
         {
           "path": "bench/packet_a_contract.py",
           "role": "code-owned Packet A authority constants and structure contract",
-          "sha256": "a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca"
+          "sha256": "a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213"
+        },
+        {
+          "path": "bench/packet_a_power_reference.py",
+          "role": "independently bound executable Packet A power-method reference",
+          "sha256": "747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500"
         }
       ],
       "historical_evidence_boundary": {
@@ -3301,28 +3537,30 @@
       "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
       "scope": "complete_machine_readable_specification",
       "validator_version": "packet-a-validator-v4",
-      "validator_source_sha256": "d5dfa02030b4d606f1b67c7173c4d4413db4386eba9dde719742ba3932285cb0",
-      "contract_source_sha256": "a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca",
+      "validator_source_sha256": "d57f549f18210a0e94e418854f5f79e4cc2fa18a4137a916f712a7ebfa034c55",
+      "contract_source_sha256": "a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213",
+      "power_reference_source_sha256": "747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500",
       "narrative_binding": {
         "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
-        "required_fields": ["specification_digest", "contract_source_sha256", "evidence_level", "execution_boundary"],
+        "required_fields": ["specification_digest", "contract_source_sha256", "power_reference_source_sha256", "evidence_level", "execution_boundary"],
         "validator": "bench/validate_memory_reliability_spec.py",
         "validator_version": "packet-a-validator-v4",
-        "contract_source_sha256": "a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca",
-        "semantic_sha256": "21d1baa3a20d80472e3870eeb48f9e273db24923ebe7e0e8093ddd9233c3c850",
+        "contract_source_sha256": "a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213",
+        "power_reference_source_sha256": "747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500",
+        "semantic_sha256": "999d287d4ee6158e2f92d53543e014fee845694c3797ce1cd02ca24113cba57d",
         "semantic_digest_scope": "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
       },
       "proposal_correction": {
         "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
         "erratum_id": "PACKET-A-ERRATUM-2026-08-30",
-        "source_sha256": "f4f18ef1ed814f7d08c5e10d73a743c305889c627b495d972b0b03caec9ee245",
+        "source_sha256": "42f0ad040588a144e4fa81d9b51f594796cda1644278bb336d599494312e3b0e",
         "corrected_sections": ["6.5", "6.8"],
         "corrections": [
           "NON_ABSTENTION_COUNTS_SUPPORTED_RESPONSE_STATUSES_OVER_E_w",
           "FINAL_N_IS_INDEPENDENTLY_DERIVED_AND_NOT_REQUIRED_TO_EQUAL_PROVISIONAL_384"
         ]
       },
-      "specification_digest": "e1df3122b147c3ff8956cfc1157899ca7146c55fbc7db51b2ff509dd5fe1d9fc"
+      "specification_digest": "cb050608e87fd150141a8678bed586bd7bcf90a1d7256e7f0b430551031b259e"
     }
   }
 }

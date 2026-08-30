@@ -5,8 +5,9 @@
 | Freeze date | August 30, 2026 |
 | Status | Frozen L0 research specification only |
 | Machine-readable authority | [`bench/memory_reliability_spec.json`](../../bench/memory_reliability_spec.json), `packet_a` |
-| Specification digest | `e1df3122b147c3ff8956cfc1157899ca7146c55fbc7db51b2ff509dd5fe1d9fc` |
-| Contract source digest | `a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca` |
+| Specification digest | `cb050608e87fd150141a8678bed586bd7bcf90a1d7256e7f0b430551031b259e` |
+| Contract source digest | `a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213` |
+| Power reference source digest | `747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500` |
 | Execution | Not executed; no benchmark manifest or confirmatory result exists |
 | Product authority | None; the active product frontier and product DAG remain binding |
 
@@ -211,22 +212,25 @@ provisional minimum of 384 paired episodes, and final allocation
 familywise alpha 0.05 with Holm across two primary contrasts, one-sided 95%
 directional bounds, 90% power, a -0.02 noninferiority margin, and a frozen 15%
 nonrecoverable infrastructure-loss allowance as a power input. The future
-script, inputs, outputs, and digests are not present or executed in this
-freeze. Its reproducible computation method is nevertheless frozen in
-`packet_a.power_simulation.computation_method`: SHA-256 counter-stream draws
-with counter inputs of seed, replicate index, candidate N, episode index, and
-draw kind; one draw maps to the declared left-closed cumulative paired
-distribution; infrastructure loss uses an independent draw and remains in the
-denominator; candidate N values are balanced multiples of 96 from 384 through
-9,600 inclusive; and the smallest N for which each declared primary contrast
-has estimated power at least 0.90 with the joint Holm pass rate reported is
-selected. The primary checkpoint/CAOS contrast uses the paired-binary method
-and frozen CAOS joint distribution. The scheduler outcome-utility contrast is
-separate: it uses a paired bounded five-level utility distribution, a
-relative-utility estimator, a studentized paired permutation test, and a
-paired percentile-bootstrap bound with fixed counter-stream resampling. It is
-not powered by the binary CAOS formula. If no candidate meets the target,
-derived N remains unset and no receipt is emitted.
+confirmatory driver, inputs, outputs, and digests are not present or executed
+in this freeze. The executable method reference is present at
+`bench/packet_a_power_reference.py` and is source-bound by the digest above.
+Its reproducible computation method is frozen in
+`packet_a.power_simulation.computation_method.reference_method_contract`:
+SHA-256 counter-stream draws use an explicit domain, version, typed fields,
+lengths, delimiters, big-endian integer encoding, draw-kind allowlist, and
+golden digest/uniform vectors. Episodes map exactly to 96 cells; utility rows
+are control levels and columns are alternative levels. Infrastructure loss,
+missing, and invalid dispositions are explicit. The paired-binary CAOS
+contrast uses an exact conditional sign tail and stratified paired percentile
+bootstrap; scheduler outcome utility uses a relative-effect statistic,
+studentized sign-flip test, and stratified relative-effect bootstrap. Holm
+ordering, ties, conjunctions, zero variance, zero ratio, quantile
+interpolation, and counter ordinals are all fixed. The candidate estimator
+evaluates 100,000 fixed replicates across the balanced grid and selects the
+smallest candidate meeting both contrast targets; if none meets the target,
+derived N remains unset and no receipt is emitted. The binary CAOS method is
+not reused for utility.
 
 The closed interim and stopping policy is also frozen: interim peeking,
 optional stopping, adaptive sampling, reallocation, early stopping, futility
@@ -259,10 +263,11 @@ canonicalized as UTF-8 with sorted keys and compact separators while omitting
 only the digest field itself. It also records SHA-256 provenance for the
 proposal, evaluation program, governance, Wave 4 result/review/oracle, the
 existing logical fixture input, and the independently authored
-`bench/packet_a_contract.py` authority source. The focused unit contract
-verifies those digests and rejects drift. Its source digest replaces the four
-derived digest literals with fixed placeholders before hashing, so coordinated
-digest rebinding does not alter the authority-source identity.
+`bench/packet_a_contract.py` authority source, and the executable
+`bench/packet_a_power_reference.py` method reference. The focused unit contract
+verifies those digests and rejects drift. The contract source digest replaces
+its three derived digest literals with fixed placeholders before hashing, so
+coordinated digest rebinding does not alter the authority-source identity.
 
 `bench/validate_memory_reliability_spec.py` is independently authored with
 immutable expected vocabularies, field-level semantic contracts, a code-owned
@@ -271,7 +276,8 @@ The candidate
 self-digest is only an internal consistency check: changing JSON and
 recomputing that field cannot pass. Public JSON, narrative, and provenance
 reads are bounded before parsing or hashing, with byte, depth, node, string,
-number, duplicate-key, non-finite, malformed-input, and read-identity checks.
+number, duplicate-key, non-finite, malformed-input, link/reparse, special-file,
+hard-link, root-containment, and before/after read-identity checks.
 The same bounded parser is used for the fenced JSON binding embedded in this
 Markdown. Exact expected keys remain enforced without echoing unknown or
 secret-like key names, duplicate keys, non-finite values, parse errors, or
@@ -293,8 +299,9 @@ validator requires it to match `packet_a` exactly:
 
 ```json
 {
-  "specification_digest": "e1df3122b147c3ff8956cfc1157899ca7146c55fbc7db51b2ff509dd5fe1d9fc",
-  "contract_source_sha256": "a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca",
+  "specification_digest": "cb050608e87fd150141a8678bed586bd7bcf90a1d7256e7f0b430551031b259e",
+  "contract_source_sha256": "a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213",
+  "power_reference_source_sha256": "747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500",
   "evidence_level": "L0",
   "execution_boundary": {
     "packet_a_executed": false,

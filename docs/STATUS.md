@@ -55,23 +55,23 @@ released, and no Defender or release-acceptance claim is made.
 ### 2026-08-30 — Packet A embedded-JSON parser remediation is prepared, uncommitted, and L0-only
 ### 2026-08-30 — Packet A authority-source, parser, structure, and power-policy continuation is L0-only
 
-Starting from exact clean commit `16697b849751a6dd1e739aaca44492ce6fe1d338`,
-and continuing from exact clean commit `ec57058e36a111f41ef24e73c6827d59f324e436`, the hardening routes the fenced
-narrative JSON binding through the same bounded parser as the top-level
-document. It rejects duplicate keys, non-finite values, malformed/deep
-discarded values, oversized fragments, and unknown keys without reflecting
-attacker-controlled names, values, or paths in exceptions. The recursive
-in-memory finite walk was removed because the iterative JSON-limit walk already
-enforces depth, node, string, numeric, and finite-value policy.
+Starting from exact clean commit `f37398e421c039e61c57b3c9021c5cf85629aff8`,
+this non-amending continuation removes the contract module's self-source
+anchor and binds its normalized source digest to a validator-owned literal.
+It adds an independently source-bound executable power-method reference with
+fixed counter serialization, golden vectors, 96-cell mapping, explicit
+rows-control/columns-alternative utility axes, exact contrast-specific tests,
+bootstrap/permutation rules, Holm decisions, and deterministic candidate-N
+selection functions. The future confirmatory driver, manifests, derived N,
+and results remain absent and unexecuted.
 
-The chain also adds a code-owned recursive structure contract, shared-alias
-rejection, strict UTF-8 narrative validation, a linear fence extractor, and
-explicit fixed-replicate/no-peeking/no-early/futility/harm-stopping rules. The
-current continuation additionally binds `bench/packet_a_contract.py` by an
-independent normalized source digest and rejects virtual, path-like, or
-path-subclass inputs before filesystem dispatch. Independent reviewer
-acceptance remains pending; no experiment, manifest, result, private data,
-product/runtime path, or Packet A acceptance claim is involved.
+The continuation also closes bounded reads against links/reparse points,
+special files, hard links, root escapes, and before/after identity changes;
+the caller may only lower the exact integer byte ceiling. Public failures are
+raised from minimal safe frames so raw bytes, duplicate pairs, candidate
+objects, exception graphs, and supplied paths are not retained. Independent
+reviewer acceptance remains pending; no experiment, manifest, result, private
+data, product/runtime path, or Packet A acceptance claim is involved.
 
 ### 2026-08-30 — Packet A recursive structure and power-policy foundation remains L0-only
 

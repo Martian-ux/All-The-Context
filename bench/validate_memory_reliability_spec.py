@@ -23,7 +23,6 @@ try:
         EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
         EXPECTED_COMPARISON_ARM_IDS,
         EXPECTED_COMPARISON_CELL_IDS,
-        EXPECTED_CONTRACT_SOURCE_SHA256,
         EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
         EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
         EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
@@ -38,7 +37,6 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
         EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
         EXPECTED_COMPARISON_ARM_IDS,
         EXPECTED_COMPARISON_CELL_IDS,
-        EXPECTED_CONTRACT_SOURCE_SHA256,
         EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
         EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
         EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
@@ -55,6 +53,9 @@ FREEZE_DOCUMENT_PATH = (
 )
 CONTRACT_SOURCE_PATH = ROOT / "bench" / "packet_a_contract.py"
 CONCRETE_PATH_TYPE = type(Path())
+# This literal is deliberately validator-owned.  It is not present in the
+# measured contract source and is therefore not self-authenticated by it.
+EXPECTED_CONTRACT_SOURCE_SHA256 = "a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213"
 _CONTRACT_SOURCE_DIGEST_PATTERNS = (
     (
         re.compile(
@@ -74,10 +75,6 @@ _CONTRACT_SOURCE_DIGEST_PATTERNS = (
         ),
         b'EXPECTED_NARRATIVE_SEMANTIC_DIGEST = ("<DERIVED_DIGEST>")',
     ),
-    (
-        re.compile(rb'(?m)^EXPECTED_CONTRACT_SOURCE_SHA256 = "[0-9a-f]{64}"\r?$'),
-        b'EXPECTED_CONTRACT_SOURCE_SHA256 = "<CONTRACT_SOURCE_SHA256>"',
-    ),
 )
 
 # Public validator inputs are bounded before parsing, decoding, or hashing.
@@ -96,6 +93,268 @@ MAX_JSON_NUMBER_DIGITS = 128
 # ``require_golden_digest=False``.
 GOLDEN_SPECIFICATION_DIGEST = EXPECTED_CANONICAL_SPECIFICATION_DIGEST
 VALIDATOR_VERSION = EXPECTED_VALIDATOR_VERSION
+POWER_REFERENCE_SOURCE_PATH = ROOT / "bench" / "packet_a_power_reference.py"
+EXPECTED_POWER_REFERENCE_SOURCE_SHA256 = (
+    "747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500"
+)
+EXPECTED_POWER_COMPUTATION_METHOD = {
+    "algorithm": "deterministic_counter_stream_monte_carlo",
+    "randomness": "sha256_counter_stream_v1",
+    "reference_implementation_path": "bench/packet_a_power_reference.py",
+    "reference_implementation_version": "packet-a-power-reference-v1",
+    "reference_implementation_sha256": EXPECTED_POWER_REFERENCE_SOURCE_SHA256,
+    "reference_functions": {
+        "replicate": "simulate_replicate",
+        "candidate_power": "estimate_candidate_power",
+        "derived_n_selection": "select_derived_n",
+    },
+    "counter_serialization": {
+        "domain_separator": "ATC-PACKET-A-POWER",
+        "version": 1,
+        "field_order": [
+            "simulation_seed",
+            "replicate_index",
+            "candidate_n",
+            "resample_index",
+            "episode_index",
+            "draw_kind",
+        ],
+        "integer_fields": [
+            "simulation_seed",
+            "replicate_index",
+            "candidate_n",
+            "resample_index",
+            "episode_index",
+        ],
+        "integer_range": "0..2^64-1",
+        "integer_encoding": "unsigned_64_bit_big_endian",
+        "domain_encoding": "ASCII_bytes_followed_by_one_unsigned_8_bit_version_byte",
+        "field_name_encoding": "ASCII_with_unsigned_16_bit_big_endian_length",
+        "value_encoding": "type_tag_then_unsigned_32_bit_big_endian_length_then_bytes",
+        "field_type_tags": {"integer": "I", "draw_kind": "S"},
+        "field_delimiter_hex": "1e",
+        "value_delimiter_hex": "1f",
+        "draw_kind_encoding": "ASCII_with_no_normalization",
+        "draw_kind_values": [
+            "paired_outcome",
+            "utility_pair",
+            "infrastructure_loss",
+            "permutation_sign",
+            "bootstrap_resample",
+        ],
+        "uniform_mapping": "first_53_bits_of_sha256_divided_by_2^53",
+    },
+    "golden_counter_vectors": [
+        {
+            "simulation_seed": 20260829,
+            "replicate_index": 0,
+            "candidate_n": 384,
+            "resample_index": 0,
+            "episode_index": 0,
+            "draw_kind": "paired_outcome",
+            "digest": "1f57cfb0b0974be16a83161e2d49eb007e09711ec7a79d886680677e8fbbfba5",
+            "uniform": 0.12243364394870782,
+        },
+        {
+            "simulation_seed": 20260829,
+            "replicate_index": 7,
+            "candidate_n": 768,
+            "resample_index": 0,
+            "episode_index": 95,
+            "draw_kind": "utility_pair",
+            "digest": "0fedd092cd4d69cdb8cf94c9ac48d8e2627e3b01f7badf5acbccce9009651816",
+            "uniform": 0.06222251495392117,
+        },
+        {
+            "simulation_seed": 20260829,
+            "replicate_index": 7,
+            "candidate_n": 768,
+            "resample_index": 0,
+            "episode_index": 95,
+            "draw_kind": "infrastructure_loss",
+            "digest": "303c9cc941a7351c8078a177bd0840ff49046d2a55de750653abd770a2484143",
+            "uniform": 0.18842487252700546,
+        },
+        {
+            "simulation_seed": 20260829,
+            "replicate_index": 7,
+            "candidate_n": 768,
+            "resample_index": 3,
+            "episode_index": 12,
+            "draw_kind": "permutation_sign",
+            "digest": "8f45a742e3862fd6bba60010aea541f787e9da6091392490255fb293919f9ff4",
+            "uniform": 0.5596565759947444,
+        },
+        {
+            "simulation_seed": 20260829,
+            "replicate_index": 7,
+            "candidate_n": 768,
+            "resample_index": 9,
+            "episode_index": 12,
+            "draw_kind": "bootstrap_resample",
+            "digest": "c5fb6dc08f44b3778eed22948ab67bab2f172494c6300d621f0c58d06b90debb",
+            "uniform": 0.7733677477947534,
+        },
+    ],
+    "episode_mapping": {
+        "cell_count": 96,
+        "cell_index_formula": "16*task_family_index + 4*repository_index + stratum_index",
+        "task_family_index_range": "0..5",
+        "repository_index_range": "0..3",
+        "stratum_index_range": "0..3",
+        "episode_cell_formula": "episode_index modulo 96",
+        "candidate_n_grid": "384,480,576,...,9600 inclusive",
+        "balanced_cell_requirement": True,
+        "cell_order": "task_family_then_repository_then_client_model_stratum",
+    },
+    "loss_and_missing_disposition": {
+        "loss_draw_kind": "infrastructure_loss",
+        "loss_rule": "uniform_draw_less_than_0.15",
+        "lost_pair": "append_zero_zero_pair_to_both_contrasts_and_retain_denominator",
+        "missing_pair": "exclude_from_estimator_test_and_bootstrap_and_force_non_pass",
+        "invalid_pair": "exclude_from_estimator_test_and_bootstrap_and_force_non_pass",
+        "imputation": "forbidden",
+    },
+    "primary_contrast_methods": {
+        "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": {
+            "outcome_type": "paired_binary",
+            "joint_distribution_order": [
+                "control_0_alternative_0",
+                "control_0_alternative_1",
+                "control_1_alternative_0",
+                "control_1_alternative_1",
+            ],
+            "statistic": "mean(alternative-control) over VALID and LOST_ZERO_PAIRS",
+            "null": "mean_difference_less_than_or_equal_to_zero",
+            "alternative": "mean_difference_at_least_0.10",
+            "test": {
+                "method": "exact_conditional_paired_sign_test",
+                "stratification": (
+                    "cell_index_blocks_with_equal_pair_weights_and_convolved_block_counts"
+                ),
+                "discordant_pair": "difference_is_not_zero",
+                "tie_rule": "zero_difference_is_omitted_from_sign_count",
+                "randomization": (
+                    "each_discordant_pair_sign_is_independently_uniform_over_plus_or_minus_one"
+                ),
+                "p_value": (
+                    "inclusive_upper_tail_sum_binomial_counts_from_observed_positive_through_" + "m"
+                ),
+                "tie_comparison": "positive_discordant_count_greater_than_or_equal_to_observed",
+            },
+            "interval": {
+                "method": "stratified_paired_percentile_bootstrap",
+                "resampling_unit": "complete_paired_episode_within_cell",
+                "replicates": 10000,
+                "quantile": (
+                    "q=0.05; position=(B-1)*q; linear_interpolation_between_adjacent_"
+                    + "order_statistics"
+                ),
+                "bootstrap_counter_episode_index": "zero_based_output_ordinal_within_cell",
+                "zero_valid_pairs": "lower_bound_unset_and_contrast_non_pass",
+                "missing_or_invalid": "exclude_and_contrast_non_pass",
+                "lost": "zero_pair_included_and_denominator_retained",
+            },
+            "resampling_counter_inputs": [
+                "simulation_seed",
+                "replicate_index",
+                "candidate_n",
+                "resample_index",
+                "episode_index",
+                "draw_kind",
+            ],
+            "decision": (
+                "holm_adjusted_p_at_most_0.05_and_lower_bound_greater_than_-0.02_"
+                + "and_at_least_0.10"
+            ),
+        },
+        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": {
+            "outcome_type": "paired_bounded_five_level_utility",
+            "matrix_axes": {
+                "rows": "control_utility",
+                "columns": "alternative_utility",
+                "order": [0.0, 0.25, 0.5, 0.75, 1.0],
+            },
+            "joint_distribution": [
+                [0.008, 0.002, 0.0, 0.0, 0.0],
+                [0.002, 0.018, 0.02, 0.0, 0.0],
+                [0.0, 0.005, 0.04, 0.075, 0.0],
+                [0.0, 0.0, 0.005, 0.1, 0.175],
+                [0.0, 0.0, 0.0, 0.0, 0.55],
+            ],
+            "joint_distribution_sum_required": 1.0,
+            "control_mean": 0.83,
+            "alternative_mean": 0.895,
+            "target_relative_effect": 0.05,
+            "sampling_input": (
+                "one_counter_stream_draw_per_episode_using_left_closed_cumulative_"
+                "row_major_25_cell_matrix"
+            ),
+            "statistic": "mean(alternative-control) divided by mean(control)",
+            "null": "relative_effect_less_than_or_equal_to_zero",
+            "alternative": "relative_effect_at_least_0.05",
+            "test": {
+                "method": "studentized_paired_sign_flip_test",
+                "replicates": 10000,
+                "studentization": "mean(difference) divided by sample_sd(difference)/sqrt(n)",
+                "sign_rule": "uniform_at_least_0.5_maps_to_positive_else_negative",
+                "p_value": "(1+inclusive_exceedance_count)/(R+1)",
+                "tie_comparison": "permuted_statistic_greater_than_or_equal_to_observed_statistic",
+                "permutation_counter_episode_index": (
+                    "zero_based_usable_pair_ordinal_after_missing_or_invalid_exclusion"
+                ),
+                "zero_variance": (
+                    "positive_mean_is_positive_infinity_zero_mean_is_zero_negative_mean_is_"
+                    + "negative_infinity"
+                ),
+            },
+            "interval": {
+                "method": "stratified_paired_percentile_bootstrap_relative_effect",
+                "resampling_unit": "complete_paired_episode_within_cell",
+                "replicates": 10000,
+                "quantile": (
+                    "q=0.05; position=(B-1)*q; linear_interpolation_between_adjacent_"
+                    + "order_statistics"
+                ),
+                "bootstrap_counter_episode_index": "zero_based_output_ordinal_within_cell",
+                "control_mean_zero": "lower_bound_unset_and_contrast_non_pass",
+                "missing_or_invalid": "exclude_and_contrast_non_pass",
+                "lost": "zero_pair_included_and_denominator_retained",
+            },
+            "resampling_counter_inputs": [
+                "simulation_seed",
+                "replicate_index",
+                "candidate_n",
+                "resample_index",
+                "episode_index",
+                "draw_kind",
+            ],
+            "decision": "holm_adjusted_p_at_most_0.05_and_lower_bound_at_least_0.05",
+        },
+    },
+    "holm_rule": {
+        "family": [
+            "PRIMARY_CONTINUITY_CAOS_DIFFERENCE",
+            "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY",
+        ],
+        "alpha": 0.05,
+        "ordering": "ascending_raw_p_value_with_declared_family_order_tie_break",
+        "adjustment": "max_prefix_min_1_m_minus_rank_plus_1_times_raw_p",
+        "joint_pass": "both_adjusted_p_values_at_most_0.05_and_both_contrast_decisions_pass",
+        "caos_conjunction": "lower_bound_greater_than_-0.02_AND_lower_bound_at_least_0.10",
+    },
+    "power_estimator": (
+        "per_contrast_rejection_rate_under_its_frozen_method_and_joint_Holm_pass_rate_"
+        + "for_both_primary_contrasts"
+    ),
+    "selection_rule": (
+        "smallest_candidate_n_for_which_each_declared_primary_contrast_has_estimated_"
+        + "power_at_least_0.90_and_joint_Holm_pass_rate_is_reported"
+    ),
+    "no_result_fallback": (
+        "if_no_candidate_meets_target_derived_n_remains_unset_and_no_receipt_is_emitted"
+    ),
+}
 
 EXPECTED_TASK_FAMILY_IDS = [
     "BUG_FIX",
@@ -521,7 +780,7 @@ EXPECTED_PROVENANCE = [
     (
         "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
         "Packet A section 6 and non-displacing boundary",
-        "f4f18ef1ed814f7d08c5e10d73a743c305889c627b495d972b0b03caec9ee245",
+        "42f0ad040588a144e4fa81d9b51f594796cda1644278bb336d599494312e3b0e",
     ),
     (
         "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -557,6 +816,11 @@ EXPECTED_PROVENANCE = [
         "bench/packet_a_contract.py",
         "code-owned Packet A authority constants and structure contract",
         EXPECTED_CONTRACT_SOURCE_SHA256,
+    ),
+    (
+        "bench/packet_a_power_reference.py",
+        "independently bound executable Packet A power-method reference",
+        EXPECTED_POWER_REFERENCE_SOURCE_SHA256,
     ),
 ]
 
@@ -887,11 +1151,137 @@ def _require_safe_concrete_path(value: Any, label: str) -> None:
     _require(type(value) is CONCRETE_PATH_TYPE, f"{label} must be a concrete pathlib path")
 
 
-def _file_identity(metadata: os.stat_result) -> tuple[int, int]:
-    return metadata.st_dev, metadata.st_ino
+def _file_fingerprint(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_nlink,
+        getattr(metadata, "st_file_attributes", 0),
+    )
 
 
-def _compute_contract_source_digest(document: bytes) -> str:
+def _is_link_or_reparse(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & reparse_flag
+    )
+
+
+def _validate_read_limit(maximum_bytes: Any) -> int:
+    _require(
+        type(maximum_bytes) is int and 0 < maximum_bytes <= MAX_INPUT_BYTES,
+        "input size limit is invalid",
+    )
+    return maximum_bytes
+
+
+def _path_chain(path: Path) -> tuple[Path, tuple[tuple[int, ...], ...], os.stat_result]:
+    _require_safe_concrete_path(path, "input path")
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    chain: list[tuple[int, ...]] = []
+    root_metadata = current.lstat()
+    _require(not _is_link_or_reparse(root_metadata), "input path uses a link or reparse point")
+    _require(stat.S_ISDIR(root_metadata.st_mode), "input parent is not a directory")
+    chain.append(_file_fingerprint(root_metadata))
+    parts = absolute.parts[1:]
+    final_metadata = root_metadata
+    for index, part in enumerate(parts):
+        current = current / part
+        metadata = current.lstat()
+        _require(not _is_link_or_reparse(metadata), "input path uses a link or reparse point")
+        is_final = index == len(parts) - 1
+        if is_final:
+            _require(stat.S_ISREG(metadata.st_mode), "input is not a regular file")
+            _require(metadata.st_nlink == 1, "input file identity is not unique")
+            final_metadata = metadata
+        else:
+            _require(stat.S_ISDIR(metadata.st_mode), "input parent is not a directory")
+        chain.append(_file_fingerprint(metadata))
+    return absolute, tuple(chain), final_metadata
+
+
+def _validate_directory_path(path: Path) -> None:
+    _require_safe_concrete_path(path, "validation root")
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    root_metadata = current.lstat()
+    _require(
+        not _is_link_or_reparse(root_metadata),
+        "validation root uses a link or reparse point",
+    )
+    _require(stat.S_ISDIR(root_metadata.st_mode), "validation root is not a directory")
+    for part in absolute.parts[1:]:
+        current = current / part
+        metadata = current.lstat()
+        _require(
+            not _is_link_or_reparse(metadata),
+            "validation root uses a link or reparse point",
+        )
+        _require(stat.S_ISDIR(metadata.st_mode), "validation root is not a directory")
+
+
+def _join_bound_path(root: Path, relative_path: str, label: str) -> Path:
+    _require_safe_concrete_path(root, "validation root")
+    _require(type(relative_path) is str, f"{label} is invalid")
+    relative = Path(relative_path)
+    _require(
+        not relative.anchor and ".." not in relative.parts,
+        f"{label} is invalid",
+    )
+    absolute_root = root.absolute()
+    _validate_directory_path(absolute_root)
+    path = absolute_root / relative
+    _require(path.is_relative_to(absolute_root), f"{label} escapes validation root")
+    return path
+
+
+def _read_bounded_file_inner(path: Path, maximum_bytes: int) -> bytes:
+    absolute, before_chain, before_metadata = _path_chain(path)
+    _require(before_metadata.st_size <= maximum_bytes, "input exceeds byte limit")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(absolute, flags)
+    data: bytes | None = None
+    try:
+        opened = os.fstat(descriptor)
+        _require(
+            _file_fingerprint(opened) == _file_fingerprint(before_metadata),
+            "input changed during read",
+        )
+        _, opened_chain, _ = _path_chain(path)
+        _require(opened_chain == before_chain, "input changed during read")
+        data = os.read(descriptor, maximum_bytes + 1)
+        after_descriptor = os.fstat(descriptor)
+        _, after_chain, after_metadata = _path_chain(path)
+        _require(after_chain == before_chain, "input changed during read")
+        _require(
+            _file_fingerprint(after_descriptor) == _file_fingerprint(opened),
+            "input changed during read",
+        )
+        _require(
+            _file_fingerprint(after_metadata) == _file_fingerprint(after_descriptor),
+            "input changed during read",
+        )
+        _require(len(data) <= maximum_bytes, "input exceeds byte limit")
+        _require(len(data) == after_descriptor.st_size, "input changed during read")
+    except BaseException:
+        del data
+        raise
+    finally:
+        os.close(descriptor)
+    _require(data is not None, "input read failed")
+    return data
+
+
+def _safe_error_message(error: SpecificationValidationError, fallback: str) -> str:
+    message = error.args[0] if len(error.args) == 1 else None
+    return message if type(message) is str else fallback
+
+
+def _compute_contract_source_digest_inner(document: bytes) -> str:
     """Hash contract source after removing its derived digest literals."""
 
     _require(type(document) is bytes, "contract source must be bytes")
@@ -903,6 +1293,25 @@ def _compute_contract_source_digest(document: bytes) -> str:
     return hashlib.sha256(normalized).hexdigest()
 
 
+def _compute_contract_source_digest(document: bytes) -> str:
+    digest: str | None = None
+    failure_message: str | None = None
+    try:
+        digest = _compute_contract_source_digest_inner(document)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "contract source digest failed")
+        del error
+    except Exception:
+        failure_message = "contract source digest failed"
+    finally:
+        del document
+    if failure_message is not None:
+        digest = None
+        raise SpecificationValidationError(failure_message)
+    _require(digest is not None, "contract source digest failed")
+    return digest
+
+
 def _read_contract_source_digest() -> str:
     return _compute_contract_source_digest(_read_bounded_file(CONTRACT_SOURCE_PATH))
 
@@ -910,35 +1319,28 @@ def _read_contract_source_digest() -> str:
 def _read_bounded_file(path: Path, *, maximum_bytes: int = MAX_INPUT_BYTES) -> bytes:
     """Read a regular file with bounded, identity-checked, content-free failure."""
 
-    _require_safe_concrete_path(path, "input path")
+    data: bytes | None = None
+    failure_message: str | None = None
     try:
-        before = path.stat()
-        _require(stat.S_ISREG(before.st_mode), "input is not a regular file")
-        _require(before.st_size <= maximum_bytes, "input exceeds byte limit")
-        with path.open("rb") as handle:
-            opened = os.fstat(handle.fileno())
-            _require(_file_identity(opened) == _file_identity(before), "input changed during read")
-            _require(opened.st_size == before.st_size, "input changed during read")
-            _require(opened.st_mtime_ns == before.st_mtime_ns, "input changed during read")
-            data = handle.read(maximum_bytes + 1)
-            after = os.fstat(handle.fileno())
-        _require(_file_identity(after) == _file_identity(opened), "input changed during read")
-        _require(after.st_mtime_ns == opened.st_mtime_ns, "input changed during read")
-        _require(len(data) <= maximum_bytes, "input exceeds byte limit")
-        _require(len(data) == after.st_size, "input changed during read")
-        final = path.stat()
-        _require(_file_identity(final) == _file_identity(after), "input changed during read")
-        _require(final.st_size == after.st_size, "input changed during read")
-        _require(final.st_mtime_ns == after.st_mtime_ns, "input changed during read")
-        return data
-    except SpecificationValidationError:
-        raise
-    except (OSError, ValueError):
-        pass
-    raise SpecificationValidationError("input read failed")
+        _require_safe_concrete_path(path, "input path")
+        limit = _validate_read_limit(maximum_bytes)
+        data = _read_bounded_file_inner(path, limit)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "input read failed")
+        del error
+    except Exception:
+        failure_message = "input read failed"
+    finally:
+        del path
+        del maximum_bytes
+    if failure_message is not None:
+        data = None
+        raise SpecificationValidationError(failure_message)
+    _require(data is not None, "input read failed")
+    return data
 
 
-def _validate_json_limits(value: Any) -> None:
+def _validate_json_limits_inner(value: Any) -> None:
     """Reject non-JSON, cyclic, or oversized values without unbounded recursion."""
 
     nodes = 0
@@ -1014,6 +1416,21 @@ def _validate_json_limits(value: Any) -> None:
             raise SpecificationValidationError("document contains an unsupported JSON value")
 
 
+def _validate_json_limits(value: Any) -> None:
+    failure_message: str | None = None
+    try:
+        _validate_json_limits_inner(value)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "document validation failed")
+        del error
+    except Exception:
+        failure_message = "document validation failed"
+    finally:
+        del value
+    if failure_message is not None:
+        raise SpecificationValidationError(failure_message)
+
+
 def _structural_projection(value: Any, path: tuple[str | int, ...] = ()) -> Any:
     """Build the code-owned structure projection used before field access.
 
@@ -1049,7 +1466,7 @@ def _structural_projection(value: Any, path: tuple[str | int, ...] = ()) -> Any:
     raise SpecificationValidationError("document structure contains an unsupported value")
 
 
-def _compute_structure_digest(value: Any) -> str:
+def _compute_structure_digest_inner(value: Any) -> str:
     """Hash the frozen schema/container contract without exposing candidate data."""
 
     try:
@@ -1070,6 +1487,25 @@ def _compute_structure_digest(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _compute_structure_digest(value: Any) -> str:
+    digest: str | None = None
+    failure_message: str | None = None
+    try:
+        digest = _compute_structure_digest_inner(value)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "document structure digest failed")
+        del error
+    except Exception:
+        failure_message = "document structure digest failed"
+    finally:
+        del value
+    if failure_message is not None:
+        digest = None
+        raise SpecificationValidationError(failure_message)
+    _require(digest is not None, "document structure digest failed")
+    return digest
+
+
 def _validate_document_structure(spec: dict[str, Any]) -> None:
     """Reject any nested schema, container, order, or identity drift first."""
 
@@ -1080,7 +1516,7 @@ def _validate_document_structure(spec: dict[str, Any]) -> None:
     )
 
 
-def _bounded_deepcopy(value: Any) -> Any:
+def _bounded_deepcopy_inner(value: Any) -> Any:
     try:
         copied = deepcopy(value)
     except (MemoryError, RecursionError, TypeError, ValueError):
@@ -1089,6 +1525,27 @@ def _bounded_deepcopy(value: Any) -> Any:
         copy_failed = False
     if copy_failed:
         raise SpecificationValidationError("document copy failed")
+    return copied
+
+
+def _bounded_deepcopy(value: Any) -> Any:
+    copied: Any = None
+    copy_succeeded = False
+    failure_message: str | None = None
+    try:
+        copied = _bounded_deepcopy_inner(value)
+        copy_succeeded = True
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "document copy failed")
+        del error
+    except Exception:
+        failure_message = "document copy failed"
+    finally:
+        del value
+    if failure_message is not None:
+        copied = None
+        raise SpecificationValidationError(failure_message)
+    _require(copy_succeeded, "document copy failed")
     return copied
 
 
@@ -1128,11 +1585,7 @@ def _parse_bounded_float(value: str) -> float:
     return parsed
 
 
-def _parse_bounded_json_bytes(document: bytes) -> Any:
-    """Parse bounded JSON with one fail-closed policy for all JSON fragments."""
-
-    _require(type(document) is bytes, "invalid JSON document")
-    _require(len(document) <= MAX_INPUT_BYTES, "input exceeds byte limit")
+def _parse_bounded_json_bytes_inner(document: bytes) -> tuple[bool, Any, str | None]:
     try:
         value = json.loads(
             document.decode("utf-8"),
@@ -1141,24 +1594,65 @@ def _parse_bounded_json_bytes(document: bytes) -> Any:
             parse_int=_parse_bounded_int,
             parse_float=_parse_bounded_float,
         )
-    except SpecificationValidationError:
-        raise
-    except (UnicodeError, json.JSONDecodeError, RecursionError):
-        parse_failed = True
-    else:
-        parse_failed = False
-    if parse_failed:
-        raise SpecificationValidationError("invalid JSON document")
-    _validate_json_limits(value)
-    return value
+        _validate_json_limits(value)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "invalid JSON document")
+        del error
+        return False, None, failure_message
+    except Exception:
+        return False, None, "invalid JSON document"
+    return True, value, None
 
 
-def load_json_document(path: Path) -> dict[str, Any]:
+def _parse_bounded_json_bytes(document: bytes) -> Any:
+    """Parse bounded JSON with one fail-closed policy for all JSON fragments."""
+
+    parsed: Any = None
+    success = False
+    failure_message: str | None = None
+    try:
+        _require(type(document) is bytes, "invalid JSON document")
+        _require(len(document) <= MAX_INPUT_BYTES, "input exceeds byte limit")
+        success, parsed, failure_message = _parse_bounded_json_bytes_inner(document)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "invalid JSON document")
+        del error
+    except Exception:
+        failure_message = "invalid JSON document"
+    finally:
+        del document
+    if failure_message is not None:
+        parsed = None
+        raise SpecificationValidationError(failure_message)
+    _require(success, "invalid JSON document")
+    return parsed
+
+
+def _load_json_document_inner(path: Path) -> dict[str, Any]:
     """Load a JSON document without silently accepting duplicate or non-finite data."""
 
     _require_safe_concrete_path(path, "input path")
     value = _parse_bounded_json_bytes(_read_bounded_file(path))
     _require(isinstance(value, dict), "specification root must be an object")
+    return value
+
+
+def load_json_document(path: Path) -> dict[str, Any]:
+    value: dict[str, Any] | None = None
+    failure_message: str | None = None
+    try:
+        value = _load_json_document_inner(path)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "input read failed")
+        del error
+    except Exception:
+        failure_message = "input read failed"
+    finally:
+        del path
+    if failure_message is not None:
+        value = None
+        raise SpecificationValidationError(failure_message)
+    _require(value is not None, "input read failed")
     return value
 
 
@@ -2751,8 +3245,8 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
         "individual_proportions": "Wilson_bounds",
         "paired_differences": "exact_paired_or_stratified_bootstrap_bounds",
         "deterministic_safety": "exact_one_sided_95_percent_Clopper_Pearson_upper_bound",
-        "primary_binary_test": "stratified_paired_difference_with_exact_or_randomization_reference",
-        "primary_binary_interval": "paired_or_stratified_bootstrap",
+        "primary_binary_test": "exact_conditional_paired_sign_test",
+        "primary_binary_interval": "stratified_paired_percentile_bootstrap",
         "multiplicity": "Holm_control_across_two_primary_contrasts",
         "secondary_measures": "exploratory_labeled",
         "raw_numerator_and_denominator_required": True,
@@ -2779,12 +3273,13 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
         "simulation_seed": 20260829,
         "simulation_repetitions": 100000,
         "computation_method": {
-            "algorithm": "deterministic_paired_bernoulli_monte_carlo",
+            "algorithm": "deterministic_counter_stream_monte_carlo",
             "randomness": "sha256_counter_stream_v1",
             "counter_inputs": [
                 "simulation_seed",
                 "replicate_index",
                 "candidate_n",
+                "resample_index",
                 "episode_index",
                 "draw_kind",
             ],
@@ -2798,13 +3293,14 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
                 "allowance_and_episode_remains_in_denominator"
             ),
             "candidate_n_grid": "complete_balanced_multiples_of_96_from_384_through_9600_inclusive",
+            "reference_method_contract": EXPECTED_POWER_COMPUTATION_METHOD,
             "primary_contrast_methods": {
                 "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": {
                     "outcome_type": "paired_binary",
                     "sampling_input": "paired_joint_distribution",
                     "estimator": "mean_alternative_minus_control_CAOS_difference",
-                    "test": "stratified_paired_difference_with_exact_randomization_reference",
-                    "interval": "one_sided_95_percent_exact_paired_or_stratified_bootstrap",
+                    "test": "exact_conditional_paired_sign_test",
+                    "interval": "stratified_paired_percentile_bootstrap",
                     "target_effect": 0.1,
                     "power_event": (
                         "Holm_adjusted_primary_CAOS_contrast_clears_noninferiority_margin_and_"
@@ -2830,13 +3326,8 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
                     "alternative_mean": 0.895,
                     "target_relative_effect": 0.05,
                     "estimator": "mean_paired_utility_difference_divided_by_control_utility_mean",
-                    "test": (
-                        "studentized_paired_permutation_test_with_10000_counter_stream_sign_flips"
-                    ),
-                    "interval": (
-                        "one_sided_95_percent_paired_percentile_bootstrap_with_10000_"
-                        "counter_stream_resamples"
-                    ),
+                    "test": "studentized_paired_sign_flip_test",
+                    "interval": ("stratified_paired_percentile_bootstrap_relative_effect"),
                     "resampling_counter_inputs": [
                         "simulation_seed",
                         "replicate_index",
@@ -2891,7 +3382,10 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
             "equal across six families, four repositories, and four client/model strata"
         ),
         "estimand": "stratified paired CAOS difference, alternative minus control",
-        "test_statistic": "stratified paired difference with exact_or_randomization_reference",
+        "test_statistic": (
+            "exact_conditional_paired_sign_test_for_CAOS_and_studentized_paired_sign_flip_"
+            + "test_for_utility"
+        ),
         "alpha": "familywise 0.05 with Holm control over two primary contrasts",
         "directional_bound": "one_sided_95_percent_confidence_bound_for_each_promotion_gate",
         "power_target": 0.9,
@@ -2900,6 +3394,11 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
         "joint_distribution_sum_required": 1.0,
     }.items():
         _require_value(power[field], value, f"packet_a.power_simulation.{field}")
+    _require_value(
+        power["computation_method"]["reference_method_contract"],
+        EXPECTED_POWER_COMPUTATION_METHOD,
+        "packet_a.power_simulation.computation_method.reference_method_contract",
+    )
 
     _require_value(
         packet["later_manifest_prerequisites"],
@@ -2958,7 +3457,7 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
     )
 
 
-def canonical_json_bytes(value: Any) -> bytes:
+def _canonical_json_bytes_inner(value: Any) -> bytes:
     _validate_json_limits(value)
     try:
         encoded = json.dumps(
@@ -2977,7 +3476,26 @@ def canonical_json_bytes(value: Any) -> bytes:
     return encoded
 
 
-def compute_specification_digest(spec: dict[str, Any]) -> str:
+def canonical_json_bytes(value: Any) -> bytes:
+    encoded: bytes | None = None
+    failure_message: str | None = None
+    try:
+        encoded = _canonical_json_bytes_inner(value)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "document is not finite canonical JSON")
+        del error
+    except Exception:
+        failure_message = "document is not finite canonical JSON"
+    finally:
+        del value
+    if failure_message is not None:
+        encoded = None
+        raise SpecificationValidationError(failure_message)
+    _require(encoded is not None, "document is not finite canonical JSON")
+    return encoded
+
+
+def _compute_specification_digest_inner(spec: dict[str, Any]) -> str:
     """Return the content digest after omitting only the declared digest field."""
 
     _validate_json_limits(spec)
@@ -2995,7 +3513,26 @@ def compute_specification_digest(spec: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json_bytes(candidate)).hexdigest()
 
 
-def with_recomputed_digest(spec: dict[str, Any]) -> dict[str, Any]:
+def compute_specification_digest(spec: dict[str, Any]) -> str:
+    digest: str | None = None
+    failure_message: str | None = None
+    try:
+        digest = _compute_specification_digest_inner(spec)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "document digest failed")
+        del error
+    except Exception:
+        failure_message = "document digest failed"
+    finally:
+        del spec
+    if failure_message is not None:
+        digest = None
+        raise SpecificationValidationError(failure_message)
+    _require(digest is not None, "document digest failed")
+    return digest
+
+
+def _with_recomputed_digest_inner(spec: dict[str, Any]) -> dict[str, Any]:
     """Copy a candidate and update its self-digest for semantic mutation tests."""
 
     _validate_json_limits(spec)
@@ -3006,6 +3543,25 @@ def with_recomputed_digest(spec: dict[str, Any]) -> dict[str, Any]:
     binding = packet.get("content_binding")
     _require(type(binding) is dict, "packet_a.content_binding must be an object")
     binding["specification_digest"] = compute_specification_digest(candidate)
+    return candidate
+
+
+def with_recomputed_digest(spec: dict[str, Any]) -> dict[str, Any]:
+    candidate: dict[str, Any] | None = None
+    failure_message: str | None = None
+    try:
+        candidate = _with_recomputed_digest_inner(spec)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "document digest failed")
+        del error
+    except Exception:
+        failure_message = "document digest failed"
+    finally:
+        del spec
+    if failure_message is not None:
+        candidate = None
+        raise SpecificationValidationError(failure_message)
+    _require(candidate is not None, "document digest failed")
     return candidate
 
 
@@ -3671,7 +4227,7 @@ _NARRATIVE_JSON_FENCE = "```json"
 _NARRATIVE_FENCE = "```"
 
 
-def _extract_narrative_json_binding(document: str) -> str:
+def _extract_narrative_json_binding_inner(document: str) -> str:
     """Extract the unique JSON fence with one bounded linear pass over lines."""
 
     heading_count = 0
@@ -3701,7 +4257,26 @@ def _extract_narrative_json_binding(document: str) -> str:
     return "".join(payload).strip()
 
 
-def compute_narrative_semantic_digest(document: bytes, *, specification_digest: str) -> str:
+def _extract_narrative_json_binding(document: str) -> str:
+    extracted: str | None = None
+    failure_message: str | None = None
+    try:
+        extracted = _extract_narrative_json_binding_inner(document)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "narrative machine-readable binding failed")
+        del error
+    except Exception:
+        failure_message = "narrative machine-readable binding failed"
+    finally:
+        del document
+    if failure_message is not None:
+        extracted = None
+        raise SpecificationValidationError(failure_message)
+    _require(extracted is not None, "narrative machine-readable binding failed")
+    return extracted
+
+
+def _compute_narrative_semantic_digest_inner(document: bytes, *, specification_digest: str) -> str:
     """Hash exact Markdown bytes while normalizing only its self-binding digest."""
 
     _require(type(document) is bytes, "narrative must be bytes")
@@ -3728,7 +4303,29 @@ def compute_narrative_semantic_digest(document: bytes, *, specification_digest: 
     return hashlib.sha256(normalized).hexdigest()
 
 
-def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
+def compute_narrative_semantic_digest(document: bytes, *, specification_digest: str) -> str:
+    digest: str | None = None
+    failure_message: str | None = None
+    try:
+        digest = _compute_narrative_semantic_digest_inner(
+            document, specification_digest=specification_digest
+        )
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "narrative digest failed")
+        del error
+    except Exception:
+        failure_message = "narrative digest failed"
+    finally:
+        del document
+        del specification_digest
+    if failure_message is not None:
+        digest = None
+        raise SpecificationValidationError(failure_message)
+    _require(digest is not None, "narrative digest failed")
+    return digest
+
+
+def _validate_narrative_inner(packet: dict[str, Any], root: Path) -> None:
     _require_safe_concrete_path(root, "validation root")
     binding = packet["content_binding"]["narrative_binding"]
     _require_value(
@@ -3736,10 +4333,8 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
         "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
         "narrative path",
     )
-    root = root.resolve()
-    path = (root / binding["path"]).resolve()
-    _require(path.is_relative_to(root), "narrative path escapes the validation root")
-    _require(path.is_file(), f"narrative binding document missing: {path}")
+    root = root.absolute()
+    path = _join_bound_path(root, binding["path"], "narrative path")
     document_bytes = _read_bounded_file(path)
     try:
         document = document_bytes.decode("utf-8")
@@ -3759,7 +4354,13 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
     )
     _require_keys(
         narrative_binding,
-        {"specification_digest", "contract_source_sha256", "evidence_level", "execution_boundary"},
+        {
+            "specification_digest",
+            "contract_source_sha256",
+            "power_reference_source_sha256",
+            "evidence_level",
+            "execution_boundary",
+        },
         "narrative machine-readable binding",
     )
     _require_value(
@@ -3769,6 +4370,11 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
         narrative_binding["contract_source_sha256"],
         packet["content_binding"]["contract_source_sha256"],
         "narrative contract_source_sha256",
+    )
+    _require_value(
+        narrative_binding["power_reference_source_sha256"],
+        packet["content_binding"]["power_reference_source_sha256"],
+        "narrative power_reference_source_sha256",
     )
     _require_value(
         narrative_binding["evidence_level"], packet["evidence_level"], "narrative evidence_level"
@@ -3790,7 +4396,23 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
     )
 
 
-def validate_spec(
+def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
+    failure_message: str | None = None
+    try:
+        _validate_narrative_inner(packet, root)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "narrative validation failed")
+        del error
+    except Exception:
+        failure_message = "narrative validation failed"
+    finally:
+        del packet
+        del root
+    if failure_message is not None:
+        raise SpecificationValidationError(failure_message)
+
+
+def _validate_spec_inner(
     spec: dict[str, Any],
     *,
     root: Path = ROOT,
@@ -3800,6 +4422,8 @@ def validate_spec(
     """Validate a candidate Packet A document, raising on any drift."""
 
     _require_safe_concrete_path(root, "validation root")
+    root = root.absolute()
+    _validate_directory_path(root)
     _require(isinstance(spec, dict), "document must be an object")
     _validate_json_limits(spec)
     _validate_document_structure(spec)
@@ -5485,8 +6109,7 @@ def validate_spec(
         "provenance sources",
     )
     for source in packet["provenance"]["canonical_inputs"]:
-        source_path = root / source["path"]
-        _require(source_path.is_file(), f"provenance source missing: {source_path}")
+        source_path = _join_bound_path(root, source["path"], "provenance path")
         source_bytes = _read_bounded_file(source_path)
         actual_source_digest = (
             _compute_contract_source_digest(source_bytes)
@@ -5495,7 +6118,7 @@ def validate_spec(
         )
         _require(
             actual_source_digest == source["sha256"],
-            f"provenance digest drift: {source['path']}",
+            "provenance digest drift",
         )
     _require(
         packet["provenance"]["secret_refusal_preserved"] is True,
@@ -5516,6 +6139,7 @@ def validate_spec(
             "validator_version",
             "validator_source_sha256",
             "contract_source_sha256",
+            "power_reference_source_sha256",
             "narrative_binding",
             "proposal_correction",
             "specification_digest",
@@ -5551,18 +6175,30 @@ def validate_spec(
         "contract source file digest",
     )
     _require_value(
+        binding["power_reference_source_sha256"],
+        EXPECTED_POWER_REFERENCE_SOURCE_SHA256,
+        "power reference source digest",
+    )
+    _require_value(
+        binding["power_reference_source_sha256"],
+        hashlib.sha256(_read_bounded_file(POWER_REFERENCE_SOURCE_PATH)).hexdigest(),
+        "power reference source file digest",
+    )
+    _require_value(
         binding["narrative_binding"],
         {
             "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
             "required_fields": [
                 "specification_digest",
                 "contract_source_sha256",
+                "power_reference_source_sha256",
                 "evidence_level",
                 "execution_boundary",
             ],
             "validator": "bench/validate_memory_reliability_spec.py",
             "validator_version": VALIDATOR_VERSION,
             "contract_source_sha256": binding["contract_source_sha256"],
+            "power_reference_source_sha256": binding["power_reference_source_sha256"],
             "semantic_sha256": binding["narrative_binding"]["semantic_sha256"],
             "semantic_digest_scope": (
                 "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
@@ -5603,12 +6239,58 @@ def validate_spec(
         _validate_narrative(packet, root)
 
 
-def load_and_validate(path: Path = SPEC_PATH) -> dict[str, Any]:
+def validate_spec(
+    spec: dict[str, Any],
+    *,
+    root: Path = ROOT,
+    require_golden_digest: bool = True,
+    validate_narrative: bool = True,
+) -> None:
+    failure_message: str | None = None
+    try:
+        _validate_spec_inner(
+            spec,
+            root=root,
+            require_golden_digest=require_golden_digest,
+            validate_narrative=validate_narrative,
+        )
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "document validation failed")
+        del error
+    except Exception:
+        failure_message = "document validation failed"
+    finally:
+        del spec
+        del root
+    if failure_message is not None:
+        raise SpecificationValidationError(failure_message)
+
+
+def _load_and_validate_inner(path: Path = SPEC_PATH) -> dict[str, Any]:
     """Load and validate the committed spec without modifying it."""
 
     _require_safe_concrete_path(path, "input path")
     value = load_json_document(path)
     validate_spec(value)
+    return value
+
+
+def load_and_validate(path: Path = SPEC_PATH) -> dict[str, Any]:
+    value: dict[str, Any] | None = None
+    failure_message: str | None = None
+    try:
+        value = _load_and_validate_inner(path)
+    except SpecificationValidationError as error:
+        failure_message = _safe_error_message(error, "input read failed")
+        del error
+    except Exception:
+        failure_message = "input read failed"
+    finally:
+        del path
+    if failure_message is not None:
+        value = None
+        raise SpecificationValidationError(failure_message)
+    _require(value is not None, "input read failed")
     return value
 
 

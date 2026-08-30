@@ -683,11 +683,12 @@ and not an execution N. The specification is frozen if and only if:
 6. the specification digest is recorded without representing provisional N as
    an executable or fixture-frozen sample; and
 7. the independently authored validator source and code-owned contract source
-   are each bound by SHA-256, so changing either source fails validation until
-   the source and all dependent specification bindings are reviewed together;
-   the contract-source digest replaces its four derived digest literals with
-   fixed placeholders before hashing so coordinated rebinding does not change
-   the authority-source identity.
+   and the executable power-method reference are each bound by SHA-256, so
+   changing any source fails validation until the source and all dependent
+   specification bindings are reviewed together; the contract-source digest
+   replaces its three derived digest literals with fixed placeholders before
+   hashing so coordinated rebinding does not change the authority-source
+   identity.
 
 Packet A specification freeze is permitted now as a non-displacing research
 decision. It does not freeze fixture IDs, a benchmark manifest, a final N, or
@@ -707,7 +708,10 @@ power_simulation_script_digest: required SHA-256 at manifest freeze
 validator_source_path: bench/validate_memory_reliability_spec.py
 validator_source_digest: bound in the machine-readable specification
 contract_source_path: bench/packet_a_contract.py
-contract_source_digest: a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca
+contract_source_digest: a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213
+power_method_reference_path: bench/packet_a_power_reference.py
+power_method_reference_version: packet-a-power-reference-v1
+power_method_reference_digest: 747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500
 input_manifest_paths:
   - bench/memory_reliability_spec.json
   - bench/memory_reliability_fixtures.json
@@ -739,18 +743,27 @@ missing_and_failure_policy: Section 6.6, frozen before simulation
 provisional_confirmatory_N: 384 paired episodes
 final_confirmatory_N: unset until script, inputs, output digest, and later manifest gate
 final_repetitions_per_base_cell: final_N / 96
+counter_serialization: ATC-PACKET-A-POWER domain + version byte; typed named fields with unsigned 16-bit field-name lengths, unsigned 32-bit value lengths, 0x1e field delimiters, 0x1f value delimiters, and unsigned 64-bit big-endian integer values
+counter_uniform: first 53 bits of SHA-256 divided by 2^53
+cell_mapping: 16*task_family_index + 4*repository_index + stratum_index; episode_index modulo 96
+utility_axes: rows control utility, columns alternative utility; row-major five-level matrix with control mean 0.83 and alternative mean 0.895
+bootstrap_and_permutation: 10000 each; complete paired episodes resampled within cell; q=0.05 uses (B-1)*q linear interpolation; sign flips use uniform >= 0.5 as positive
+decision_rule: Holm ascending raw p with declared-order tie-break; CAOS lower bound > -0.02 AND >= 0.10; utility lower bound >= 0.05; joint pass requires both
+missing_loss_rule: lost pairs become zero/zero and remain in the denominator; missing or invalid pairs are excluded and force non-pass; no imputation
 ~~~
 
 The script path is a required future reproducibility artifact; this proposal
 does not claim that the script has already been added or executed. The
-simulation must independently emit the paired joint-distribution check,
-stratum allocation, derived N, and output manifest digest. The frozen power
-method is contrast-specific: the checkpoint/CAOS contrast uses paired binary
-outcomes and the declared CAOS joint distribution, while the scheduler
-outcome-utility contrast uses a paired bounded five-level utility distribution,
-a relative-utility estimator, a studentized paired permutation test, and a
-paired percentile-bootstrap bound with fixed counter-stream resampling. The
-binary CAOS method is not reused for utility. Any change to the script,
+source-bound executable reference fixes the paired joint-distribution check,
+stratum allocation, exact counters, and contrast decisions that the future
+simulation must use; the future simulation must independently emit the derived
+N and output manifest digest. The frozen power method is contrast-specific:
+the checkpoint/CAOS contrast uses paired binary outcomes and the declared CAOS
+joint distribution, while the scheduler outcome-utility contrast uses a paired
+bounded five-level utility distribution, a relative-utility estimator, a
+studentized paired sign-flip test, and a paired percentile-bootstrap bound
+with fixed counter-stream resampling. The binary CAOS method is not reused for
+utility. Any change to the script, reference,
 version, input manifest, joint distribution, allocation, estimator, test,
 alpha, power, missingness rule, or seed creates a new specification version and
 leaves N provisional.

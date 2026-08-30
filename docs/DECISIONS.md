@@ -46,10 +46,38 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+## ADR-175: Packet A binds an executable power reference and closes source reads
+
+**Status:** recorded on 2026-08-30 as one non-amending continuation from exact
+clean commit `f37398e421c039e61c57b3c9021c5cf85629aff8`; independent reviewer
+acceptance remains pending. This remains an L0, non-displacing research change
+and does not authorize execution, production or client changes, external
+access, promotion, or frontier advancement.
+
+The contract source no longer carries its own source-digest literal. The
+validator owns the immutable normalized-source anchor, and the measured
+contract source is normalized only for its three derived specification,
+structure, and narrative literals. `bench/packet_a_power_reference.py` is a
+separately SHA-256-bound executable reference (`packet-a-power-reference-v1`)
+with golden counter vectors, fixed 96-cell mapping, explicit utility matrix
+axes, exact paired-binary and studentized utility methods, fixed 10,000
+bootstrap/permutation counts, fixed 100,000-replicate estimation, and a
+deterministic no-result selection rule. It has no filesystem, product,
+provider, fixture, manifest, or result side effects.
+
+The validator's bounded reader accepts only exact concrete pathlib paths,
+requires root containment for bound sources, rejects link/reparse, special,
+and multiply-linked files, and compares path-chain and descriptor identity
+before and after reading. The exact integer byte limit is positive and no
+greater than the compiled ceiling. Public wrappers discard raw buffers,
+candidate objects, duplicate pairs, supplied paths, and exception graphs
+before raising bounded messages. No experiment, manifest, private data, or
+product/runtime change is part of this decision.
+
 ## ADR-174: Packet A independently binds authority source and rejects virtual paths
 
 **Status:** recorded on 2026-08-30 as a continuation from exact clean commit
-`ec57058e36a111f41ef24e73c6827d59f324e436`; independent fresh-reviewer
+`f37398e421c039e61c57b3c9021c5cf85629aff8`; independent fresh-reviewer
 acceptance remains pending. This remains an L0, non-displacing research change
 and does not authorize execution, production or client changes, external
 access, promotion, or frontier advancement.
