@@ -172,7 +172,46 @@ def test_workflow_rehashes_full_handoff_and_binds_inventory_to_run_attempt() -> 
     assert "foreach ($relative in $finalFiles)" in rehash
     assert "Get-FileHash -LiteralPath $Path -Algorithm SHA256" in rehash
     assert "actualFiles" in rehash
-    assert "TODO(lead composition): invoke the independent verifier" in text
+
+
+def test_workflow_independently_verifies_exact_candidate_before_evidence_staging() -> None:
+    text = _read_workflow()
+
+    build_end = text.index("Build direct package SPDX subject metadata")
+    verify_start = text.index("Independently verify exact Windows candidate archive and manifest")
+    handoff_start = text.index("Stage exact replacement-candidate handoff")
+    verify = text[verify_start:handoff_start]
+
+    assert build_end < verify_start < handoff_start
+    assert "shell: pwsh" in verify
+    assert "VERSION: ${{ inputs.version }}" in verify
+    assert "SOURCE_COMMIT: ${{ github.sha }}" in verify
+    assert (
+        "python scripts/verify_installed_component_manifest_independent.py verify-archive `"
+        in verify
+    )
+    for expected in (
+        '--archive "dist/release/all-the-context-$env:VERSION-windows-x86_64.zip"',
+        '--direct-package "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe"',
+        "--main dist/desktop/AllTheContextSetup.exe",
+        "--mcp build/desktop/helper-dist/AllTheContextMCP.exe",
+        "--recovery dist/desktop/AllTheContextRecovery.exe",
+        "--updater build/desktop/update-helper-dist/AllTheContextUpdater.exe",
+        "--source-root .",
+        '--version "$env:VERSION"',
+        '--source-commit "$env:SOURCE_COMMIT"',
+        "--platform windows",
+        "--architecture x86_64",
+    ):
+        assert expected in verify
+    assert "$LASTEXITCODE -ne 0" in verify
+    assert "Independent installed-component verification failed closed" in verify
+    assert "installed_component_manifest.py" not in verify
+    assert "prepare_windows_security_submission.py" not in text
+    assert "continue-on-error" not in text
+    assert "if: ${{ always() }}" not in text
+    assert "exit 0" not in verify
+    assert "|| true" not in verify
 
 
 def test_workflow_never_invokes_release_publication_or_produced_binary_smokes() -> None:

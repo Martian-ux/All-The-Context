@@ -169,6 +169,28 @@ jobs:
           --source-commit "$env:SOURCE_COMMIT"
           --platform windows
           --architecture x86_64
+      - name: Independently verify exact Windows candidate archive and manifest
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          python scripts/verify_installed_component_manifest_independent.py verify-archive `
+            --archive "dist/release/all-the-context-$env:VERSION-windows-x86_64.zip" `
+            --direct-package "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe" `
+            --main dist/desktop/AllTheContextSetup.exe `
+            --mcp build/desktop/helper-dist/AllTheContextMCP.exe `
+            --recovery dist/desktop/AllTheContextRecovery.exe `
+            --updater build/desktop/update-helper-dist/AllTheContextUpdater.exe `
+            --source-root . `
+            --version "$env:VERSION" `
+            --source-commit "$env:SOURCE_COMMIT" `
+            --platform windows `
+            --architecture x86_64
+          if ($LASTEXITCODE -ne 0) {
+            throw "Independent installed-component verification failed closed"
+          }
       - name: Stage exact replacement-candidate handoff without executing binaries
         shell: pwsh
         env:
@@ -374,7 +396,6 @@ jobs:
           if ([System.IO.File]::ReadAllText($checksumPath) -cne $expectedChecksum) {
             throw "handoff inventory checksum sidecar is invalid"
           }
-      # TODO(lead composition): invoke the independent verifier when its script is added to this branch.
       - name: Upload private Windows candidate artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
         with:
