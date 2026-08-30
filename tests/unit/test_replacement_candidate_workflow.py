@@ -5,9 +5,340 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "replacement-candidate.yml"
 ACTION_USE = re.compile(r"^\s+uses:\s+([^\s]+)", re.MULTILINE)
+
+
+class _WorkflowYamlParser:
+    """Parse the small YAML subset used by the workflow contract fixture."""
+
+    def __init__(self, text: str) -> None:
+        self._lines = text.splitlines()
+
+    def parse(self) -> dict[str, object]:
+        index = self._next_content(0)
+        assert index is not None
+        value, index = self._node(index, self._indent(self._lines[index]))
+        assert self._next_content(index) is None
+        assert isinstance(value, dict)
+        return value
+
+    def _node(self, index: int, indent: int) -> tuple[object, int]:
+        line = self._lines[index]
+        assert self._indent(line) == indent
+        if line[indent:].startswith("-"):
+            return self._sequence(index, indent)
+        return self._mapping(index, indent)
+
+    def _mapping(
+        self, index: int, indent: int, values: dict[str, object] | None = None
+    ) -> tuple[dict[str, object], int]:
+        result = {} if values is None else values
+        while True:
+            index = self._next_content(index)
+            if index is None:
+                return result, len(self._lines)
+            line = self._lines[index]
+            current_indent = self._indent(line)
+            if current_indent < indent:
+                return result, index
+            assert current_indent == indent
+            content = line[indent:]
+            if content.startswith("-"):
+                return result, index
+            key, raw_value = self._split_mapping(content)
+            assert key not in result, f"duplicate YAML mapping key: {key!r}"
+            result[key] = self._value(raw_value, index + 1, indent)
+            index = self._value_end(raw_value, index + 1, indent)
+
+    def _sequence(self, index: int, indent: int) -> tuple[list[object], int]:
+        result: list[object] = []
+        while True:
+            index = self._next_content(index)
+            if index is None:
+                return result, len(self._lines)
+            line = self._lines[index]
+            current_indent = self._indent(line)
+            if current_indent < indent:
+                return result, index
+            assert current_indent == indent
+            content = line[indent:]
+            assert content.startswith("-")
+            item = content[1:].lstrip()
+            if not item:
+                child = self._next_content(index + 1)
+                if child is None or self._indent(self._lines[child]) <= indent:
+                    result.append(None)
+                    index = index + 1
+                else:
+                    value, index = self._node(child, self._indent(self._lines[child]))
+                    result.append(value)
+                continue
+
+            key, raw_value = self._split_mapping(item)
+            item_values: dict[str, object] = {}
+            item_values[key] = self._value(raw_value, index + 1, indent + 2)
+            index = self._value_end(raw_value, index + 1, indent + 2)
+            child = self._next_content(index)
+            if child is not None and self._indent(self._lines[child]) > indent:
+                assert self._indent(self._lines[child]) == indent + 2
+                item_values, index = self._mapping(child, indent + 2, item_values)
+            result.append(item_values)
+
+    def _value(self, raw_value: str, index: int, parent_indent: int) -> object:
+        value = raw_value.strip()
+        if value.startswith(("|", ">")):
+            block, _ = self._block_scalar(value, index, parent_indent)
+            return block
+        if value:
+            return self._scalar(value)
+        child = self._next_content(index)
+        if child is None or self._indent(self._lines[child]) <= parent_indent:
+            return {}
+        parsed, _ = self._node(child, self._indent(self._lines[child]))
+        return parsed
+
+    def _value_end(self, raw_value: str, index: int, parent_indent: int) -> int:
+        value = raw_value.strip()
+        if value.startswith(("|", ">")):
+            _, index = self._block_scalar(value, index, parent_indent)
+            return index
+        if value:
+            return index
+        child = self._next_content(index)
+        if child is None or self._indent(self._lines[child]) <= parent_indent:
+            return index
+        _, index = self._node(child, self._indent(self._lines[child]))
+        return index
+
+    def _block_scalar(self, style: str, index: int, parent_indent: int) -> tuple[str, int]:
+        content: list[str] = []
+        block_indent: int | None = None
+        while index < len(self._lines):
+            line = self._lines[index]
+            if not line.strip():
+                content.append("")
+                index += 1
+                continue
+            current_indent = self._indent(line)
+            if current_indent <= parent_indent:
+                break
+            if block_indent is None:
+                block_indent = current_indent
+            assert current_indent >= block_indent
+            content.append(line[block_indent:])
+            index += 1
+        if style.startswith("|!"):
+            raise AssertionError(f"unsupported YAML block style: {style}")
+        if style.startswith(">"):
+            value = " ".join(part.strip() for part in content).strip()
+        else:
+            value = "\n".join(content)
+        if style.endswith("-"):
+            return value.rstrip("\n"), index
+        return value + "\n", index
+
+    def _next_content(self, index: int) -> int | None:
+        while index < len(self._lines):
+            stripped = self._lines[index].strip()
+            if stripped and not stripped.startswith("#"):
+                return index
+            index += 1
+        return None
+
+    @staticmethod
+    def _indent(line: str) -> int:
+        assert "\t" not in line[: len(line) - len(line.lstrip())]
+        return len(line) - len(line.lstrip(" "))
+
+    @staticmethod
+    def _split_mapping(content: str) -> tuple[str, str]:
+        for index, character in enumerate(content):
+            if character == ":" and (index + 1 == len(content) or content[index + 1].isspace()):
+                key = content[:index].strip()
+                assert key
+                return key, content[index + 1 :]
+        raise AssertionError(f"expected YAML mapping entry: {content!r}")
+
+    @staticmethod
+    def _scalar(value: str) -> str:
+        value = _strip_yaml_comment(value)
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            return value[1:-1]
+        return value
+
+
+def _strip_yaml_comment(value: str) -> str:
+    quoted: str | None = None
+    for index, character in enumerate(value):
+        if character in {'"', "'"}:
+            if quoted == character:
+                quoted = None
+            elif quoted is None:
+                quoted = character
+        elif character == "#" and quoted is None and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+    return value
+
+
+def _mapping(value: object, description: str) -> dict[str, object]:
+    assert isinstance(value, dict), description
+    return value
+
+
+def _build_windows_steps(text: str) -> list[dict[str, object]]:
+    document = _WorkflowYamlParser(text).parse()
+    jobs = _mapping(document.get("jobs"), "workflow jobs mapping is required")
+    build_windows = _mapping(jobs.get("build-windows"), "build-windows job mapping is required")
+    raw_steps = build_windows.get("steps")
+    assert isinstance(raw_steps, list), "build-windows steps list is required"
+    assert all(isinstance(step, dict) for step in raw_steps), "each workflow step must be a mapping"
+    return [step for step in raw_steps if isinstance(step, dict)]
+
+
+def _step_identity(step: dict[str, object]) -> str:
+    name = step.get("name")
+    uses = step.get("uses")
+    assert isinstance(name, str) or isinstance(uses, str), "workflow step has no identity"
+    if isinstance(name, str):
+        assert name
+        return f"name:{name}"
+    assert isinstance(uses, str)
+    return f"uses:{uses}"
+
+
+def _step_by_name(steps: list[dict[str, object]], name: str) -> tuple[int, dict[str, object]]:
+    matches = [(index, step) for index, step in enumerate(steps) if step.get("name") == name]
+    assert len(matches) == 1, f"expected exactly one step named {name!r}"
+    return matches[0]
+
+
+def _required_string(mapping: dict[str, object], key: str) -> str:
+    value = mapping.get(key)
+    assert isinstance(value, str), f"workflow field {key!r} must be a string"
+    return value
+
+
+def _active_run_text(run: str) -> str:
+    return "\n".join(line for line in run.splitlines() if not line.lstrip().startswith("#"))
+
+
+def _semantic_step_text(step: dict[str, object]) -> str:
+    values: list[str] = []
+
+    def collect(value: object, *, key: str | None = None) -> None:
+        if isinstance(value, str):
+            values.append(_active_run_text(value) if key == "run" else value)
+        elif isinstance(value, dict):
+            for key, nested in value.items():
+                values.append(key)
+                collect(nested, key=key)
+        elif isinstance(value, list):
+            for nested in value:
+                collect(nested)
+
+    collect(step)
+    return "\n".join(values)
+
+
+def _assert_independent_verifier_contract(text: str) -> None:
+    steps = _build_windows_steps(text)
+    identities = [_step_identity(step) for step in steps]
+    assert len(identities) == len(set(identities)), "workflow step identities must be unique"
+
+    verifier_name = "Independently verify exact Windows candidate archive and manifest"
+    verifier_index, verifier = _step_by_name(steps, verifier_name)
+    verifier_run = _active_run_text(_required_string(verifier, "run"))
+    assert verifier.get("shell") == "pwsh"
+    verifier_env = _mapping(verifier.get("env"), "verifier environment mapping is required")
+    assert verifier_env == {
+        "VERSION": "${{ inputs.version }}",
+        "SOURCE_COMMIT": "${{ github.sha }}",
+    }
+    verifier_arguments = (
+        "python scripts/verify_installed_component_manifest_independent.py verify-archive",
+        '--archive "dist/release/all-the-context-$env:VERSION-windows-x86_64.zip"',
+        '--direct-package "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe"',
+        "--main dist/desktop/AllTheContextSetup.exe",
+        "--mcp build/desktop/helper-dist/AllTheContextMCP.exe",
+        "--recovery dist/desktop/AllTheContextRecovery.exe",
+        "--updater build/desktop/update-helper-dist/AllTheContextUpdater.exe",
+        "--source-root .",
+        '--version "$env:VERSION"',
+        '--source-commit "$env:SOURCE_COMMIT"',
+        "--platform windows",
+        "--architecture x86_64",
+    )
+    assert any(
+        line.strip().startswith(verifier_arguments[0]) for line in verifier_run.splitlines()
+    )
+    assert all(argument in verifier_run for argument in verifier_arguments[1:])
+    assert "$LASTEXITCODE -ne 0" in verifier_run
+    assert "Independent installed-component verification failed closed" in verifier_run
+    assert "exit 0" not in verifier_run
+    assert "|| true" not in verifier_run
+
+    producer_commands = {
+        "Build native desktop bytes without executing them": "python scripts/build_desktop.py",
+        "Build direct unsigned package and installed-component provenance": (
+            "python scripts/package_desktop.py"
+        ),
+        "Build deterministic Windows archive and metadata": (
+            "python scripts/build_release_assets.py"
+        ),
+        "Build direct package SPDX subject metadata": "python scripts/build_release_assets.py",
+    }
+    for name, command in producer_commands.items():
+        producer_index, producer = _step_by_name(steps, name)
+        assert producer_index < verifier_index
+        producer_run = _active_run_text(_required_string(producer, "run"))
+        assert any(line.strip().startswith(command) for line in producer_run.splitlines())
+
+    static_verifier_index, _ = _step_by_name(
+        steps, "Verify installed-component manifest and archive statically"
+    )
+    assert static_verifier_index < verifier_index
+
+    consumer_requirements = {
+        "Stage exact replacement-candidate handoff without executing binaries": (
+            '"source/matrix-evidence.json" = "dist/source-evidence/matrix-evidence.json"',
+        ),
+        "Run content-hygiene scan (not malware or Defender scanning)": (
+            "--artifact-dir dist/replacement-candidate-handoff",
+            "--report dist/replacement-candidate-handoff/content-hygiene-scan-report.json",
+        ),
+        "Rehash every allowlisted handoff file after content-hygiene scan": (
+            "foreach ($relative in $finalFiles)",
+            "Get-FileHash -LiteralPath $Path -Algorithm SHA256",
+        ),
+        "Upload private Windows candidate artifact": (
+            "actions/upload-artifact@",
+            "dist/replacement-candidate-handoff/**",
+        ),
+    }
+    for name, required_values in consumer_requirements.items():
+        consumer_index, consumer = _step_by_name(steps, name)
+        assert consumer_index > verifier_index
+        consumer_text = _semantic_step_text(consumer)
+        assert all(required in consumer_text for required in required_values)
+
+    consumer_markers = (
+        "dist/replacement-candidate-handoff",
+        "content-hygiene-scan-report.json",
+        "handoff-inventory-v1.json",
+        '"source/matrix-evidence.json"',
+        "actions/upload-artifact@",
+    )
+    for index, step in enumerate(steps):
+        step_text = _semantic_step_text(step)
+        if any(marker in step_text for marker in consumer_markers):
+            assert index > verifier_index, "handoff/evidence consumer precedes independent verifier"
+        assert "continue-on-error" not in step
+        assert "if" not in step
+        assert "prepare_windows_security_submission.py" not in step_text
 
 
 def _read_workflow() -> str:
@@ -175,43 +506,19 @@ def test_workflow_rehashes_full_handoff_and_binds_inventory_to_run_attempt() -> 
 
 
 def test_workflow_independently_verifies_exact_candidate_before_evidence_staging() -> None:
+    _assert_independent_verifier_contract(_read_workflow())
+
+
+def test_workflow_semantic_contract_rejects_commented_independent_verifier() -> None:
     text = _read_workflow()
-
-    build_end = text.index("Build direct package SPDX subject metadata")
-    verify_start = text.index("Independently verify exact Windows candidate archive and manifest")
-    handoff_start = text.index("Stage exact replacement-candidate handoff")
-    verify = text[verify_start:handoff_start]
-
-    assert build_end < verify_start < handoff_start
-    assert "shell: pwsh" in verify
-    assert "VERSION: ${{ inputs.version }}" in verify
-    assert "SOURCE_COMMIT: ${{ github.sha }}" in verify
-    assert (
-        "python scripts/verify_installed_component_manifest_independent.py verify-archive `"
-        in verify
+    mutated = text.replace(
+        "      - name: Independently verify exact Windows candidate archive and manifest",
+        "      # - name: Independently verify exact Windows candidate archive and manifest",
+        1,
     )
-    for expected in (
-        '--archive "dist/release/all-the-context-$env:VERSION-windows-x86_64.zip"',
-        '--direct-package "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe"',
-        "--main dist/desktop/AllTheContextSetup.exe",
-        "--mcp build/desktop/helper-dist/AllTheContextMCP.exe",
-        "--recovery dist/desktop/AllTheContextRecovery.exe",
-        "--updater build/desktop/update-helper-dist/AllTheContextUpdater.exe",
-        "--source-root .",
-        '--version "$env:VERSION"',
-        '--source-commit "$env:SOURCE_COMMIT"',
-        "--platform windows",
-        "--architecture x86_64",
-    ):
-        assert expected in verify
-    assert "$LASTEXITCODE -ne 0" in verify
-    assert "Independent installed-component verification failed closed" in verify
-    assert "installed_component_manifest.py" not in verify
-    assert "prepare_windows_security_submission.py" not in text
-    assert "continue-on-error" not in text
-    assert "if: ${{ always() }}" not in text
-    assert "exit 0" not in verify
-    assert "|| true" not in verify
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
 
 
 def test_workflow_never_invokes_release_publication_or_produced_binary_smokes() -> None:
