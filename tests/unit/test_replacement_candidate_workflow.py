@@ -143,13 +143,9 @@ def _assert_workflow_semantics(text: str) -> None:
     """Readable assertions for the exact reviewed workflow semantics."""
 
     assert _step_headers(text) == EXPECTED_STEP_HEADERS
-    action_refs = re.findall(
-        r"^(?:      - uses:|        uses:) ([^\n]+)$", text, re.MULTILINE
-    )
+    action_refs = re.findall(r"^(?:      - uses:|        uses:) ([^\n]+)$", text, re.MULTILINE)
     assert action_refs == EXPECTED_ACTION_REFS
-    assert all(
-        re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action) for action in EXPECTED_ACTION_REFS
-    )
+    assert all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action) for action in EXPECTED_ACTION_REFS)
 
     assert text.startswith("name: Private Windows replacement candidate\n\non:\n")
     assert "  workflow_dispatch:\n    inputs:\n" in text
@@ -344,7 +340,7 @@ def test_workflow_has_exact_approved_semantics() -> None:
             "quoted if control",
             "Require deliberate private replacement phrase",
             "        run: |\n",
-            "        \"if\": ${{ false }}\n        run: |\n",
+            '        "if": ${{ false }}\n        run: |\n',
         ),
         (
             "if control",
@@ -356,7 +352,7 @@ def test_workflow_has_exact_approved_semantics() -> None:
             "quoted continue-on-error",
             "Require unused beta.7 release slot before build",
             "        shell: pwsh\n",
-            "        \"continue-on-error\": true\n        shell: pwsh\n",
+            '        "continue-on-error": true\n        shell: pwsh\n',
         ),
         (
             "continue-on-error",
@@ -423,11 +419,11 @@ def test_workflow_has_exact_approved_semantics() -> None:
             "Unicode line separator",
             INDEPENDENT_VERIFIER_NAME,
             (
-                "          $ErrorActionPreference = \"Stop\"\n"
+                '          $ErrorActionPreference = "Stop"\n'
                 "          python scripts/verify_installed_component_manifest_independent.py"
             ),
             (
-                "          $ErrorActionPreference = \"Stop\"\u2028"
+                '          $ErrorActionPreference = "Stop"\u2028'
                 "          python scripts/verify_installed_component_manifest_independent.py"
             ),
         ),

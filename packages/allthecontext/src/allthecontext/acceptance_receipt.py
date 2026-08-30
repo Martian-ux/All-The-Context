@@ -56,9 +56,7 @@ ALLOWED_SEVERITIES = frozenset({"P0", "P1", "P2", "P3"})
 ALLOWED_DECISIONS = frozenset({"approve", "reject"})
 ALLOWED_COMPONENT_ROLES = frozenset({"main", "mcp", "recovery", "updater"})
 ALLOWED_MICROSOFT_STATUSES = frozenset({"submitted", "in_review", "closed"})
-ALLOWED_MICROSOFT_DETERMINATIONS = frozenset(
-    {"pending", "no_malware", "malware", "inconclusive"}
-)
+ALLOWED_MICROSOFT_DETERMINATIONS = frozenset({"pending", "no_malware", "malware", "inconclusive"})
 
 # The certification profile remains the complete pre-publication V1 contract.
 # Public-release smoke and launch-watch closure happen only after the immutable
@@ -414,9 +412,7 @@ def _validate_microsoft_reassessment(value: object) -> dict[str, Any]:
     )
     missing = sorted(MICROSOFT_REASSESSMENT_ALLOWED_KEYS - set(record))
     if missing:
-        raise ManifestError(
-            "microsoft_reassessment is missing fields: " + ", ".join(missing)
-        )
+        raise ManifestError("microsoft_reassessment is missing fields: " + ", ".join(missing))
 
     candidate_version = record.get("candidate_version")
     if not isinstance(candidate_version, str):
@@ -424,9 +420,7 @@ def _validate_microsoft_reassessment(value: object) -> dict[str, Any]:
     ReleaseVersion.parse(candidate_version)
     source_commit = record.get("source_commit")
     if not isinstance(source_commit, str) or COMMIT.fullmatch(source_commit) is None:
-        raise ManifestError(
-            "microsoft_reassessment source_commit must be a full lowercase SHA"
-        )
+        raise ManifestError("microsoft_reassessment source_commit must be a full lowercase SHA")
     for field in (
         "candidate_sha256",
         "component_sha256",
@@ -447,9 +441,7 @@ def _validate_microsoft_reassessment(value: object) -> dict[str, Any]:
     ):
         raise ManifestError("microsoft_reassessment component_size must be a positive integer")
     if not isinstance(record.get("opaque_submission_id_present"), bool):
-        raise ManifestError(
-            "microsoft_reassessment opaque_submission_id_present must be a boolean"
-        )
+        raise ManifestError("microsoft_reassessment opaque_submission_id_present must be a boolean")
 
     microsoft_status = record.get("microsoft_status")
     if microsoft_status not in ALLOWED_MICROSOFT_STATUSES:
@@ -473,8 +465,7 @@ def _validate_microsoft_reassessment(value: object) -> dict[str, Any]:
         )
         if not isinstance(result_digest, str) or SHA256.fullmatch(result_digest) is None:
             raise ManifestError(
-                "microsoft_reassessment redacted_result_artifact_sha256 must be a "
-                "lowercase SHA-256"
+                "microsoft_reassessment redacted_result_artifact_sha256 must be a lowercase SHA-256"
             )
         if microsoft_status != "closed":
             raise ManifestError(
@@ -585,9 +576,7 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         value["counts"] = _validate_counts(value.get("counts"))
     if "microsoft_reassessment" in value:
         if gate_id != MICROSOFT_REASSESSMENT_GATE_ID:
-            raise ManifestError(
-                "microsoft_reassessment is allowed only on the BETA-S06 receipt"
-            )
+            raise ManifestError("microsoft_reassessment is allowed only on the BETA-S06 receipt")
         value["microsoft_reassessment"] = _validate_microsoft_reassessment(
             value.get("microsoft_reassessment")
         )
@@ -681,9 +670,7 @@ def _validate_bundle_microsoft_reassessment(
     }
     for field, expected in bindings.items():
         if record.get(field) != expected:
-            raise ManifestError(
-                f"microsoft_reassessment {field} does not match the receipt bundle"
-            )
+            raise ManifestError(f"microsoft_reassessment {field} does not match the receipt bundle")
 
     if security_receipt.get("status") != "pass":
         return

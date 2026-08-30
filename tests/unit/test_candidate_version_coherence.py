@@ -16,9 +16,7 @@ def test_candidate_version_is_coherent_across_release_metadata() -> None:
     runtime = (ROOT / "packages/allthecontext/src/allthecontext/__init__.py").read_text(
         encoding="utf-8"
     )
-    dashboard = json.loads(
-        (ROOT / "apps/dashboard/package.json").read_text(encoding="utf-8")
-    )
+    dashboard = json.loads((ROOT / "apps/dashboard/package.json").read_text(encoding="utf-8"))
     dashboard_lock = json.loads(
         (ROOT / "apps/dashboard/package-lock.json").read_text(encoding="utf-8")
     )

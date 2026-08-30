@@ -19,8 +19,10 @@ from scripts.build_release_assets import build_archive
 
 SOURCE_COMMIT = "a" * 40
 VERSION = "0.1.0-beta.7"
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / (
-    "verify_installed_component_manifest_independent.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / ("verify_installed_component_manifest_independent.py")
 )
 
 
@@ -314,9 +316,7 @@ def test_rejects_archive_package_drift_and_malformed_zip(tmp_path: Path) -> None
         _verify(candidate)
 
     candidate.archive.write_bytes(b"not a ZIP")
-    with pytest.raises(
-        verifier.IndependentManifestVerificationError, match=r"valid ZIP|envelope"
-    ):
+    with pytest.raises(verifier.IndependentManifestVerificationError, match=r"valid ZIP|envelope"):
         _verify(candidate)
 
 
@@ -334,9 +334,7 @@ def test_rejects_component_path_escape_and_duplicate_identity(tmp_path: Path) ->
         candidate.components["recovery"].hardlink_to(candidate.components["mcp"])
     except (OSError, NotImplementedError):
         pytest.skip("hardlink creation is unavailable on this host")
-    with pytest.raises(
-        verifier.IndependentManifestVerificationError, match=r"hardlink|duplicate"
-    ):
+    with pytest.raises(verifier.IndependentManifestVerificationError, match=r"hardlink|duplicate"):
         _verify(candidate)
 
 
@@ -463,9 +461,7 @@ def _central_offsets(archive: Path) -> list[int]:
 
 def _patch_first_local_field(archive: Path, *, offset: int, value: int, width: int = 2) -> None:
     raw, local_offset, _central_offset, _eocd_offset = _zip_offsets(archive)
-    raw[local_offset + offset : local_offset + offset + width] = value.to_bytes(
-        width, "little"
-    )
+    raw[local_offset + offset : local_offset + offset + width] = value.to_bytes(width, "little")
     archive.write_bytes(raw)
 
 
@@ -490,9 +486,7 @@ def _patch_first_entry_field(
 
 def _patch_eocd_field(archive: Path, *, offset: int, value: int, width: int) -> None:
     raw, _local_offset, _central_offset, eocd_offset = _zip_offsets(archive)
-    raw[eocd_offset + offset : eocd_offset + offset + width] = value.to_bytes(
-        width, "little"
-    )
+    raw[eocd_offset + offset : eocd_offset + offset + width] = value.to_bytes(width, "little")
     archive.write_bytes(raw)
 
 
@@ -509,9 +503,7 @@ def _write_archive_with_first_extra(path: Path, members: list[tuple[str, bytes]]
 
 
 @pytest.mark.parametrize("order", list(itertools.permutations(range(3))))
-def test_enforces_canonical_member_order(
-    tmp_path: Path, order: tuple[int, int, int]
-) -> None:
+def test_enforces_canonical_member_order(tmp_path: Path, order: tuple[int, int, int]) -> None:
     candidate = _candidate(tmp_path)
     members = _members(candidate)
     _write_archive(candidate.archive, [members[index] for index in order])
@@ -519,9 +511,7 @@ def test_enforces_canonical_member_order(
     if order == (0, 1, 2):
         assert _verify(candidate) == candidate.payload
     else:
-        with pytest.raises(
-            verifier.IndependentManifestVerificationError, match="member order"
-        ):
+        with pytest.raises(verifier.IndependentManifestVerificationError, match="member order"):
             _verify(candidate)
 
 
@@ -535,9 +525,7 @@ def test_rejects_noncanonical_physical_local_member_order(tmp_path: Path) -> Non
     raw[offsets[1] + 42 : offsets[1] + 46] = first_local
     candidate.archive.write_bytes(raw)
 
-    with pytest.raises(
-        verifier.IndependentManifestVerificationError, match="local member order"
-    ):
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="local member order"):
         _verify(candidate)
 
 
@@ -705,9 +693,7 @@ def test_rejects_archive_comment_and_member_extra(tmp_path: Path) -> None:
     candidate = _candidate(tmp_path)
     with zipfile.ZipFile(candidate.archive, "a") as bundle:
         bundle.comment = b"comment"
-    with pytest.raises(
-        verifier.IndependentManifestVerificationError, match=r"comments|end record"
-    ):
+    with pytest.raises(verifier.IndependentManifestVerificationError, match=r"comments|end record"):
         _verify(candidate)
 
     candidate = _candidate(tmp_path / "extra")
@@ -815,8 +801,7 @@ def test_rejects_zipinfo_filename_normalization(
         verifier.ARCHIVE_MEMBER_PREFIX + "./AllTheContextSetup.exe",
         verifier.ARCHIVE_MEMBER_PREFIX + "C:/AllTheContextSetup.exe",
         verifier.ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.exe\x00suffix",
-        verifier.ARCHIVE_MEMBER_PREFIX.replace("installed", "Installed")
-        + "AllTheContextSetup.exe",
+        verifier.ARCHIVE_MEMBER_PREFIX.replace("installed", "Installed") + "AllTheContextSetup.exe",
         verifier.ARCHIVE_MEMBER_PREFIX.replace("/", "\\") + "AllTheContextSetup.exe",
     ],
 )
@@ -828,8 +813,7 @@ def test_rejects_noncanonical_archive_member_paths(tmp_path: Path, member_name: 
     if "\x00" in member_name:
         _patch_first_central_name(
             candidate.archive,
-            (verifier.ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.ex").encode()
-            + b"\x00",
+            (verifier.ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.ex").encode() + b"\x00",
         )
     elif "\\" in member_name:
         _patch_first_central_name(
@@ -892,9 +876,7 @@ def test_rejects_oversized_regular_input_without_large_allocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     candidate = _candidate(tmp_path)
-    _pretend_oversized(
-        candidate.components["mcp"], monkeypatch, verifier.MAX_EXECUTABLE_BYTES + 1
-    )
+    _pretend_oversized(candidate.components["mcp"], monkeypatch, verifier.MAX_EXECUTABLE_BYTES + 1)
 
     with pytest.raises(verifier.IndependentManifestVerificationError, match="maximum"):
         _verify(candidate)
@@ -964,9 +946,7 @@ def test_rejects_non_amd64_or_non_pe32_plus_components(
         raw[128 + 24 : 128 + 26] = (0x10B).to_bytes(2, "little")
     candidate.components[role].write_bytes(raw)
 
-    with pytest.raises(
-        verifier.IndependentManifestVerificationError, match=r"AMD64|PE32"
-    ):
+    with pytest.raises(verifier.IndependentManifestVerificationError, match=r"AMD64|PE32"):
         _verify(candidate)
 
 
@@ -990,9 +970,7 @@ def test_rejects_component_path_swap_after_validation(
         return original(path, label=label, expected_identity=expected_identity)
 
     monkeypatch.setattr(verifier, "_stable_executable", swap_before_read)
-    with pytest.raises(
-        verifier.IndependentManifestVerificationError, match="path validation"
-    ):
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="path validation"):
         _verify(candidate)
 
 

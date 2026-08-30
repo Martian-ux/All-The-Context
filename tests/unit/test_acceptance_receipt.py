@@ -233,9 +233,7 @@ def test_beta6_s06_receipt_interpretation_is_preserved_without_retroactive_upgra
         validate_receipt_bundle(
             _s06_bundle(
                 version="0.1.0-beta.6",
-                microsoft_reassessment=_microsoft_reassessment(
-                    candidate_version="0.1.0-beta.6"
-                ),
+                microsoft_reassessment=_microsoft_reassessment(candidate_version="0.1.0-beta.6"),
             )
         )
 
@@ -275,9 +273,7 @@ def test_acceptance_schema_exposes_only_bounded_microsoft_reassessment_metadata(
         (root / "release" / "acceptance-receipt.schema.json").read_text(encoding="utf-8")
     )
     bundle_schema = json.loads(
-        (root / "release" / "acceptance-receipt-bundle.schema.json").read_text(
-            encoding="utf-8"
-        )
+        (root / "release" / "acceptance-receipt-bundle.schema.json").read_text(encoding="utf-8")
     )
     reassessment = receipt_schema["$defs"]["microsoftReassessment"]
     assert receipt_schema["properties"]["microsoft_reassessment"] == {

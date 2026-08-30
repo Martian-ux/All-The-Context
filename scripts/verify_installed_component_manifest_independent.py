@@ -60,9 +60,7 @@ ARCHIVE_MEMBER_PREFIX = "installed-component-package/"
 ARCHIVE_MEMBER_BASENAMES = frozenset(
     {"AllTheContextSetup.exe", MANIFEST_FILE_NAME, CHECKSUM_FILE_NAME}
 )
-ARCHIVE_MEMBER_NAMES = frozenset(
-    ARCHIVE_MEMBER_PREFIX + name for name in ARCHIVE_MEMBER_BASENAMES
-)
+ARCHIVE_MEMBER_NAMES = frozenset(ARCHIVE_MEMBER_PREFIX + name for name in ARCHIVE_MEMBER_BASENAMES)
 ARCHIVE_MEMBER_ORDER = tuple(sorted(ARCHIVE_MEMBER_NAMES, key=str.casefold))
 AMD64_MACHINE = 0x8664
 PE32_PLUS_MAGIC = 0x20B
@@ -205,9 +203,7 @@ def _reject_linked_path(lexical: Path, root: Path) -> None:
             _failure("verification input uses a symlink or reparse point")
 
 
-def _regular_file(
-    value: Path, *, root: Path, label: str, maximum_size: int | None = None
-) -> Path:
+def _regular_file(value: Path, *, root: Path, label: str, maximum_size: int | None = None) -> Path:
     lexical_root, resolved_root = _validate_root(root)
     lexical = _absolute(value)
     _reject_linked_path(lexical, lexical_root)
@@ -245,9 +241,7 @@ def _assert_regular_snapshot(snapshot: _FileSnapshot, *, label: str) -> None:
         _failure(f"{label} must not be a hardlink")
 
 
-def _hash_stream(
-    stream: BinaryIO, *, label: str, maximum_size: int
-) -> tuple[str, int]:
+def _hash_stream(stream: BinaryIO, *, label: str, maximum_size: int) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
     try:
@@ -291,10 +285,7 @@ def _measure_once(
             if (
                 _identity(before_handle) != _identity(before_path)
                 or before_handle.size != before_path.size
-                or (
-                    expected_identity is not None
-                    and _identity(before_handle) != expected_identity
-                )
+                or (expected_identity is not None and _identity(before_handle) != expected_identity)
             ):
                 _failure(f"{label} changed before it was read")
             digest, size = _hash_stream(stream, label=label, maximum_size=maximum_size)
@@ -591,9 +582,7 @@ def _read_range(
     return raw
 
 
-def _authenticode_status_stream(
-    stream: BinaryIO, *, file_size: int, label: str
-) -> str:
+def _authenticode_status_stream(stream: BinaryIO, *, file_size: int, label: str) -> str:
     dos_header = _read_range(stream, offset=0, size=64, file_size=file_size, label=label)
     if dos_header[:2] != b"MZ":
         _failure(f"{label} is not a valid PE executable")
@@ -698,9 +687,7 @@ def _validate_source_paths(
             _failure(f"{role} executable has an unexpected source filename")
         identity = _file_identity(path, label=f"{role} executable")
         if identity in identities:
-            _failure(
-                f"verification contains duplicate inputs: {identities[identity]} and {role}"
-        )
+            _failure(f"verification contains duplicate inputs: {identities[identity]} and {role}")
         identities[identity] = role
         components[role] = _ValidatedPath(path, identity)
     if direct_identity is None or archive_identity is None:
@@ -748,8 +735,7 @@ def _validate_zip_info_metadata(infos: list[zipfile.ZipInfo]) -> None:
         if total_size > MAX_TOTAL_UNCOMPRESSED_BYTES:
             _failure("release ZIP exceeds the maximum uncompressed size")
         if info.file_size > 0 and (
-            info.compress_size == 0
-            or info.file_size > info.compress_size * MAX_COMPRESSION_RATIO
+            info.compress_size == 0 or info.file_size > info.compress_size * MAX_COMPRESSION_RATIO
         ):
             _failure("release ZIP member exceeds the maximum compression ratio")
 
@@ -769,9 +755,7 @@ def _decode_primitive_zip_name(raw_name: bytes) -> str:
     return name
 
 
-def _inspect_zip_envelope(
-    stream: BinaryIO, *, file_size: int
-) -> tuple[_PrimitiveZipRecord, ...]:
+def _inspect_zip_envelope(stream: BinaryIO, *, file_size: int) -> tuple[_PrimitiveZipRecord, ...]:
     """Bound and inspect the ZIP envelope before invoking ZipFile inventory."""
 
     if file_size < 22:
@@ -879,8 +863,7 @@ def _inspect_zip_envelope(
         if name_size > MAX_ZIP_MEMBER_NAME_BYTES:
             _failure("release ZIP member filename is too long")
         if (
-            version_made_by
-            != ((EXPECTED_ZIP_CREATE_SYSTEM << 8) | EXPECTED_ZIP_CREATE_VERSION)
+            version_made_by != ((EXPECTED_ZIP_CREATE_SYSTEM << 8) | EXPECTED_ZIP_CREATE_VERSION)
             or version_needed != EXPECTED_ZIP_EXTRACT_VERSION
             or flags != EXPECTED_ZIP_FLAGS
             or compression != EXPECTED_ZIP_COMPRESSION
@@ -932,8 +915,7 @@ def _inspect_zip_envelope(
         if uncompressed_size > MAX_MEMBER_BYTES:
             _failure("release ZIP member exceeds the maximum allowed size")
         if uncompressed_size > 0 and (
-            compressed_size == 0
-            or uncompressed_size > compressed_size * MAX_COMPRESSION_RATIO
+            compressed_size == 0 or uncompressed_size > compressed_size * MAX_COMPRESSION_RATIO
         ):
             _failure("release ZIP member exceeds the maximum compression ratio")
     if cursor != eocd_offset:
@@ -1115,9 +1097,7 @@ def _read_archive_contents(
             )
             stream.seek(0)
             try:
-                primitive_records = _inspect_zip_envelope(
-                    stream, file_size=before_path.size
-                )
+                primitive_records = _inspect_zip_envelope(stream, file_size=before_path.size)
                 primitive_by_name = {record.name: record for record in primitive_records}
                 stream.seek(0)
                 with zipfile.ZipFile(stream, "r") as bundle:
@@ -1259,9 +1239,7 @@ def _stable_executable(
                     stream, file_size=before_path.size, label=label
                 )
                 stream.seek(0)
-                digest, size = _hash_stream(
-                    stream, label=label, maximum_size=MAX_EXECUTABLE_BYTES
-                )
+                digest, size = _hash_stream(stream, label=label, maximum_size=MAX_EXECUTABLE_BYTES)
                 after_handle = _snapshot(os.fstat(stream.fileno()))
             after_path = _snapshot(path.stat(follow_symlinks=False))
         except IndependentManifestVerificationError:
@@ -1315,8 +1293,8 @@ def _verify_archive(
     )
     if _file_identity(archive, label="release archive") != archive_identity:
         _failure("release archive changed after path validation")
-    raw_manifest, raw_checksum, package_digest, package_size, package_name = (
-        _read_archive_contents(archive, expected_identity=archive_identity)
+    raw_manifest, raw_checksum, package_digest, package_size, package_name = _read_archive_contents(
+        archive, expected_identity=archive_identity
     )
 
     manifest_digest = hashlib.sha256(raw_manifest).hexdigest()
