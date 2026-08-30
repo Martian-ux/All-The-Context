@@ -865,5 +865,782 @@
     "E03",
     "E04",
     "E05"
-  ]
+  ],
+  "packet_a": {
+    "schema_version": 1,
+    "specification_id": "atc-memory-reliability-packet-a-v1",
+    "freeze_date": "2026-08-30",
+    "status": "frozen_specification_only",
+    "evidence_level": "L0",
+    "authority": "research_contract_only",
+    "canonical_integration": {
+      "extends_specification_id": "atc-memory-reliability-evaluation-v1",
+      "reuses_existing_sections": [
+        "capabilities",
+        "experiments",
+        "metric_families",
+        "budgets",
+        "statistics",
+        "promotion_gates",
+        "decision_states"
+      ],
+      "does_not_create_parallel_fixture_or_runtime": true
+    },
+    "non_displacing": {
+      "research_lane": true,
+      "active_frontier_remains_blocking": true,
+      "product_dag_remains_authoritative": true,
+      "product_prerequisite": false,
+      "reorders_product_dag": false,
+      "production_schema_authorized": false,
+      "production_data_collection_authorized": false,
+      "external_access_authorized": false,
+      "execution_authorized": false,
+      "promotion_authorized": false,
+      "benchmark_manifest_frozen": false
+    },
+    "content_policy": {
+      "synthetic_symbolic_only": true,
+      "real_personal_context": false,
+      "raw_prompts_or_transcripts": false,
+      "raw_commands": false,
+      "credentials_or_tokens": false,
+      "hidden_reasoning": false,
+      "executable_predicates_or_procedures": false,
+      "imported_text_is_untrusted_data": true,
+      "untrusted_text_can_change_policy_or_budget": false
+    },
+    "calibration_pilot": {
+      "episode_pairs": 48,
+      "task_family_count": 6,
+      "sanitized_fixture_repository_count": 2,
+      "client_model_build_strata_count": 2,
+      "repetitions_per_family_repository_stratum_cell": 2,
+      "purpose": [
+        "fixture_determinism",
+        "receipt_completeness",
+        "oracle_behavior",
+        "secret_refusal",
+        "project_isolation",
+        "lifecycle_cleanup",
+        "budget_accounting"
+      ],
+      "calibration_only": true,
+      "may_tune_mechanism": false,
+      "may_change_estimand": false,
+      "may_change_primary_contrast": false,
+      "may_change_control_set": false,
+      "may_set_confirmatory_threshold": false,
+      "may_open_holdout": false
+    },
+    "confirmatory_design": {
+      "provisional_paired_episode_count": 384,
+      "final_paired_episode_count": "unset_until_reproducible_power_simulation",
+      "episode_unit": "paired_episode",
+      "task_family_count": 6,
+      "sanitized_fixture_repository_count": 4,
+      "client_model_build_strata_count": 4,
+      "repetitions_per_family_repository_stratum_cell": 4,
+      "same_logical_episode_across_arms": true,
+      "matched_fields": [
+        "task",
+        "source_state",
+        "mutation_schedule",
+        "oracle",
+        "tools",
+        "permission_set",
+        "time_budget",
+        "predeclared_seed",
+        "client_build",
+        "model_build",
+        "reasoning_effort",
+        "context_budget",
+        "total_token_budget",
+        "latency_budget",
+        "cost_budget"
+      ],
+      "episode_ids": "unset_until_later_manifest_gate",
+      "reserve_policy": "unset_until_later_manifest_gate",
+      "deterministic_episode_seeds": "unset_until_later_manifest_gate"
+    },
+    "task_families": [
+      {"id": "BUG_FIX", "label": "bug fix"},
+      {"id": "REFACTOR", "label": "refactor"},
+      {"id": "RELEASE_PREPARATION", "label": "release preparation"},
+      {"id": "DOCUMENTATION_CONFIGURATION", "label": "documentation/configuration"},
+      {"id": "INCIDENT_INVESTIGATION", "label": "incident investigation"},
+      {"id": "CROSS_CLIENT_PROJECT_HANDOFF", "label": "cross-client project handoff"}
+    ],
+    "fixture_repository_contract": {
+      "repository_ids": "unset_until_later_manifest_gate",
+      "required_shapes": ["python", "typescript", "mixed_project"],
+      "content_policy": "sanitized_symbolic_fixture_only",
+      "fixture_ids_frozen_now": false,
+      "existing_logical_fixture_catalog_is_specification_input": true
+    },
+    "client_model_build_strata": {
+      "strata_ids": "unset_until_later_manifest_gate",
+      "count": 4,
+      "fixed_before_confirmatory_execution": true,
+      "client_and_model_build_are_recorded": true,
+      "reasoning_effort_is_recorded": true
+    },
+    "arm_vocabulary": [
+      {
+        "id": "NO_MEMORY",
+        "condition_id": "simple_no_memory",
+        "group": "simple_baseline",
+        "description": "No ATC memory or retained prior context.",
+        "promotion_role": "required_floor",
+        "unavailable_status": "SUPPORTED"
+      },
+      {
+        "id": "STATIC_TASK_NOTE",
+        "condition_id": "simple_static_task_note",
+        "group": "simple_baseline",
+        "description": "Fixed task note with no adaptive memory.",
+        "promotion_role": "required_simple_control",
+        "unavailable_status": "UNSUPPORTED"
+      },
+      {
+        "id": "STATIC_PROFILE",
+        "condition_id": "simple_static_profile",
+        "group": "simple_baseline",
+        "description": "Frozen compact user, project, or task profile with no adaptive updates.",
+        "promotion_role": "canonical_simple_baseline",
+        "unavailable_status": "UNSUPPORTED"
+      },
+      {
+        "id": "APPEND_LOG_SEARCH",
+        "condition_id": "simple_append_log_search",
+        "group": "simple_baseline",
+        "description": "Append-only event log with exact or lexical search and no canonical current-state model.",
+        "promotion_role": "required_retrieval_control",
+        "unavailable_status": "UNSUPPORTED"
+      },
+      {
+        "id": "CURRENT_RETRIEVAL",
+        "condition_id": "simple_current_retrieval",
+        "group": "simple_baseline",
+        "description": "Current authorized-record retrieval with lifecycle filtering.",
+        "promotion_role": "required_current_control",
+        "unavailable_status": "UNSUPPORTED"
+      },
+      {
+        "id": "SIMPLE_ATC_RETRIEVAL_V3",
+        "condition_id": "simple_atc_retrieval_v3",
+        "group": "simple_baseline",
+        "description": "Current ATC authorized retrieval and deterministic set compilation.",
+        "promotion_role": "canonical_existing_deterministic_baseline",
+        "unavailable_status": "UNSUPPORTED"
+      },
+      {
+        "id": "OPTIMIZED_CAPSULE",
+        "condition_id": "optimized_capsule",
+        "group": "simple_baseline",
+        "description": "Best feasible Project Context Capsule under the frozen disclosure and token budget.",
+        "promotion_role": "primary_continuity_baseline",
+        "unavailable_status": "UNSUPPORTED"
+      },
+      {
+        "id": "LONG_CONTEXT_CONTROL",
+        "condition_id": "simple_long_context",
+        "group": "simple_baseline",
+        "description": "Full feasible authorized prior transcript under matched model, context, latency, and cost budgets.",
+        "promotion_role": "required_when_supported",
+        "unavailable_status": "UNSUPPORTED"
+      },
+      {
+        "id": "BEST_NON_ATC_HYBRID",
+        "condition_id": "hybrid_best_non_atc",
+        "group": "hybrid",
+        "description": "Best non-ATC combination of eligible simple controls under the same budget.",
+        "promotion_role": "strongest_non_atc_baseline",
+        "unavailable_status": "UNSUPPORTED"
+      },
+      {
+        "id": "COMPETITOR_MEM0",
+        "condition_id": "competitor_mem0",
+        "group": "individual_competitor",
+        "description": "Pinned Mem0 adapter using only genuinely supported operations.",
+        "promotion_role": "individual_external_comparator",
+        "unavailable_status": "UNSUPPORTED",
+        "pinned_revision_required_at_manifest_freeze": true
+      },
+      {
+        "id": "COMPETITOR_GRAPHITI",
+        "condition_id": "competitor_graphiti",
+        "group": "individual_competitor",
+        "description": "Pinned Graphiti adapter using only genuinely supported operations.",
+        "promotion_role": "individual_external_comparator",
+        "unavailable_status": "UNSUPPORTED",
+        "pinned_revision_required_at_manifest_freeze": true
+      },
+      {
+        "id": "COMPETITOR_HINDSIGHT",
+        "condition_id": "competitor_hindsight",
+        "group": "individual_competitor",
+        "description": "Pinned Hindsight adapter using only genuinely supported operations.",
+        "promotion_role": "individual_external_comparator",
+        "unavailable_status": "UNSUPPORTED",
+        "pinned_revision_required_at_manifest_freeze": true
+      },
+      {
+        "id": "COMPETITOR_LETTA",
+        "condition_id": "competitor_letta",
+        "group": "individual_competitor",
+        "description": "Pinned Letta adapter using only genuinely supported operations.",
+        "promotion_role": "individual_external_comparator",
+        "unavailable_status": "UNSUPPORTED",
+        "pinned_revision_required_at_manifest_freeze": true
+      },
+      {
+        "id": "COMPETITOR_LANGMEM",
+        "condition_id": "competitor_langmem",
+        "group": "individual_competitor",
+        "description": "Pinned LangMem adapter using only genuinely supported operations.",
+        "promotion_role": "individual_external_comparator",
+        "unavailable_status": "UNSUPPORTED",
+        "pinned_revision_required_at_manifest_freeze": true
+      },
+      {
+        "id": "MATCHED_HYBRIDS",
+        "condition_id": "hybrid_atc_governed_or_mechanism_specific",
+        "group": "hybrid",
+        "description": "Capsule plus a preregistered checkpoint, reconciliation, M1, M3, or mechanism-specific cell with matched total tokens, latency, tools, and permissions.",
+        "promotion_role": "mechanism_comparison",
+        "unavailable_status": "UNSUPPORTED"
+      }
+    ],
+    "required_ablations": [
+      "working_checkpoints",
+      "episodic_outcome_records",
+      "temporal_relational_projections",
+      "procedure_distillation_and_retrieval",
+      "typed_event_activation",
+      "consequence_contracts_and_checkpoint_tokens",
+      "outcome_dependency_closure",
+      "full_atc_research_stack",
+      "checkpoint_without_reconciliation",
+      "reconciliation_without_m1_binding",
+      "m1_without_dependency_or_invalidation_closure",
+      "semantic_acknowledgement_challenge_vs_content_free_placebo",
+      "prospective_memory_without_negative_guards",
+      "prospective_memory_without_current_version_reread",
+      "prospective_memory_without_dependency_closure",
+      "prospective_memory_without_action_ceiling",
+      "conditional_failure_memory_without_disconfirmation",
+      "static_warranty_without_local_use_time_verification",
+      "m3_optimized_rebuild_vs_independent_full_rebuild",
+      "continuity_debt_aggregate_vs_category_vector",
+      "procedures_without_applicability_rollback_or_purge_closure"
+    ],
+    "mutation_classes": [
+      "BRANCH_OR_SOURCE_REVISION_CHANGE",
+      "CORRECTED_REQUIREMENTS",
+      "DEPENDENCY_CHANGE",
+      "ABANDONED_APPROACH",
+      "ORDINARY_DELETION",
+      "TERMINAL_PURGE",
+      "PROJECT_AMBIGUITY",
+      "EXTERNALLY_MODIFIED_FILES",
+      "STALE_CHECKPOINT_SUPERFICIALLY_PLAUSIBLE"
+    ],
+    "episode_contract": {
+      "minimum_sessions": 2,
+      "supported_client_switch_subset": true,
+      "between_session_mutations_are_predeclared": true,
+      "same_oracle_for_all_arms": true,
+      "same_permission_set_for_all_arms": true,
+      "same_tool_budget_for_all_arms": true,
+      "same_time_budget_for_all_arms": true,
+      "same_predeclared_seed_for_all_arms": true
+    },
+    "permission_contract": {
+      "same_across_arms": true,
+      "authorization_precedes_relevance": true,
+      "unknown_permission_state": "FAIL_CLOSED",
+      "unresolved_project_state": "ABSTAIN_NO_ISSUED_ARTIFACT",
+      "allowed": [
+        "predeclared_authorized_principal",
+        "exact_resolved_project_scope",
+        "sanitized_symbolic_fixture",
+        "bounded_deterministic_tool_stub",
+        "independent_oracle_or_harness"
+      ],
+      "forbidden": [
+        "unauthorized_candidates",
+        "cross_project_join",
+        "unresolved_project_issue_or_write",
+        "network_access",
+        "provider_access",
+        "credentials",
+        "real_personal_context",
+        "production_core_access",
+        "operator_core_access",
+        "external_effects",
+        "gold_labels",
+        "forbidden_sets",
+        "future_events",
+        "other_condition_outputs"
+      ],
+      "permission_change_requires_new_specification_version": true
+    },
+    "budget_contract": {
+      "fair_comparison_dimensions": [
+        "client_build",
+        "model_build",
+        "reasoning_effort",
+        "task_and_source_state",
+        "context_tokens",
+        "total_tokens",
+        "tool_calls",
+        "time",
+        "retry_budget",
+        "disclosure",
+        "latency",
+        "storage",
+        "monetary_cost",
+        "temperature",
+        "deterministic_seed"
+      ],
+      "local_reference": {
+        "deterministic_local_ingest_p95_ms_per_event_at_10000_objects": 25,
+        "authorized_query_compile_p95_ms_at_10000_objects": 150,
+        "working_checkpoint_export_p95_ms": 100,
+        "working_checkpoint_import_p95_ms": 100,
+        "correction_to_invalidation_p95_ms_at_1000_artifacts": 250,
+        "protected_token_consume_p99_ms": 100,
+        "deterministic_rebuild_seconds_at_10000_objects_and_100000_edges": 30,
+        "ordinary_compiled_context_tokens_maximum": 2048,
+        "specialized_agentic_context_tokens_maximum": 8192,
+        "specialized_upstream_override_must_be_reported": true
+      },
+      "cost_promotion": {
+        "frozen_price_sheet_required": true,
+        "failed_and_retried_calls_count": true,
+        "development_cost_reported_separately": true,
+        "maximum_end_to_end_cost_premium": 0.25,
+        "minimum_caos_gain_if_cost_premium_positive": 0.05
+      },
+      "environment_profile_required": [
+        "cpu",
+        "memory",
+        "operating_system",
+        "python",
+        "filesystem",
+        "cold_warm_definition",
+        "concurrency",
+        "background_load"
+      ]
+    },
+    "secret_refusal": {
+      "status": "frozen_before_assignment_or_storage",
+      "forbidden_categories": [
+        "credentials",
+        "token_like_values",
+        "private_keys",
+        "authorization_headers",
+        "session_cookies",
+        "raw_prompts",
+        "command_text",
+        "imported_prose",
+        "tool_model_or_provider_prose",
+        "executable_payloads",
+        "unbounded_content"
+      ],
+      "refusal_code": "SECRET_REFUSAL",
+      "not_a_failed_memory_episode": true,
+      "raw_value_not_retained_or_echoed": true
+    },
+    "hard_safety_rules": [
+      "UNAUTHORIZED_INFLUENCE",
+      "WRONG_PROJECT_INFLUENCE",
+      "STALE_PROTECTED_ACTION",
+      "DUPLICATE_EXECUTION",
+      "CORRECTION_NONCONVERGENCE",
+      "SECRET_PERSISTENCE",
+      "PURGE_RESIDUE",
+      "UNRESOLVED_IDENTITY_ISSUE",
+      "ARBITRARY_EXECUTABLE_PAYLOAD",
+      "SELF_ATTESTED_SAFETY_OR_SUCCESS",
+      "PROTECTED_ACTION_WITHOUT_CURRENT_EXACT_CONFIRMATION",
+      "INACCESSIBLE_CANDIDATE_DIAGNOSTIC_LEAK",
+      "MISSING_DEPENDENCY_OR_INCOMPLETE_REBUILD_INVENTORY",
+      "UNKNOWN_STATE_FAILS_CLOSED"
+    ],
+    "hard_safety_policy": {
+      "failure_is_non_compensable": true,
+      "failure_stops_affected_promotion": true,
+      "failure_cannot_be_averaged_away": true,
+      "zero_observed_failures_is_not_zero_risk": true,
+      "required_report_fields": [
+        "observed_count",
+        "denominator",
+        "confidence_bound",
+        "exposure",
+        "unexercised_surface"
+      ]
+    },
+    "cell_status_contract": {
+      "allowed_statuses": [
+        "SUPPORTED",
+        "UNSUPPORTED",
+        "BLOCKED",
+        "SKIPPED",
+        "NOT_EXERCISED",
+        "MISSING",
+        "UNKNOWN",
+        "ABSTENTION",
+        "ERROR",
+        "INFRASTRUCTURE_FAILURE",
+        "ATTRITION"
+      ],
+      "unsupported_status_requires": [
+        "reason",
+        "denominator_disposition",
+        "capability_boundary"
+      ],
+      "non_credit_statuses": [
+        "UNSUPPORTED",
+        "BLOCKED",
+        "SKIPPED",
+        "NOT_EXERCISED",
+        "MISSING",
+        "UNKNOWN",
+        "ABSTENTION",
+        "ERROR",
+        "INFRASTRUCTURE_FAILURE",
+        "ATTRITION"
+      ],
+      "indeterminate_pre_eligibility_code": "INDETERMINATE_PRE_ELIGIBILITY",
+      "indeterminate_pre_eligibility_in_E_w": false,
+      "missing_status_is_retained": true,
+      "after_outcome_cell_removal": false,
+      "after_outcome_status_relabeling": false
+    },
+    "caos_contract": {
+      "id": "current_authorized_outcome_success",
+      "abbreviation": "CAOS",
+      "aggregation": "all_required_components_true_at_episode_level",
+      "required_components": [
+        "task_oracle_pass",
+        "currentness_pass",
+        "authority_and_permission_pass",
+        "required_prerequisites_and_exceptions_pass",
+        "within_context_and_cost_budget",
+        "correction_checkpoint_pass"
+      ],
+      "hard_safety_is_non_compensable": true,
+      "missing_outcome": "UNKNOWN_NOT_PASS_OR_FAIL",
+      "report_components_separately": true
+    },
+    "opportunity_contract": {
+      "eligible_opportunity_denominator": "E_w",
+      "denominator_is_frozen_before_execution": true,
+      "denominator_is_mechanism_independent": true,
+      "eligibility_assigned_before_mechanism_result": true,
+      "same_episode_and_source_state_for_all_arms": true,
+      "every_eligible_opportunity_enters_E_w": true,
+      "abstention_error_unsupported_and_missing_remain_in_E_w": true,
+      "outcome_dependent_exclusion": false,
+      "after_outcome_denominator_reconstruction": false,
+      "circular_denominator_reference": false,
+      "mechanism_defined_scored_event_denominator": false,
+      "pre_eligibility_unknown_code": "INDETERMINATE_PRE_ELIGIBILITY",
+      "pre_eligibility_unknown_is_outside_E_w": true,
+      "coverage_formula": "recorded_eligible_opportunity_statuses / E_w",
+      "non_abstention_formula": "(E_w - abstentions - errors - unsupported) / E_w",
+      "workstreams": [
+        {
+          "id": "PROSPECTIVE_MEMORY",
+          "positive_opportunity_minimum": 50,
+          "negative_opportunity_minimum": 50,
+          "positive_definition": "due_or_cue_opportunity",
+          "negative_definition": "non_due_or_negative_control_opportunity",
+          "coverage_floor": 0.9,
+          "non_abstention_floor": 0.9,
+          "directional_method": "preregistered_one_sided_confidence_bound_or_test"
+        },
+        {
+          "id": "ADAPTIVE_ROUTING",
+          "positive_opportunity_minimum": 50,
+          "negative_opportunity_minimum": 50,
+          "positive_definition": "beneficial_route_opportunity",
+          "negative_definition": "no_benefit_or_wrong_route_opportunity",
+          "coverage_floor": 0.9,
+          "non_abstention_floor": 0.9,
+          "directional_method": "preregistered_one_sided_confidence_bound_or_test"
+        },
+        {
+          "id": "CONTINUITY_DEBT",
+          "positive_opportunity_minimum": 100,
+          "negative_opportunity_minimum": 100,
+          "positive_definition": "independently_adjudicated_avoidable_debt_opportunity",
+          "negative_definition": "independently_adjudicated_non_debt_opportunity",
+          "coverage_floor": 0.9,
+          "non_abstention_floor": 0.9,
+          "directional_method": "preregistered_one_sided_confidence_bound_or_test"
+        }
+      ]
+    },
+    "estimands": [
+      {
+        "id": "CAOS_BY_ARM",
+        "endpoint": "CAOS",
+        "numerator": "count of eligible episodes with CAOS=PASS",
+        "denominator": "eligible_episode_arm",
+        "direction": "higher_is_better",
+        "missingness": "missing_is_not_pass_and_denominator_is_retained",
+        "interval": "Wilson_95_percent"
+      },
+      {
+        "id": "PRIMARY_CONTINUITY_CAOS_DIFFERENCE",
+        "endpoint": "CAOS",
+        "contrast": "checkpoint_reconciliation_minus_optimized_capsule",
+        "unit": "paired_episode_stratified_by_family_repository_and_client_model_stratum",
+        "numerator": "paired CAOS difference",
+        "denominator": "all eligible paired episodes in the declared contrast",
+        "direction": "higher_is_better",
+        "noninferiority_margin": -0.02,
+        "interval": "one_sided_95_percent_exact_paired_or_stratified_bootstrap",
+        "multiplicity_family": "two_primary_contrasts_holm"
+      },
+      {
+        "id": "CONTINUITY_DEBT_RELATIVE_REDUCTION",
+        "endpoint": "avoidable_continuity_debt",
+        "contrast": "stronger_condition_minus_comparator_relative_reduction",
+        "denominator": "E_w_for_CONTINUITY_DEBT",
+        "direction": "higher_reduction_is_better",
+        "minimum_lower_bound": 0.2,
+        "interval": "one_sided_95_percent_confidence_bound",
+        "missingness": "abstention_error_unsupported_missing_and_unknown_receive_no_credit"
+      },
+      {
+        "id": "FIRST_ACTION_CORRECTNESS_DIFFERENCE",
+        "endpoint": "first_action_correctness",
+        "denominator": "eligible_episode_arm",
+        "direction": "higher_is_better",
+        "minimum_lower_bound": 0.0,
+        "interval": "one_sided_95_percent_confidence_bound"
+      },
+      {
+        "id": "CONTEXT_BUDGET_RATIO",
+        "endpoint": "context_tokens",
+        "denominator": "eligible_episode_arm",
+        "direction": "lower_is_better_subject_to_CAOS",
+        "constraints": [
+          "upper_bound_below_full_transcript_control",
+          "no_more_than_25_percent_above_optimized_capsule"
+        ],
+        "interval": "paired_bootstrap"
+      },
+      {
+        "id": "PROSPECTIVE_RECALL",
+        "endpoint": "due_opportunity_recall",
+        "denominator": "positive_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "direction": "higher_is_better",
+        "minimum_point_value": 0.8,
+        "minimum_lower_bound": 0.8,
+        "interval": "one_sided_95_percent_confidence_bound"
+      },
+      {
+        "id": "PROSPECTIVE_BLINDED_USEFULNESS",
+        "endpoint": "task_level_blinded_usefulness",
+        "denominator": "positive_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "direction": "higher_is_better",
+        "minimum_point_value": 0.7,
+        "minimum_lower_bound": 0.7,
+        "interval": "one_sided_95_percent_confidence_bound"
+      },
+      {
+        "id": "PROSPECTIVE_FALSE_ALARM_RATE",
+        "endpoint": "false_alarms",
+        "denominator": "negative_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "direction": "lower_is_better",
+        "maximum_upper_bound": 0.05,
+        "interval": "one_sided_95_percent_confidence_bound"
+      },
+      {
+        "id": "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY",
+        "endpoint": "outcome_utility",
+        "contrast": "evidence_compiled_prospective_memory_minus_deterministic_scheduler",
+        "denominator": "eligible paired opportunities in E_w",
+        "direction": "higher_is_better",
+        "minimum_relative_lower_bound": 0.05,
+        "interval": "one_sided_95_percent_confidence_bound",
+        "multiplicity_family": "two_primary_contrasts_holm"
+      },
+      {
+        "id": "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT",
+        "endpoint": "CAOS",
+        "contrast": "adaptive_router_minus_current_lexical_and_capsule_baseline",
+        "denominator": "fixed_target_task_opportunities_in_E_w",
+        "direction": "higher_is_better",
+        "minimum_lower_bound": 0.0,
+        "interval": "one_sided_95_percent_confidence_bound"
+      },
+      {
+        "id": "HARD_SAFETY_FAILURE_RATE",
+        "endpoint": "hard_safety_failure",
+        "numerator": "observed hard-safety failures",
+        "denominator": "applicable declared safety opportunities",
+        "direction": "lower_is_better",
+        "maximum_point_value": 0.0,
+        "interval": "exact_one_sided_95_percent_binomial_upper_bound"
+      }
+    ],
+    "statistics_contract": {
+      "individual_proportions": "Wilson_bounds",
+      "paired_differences": "exact_paired_or_stratified_bootstrap_bounds",
+      "deterministic_safety": "exact_one_sided_95_percent_Clopper_Pearson_upper_bound",
+      "primary_binary_test": "stratified_paired_difference_with_exact_or_randomization_reference",
+      "primary_binary_interval": "paired_or_stratified_bootstrap",
+      "multiplicity": "Holm_control_across_two_primary_contrasts",
+      "secondary_measures": "exploratory_labeled",
+      "raw_numerator_and_denominator_required": true,
+      "no_post_outcome_exclusions": true,
+      "no_imputation_of_missing_or_unknown": true,
+      "zero_observed_failures_reporting": "count_denominator_confidence_bound_exposure_unexercised_surface"
+    },
+    "power_simulation": {
+      "status": "required_future_reproducibility_artifact_not_added_or_executed",
+      "script_path": "bench/memory_reliability_power_simulation.py",
+      "script_version": "packet-a-power-v1",
+      "script_sha256": "unset_until_later_manifest_gate",
+      "input_manifest_paths": [
+        "bench/memory_reliability_spec.json",
+        "bench/memory_reliability_fixtures.json",
+        "Packet A fixture/task manifest"
+      ],
+      "input_manifest_sha256": "unset_until_later_manifest_gate",
+      "output_manifest_sha256": "unset_until_later_manifest_gate",
+      "simulation_seed": 20260829,
+      "simulation_repetitions": 100000,
+      "baseline_control_caos": 0.75,
+      "alternative_caos": 0.85,
+      "target_paired_effect": 0.1,
+      "paired_joint_distribution": {
+        "control_0_alternative_0": 0.1,
+        "control_0_alternative_1": 0.15,
+        "control_1_alternative_0": 0.05,
+        "control_1_alternative_1": 0.7
+      },
+      "paired_correlation": 0.404226,
+      "stratum_weights": "equal across six families, four repositories, and four client/model strata",
+      "allocation": "four repetitions per family/repository/stratum cell",
+      "estimand": "stratified paired CAOS difference, alternative minus control",
+      "test_statistic": "stratified paired difference with exact_or_randomization_reference",
+      "alpha": "familywise 0.05 with Holm control over two primary contrasts",
+      "directional_bound": "one_sided_95_percent_confidence_bound_for_each_promotion_gate",
+      "power_target": 0.9,
+      "noninferiority_margin": -0.02,
+      "missing_and_failure_policy": "packet_a.cell_status_contract_and_statistics_contract",
+      "provisional_confirmatory_n": 384,
+      "final_confirmatory_n": "unset_until_script_inputs_and_output_digest_reproduce_it",
+      "joint_distribution_sum_required": 1.0,
+      "derived_n_must_be_emitted": true,
+      "output_digest_must_be_emitted": true,
+      "changing_any_input_creates_new_specification_version": true
+    },
+    "later_manifest_prerequisites": [
+      "manifest_lists_reproduced_final_N_episode_ids_six_task_families_four_fixture_repositories_four_strata_four_repetitions_reserve_policy_and_deterministic_seeds",
+      "every_arm_baseline_control_primary_contrast_oracle_budget_permission_mutation_and_required_ablation_is_versioned_and_content_digested",
+      "power_script_path_version_script_digest_input_manifest_digest_and_output_manifest_digest_reproduce_N_384_under_frozen_inputs",
+      "calibration_fixture_determinism_receipt_completeness_oracle_behavior_secret_refusal_project_isolation_lifecycle_cleanup_and_budget_gates_pass",
+      "CAOS_hard_safety_raw_numerators_denominators_confidence_methods_Holm_control_opportunity_floors_and_missing_failed_run_dispositions_are_unchanged",
+      "benchmark_manifest_digest_is_recorded_before_any_confirmatory_result_is_read"
+    ],
+    "not_frozen_by_packet_a": [
+      "confirmatory_fixture_ids",
+      "benchmark_manifest",
+      "final_confirmatory_N",
+      "confirmatory_results",
+      "promotion_decision",
+      "product_schema",
+      "production_or_live_behavior",
+      "production_data_collection",
+      "external_access",
+      "release_or_support_claim"
+    ],
+    "execution_boundary": {
+      "packet_a_executed": false,
+      "benchmark_manifest_exists": false,
+      "confirmatory_results_exist": false,
+      "production_behavior_changed": false,
+      "model_or_provider_run_performed": false,
+      "l2_or_l3_packet_a_evidence_claimed": false,
+      "wave4_l2_provenance_is_historical_input_only": true
+    },
+    "provenance": {
+      "canonical_inputs": [
+        {
+          "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
+          "role": "Packet A section 6 and non-displacing boundary",
+          "sha256": "2aa14984d74a5f2cd268ddb2216aa1d69c839d09211073ea247e3b441b808e82"
+        },
+        {
+          "path": "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
+          "role": "canonical baseline ladder, metrics, budgets, and statistical program",
+          "sha256": "9926f7b13b0a5c5d02844a1ba1ddf1ce451d5e839ddc6fd33101ec7d06a7ece6"
+        },
+        {
+          "path": "docs/research/ATC_MEMORY_LAB_GOVERNANCE.md",
+          "role": "worker independence, evidence ladder, and supplier boundary",
+          "sha256": "67ca9c3ae53361d5f4b3ee2f5d972e9b94291ac0189a2f3a795e0a78dc578622"
+        },
+        {
+          "path": "docs/research/ATC_MEMORY_LAB_WAVE4_RESULTS_2026-07-23.md",
+          "role": "historical coordinator-reproduced M1/M3 result boundary",
+          "sha256": "994a4dce3172ae78ac34c05af5cfe7be00462b513c61ceb21a978a1690af4dcf"
+        },
+        {
+          "path": "docs/research/ATC_MEMORY_LAB_WAVE4_INDEPENDENT_REVIEW_2026-07-23.md",
+          "role": "historical independent review and deferred production gaps",
+          "sha256": "f6046658908cbb16e452cb05e19728320c207ff49ef341a18d701713f58ddf93"
+        },
+        {
+          "path": "docs/research/ATC_MEMORY_LAB_WAVE4_FALSIFICATION_ORACLE_2026-07-23.md",
+          "role": "historical frozen M1/M3 falsification and hard-gate vocabulary",
+          "sha256": "49acd4abee43ce2fc460c0be02793fc2de9d38e5a103ff1cbf00615133a3c04f"
+        },
+        {
+          "path": "bench/memory_reliability_fixtures.json",
+          "role": "existing logical symbolic fixture input; not a Packet A confirmatory manifest",
+          "sha256": "34dc0b6cf365ecd062d779628a57916ca1b3794263fd47911c4290692cf693ac"
+        }
+      ],
+      "historical_evidence_boundary": {
+        "wave4_m3": "L2_coordinator_reproduced_deterministic_symbolic_retained_contract_only",
+        "wave4_m1": "L2_coordinator_reproduced_deterministic_symbolic_retained_contract_only",
+        "wave4_e02": "five_UNSUPPORTED_and_one_NOT_EXERCISED_production_semantics",
+        "packet_a_claim": "L0_specification_only_no_execution_or_promotion"
+      },
+      "secret_refusal_preserved": true,
+      "imported_text_remains_untrusted_data": true
+    },
+    "validation_contract": {
+      "mode": "fail_closed",
+      "rejection_is_not_a_result": true,
+      "checks": [
+        "CIRCULAR_OR_AFTER_OUTCOME_DENOMINATOR",
+        "MISSING_CELL_OR_UNDECLARED_ARM",
+        "BAD_PERMISSION_OR_SAFETY_BOUNDARY",
+        "UNKNOWN_STATUS_OR_CATEGORY",
+        "NON_FINITE_NUMERIC_VALUE",
+        "DIGEST_DRIFT",
+        "ACCIDENTAL_EXECUTION_OR_MANIFEST_CLAIM"
+      ],
+      "unknown_categories_are_rejected": true,
+      "non_finite_values_are_rejected": true,
+      "digest_mismatch_is_rejected": true,
+      "execution_or_manifest_claim_is_rejected": true
+    },
+    "content_binding": {
+      "algorithm": "SHA-256",
+      "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
+      "scope": "complete_machine_readable_specification",
+      "specification_digest": "0dab5f9d4cc6461c96cd8a1921a230b7a8dda1e946b4816b9a05b1d43534b47a"
+    }
+  }
 }

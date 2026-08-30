@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 from collections import Counter
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 ROOT = Path(__file__).parents[2]
 SPEC_PATH = ROOT / "bench" / "memory_reliability_spec.json"
@@ -37,6 +42,310 @@ def _scenario(fixture: dict[str, Any], scenario_id: str) -> dict[str, Any]:
     scenarios = fixture["scenarios"]
     assert isinstance(scenarios, list)
     return next(value for value in scenarios if value["id"] == scenario_id)
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise AssertionError("Packet A must contain only finite JSON values") from exc
+    return encoded.encode("utf-8")
+
+
+def _packet_a_digest(spec: dict[str, Any]) -> str:
+    candidate = deepcopy(spec)
+    binding = candidate["packet_a"]["content_binding"]
+    binding.pop("specification_digest")
+    return hashlib.sha256(_canonical_json_bytes(candidate)).hexdigest()
+
+
+def _assert_finite_json(value: object) -> None:
+    if isinstance(value, float):
+        assert math.isfinite(value)
+    elif isinstance(value, dict):
+        for child in value.values():
+            _assert_finite_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            _assert_finite_json(child)
+
+
+def _assert_packet_a_contract(spec: dict[str, Any]) -> None:
+    packet = spec["packet_a"]
+    _assert_finite_json(packet)
+
+    assert packet["schema_version"] == 1
+    assert packet["specification_id"] == "atc-memory-reliability-packet-a-v1"
+    assert packet["freeze_date"] == "2026-08-30"
+    assert packet["status"] == "frozen_specification_only"
+    assert packet["evidence_level"] == "L0"
+    assert packet["authority"] == "research_contract_only"
+    assert packet["canonical_integration"]["extends_specification_id"] == spec["specification_id"]
+    assert packet["canonical_integration"]["does_not_create_parallel_fixture_or_runtime"] is True
+
+    non_displacing = packet["non_displacing"]
+    assert all(
+        non_displacing[key] is value
+        for key, value in {
+            "research_lane": True,
+            "active_frontier_remains_blocking": True,
+            "product_dag_remains_authoritative": True,
+            "product_prerequisite": False,
+            "reorders_product_dag": False,
+            "production_schema_authorized": False,
+            "production_data_collection_authorized": False,
+            "external_access_authorized": False,
+            "execution_authorized": False,
+            "promotion_authorized": False,
+            "benchmark_manifest_frozen": False,
+        }.items()
+    )
+
+    task_families = packet["task_families"]
+    assert [(item["id"], item["label"]) for item in task_families] == [
+        ("BUG_FIX", "bug fix"),
+        ("REFACTOR", "refactor"),
+        ("RELEASE_PREPARATION", "release preparation"),
+        ("DOCUMENTATION_CONFIGURATION", "documentation/configuration"),
+        ("INCIDENT_INVESTIGATION", "incident investigation"),
+        ("CROSS_CLIENT_PROJECT_HANDOFF", "cross-client project handoff"),
+    ]
+    assert packet["confirmatory_design"]["task_family_count"] == len(task_families) == 6
+    assert packet["calibration_pilot"]["task_family_count"] == len(task_families)
+
+    arms = packet["arm_vocabulary"]
+    arm_ids = [item["id"] for item in arms]
+    condition_ids = [item["condition_id"] for item in arms]
+    assert len(arm_ids) == len(set(arm_ids)) == 15
+    assert len(condition_ids) == len(set(condition_ids)) == 15
+    assert arm_ids == [
+        "NO_MEMORY",
+        "STATIC_TASK_NOTE",
+        "STATIC_PROFILE",
+        "APPEND_LOG_SEARCH",
+        "CURRENT_RETRIEVAL",
+        "SIMPLE_ATC_RETRIEVAL_V3",
+        "OPTIMIZED_CAPSULE",
+        "LONG_CONTEXT_CONTROL",
+        "BEST_NON_ATC_HYBRID",
+        "COMPETITOR_MEM0",
+        "COMPETITOR_GRAPHITI",
+        "COMPETITOR_HINDSIGHT",
+        "COMPETITOR_LETTA",
+        "COMPETITOR_LANGMEM",
+        "MATCHED_HYBRIDS",
+    ]
+    assert arms[0]["unavailable_status"] == "SUPPORTED"
+    assert all(item["unavailable_status"] == "UNSUPPORTED" for item in arms[1:])
+
+    required_ablations = packet["required_ablations"]
+    assert len(required_ablations) == len(set(required_ablations))
+    assert {
+        "checkpoint_without_reconciliation",
+        "reconciliation_without_m1_binding",
+        "m1_without_dependency_or_invalidation_closure",
+        "semantic_acknowledgement_challenge_vs_content_free_placebo",
+        "prospective_memory_without_negative_guards",
+        "prospective_memory_without_current_version_reread",
+        "prospective_memory_without_dependency_closure",
+        "prospective_memory_without_action_ceiling",
+        "m3_optimized_rebuild_vs_independent_full_rebuild",
+        "continuity_debt_aggregate_vs_category_vector",
+        "procedures_without_applicability_rollback_or_purge_closure",
+    } <= set(required_ablations)
+    assert set(packet["mutation_classes"]) == {
+        "BRANCH_OR_SOURCE_REVISION_CHANGE",
+        "CORRECTED_REQUIREMENTS",
+        "DEPENDENCY_CHANGE",
+        "ABANDONED_APPROACH",
+        "ORDINARY_DELETION",
+        "TERMINAL_PURGE",
+        "PROJECT_AMBIGUITY",
+        "EXTERNALLY_MODIFIED_FILES",
+        "STALE_CHECKPOINT_SUPERFICIALLY_PLAUSIBLE",
+    }
+
+    permissions = packet["permission_contract"]
+    assert permissions["same_across_arms"] is True
+    assert permissions["authorization_precedes_relevance"] is True
+    assert permissions["unknown_permission_state"] == "FAIL_CLOSED"
+    assert permissions["unresolved_project_state"] == "ABSTAIN_NO_ISSUED_ARTIFACT"
+    assert {
+        "network_access",
+        "provider_access",
+        "credentials",
+        "real_personal_context",
+        "production_core_access",
+        "operator_core_access",
+        "external_effects",
+        "gold_labels",
+        "future_events",
+        "other_condition_outputs",
+    } <= set(permissions["forbidden"])
+
+    secret_refusal = packet["secret_refusal"]
+    assert secret_refusal["status"] == "frozen_before_assignment_or_storage"
+    assert secret_refusal["refusal_code"] == "SECRET_REFUSAL"
+    assert secret_refusal["not_a_failed_memory_episode"] is True
+    assert secret_refusal["raw_value_not_retained_or_echoed"] is True
+
+    safety = packet["hard_safety_policy"]
+    assert safety["failure_is_non_compensable"] is True
+    assert safety["failure_stops_affected_promotion"] is True
+    assert safety["failure_cannot_be_averaged_away"] is True
+    assert packet["hard_safety_rules"]
+
+    cell_status = packet["cell_status_contract"]
+    statuses = set(cell_status["allowed_statuses"])
+    assert cell_status["indeterminate_pre_eligibility_code"] not in statuses
+    assert cell_status["indeterminate_pre_eligibility_in_E_w"] is False
+    assert cell_status["missing_status_is_retained"] is True
+    assert cell_status["after_outcome_cell_removal"] is False
+    assert cell_status["after_outcome_status_relabeling"] is False
+    assert set(cell_status["non_credit_statuses"]) <= statuses
+
+    opportunity = packet["opportunity_contract"]
+    assert opportunity["eligible_opportunity_denominator"] == "E_w"
+    assert opportunity["denominator_is_frozen_before_execution"] is True
+    assert opportunity["denominator_is_mechanism_independent"] is True
+    assert opportunity["eligibility_assigned_before_mechanism_result"] is True
+    assert opportunity["every_eligible_opportunity_enters_E_w"] is True
+    assert opportunity["outcome_dependent_exclusion"] is False
+    assert opportunity["after_outcome_denominator_reconstruction"] is False
+    assert opportunity["circular_denominator_reference"] is False
+    assert opportunity["mechanism_defined_scored_event_denominator"] is False
+    assert opportunity["pre_eligibility_unknown_is_outside_E_w"] is True
+    assert opportunity["coverage_formula"] == "recorded_eligible_opportunity_statuses / E_w"
+    assert opportunity["non_abstention_formula"] == (
+        "(E_w - abstentions - errors - unsupported) / E_w"
+    )
+    for workstream in opportunity["workstreams"]:
+        assert workstream["coverage_floor"] == 0.9
+        assert workstream["non_abstention_floor"] == 0.9
+        assert workstream["positive_opportunity_minimum"] > 0
+        assert workstream["negative_opportunity_minimum"] > 0
+
+    for estimand in packet["estimands"]:
+        denominator = str(estimand["denominator"]).lower()
+        assert "after" not in denominator
+        assert "outcome" not in denominator
+        assert "mechanism_result" not in denominator
+        assert "scored_event" not in denominator
+        assert estimand["direction"]
+        assert estimand["interval"]
+
+    power = packet["power_simulation"]
+    assert power["status"] == "required_future_reproducibility_artifact_not_added_or_executed"
+    assert power["script_path"] == "bench/memory_reliability_power_simulation.py"
+    assert power["script_version"] == "packet-a-power-v1"
+    assert power["simulation_seed"] == 20260829
+    assert power["simulation_repetitions"] == 100000
+    assert power["baseline_control_caos"] == 0.75
+    assert power["alternative_caos"] == 0.85
+    assert power["target_paired_effect"] == 0.1
+    assert sum(power["paired_joint_distribution"].values()) == 1.0
+    assert power["paired_correlation"] == 0.404226
+    assert power["provisional_confirmatory_n"] == 384
+    assert power["final_confirmatory_n"].startswith("unset_")
+
+    assert len(packet["later_manifest_prerequisites"]) == 6
+    assert packet["not_frozen_by_packet_a"] == [
+        "confirmatory_fixture_ids",
+        "benchmark_manifest",
+        "final_confirmatory_N",
+        "confirmatory_results",
+        "promotion_decision",
+        "product_schema",
+        "production_or_live_behavior",
+        "production_data_collection",
+        "external_access",
+        "release_or_support_claim",
+    ]
+
+    execution = packet["execution_boundary"]
+    assert all(
+        execution[key] is False
+        for key in (
+            "packet_a_executed",
+            "benchmark_manifest_exists",
+            "confirmatory_results_exist",
+            "production_behavior_changed",
+            "model_or_provider_run_performed",
+            "l2_or_l3_packet_a_evidence_claimed",
+        )
+    )
+    assert execution["wave4_l2_provenance_is_historical_input_only"] is True
+
+    binding = packet["content_binding"]
+    assert binding["algorithm"] == "SHA-256"
+    assert binding["scope"] == "complete_machine_readable_specification"
+    assert binding["specification_digest"] == _packet_a_digest(spec)
+
+    for source in packet["provenance"]["canonical_inputs"]:
+        source_path = ROOT / source["path"]
+        assert source_path.is_file()
+        assert hashlib.sha256(source_path.read_bytes()).hexdigest() == source["sha256"]
+    assert packet["provenance"]["secret_refusal_preserved"] is True
+    assert packet["provenance"]["imported_text_remains_untrusted_data"] is True
+
+
+def test_packet_a_specification_freeze_is_content_bound_and_non_displacing() -> None:
+    spec = _load(SPEC_PATH)
+    _assert_packet_a_contract(spec)
+
+
+def test_packet_a_validation_fails_closed_on_drift_and_unsafe_or_circular_inputs() -> None:
+    spec = _load(SPEC_PATH)
+
+    mutations: list[tuple[str, Any]] = []
+
+    circular = deepcopy(spec)
+    circular["packet_a"]["opportunity_contract"]["outcome_dependent_exclusion"] = True
+    mutations.append(("circular denominator", circular))
+
+    after_outcome = deepcopy(spec)
+    after_outcome["packet_a"]["estimands"][0]["denominator"] = "post_outcome_scored_events"
+    mutations.append(("after-outcome denominator", after_outcome))
+
+    missing_cell = deepcopy(spec)
+    missing_cell["packet_a"]["arm_vocabulary"].pop()
+    mutations.append(("missing arm cell", missing_cell))
+
+    bad_permission = deepcopy(spec)
+    bad_permission["packet_a"]["permission_contract"]["forbidden"].remove("network_access")
+    mutations.append(("bad permission boundary", bad_permission))
+
+    bad_safety = deepcopy(spec)
+    bad_safety["packet_a"]["hard_safety_policy"]["failure_cannot_be_averaged_away"] = False
+    mutations.append(("bad safety policy", bad_safety))
+
+    unknown_category = deepcopy(spec)
+    unknown_category["packet_a"]["cell_status_contract"]["allowed_statuses"].append(
+        "MADE_UP_STATUS"
+    )
+    mutations.append(("unknown category", unknown_category))
+
+    non_finite = deepcopy(spec)
+    non_finite["packet_a"]["power_simulation"]["power_target"] = float("nan")
+    mutations.append(("non-finite value", non_finite))
+
+    digest_drift = deepcopy(spec)
+    digest_drift["packet_a"]["freeze_date"] = "2099-01-01"
+    mutations.append(("digest drift", digest_drift))
+
+    execution_claim = deepcopy(spec)
+    execution_claim["packet_a"]["execution_boundary"]["confirmatory_results_exist"] = True
+    mutations.append(("execution claim", execution_claim))
+
+    for _label, candidate in mutations:
+        with pytest.raises(AssertionError):
+            _assert_packet_a_contract(candidate)
 
 
 def test_spec_is_explicitly_non_executable_and_fixes_first_five_order() -> None:
