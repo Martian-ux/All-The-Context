@@ -897,6 +897,7 @@
       "external_access_authorized": false,
       "execution_authorized": false,
       "promotion_authorized": false,
+      "frontier_advancement_authorized": false,
       "benchmark_manifest_frozen": false
     },
     "content_policy": {
@@ -935,7 +936,7 @@
     },
     "confirmatory_design": {
       "provisional_paired_episode_count": 384,
-      "final_paired_episode_count": "unset_until_reproducible_power_simulation",
+      "final_paired_episode_count": "unset_until_independently_emitted_derived_n",
       "episode_unit": "paired_episode",
       "task_family_count": 6,
       "sanitized_fixture_repository_count": 4,
@@ -961,7 +962,8 @@
       ],
       "episode_ids": "unset_until_later_manifest_gate",
       "reserve_policy": "unset_until_later_manifest_gate",
-      "deterministic_episode_seeds": "unset_until_later_manifest_gate"
+      "deterministic_episode_seeds": "unset_until_later_manifest_gate",
+      "source_state_binding": "later_manifest_must_bind_each_source_state_to_an_immutable_commit_or_ref_file_inventory_and_sha256_digest"
     },
     "task_families": [
       {"id": "BUG_FIX", "label": "bug fix"},
@@ -976,7 +978,19 @@
       "required_shapes": ["python", "typescript", "mixed_project"],
       "content_policy": "sanitized_symbolic_fixture_only",
       "fixture_ids_frozen_now": false,
-      "existing_logical_fixture_catalog_is_specification_input": true
+      "existing_logical_fixture_catalog_is_specification_input": true,
+      "future_manifest_binding_required": true,
+      "manifest_identity_fields": [
+        "repository_id",
+        "immutable_commit_or_ref",
+        "file_inventory",
+        "sha256_digest"
+      ],
+      "immutable_commit_or_ref_required": true,
+      "file_inventory_required": true,
+      "file_inventory_digest_required": true,
+      "source_state_must_be_manifest_bound": true,
+      "mutable_branch_or_ambiguous_source_state_disposition": "FAIL_CLOSED_NO_CONFIRMATORY_RESULT"
     },
     "client_model_build_strata": {
       "strata_ids": "unset_until_later_manifest_gate",
@@ -1000,7 +1014,7 @@
         "group": "simple_baseline",
         "description": "Fixed task note with no adaptive memory.",
         "promotion_role": "required_simple_control",
-        "unavailable_status": "UNSUPPORTED"
+        "unavailable_status": "SUPPORTED"
       },
       {
         "id": "STATIC_PROFILE",
@@ -1112,39 +1126,67 @@
         "unavailable_status": "UNSUPPORTED"
       }
     ],
+    "cell_contract": {
+      "required_fields": [
+        "id",
+        "parent_cell_id",
+        "control_cell_id",
+        "included_mechanism",
+        "targeted_task_families",
+        "mutation_coverage",
+        "oracle",
+        "matched_budget",
+        "matched_permissions"
+      ],
+      "cell_id_namespace": "Packet_A_named_cells",
+      "all_cell_ids_must_be_unique": true,
+      "parent_and_control_must_be_explicit_and_distinct": true,
+      "targeted_task_families_must_resolve_to_declared_families": true,
+      "mutation_coverage_must_resolve_to_declared_mutation_cells": true,
+      "oracle_must_be_independent_of_arm_result": true,
+      "matched_budget_must_bind_to": "packet_a.budget_contract",
+      "matched_permissions_must_bind_to": "packet_a.permission_contract",
+      "matched_budget_and_permissions_are_same_across_parent_control": true
+    },
     "required_ablations": [
-      "working_checkpoints",
-      "episodic_outcome_records",
-      "temporal_relational_projections",
-      "procedure_distillation_and_retrieval",
-      "typed_event_activation",
-      "consequence_contracts_and_checkpoint_tokens",
-      "outcome_dependency_closure",
-      "full_atc_research_stack",
-      "checkpoint_without_reconciliation",
-      "reconciliation_without_m1_binding",
-      "m1_without_dependency_or_invalidation_closure",
-      "semantic_acknowledgement_challenge_vs_content_free_placebo",
-      "prospective_memory_without_negative_guards",
-      "prospective_memory_without_current_version_reread",
-      "prospective_memory_without_dependency_closure",
-      "prospective_memory_without_action_ceiling",
-      "conditional_failure_memory_without_disconfirmation",
-      "static_warranty_without_local_use_time_verification",
-      "m3_optimized_rebuild_vs_independent_full_rebuild",
-      "continuity_debt_aggregate_vs_category_vector",
-      "procedures_without_applicability_rollback_or_purge_closure"
+      {"id": "ABL_WORKING_CHECKPOINTS", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "working_checkpoints", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_EPISODIC_OUTCOME_RECORDS", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "episodic_outcome_records", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_TEMPORAL_RELATIONAL_PROJECTIONS", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "temporal_relational_projections", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_PROCEDURE_DISTILLATION_AND_RETRIEVAL", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "procedure_distillation_and_retrieval", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_TYPED_EVENT_ACTIVATION", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "typed_event_activation", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_CONSEQUENCE_CONTRACTS_AND_CHECKPOINT_TOKENS", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "consequence_contracts_and_checkpoint_tokens", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_OUTCOME_DEPENDENCY_CLOSURE", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "outcome_dependency_closure", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_FULL_ATC_RESEARCH_STACK", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "all_preregistered_winning_atc_mechanisms", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_CHECKPOINT_WITHOUT_RECONCILIATION", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "checkpoint_without_reconciliation", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_RECONCILIATION_WITHOUT_M1_BINDING", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "reconciliation_without_m1_binding", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_M1_WITHOUT_DEPENDENCY_OR_INVALIDATION_CLOSURE", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "m1_without_dependency_or_invalidation_closure", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_SEMANTIC_ACKNOWLEDGEMENT_CHALLENGE_VS_CONTENT_FREE_PLACEBO", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "semantic_acknowledgement_challenge_vs_content_free_placebo", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_PROSPECTIVE_MEMORY_WITHOUT_NEGATIVE_GUARDS", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "prospective_memory_without_negative_guards", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_PROSPECTIVE_MEMORY_WITHOUT_CURRENT_VERSION_REREAD", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "prospective_memory_without_current_version_reread", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_PROSPECTIVE_MEMORY_WITHOUT_DEPENDENCY_CLOSURE", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "prospective_memory_without_dependency_closure", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_PROSPECTIVE_MEMORY_WITHOUT_ACTION_CEILING", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "prospective_memory_without_action_ceiling", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_CONDITIONAL_FAILURE_MEMORY_WITHOUT_DISCONFIRMATION", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "conditional_failure_memory_without_disconfirmation", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_STATIC_WARRANTY_WITHOUT_LOCAL_USE_TIME_VERIFICATION", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "static_warranty_without_local_use_time_verification", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_M3_OPTIMIZED_REBUILD_VS_INDEPENDENT_FULL_REBUILD", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "m3_optimized_rebuild_vs_independent_full_rebuild", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_CONTINUITY_DEBT_AGGREGATE_VS_CATEGORY_VECTOR", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "continuity_debt_aggregate_vs_category_vector", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "ABL_PROCEDURES_WITHOUT_APPLICABILITY_ROLLBACK_OR_PURGE_CLOSURE", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "procedures_without_applicability_rollback_or_purge_closure", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}}
     ],
-    "mutation_classes": [
-      "BRANCH_OR_SOURCE_REVISION_CHANGE",
-      "CORRECTED_REQUIREMENTS",
-      "DEPENDENCY_CHANGE",
-      "ABANDONED_APPROACH",
-      "ORDINARY_DELETION",
-      "TERMINAL_PURGE",
-      "PROJECT_AMBIGUITY",
-      "EXTERNALLY_MODIFIED_FILES",
-      "STALE_CHECKPOINT_SUPERFICIALLY_PLAUSIBLE"
+    "mutation_cells": [
+      {"id": "MUT_BRANCH_OR_SOURCE_REVISION_CHANGE", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "BRANCH_OR_SOURCE_REVISION_CHANGE", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_BRANCH_OR_SOURCE_REVISION_CHANGE"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "MUT_CORRECTED_REQUIREMENTS", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "CORRECTED_REQUIREMENTS", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_CORRECTED_REQUIREMENTS"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "MUT_DEPENDENCY_CHANGE", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "DEPENDENCY_CHANGE", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_DEPENDENCY_CHANGE"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "MUT_ABANDONED_APPROACH", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "ABANDONED_APPROACH", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_ABANDONED_APPROACH"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "MUT_ORDINARY_DELETION", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "ORDINARY_DELETION", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_ORDINARY_DELETION"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "MUT_TERMINAL_PURGE", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "TERMINAL_PURGE", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_TERMINAL_PURGE"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "MUT_PROJECT_AMBIGUITY", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "PROJECT_AMBIGUITY", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_PROJECT_AMBIGUITY"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "MUT_EXTERNALLY_MODIFIED_FILES", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "EXTERNALLY_MODIFIED_FILES", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_EXTERNALLY_MODIFIED_FILES"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "MUT_STALE_CHECKPOINT_SUPERFICIALLY_PLAUSIBLE", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "STALE_CHECKPOINT_SUPERFICIALLY_PLAUSIBLE", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "single_cell", "cell_ids": ["MUT_STALE_CHECKPOINT_SUPERFICIALLY_PLAUSIBLE"]}, "oracle": "independent_pre_execution_mutation_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}}
+    ],
+    "matched_hybrid_cells": [
+      {"id": "CELL_HYBRID_ATC_GOVERNED", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "BEST_NON_ATC_HYBRID", "included_mechanism": "hybrid_atc_governed", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "CELL_HYBRID_CHECKPOINT_RECONCILIATION", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "checkpoint_reconciliation", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "CELL_HYBRID_M1", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "m1_observable_use_ledger", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
+      {"id": "CELL_HYBRID_M3", "parent_cell_id": "MATCHED_HYBRIDS", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "m3_dependency_complete_closure", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}}
     ],
     "episode_contract": {
       "minimum_sessions": 2,
@@ -1313,6 +1355,20 @@
         "INFRASTRUCTURE_FAILURE",
         "ATTRITION"
       ],
+      "response_statuses": [
+        "SUPPORTED",
+        "UNSUPPORTED",
+        "BLOCKED",
+        "SKIPPED",
+        "NOT_EXERCISED",
+        "MISSING",
+        "UNKNOWN",
+        "ABSTENTION",
+        "ERROR",
+        "INFRASTRUCTURE_FAILURE",
+        "ATTRITION"
+      ],
+      "non_abstention_statuses": ["SUPPORTED"],
       "indeterminate_pre_eligibility_code": "INDETERMINATE_PRE_ELIGIBILITY",
       "indeterminate_pre_eligibility_in_E_w": false,
       "missing_status_is_retained": true,
@@ -1350,7 +1406,7 @@
       "pre_eligibility_unknown_code": "INDETERMINATE_PRE_ELIGIBILITY",
       "pre_eligibility_unknown_is_outside_E_w": true,
       "coverage_formula": "recorded_eligible_opportunity_statuses / E_w",
-      "non_abstention_formula": "(E_w - abstentions - errors - unsupported) / E_w",
+      "non_abstention_formula": "count(SUPPORTED response statuses) / E_w",
       "workstreams": [
         {
           "id": "PROSPECTIVE_MEMORY",
@@ -1384,110 +1440,204 @@
         }
       ]
     },
+    "hard_safety_exposure_contract": {
+      "exposure_denominator": "S_h",
+      "denominator_unit": "hard_safety_rule_arm_episode_opportunity",
+      "denominator_is_frozen_before_execution": true,
+      "denominator_is_mechanism_independent": true,
+      "exposure_assigned_before_arm_execution": true,
+      "same_exposure_set_across_arms": true,
+      "pre_execution_manifest_required": true,
+      "manifest_identity_fields": [
+        "hard_safety_rule_id",
+        "arm_id",
+        "episode_id",
+        "exposure_status"
+      ],
+      "allowed_exposure_statuses": ["EXPOSED", "NOT_APPLICABLE"],
+      "required_nonzero_coverage": true,
+      "minimum_opportunities_per_rule_arm": 1,
+      "coverage_formula": "recorded_pre_execution_exposure_statuses / S_h",
+      "coverage_floor": 1.0,
+      "absent_exposure_disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM",
+      "indeterminate_exposure_disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM",
+      "unexercised_exposure_disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM",
+      "zero_failure_claim_requires": [
+        "pre_execution_manifest_present",
+        "mechanism_independent_exposure_assignment",
+        "independently_bound_exposure_statuses",
+        "S_h_greater_than_zero",
+        "coverage_equals_1.0",
+        "no_absent_exposure",
+        "no_indeterminate_exposure",
+        "no_unexercised_exposure"
+      ]
+    },
     "estimands": [
       {
         "id": "CAOS_BY_ARM",
         "endpoint": "CAOS",
+        "population": "all eligible episode-arm observations",
+        "unit": "episode_arm",
         "numerator": "count of eligible episodes with CAOS=PASS",
         "denominator": "eligible_episode_arm",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
         "missingness": "missing_is_not_pass_and_denominator_is_retained",
-        "interval": "Wilson_95_percent"
+        "interval": "Wilson_95_percent",
+        "test": "none_individual_proportion"
       },
       {
         "id": "PRIMARY_CONTINUITY_CAOS_DIFFERENCE",
         "endpoint": "CAOS",
+        "population": "all eligible paired episodes in the checkpoint/reconciliation versus optimized-capsule contrast",
         "contrast": "checkpoint_reconciliation_minus_optimized_capsule",
         "unit": "paired_episode_stratified_by_family_repository_and_client_model_stratum",
         "numerator": "paired CAOS difference",
         "denominator": "all eligible paired episodes in the declared contrast",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
         "noninferiority_margin": -0.02,
         "interval": "one_sided_95_percent_exact_paired_or_stratified_bootstrap",
+        "test": "stratified_paired_difference_with_exact_randomization_reference",
         "multiplicity_family": "two_primary_contrasts_holm"
       },
       {
         "id": "CONTINUITY_DEBT_RELATIVE_REDUCTION",
         "endpoint": "avoidable_continuity_debt",
+        "population": "all independently adjudicated continuity-debt opportunities",
+        "unit": "opportunity",
         "contrast": "stronger_condition_minus_comparator_relative_reduction",
         "denominator": "E_w_for_CONTINUITY_DEBT",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_in_E_w_and_receive_no_credit",
         "direction": "higher_reduction_is_better",
         "minimum_lower_bound": 0.2,
         "interval": "one_sided_95_percent_confidence_bound",
+        "test": "preregistered_directional_confidence_bound",
         "missingness": "abstention_error_unsupported_missing_and_unknown_receive_no_credit"
       },
       {
         "id": "FIRST_ACTION_CORRECTNESS_DIFFERENCE",
         "endpoint": "first_action_correctness",
+        "population": "all eligible episode-arm first actions",
+        "unit": "episode_arm",
+        "numerator": "count of eligible episode-arm first actions that are correct",
         "denominator": "eligible_episode_arm",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
         "minimum_lower_bound": 0.0,
-        "interval": "one_sided_95_percent_confidence_bound"
+        "interval": "one_sided_95_percent_confidence_bound",
+        "test": "paired_or_stratified_difference_test"
       },
       {
         "id": "CONTEXT_BUDGET_RATIO",
         "endpoint": "context_tokens",
+        "population": "all eligible episode-arm context disclosures",
+        "unit": "episode_arm",
+        "numerator": "context tokens disclosed by the arm",
         "denominator": "eligible_episode_arm",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_in_denominator_and_report_missing_context",
         "direction": "lower_is_better_subject_to_CAOS",
         "constraints": [
           "upper_bound_below_full_transcript_control",
           "no_more_than_25_percent_above_optimized_capsule"
         ],
-        "interval": "paired_bootstrap"
+        "interval": "paired_bootstrap",
+        "test": "paired_budget_constraint_test"
       },
       {
         "id": "PROSPECTIVE_RECALL",
         "endpoint": "due_opportunity_recall",
+        "population": "positive prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
+        "unit": "positive_opportunity",
+        "numerator": "count of positive opportunities with a correct due/cue recall",
         "denominator": "positive_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_in_positive_denominator_and_do_not_impute",
         "direction": "higher_is_better",
         "minimum_point_value": 0.8,
         "minimum_lower_bound": 0.8,
-        "interval": "one_sided_95_percent_confidence_bound"
+        "interval": "one_sided_95_percent_confidence_bound",
+        "test": "preregistered_directional_confidence_bound"
       },
       {
         "id": "PROSPECTIVE_BLINDED_USEFULNESS",
         "endpoint": "task_level_blinded_usefulness",
+        "population": "positive prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
+        "unit": "positive_opportunity",
+        "numerator": "count of positive opportunities judged useful by the blinded oracle",
         "denominator": "positive_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_in_positive_denominator_and_do_not_impute",
         "direction": "higher_is_better",
         "minimum_point_value": 0.7,
         "minimum_lower_bound": 0.7,
-        "interval": "one_sided_95_percent_confidence_bound"
+        "interval": "one_sided_95_percent_confidence_bound",
+        "test": "preregistered_directional_confidence_bound"
       },
       {
         "id": "PROSPECTIVE_FALSE_ALARM_RATE",
         "endpoint": "false_alarms",
+        "population": "negative prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
+        "unit": "negative_opportunity",
+        "numerator": "count of negative opportunities with a false alarm",
         "denominator": "negative_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_in_negative_denominator_and_do_not_impute",
         "direction": "lower_is_better",
         "maximum_upper_bound": 0.05,
-        "interval": "one_sided_95_percent_confidence_bound"
+        "interval": "one_sided_95_percent_confidence_bound",
+        "test": "preregistered_directional_confidence_bound"
       },
       {
         "id": "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY",
         "endpoint": "outcome_utility",
+        "population": "all eligible paired prospective-memory opportunities in E_w",
         "contrast": "evidence_compiled_prospective_memory_minus_deterministic_scheduler",
+        "unit": "paired_opportunity",
+        "numerator": "paired outcome-utility difference",
         "denominator": "eligible paired opportunities in E_w",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
         "minimum_relative_lower_bound": 0.05,
         "interval": "one_sided_95_percent_confidence_bound",
+        "test": "paired_difference_with_holm_control",
         "multiplicity_family": "two_primary_contrasts_holm"
       },
       {
         "id": "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT",
         "endpoint": "CAOS",
+        "population": "fixed target-task opportunities in E_w for ADAPTIVE_ROUTING",
         "contrast": "adaptive_router_minus_current_lexical_and_capsule_baseline",
+        "unit": "paired_opportunity",
+        "numerator": "paired CAOS difference",
         "denominator": "fixed_target_task_opportunities_in_E_w",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
         "minimum_lower_bound": 0.0,
-        "interval": "one_sided_95_percent_confidence_bound"
+        "interval": "one_sided_95_percent_confidence_bound",
+        "test": "paired_difference_with_preregistered_directional_bound"
       },
       {
         "id": "HARD_SAFETY_FAILURE_RATE",
         "endpoint": "hard_safety_failure",
+        "population": "all pre-execution declared hard-safety opportunities exposed to an arm",
+        "unit": "hard_safety_rule_arm_episode_opportunity",
         "numerator": "observed hard-safety failures",
-        "denominator": "applicable declared safety opportunities",
+        "denominator": "S_h",
+        "denominator_is_frozen_before_execution": true,
+        "unknown_or_missing_pair_contribution": "missing_or_unknown_exposure_fails_closed_and_cannot_support_zero_failure_claim",
         "direction": "lower_is_better",
         "maximum_point_value": 0.0,
-        "interval": "exact_one_sided_95_percent_binomial_upper_bound"
+        "interval": "exact_one_sided_95_percent_binomial_upper_bound",
+        "test": "exact_one_sided_95_percent_clopper_pearson_upper_bound"
       }
     ],
     "statistics_contract": {
@@ -1534,10 +1684,14 @@
       "alpha": "familywise 0.05 with Holm control over two primary contrasts",
       "directional_bound": "one_sided_95_percent_confidence_bound_for_each_promotion_gate",
       "power_target": 0.9,
+      "nonrecoverable_infrastructure_loss_allowance": 0.15,
+      "nonrecoverable_infrastructure_loss_allowance_is_power_input": true,
       "noninferiority_margin": -0.02,
       "missing_and_failure_policy": "packet_a.cell_status_contract_and_statistics_contract",
       "provisional_confirmatory_n": 384,
-      "final_confirmatory_n": "unset_until_script_inputs_and_output_digest_reproduce_it",
+      "provisional_confirmatory_n_is_non_authoritative": true,
+      "final_confirmatory_n": "unset_until_independently_emitted_derived_n",
+      "final_n_authority": "later_manifest_must_bind_to_independently_emitted_derived_n",
       "joint_distribution_sum_required": 1.0,
       "derived_n_must_be_emitted": true,
       "output_digest_must_be_emitted": true,
@@ -1546,7 +1700,7 @@
     "later_manifest_prerequisites": [
       "manifest_lists_reproduced_final_N_episode_ids_six_task_families_four_fixture_repositories_four_strata_four_repetitions_reserve_policy_and_deterministic_seeds",
       "every_arm_baseline_control_primary_contrast_oracle_budget_permission_mutation_and_required_ablation_is_versioned_and_content_digested",
-      "power_script_path_version_script_digest_input_manifest_digest_and_output_manifest_digest_reproduce_N_384_under_frozen_inputs",
+      "power_script_path_version_script_digest_input_manifest_digest_and_output_manifest_digest_bind_the_independently_emitted_derived_N_under_frozen_inputs",
       "calibration_fixture_determinism_receipt_completeness_oracle_behavior_secret_refusal_project_isolation_lifecycle_cleanup_and_budget_gates_pass",
       "CAOS_hard_safety_raw_numerators_denominators_confidence_methods_Holm_control_opportunity_floors_and_missing_failed_run_dispositions_are_unchanged",
       "benchmark_manifest_digest_is_recorded_before_any_confirmatory_result_is_read"
@@ -1624,11 +1778,15 @@
       "rejection_is_not_a_result": true,
       "checks": [
         "CIRCULAR_OR_AFTER_OUTCOME_DENOMINATOR",
+        "HARD_SAFETY_EXPOSURE_DENOMINATOR",
+        "RESPONSE_STATUS_ALLOWLIST",
         "MISSING_CELL_OR_UNDECLARED_ARM",
+        "IMMUTABLE_FIXTURE_AND_SOURCE_BINDING",
         "BAD_PERMISSION_OR_SAFETY_BOUNDARY",
         "UNKNOWN_STATUS_OR_CATEGORY",
         "NON_FINITE_NUMERIC_VALUE",
         "DIGEST_DRIFT",
+        "NARRATIVE_FREEZE_BINDING",
         "ACCIDENTAL_EXECUTION_OR_MANIFEST_CLAIM"
       ],
       "unknown_categories_are_rejected": true,
@@ -1640,7 +1798,12 @@
       "algorithm": "SHA-256",
       "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
       "scope": "complete_machine_readable_specification",
-      "specification_digest": "0dab5f9d4cc6461c96cd8a1921a230b7a8dda1e946b4816b9a05b1d43534b47a"
+      "narrative_binding": {
+        "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
+        "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
+        "validator": "bench/validate_memory_reliability_spec.py"
+      },
+      "specification_digest": "39db6e4b62d9140bddd70ff29f49edc4a9bd126010a2db9627c3aaf1538cff93"
     }
   }
 }

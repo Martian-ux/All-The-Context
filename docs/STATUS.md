@@ -52,6 +52,30 @@ scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
 source and contract-test hardening only: no beta.7 candidate has been built,
 executed, scanned, submitted, approved, published, tagged, uploaded, or
 released, and no Defender or release-acceptance claim is made.
+### 2026-08-30 — Packet A specification freeze remains L0 and non-displacing
+
+Packet A is frozen as a single machine-readable research contract in
+[`bench/memory_reliability_spec.json`](../bench/memory_reliability_spec.json),
+with the narrative binding in
+[`ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md`](research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md)
+and the independently authored validator in
+[`bench/validate_memory_reliability_spec.py`](../bench/validate_memory_reliability_spec.py).
+The lane is L0 and non-displacing: the active product frontier and product DAG
+remain blocking, and Packet A does not advance the frontier, become a product
+prerequisite, authorize production data collection, change production/schema
+behavior, grant external access, or authorize promotion.
+
+The contract now requires a mechanism-independent pre-execution hard-safety
+exposure denominator with nonzero coverage, exact response-status accounting,
+immutable future fixture/source-state bindings, operational estimands, and
+structured named cells. The provisional 384 is non-authoritative; a later
+manifest must bind to the independently emitted derived N, and the frozen 15%
+nonrecoverable infrastructure-loss allowance remains a power input.
+
+No Packet A fixture/task manifest, benchmark execution, model/provider run,
+confirmatory result, production data collection, frontier advancement, or L2/L3
+Packet A claim exists. Rejection by the validator is a specification-integrity
+failure, not benchmark evidence.
 
 ### 2026-08-29 — protected-main integration and next proof frontier
 

@@ -46,6 +46,30 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+## ADR-168: Packet A freezes an L0 specification without advancing the frontier
+
+**Status:** accepted on 2026-08-30 as a non-displacing research decision. It
+does not authorize benchmark execution, production data collection, schema or
+runtime changes, external access, promotion, or advancement of the active
+product frontier.
+
+Packet A has one canonical machine-readable authority at
+[`bench/memory_reliability_spec.json`](../bench/memory_reliability_spec.json),
+bound to the narrative freeze and checked by the independently authored
+`bench/validate_memory_reliability_spec.py`. The contract requires an
+independent pre-execution hard-safety exposure denominator with nonzero
+coverage; absent, indeterminate, or unexercised exposure cannot support a
+zero-failure claim. Cell statuses, arms, provenance, estimands, hard-safety
+rules, trust/content policies, structured mutation/ablation/matched-hybrid
+cells, and execution boundaries are closed vocabularies.
+
+The provisional planning value 384 remains explicitly non-authoritative. A
+future manifest must bind to the independently emitted derived N and to each
+future fixture repository/source state by immutable commit/ref, file inventory,
+and SHA-256 digest. The 15% nonrecoverable infrastructure-loss allowance is a
+frozen power input. The existing product DAG and active frontier remain
+binding; Packet A evidence is L0 specification-only and creates no product or
+promotion credit.
 
 ## ADR-167: Candidate-owned evidence precedes Windows reassessment and live-client credit
 

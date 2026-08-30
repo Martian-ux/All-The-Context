@@ -5,7 +5,7 @@
 | Freeze date | August 30, 2026 |
 | Status | Frozen L0 research specification only |
 | Machine-readable authority | [`bench/memory_reliability_spec.json`](../../bench/memory_reliability_spec.json), `packet_a` |
-| Specification digest | `0dab5f9d4cc6461c96cd8a1921a230b7a8dda1e946b4816b9a05b1d43534b47a` |
+| Specification digest | `39db6e4b62d9140bddd70ff29f49edc4a9bd126010a2db9627c3aaf1538cff93` |
 | Execution | Not executed; no benchmark manifest or confirmatory result exists |
 | Product authority | None; the active product frontier and product DAG remain binding |
 
@@ -56,7 +56,8 @@ The complete arm vocabulary is content-bound in `packet_a.arm_vocabulary`:
 - `MATCHED_HYBRIDS` for `hybrid_atc_governed` and each preregistered
   mechanism-specific comparison.
 
-Every unavailable cell is explicitly `UNSUPPORTED` with its reason,
+`STATIC_TASK_NOTE` is always `SUPPORTED`. Every other unavailable cell is
+explicitly `UNSUPPORTED` with its reason,
 denominator disposition, and capability boundary. No competitor is wrapped in
 ATC authority, and no unsupported capability is silently emulated. Required
 ablations remain separate named cells, including the checkpoint/reconciliation/
@@ -94,6 +95,13 @@ candidate diagnostic leaks, incomplete dependency inventory, and unknown-state
 fail-open behavior. Zero observed failures must still report exposure,
 denominator, confidence bound, and unexercised surface.
 
+Hard-safety exposure is a separate pre-execution contract. An independent,
+mechanism-independent manifest must bind every hard-safety rule, arm, and
+episode opportunity into `S_h` before any arm runs. It requires at least one
+declared opportunity per rule/arm, complete exposure-status coverage, and no
+absent, indeterminate, or unexercised exposure. Any such gap fails closed and
+cannot support a zero-failure claim.
+
 ## Outcomes, denominators, and missingness
 
 CAOS (Current Authorized Outcome Success) is conjunctive at episode level. The
@@ -106,9 +114,12 @@ The independent eligible-opportunity denominator is frozen before execution as
 `E_w` for each workstream and arm. Eligibility is mechanism-independent and
 assigned before any mechanism result. Every eligible opportunity enters `E_w`,
 including an arm that abstains, errors, is unsupported, or has a missing run.
-Coverage is `recorded eligible-opportunity statuses / E_w`; non-abstention is
-`(E_w - abstentions - errors - unsupported) / E_w`. If eligibility cannot be
-decided before execution, the oracle records
+Coverage is `recorded eligible-opportunity statuses / E_w`; the exact response
+status allowlist is the full frozen cell-status vocabulary, and non-abstention
+is `count(SUPPORTED response statuses) / E_w`. Thus blocked, skipped,
+not-exercised, missing, unknown, infrastructure-failure, attrition,
+unsupported, abstention, and error statuses cannot disappear from the rate. If
+eligibility cannot be decided before execution, the oracle records
 `INDETERMINATE_PRE_ELIGIBILITY` outside `E_w`; it cannot be used later to remove
 an eligible opportunity. A mechanism-defined scored-event denominator,
 circular denominator, and after-outcome exclusion are prohibited.
@@ -124,9 +135,11 @@ The frozen estimands include CAOS by arm; the primary checkpoint/reconciliation
 versus optimized-capsule CAOS difference; relative Continuity Debt reduction;
 first-action correctness; context-token constraints; prospective recall,
 blinded usefulness, false alarms, and scheduler outcome utility; adaptive
-routing CAOS improvement; and hard-safety failure rate. Every numerical result
-must state its numerator, denominator, direction, interval/test, and missingness
-rule. Individual proportions use Wilson bounds; paired differences use exact or
+routing CAOS improvement; and hard-safety failure rate. Every estimand has an
+explicit unique ID, population, unit, numerator or contrast, frozen denominator,
+unknown/missing contribution, direction, and interval/test. Every numerical
+result must state those fields and its missingness rule. Individual proportions
+use Wilson bounds; paired differences use exact or
 stratified paired bootstrap bounds; deterministic safety uses an exact one-sided
 95% Clopper–Pearson upper bound; and Holm controls the two primary contrasts.
 Secondary measures are exploratory.
@@ -149,8 +162,13 @@ replicates, control CAOS 0.75, alternative CAOS 0.85, target paired effect
 0.10, the frozen joint distribution `(0.10, 0.15, 0.05, 0.70)`, correlation
 `0.404226`, equal family/repository/stratum weights, four repetitions per cell,
 familywise alpha 0.05 with Holm across two primary contrasts, one-sided 95%
-directional bounds, 90% power, and a -0.02 noninferiority margin. The script,
+directional bounds, 90% power, a -0.02 noninferiority margin, and a frozen 15%
+nonrecoverable infrastructure-loss allowance as a power input. The script,
 inputs, outputs, and digests are not present or executed in this freeze.
+
+The provisional planning value 384 is non-authoritative. The later manifest
+must bind to the independently emitted derived N from the reproducible power
+simulation; it must not replace that value with an assumed 384.
 
 The later benchmark-manifest freeze requires all six prerequisites recorded in
 `packet_a.later_manifest_prerequisites`: reproduced N and full episode layout;
@@ -159,8 +177,10 @@ mutations, and ablations; reproducible power-script/input/output digests;
 passing calibration and fixture/oracle/secret/isolation/lifecycle/budget gates;
 unchanged CAOS, safety, denominator, confidence, multiplicity, opportunity, and
 missingness rules; and a manifest digest recorded before any confirmatory result
-is read. The final N, confirmatory fixture IDs, and benchmark manifest remain
-unset until those gates pass.
+is read. Each future fixture repository and source state must also be bound by
+repository ID, immutable commit/ref, complete file inventory, and SHA-256
+content digest before results. The final N, confirmatory fixture IDs, and
+benchmark manifest remain unset until those gates pass.
 
 ## Content binding and validation
 
@@ -171,12 +191,37 @@ proposal, evaluation program, governance, Wave 4 result/review/oracle, and
 existing logical fixture input. The focused unit contract verifies those
 digests and rejects drift.
 
-The validator is deliberately fail-closed for circular or after-outcome
+`bench/validate_memory_reliability_spec.py` is independently authored with
+immutable expected vocabularies and a golden digest. It also validates this
+freeze Markdown's digest, evidence level, and execution-boundary block against
+the machine-readable authority. The validator is deliberately fail-closed for
+circular or after-outcome
 denominators, missing or undeclared cells, bad permission/safety boundaries,
 unknown statuses/categories, non-finite numbers, source/specification digest
 drift, and accidental execution, manifest, result, production, or L2/L3 claims.
 These are specification-integrity checks; a rejection is not a benchmark
 result.
+
+### Machine-readable binding
+
+The following block is authoritative only as a cross-document binding. The
+validator requires it to match `packet_a` exactly:
+
+```json
+{
+  "specification_digest": "39db6e4b62d9140bddd70ff29f49edc4a9bd126010a2db9627c3aaf1538cff93",
+  "evidence_level": "L0",
+  "execution_boundary": {
+    "packet_a_executed": false,
+    "benchmark_manifest_exists": false,
+    "confirmatory_results_exist": false,
+    "production_behavior_changed": false,
+    "model_or_provider_run_performed": false,
+    "l2_or_l3_packet_a_evidence_claimed": false,
+    "wave4_l2_provenance_is_historical_input_only": true
+  }
+}
+```
 
 No fixture, benchmark, model, provider, production Core, or external action was
 executed for this freeze. No raw context, credentials, imported prose, hidden
