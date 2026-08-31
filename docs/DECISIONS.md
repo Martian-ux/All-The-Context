@@ -1,5 +1,28 @@
 # Architecture decisions
 
+## ADR-180: Treat private candidate handoff failures as non-candidate evidence
+
+**Status:** accepted on 2026-08-31 after exact protected-main workflow run
+`33417852210` failed before artifact handoff and upload.
+
+The private replacement workflow may grant source/build-stage evidence without
+granting candidate-artifact evidence. In run `33417852210`, exact protected-main
+SHA `daac4e2964daf60885969f6ddd83f6abea9ac721` passed the source, version,
+hosted-matrix, Windows-runner, packaging, canonical archive, installed-
+component, and independent-verification gates. A malformed PowerShell boolean
+expression in the first handoff inventory guard then failed before the
+content-hygiene, final rehash, and upload steps.
+
+The guard is corrected as two explicitly parenthesized `Test-Path` calls joined
+by `-or`. The reviewed byte digest still binds the complete workflow, and a
+separate readable semantic assertion now requires this executable form so a
+coordinated digest update cannot silently reintroduce the invalid expression.
+An unsuccessful run that never reaches upload creates no downloadable private
+candidate and authorizes no execution, installation, Defender claim,
+publication, release, Microsoft submission, or dogfood mutation. Candidate
+acceptance must restart from a fresh exact protected-main dispatch after this
+fix merges and its hosted gates pass.
+
 ## ADR-179: Freeze exact beta.7 Windows candidate evidence without release credit
 
 **Status:** accepted on 2026-08-31 as private exact-artifact engineering

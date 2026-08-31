@@ -22,10 +22,10 @@ instead of guessing.
 At this boundary, protected main contains the merged Import Truth and the
 subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
 client read/explicit-memory foundations, Continuous Capture, replacement
-workflow hardening, updater/recovery trust hardening, and the Windows timing
-test correction through PR #101 at exact SHA
-`af3b6a15c2c10289bb89f62199b359041f2ea73d`. Protected-main CI run
-`33404631149` and CodeQL run `33404630078` completed successfully for that exact
+workflow hardening, updater/recovery trust hardening, the Windows timing test
+correction, and exact candidate-evidence reconciliation through PR #102 at
+exact SHA `daac4e2964daf60885969f6ddd83f6abea9ac721`. Protected-main CI run
+`33414796180` and CodeQL run `33414795653` completed successfully for that exact
 SHA. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
@@ -37,6 +37,24 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-31 — private replacement handoff guard correction
+
+Exact protected-main SHA `daac4e2964daf60885969f6ddd83f6abea9ac721` was
+dispatched through the approval-gated private Windows replacement workflow in
+run `33417852210`. The source, unused-version, exact hosted-matrix, Windows
+runner, build, packaging, archive, canonical-manifest, and independent-
+verification gates passed. The run then failed closed before handoff or upload
+because one PowerShell condition passed `-or` inside a `Test-Path` invocation
+instead of composing two parenthesized invocations.
+
+This focused correction makes the two path tests explicit and adds a readable
+semantic regression to the code-owned exact-workflow contract. Run
+`33417852210` produced no downloadable candidate artifact, and no candidate
+from that run was executed, installed, scanned by Defender, published, tagged,
+submitted to Microsoft, or placed into live dogfood. A new exact protected-main
+dispatch remains required after this correction merges and its hosted gates
+pass.
 
 ### 2026-08-31 — exact protected-main beta.7 Windows candidate evidence
 

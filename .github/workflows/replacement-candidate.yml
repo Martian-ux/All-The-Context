@@ -263,7 +263,10 @@ jobs:
           }
           $inventoryPath = Join-Path $handoff "handoff-inventory-v1.json"
           $inventoryChecksumPath = Join-Path $handoff "handoff-inventory-v1.json.sha256"
-          if (Test-Path -LiteralPath $inventoryPath -or Test-Path -LiteralPath $inventoryChecksumPath) {
+          if (
+            (Test-Path -LiteralPath $inventoryPath) -or
+            (Test-Path -LiteralPath $inventoryChecksumPath)
+          ) {
             throw "refusing to replace an existing handoff inventory"
           }
           $artifactName = "replacement-candidate-windows-$env:VERSION-$env:SOURCE_COMMIT"
