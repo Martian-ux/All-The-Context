@@ -43,6 +43,7 @@ from allthecontext.release_manifest import sha256_file
 from allthecontext.windows_update_helper import (
     HelperPhase,
     UpdateJournal,
+    bind_handoff_state,
     journal_failure_diagnostic,
 )
 from mcp import ClientSession, StdioServerParameters
@@ -302,6 +303,7 @@ def prepare_packaged_update_transaction(
         updated_at=now,
     )
     journal.save(journal_path)
+    bind_handoff_state(journal, journal_path)
     return transaction_helper, journal_path
 
 
