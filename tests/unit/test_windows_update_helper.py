@@ -357,6 +357,31 @@ def test_same_operation_forged_journal_is_rejected_by_state_binding(
     assert fixture.application.read_bytes() == fixture.old_application
 
 
+@pytest.mark.parametrize("authority", ["parent_pid", "database_backup"])
+def test_same_operation_forged_mutable_authority_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authority: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = json.loads(fixture.journal_path.read_text(encoding="utf-8"))
+    if authority == "parent_pid":
+        journal["parent_pid"] = 123
+    else:
+        replacement_backup = Path(journal["database_backup_path"]).with_name(
+            "unrelated.sqlite3"
+        )
+        replacement_backup.write_bytes(b"unrelated database authority")
+        digest, size = _digest(replacement_backup)
+        journal["database_backup_path"] = str(replacement_backup)
+        journal["database_backup_sha256"] = digest
+        journal["database_backup_size"] = size
+    fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
+
+    with pytest.raises(HelperError, match="application_state_mismatch"):
+        run_transaction(fixture.journal_path)
+
+    assert fixture.application.read_bytes() == fixture.old_application
+
+
 def test_failed_health_restores_previous_binary_mcp_and_database(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -600,7 +625,66 @@ def test_core_start_guard_recovers_interrupted_unbound_preparation(
     recovered = json.loads(fixture.state_path.read_text(encoding="utf-8"))
     assert recovered["phase"] == "error"
     assert recovered["transaction_path"] is None
+    assert recovered["operation_id"] is None
     assert recovered["handoff_identity"] is None
+
+
+def test_pending_handoff_transition_reconciles_either_crash_side(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    original_identity = state["handoff_identity"]
+    journal.parent_pid = 123
+    next_identity = helper_module.journal_handoff_identity(journal)
+
+    state["pending_handoff_identity"] = next_identity
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    original = UpdateJournal.load(fixture.journal_path)
+    reconciled = helper_module._validate_handoff_state(original, fixture.journal_path)
+    assert reconciled["handoff_identity"] == original_identity
+    assert reconciled["pending_handoff_identity"] is None
+
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["pending_handoff_identity"] = next_identity
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    journal.save(fixture.journal_path)
+    promoted = helper_module._validate_handoff_state(journal, fixture.journal_path)
+    assert promoted["handoff_identity"] == next_identity
+    assert promoted["pending_handoff_identity"] is None
+
+
+def test_terminal_replay_requires_completed_journal_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    assert run_transaction(fixture.journal_path) == 0
+    journal = json.loads(fixture.journal_path.read_text(encoding="utf-8"))
+    journal["replacement_sha256"] = "0" * 64
+    fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
+
+    with pytest.raises(HelperError, match="application_state_mismatch"):
+        run_transaction(fixture.journal_path)
+
+
+def test_terminal_journal_requires_state_first_terminal_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.phase = HelperPhase.COMMITTED
+    journal.save(fixture.journal_path)
+
+    with pytest.raises(HelperError, match="application_state_mismatch"):
+        run_transaction(fixture.journal_path)
+
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "restart_required"
+    assert state["transaction_path"] == str(fixture.journal_path)
 
 
 @pytest.mark.parametrize(

@@ -527,7 +527,7 @@ def _build_bundle_with_binding(
     selected_measurement = measurements[f"{role} executable"]
     selected_path = component_paths[role]
     if (
-        component["filename"] != selected_path.name
+        selected_path.name.casefold() not in manifest_module.SOURCE_BASENAMES[role]
         or component["sha256"] != selected_measurement.digest
         or component["size"] != selected_measurement.size
     ):
@@ -654,12 +654,10 @@ def _write_owned_new(
     path = output / filename
     if os.path.lexists(str(path)):
         raise WindowsSecuritySubmissionError(f"refusing to replace existing {label}")
-    created = False
     file_identity: _OutputFileIdentity | None = None
     stream: Any | None = None
     try:
         stream = path.open("xb")
-        created = True
         # Bind the exclusively created handle before the pathname can be trusted.
         file_identity = _output_stream_identity(stream)
         _write_all(stream, content)
@@ -676,30 +674,8 @@ def _write_owned_new(
         raise WindowsSecuritySubmissionError(f"refusing to replace existing {label}") from exc
     except BaseException as exc:
         if stream is not None:
-            try:
-                file_identity = _output_stream_identity(stream)
-            except WindowsSecuritySubmissionError:
-                file_identity = None
             with suppress(OSError):
                 stream.close()
-        if file_identity is not None:
-            try:
-                path_identity = _output_file_identity(path)
-                file_identity = (
-                    path_identity
-                    if _same_output_object(path_identity, file_identity)
-                    else None
-                )
-            except WindowsSecuritySubmissionError:
-                file_identity = None
-        if created:
-            _best_effort_remove_owned_new_file(
-                output,
-                identity,
-                path,
-                expected_identity=file_identity,
-                expected_names={*expected_names, filename},
-            )
         if isinstance(exc, OSError):
             raise WindowsSecuritySubmissionError(f"could not write {label}") from exc
         raise
@@ -714,72 +690,6 @@ def _write_all(stream: Any, content: bytes) -> None:
         offset += written
     stream.flush()
     os.fsync(stream.fileno())
-
-
-def _best_effort_remove_owned_new_file(
-    output: Path,
-    identity: _DirectoryIdentity,
-    path: Path,
-    *,
-    expected_identity: _OutputFileIdentity | None,
-    expected_names: set[str],
-) -> None:
-    """Remove a file created by this operation only while ownership is proven."""
-
-    try:
-        if expected_identity is None:
-            return
-        _assert_owned_output_directory(output, identity, expected_names=expected_names)
-        current = _output_file_identity(path)
-        if current != expected_identity:
-            return
-        path.unlink()
-        _assert_owned_output_directory(
-            output,
-            identity,
-            expected_names=expected_names - {path.name},
-        )
-    except (OSError, WindowsSecuritySubmissionError):
-        # A changed directory or file is retained rather than risking deletion
-        # of an object no longer owned by this operation.
-        return
-
-
-def _cleanup_owned_file(
-    output: Path,
-    identity: _DirectoryIdentity,
-    filename: str,
-    file_identity: _OutputFileIdentity,
-    *,
-    expected_names: set[str],
-) -> None:
-    """Unlink only while both the containing directory and file are unchanged."""
-
-    _assert_owned_output_directory(output, identity, expected_names=expected_names)
-    path = output / filename
-    if _output_file_identity(path) != file_identity:
-        raise WindowsSecuritySubmissionError("output file identity changed")
-    try:
-        path.unlink()
-    except OSError as exc:
-        raise WindowsSecuritySubmissionError(
-            "could not clean up security submission output"
-        ) from exc
-    _assert_owned_output_directory(
-        output,
-        identity,
-        expected_names=expected_names - {filename},
-    )
-
-
-def _remove_owned_output_directory(output: Path, identity: _DirectoryIdentity) -> None:
-    """Remove only an empty output directory still owned by this operation."""
-
-    try:
-        _assert_owned_output_directory(output, identity, expected_names=set())
-        output.rmdir()
-    except (OSError, WindowsSecuritySubmissionError):
-        return
 
 
 def create_bundle(
@@ -823,11 +733,9 @@ def create_bundle(
     )
     bundle_path = output / BUNDLE_FILE_NAME
     checksum_path = output / BUNDLE_CHECKSUM_FILE_NAME
-    bundle_identity: _OutputFileIdentity | None = None
-    checksum_identity: _OutputFileIdentity | None = None
     try:
         _revalidate_input_binding(input_binding)
-        bundle_identity = _write_owned_new(
+        _write_owned_new(
             output,
             output_identity,
             BUNDLE_FILE_NAME,
@@ -837,7 +745,7 @@ def create_bundle(
         )
         digest = hashlib.sha256(raw_bundle).hexdigest()
         _revalidate_input_binding(input_binding)
-        checksum_identity = _write_owned_new(
+        _write_owned_new(
             output,
             output_identity,
             BUNDLE_CHECKSUM_FILE_NAME,
@@ -847,25 +755,9 @@ def create_bundle(
         )
         _revalidate_input_binding(input_binding)
     except BaseException:
-        if checksum_identity is not None:
-            with suppress(WindowsSecuritySubmissionError):
-                _cleanup_owned_file(
-                    output,
-                    output_identity,
-                    BUNDLE_CHECKSUM_FILE_NAME,
-                    checksum_identity,
-                    expected_names={BUNDLE_FILE_NAME, BUNDLE_CHECKSUM_FILE_NAME},
-                )
-        if bundle_identity is not None:
-            with suppress(WindowsSecuritySubmissionError):
-                _cleanup_owned_file(
-                    output,
-                    output_identity,
-                    BUNDLE_FILE_NAME,
-                    bundle_identity,
-                    expected_names={BUNDLE_FILE_NAME},
-                )
-        _remove_owned_output_directory(output, output_identity)
+        # A pathname can be replaced after any identity check and before an
+        # unlink. Retain failed operation-owned output rather than risk deleting
+        # an object that this process did not create.
         raise
     return bundle_path, checksum_path
 

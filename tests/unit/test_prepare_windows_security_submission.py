@@ -203,6 +203,19 @@ def test_bundle_is_content_free_and_binds_all_verified_inputs(tmp_path: Path) ->
     )
 
 
+def test_main_candidate_accepts_verified_setup_source_name(tmp_path: Path) -> None:
+    stage = _stage(tmp_path)
+    bundle_path, _checksum_path = create_bundle(
+        **_bundle_kwargs(stage, stage.root / "main-submission", role="main")
+    )
+
+    payload = json.loads(bundle_path.read_bytes())
+    assert payload["candidate"]["filename"] == "AllTheContextSetup.exe"
+    assert payload["candidate"]["sha256"] == hashlib.sha256(
+        stage.components["main"].read_bytes()
+    ).hexdigest()
+
+
 def test_component_mutation_fails_closed_without_writing_output(tmp_path: Path) -> None:
     stage = _stage(tmp_path)
     stage.components["mcp"].write_bytes(_pe_image(certificate_offset=392, certificate_size=24))
@@ -410,62 +423,6 @@ def test_output_identity_change_blocks_exclusive_write(tmp_path: Path, monkeypat
     assert not (output / BUNDLE_FILE_NAME).exists()
 
 
-def test_cleanup_skips_unlink_when_output_identity_changes(tmp_path: Path, monkeypatch) -> None:
-    stage = _stage(tmp_path)
-    output, identity = submission_module._create_owned_output_directory(
-        stage.root / "submission", source_root=stage.root
-    )
-    bundle_identity = submission_module._write_owned_new(
-        output,
-        identity,
-        BUNDLE_FILE_NAME,
-        b"synthetic bundle",
-        label="security submission bundle",
-        expected_names=set(),
-    )
-    replacement = dataclass_replace(identity, inode=identity.inode + 1)
-    monkeypatch.setattr(submission_module, "_directory_identity", lambda _path: replacement)
-
-    with pytest.raises(WindowsSecuritySubmissionError, match="identity changed"):
-        submission_module._cleanup_owned_file(
-            output,
-            identity,
-            BUNDLE_FILE_NAME,
-            bundle_identity,
-            expected_names={BUNDLE_FILE_NAME},
-        )
-    assert (output / BUNDLE_FILE_NAME).read_bytes() == b"synthetic bundle"
-
-
-def test_cleanup_skips_unlink_when_output_file_identity_changes(
-    tmp_path: Path, monkeypatch
-) -> None:
-    stage = _stage(tmp_path)
-    output, identity = submission_module._create_owned_output_directory(
-        stage.root / "submission", source_root=stage.root
-    )
-    bundle_identity = submission_module._write_owned_new(
-        output,
-        identity,
-        BUNDLE_FILE_NAME,
-        b"synthetic bundle",
-        label="security submission bundle",
-        expected_names=set(),
-    )
-    replacement = dataclass_replace(bundle_identity, inode=bundle_identity.inode + 1)
-    monkeypatch.setattr(submission_module, "_output_file_identity", lambda _path: replacement)
-
-    with pytest.raises(WindowsSecuritySubmissionError, match="file identity changed"):
-        submission_module._cleanup_owned_file(
-            output,
-            identity,
-            BUNDLE_FILE_NAME,
-            bundle_identity,
-            expected_names={BUNDLE_FILE_NAME},
-        )
-    assert (output / BUNDLE_FILE_NAME).read_bytes() == b"synthetic bundle"
-
-
 def test_preparer_has_no_process_or_archive_execution_surface() -> None:
     source = Path(__file__).parents[2] / "scripts" / "prepare_windows_security_submission.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
@@ -486,6 +443,12 @@ def test_preparer_has_no_process_or_archive_execution_surface() -> None:
     text = source.read_text(encoding="utf-8").casefold()
     assert "subprocess" not in text
     assert "zipfile" not in text
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "unlink"
+        for node in ast.walk(tree)
+    )
 
 
 def test_component_identity_is_revalidated_between_verification_phases(
@@ -523,7 +486,7 @@ def test_source_root_identity_is_revalidated_between_verification_phases(
     assert not (tmp_path / "source-root" / "submission").exists()
 
 
-def test_component_change_after_last_validation_before_first_write_is_removed(
+def test_component_change_after_last_validation_retains_failed_output(
     tmp_path: Path, monkeypatch
 ) -> None:
     stage = _stage(tmp_path)
@@ -542,10 +505,13 @@ def test_component_change_after_last_validation_before_first_write_is_removed(
     output = stage.root / "submission"
     with pytest.raises(WindowsSecuritySubmissionError, match="mcp executable"):
         create_bundle(**_bundle_kwargs(stage, output))
-    assert not output.exists()
+    assert (output / BUNDLE_FILE_NAME).is_file()
+    assert not (output / BUNDLE_CHECKSUM_FILE_NAME).exists()
 
 
-def test_component_change_after_final_write_is_removed(tmp_path: Path, monkeypatch) -> None:
+def test_component_change_after_final_write_retains_failed_output(
+    tmp_path: Path, monkeypatch
+) -> None:
     stage = _stage(tmp_path)
     original = submission_module._write_owned_new
 
@@ -560,7 +526,8 @@ def test_component_change_after_final_write_is_removed(tmp_path: Path, monkeypat
     output = stage.root / "submission"
     with pytest.raises(WindowsSecuritySubmissionError, match="mcp executable"):
         create_bundle(**_bundle_kwargs(stage, output))
-    assert not output.exists()
+    assert (output / BUNDLE_FILE_NAME).is_file()
+    assert (output / BUNDLE_CHECKSUM_FILE_NAME).is_file()
 
 
 def test_selected_candidate_uses_stable_component_measurement(
@@ -619,7 +586,7 @@ def test_exclusive_output_handle_is_bound_before_first_write(
     assert events == ["capture", "write", "capture"]
 
 
-def test_failed_exclusive_write_cleans_only_owned_output(tmp_path: Path, monkeypatch) -> None:
+def test_failed_exclusive_write_retains_output_without_unlink(tmp_path: Path, monkeypatch) -> None:
     stage = _stage(tmp_path)
     original = submission_module._write_all
     calls = 0
@@ -636,4 +603,5 @@ def test_failed_exclusive_write_cleans_only_owned_output(tmp_path: Path, monkeyp
     output = stage.root / "submission"
     with pytest.raises(WindowsSecuritySubmissionError, match="security submission checksum"):
         create_bundle(**_bundle_kwargs(stage, output))
-    assert not output.exists()
+    assert (output / BUNDLE_FILE_NAME).is_file()
+    assert (output / BUNDLE_CHECKSUM_FILE_NAME).read_bytes() != b""

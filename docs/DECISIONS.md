@@ -15,20 +15,26 @@ artifact. The recovery journal is schema version 2 and records the copied
 recovery-helper digest and size. RunOnce registration, detached helper launch,
 replacement execution, diagnostics/health, rollback copies, and Core launch
 fail closed when the recorded file binding is absent or no longer matches.
-The application state also records a SHA-256 identity over the journal's
-immutable replacement, rollback, helper, path, version, and Core handoff
-authority. Recovery registration, launch, active state mutation, and the Core
-startup guard require that independently persisted identity. An interrupted
-preparation that never published the binding is reset before cutover so the
-unchanged old application may start. A `cutover_started` recovery always
+The application state also records current, pending, and narrowly retained
+completed SHA-256 identities over the journal's replacement, rollback,
+database-backup, helper, parent-process, path, version, and Core handoff
+authority. Authority-changing parent and stopped-database updates use a
+two-phase state/journal publication that reconciles a crash on either side.
+Recovery registration, launch, active state mutation, terminal replay, and the
+Core startup guard require the appropriate independently persisted identity.
+Terminal cleanup also requires the state-first terminal phase marker, so a
+journal-only progress mutation cannot skip cutover or rollback.
+An interrupted preparation that never published the binding clears its
+operation identity before cutover so the unchanged old application may start
+and the same candidate can be retried. A `cutover_started` recovery always
 re-runs the packaged installer and validates its complete application, MCP,
 recovery, and updater report; it may not infer a complete cutover from the main
 application alone.
 
-This decision intentionally does not claim cross-file atomic publication,
-recursive cleanup race closure, database-backup identity binding, or
-elimination of the portable validation-to-process-creation interval. Version-1
-recovery journals are rejected rather than silently upgraded.
+This decision intentionally does not claim literal cross-file atomicity,
+recursive cleanup race closure, or elimination of the portable validation-to-
+process-creation interval. Version-1 recovery journals are rejected rather
+than silently upgraded.
 
 ## ADR-177: Hermes integration is profile-local and splits retrieval from capture
 
@@ -5253,9 +5259,12 @@ and Windows drive-qualified names.
 The emitted JSON contains no candidate bytes, paths, credentials, logs, user
 context, or vendor assertion: only exact digests, sizes, filenames, roles,
 provenance binding, hold status, and empty detection placeholders. Publication
-creates a new output directory and exclusively creates its two files; existing
-output, symlink/reparse redirection, hardlinked output, directory identity
-changes, and cleanup races fail closed. The script does not execute binaries,
+creates a new output directory, binds the exclusively created handle before
+writing, revalidates every input after the final write, and exclusively creates
+its two files. Existing output, symlink/reparse redirection, hardlinked output,
+directory identity changes, and pathname replacement fail closed. A failed
+operation deliberately retains its bounded content-free output instead of
+attempting a raceable pathname unlink. The script does not execute binaries,
 open a release archive as an executable, contact Microsoft, or submit/upload
 anything. A fresh exact artifact and the physical Defender reassessment remain
 required before any release decision.

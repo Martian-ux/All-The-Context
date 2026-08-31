@@ -52,13 +52,17 @@ digest and size come from stable measurements of the actual verified bytes.
 Output publication captures the exclusively-created handle before the first
 write, refuses replacement, symlink/reparse redirection and hardlinked output,
 then revalidates every input after the final write. Unsafe cleanup after an
-ownership change is refused.
+ownership change is refused: failed bounded content-free output is retained
+rather than unlinked through a raceable pathname. NUL-truncated ZIP member
+names are rejected, and a verified main candidate may use either canonical
+installed or setup source naming while remaining digest-bound to the manifest.
 
 The preparer never executes a candidate or treats an archive as executable,
 contacts Microsoft, uploads or publishes anything, or asserts Defender,
 malware, signing, clearance, or release acceptance. Focused synthetic coverage
-passes 47 tests locally, including adversarial phase/final-write swaps and partial-write
-cleanup. A fresh exact Windows candidate, Defender submission/reassessment, and
+passes 49 tests locally, including adversarial phase/final-write swaps,
+pathname retention, main-source naming, and partial writes. A fresh exact Windows
+candidate, Defender submission/reassessment, and
 release acceptance remain open.
 
 ### 2026-08-31 — focused updater/recovery trust hardening
@@ -73,18 +77,22 @@ SHA-256 and size; registration and detached launch verify that binding before
 touching RunOnce or creating a process. Replacement and installed-application
 files receive the same bounded digest/identity checks before subprocess and
 Core launch, and rollback sources reject linked or multi-link files.
-Application state independently binds the immutable journal handoff authority;
-recovery registration, launch, active state updates, and the Core startup guard
-reject a same-operation replacement journal. An interrupted preparation that
-never publishes this binding resets before cutover and leaves the old app
-available. Recovery from `cutover_started` re-runs the packaged installer and
+Application state independently binds the journal's replacement, rollback,
+database-backup, helper, parent-process, path, version, and Core handoff
+authority through crash-reconcilable current/pending/completed identities.
+Recovery registration, launch, active state updates, terminal replay, and the
+Core startup guard reject a same-operation replacement journal. Terminal replay
+also requires the state-first terminal phase marker. An interrupted
+preparation that never publishes this binding clears its operation before
+cutover, leaves the old app available, and permits the same candidate to retry.
+Recovery from `cutover_started` re-runs the packaged installer and
 revalidates all four installed components instead of trusting the main binary
 as proof of a complete cutover.
 
-The focused updater/recovery suite passes 90 tests on Windows Python 3.14.3.
+The focused updater/recovery suite passes 95 tests on Windows Python 3.12.10.
 This is source-level synthetic/mock evidence only. It does not close the
-cross-file publication interval, recursive cleanup race, database-backup
-identity, final validation-to-process-creation interval, exact packaged/live-
+literal cross-file publication interval, recursive cleanup race, final
+validation-to-process-creation interval, exact packaged/live-
 client behavior, or release acceptance. Existing version-1 recovery journals
 fail closed and require a fresh update transaction.
 

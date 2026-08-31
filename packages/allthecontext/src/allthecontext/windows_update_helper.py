@@ -448,18 +448,10 @@ class UpdateJournal:
 
 
 def journal_handoff_identity(journal: UpdateJournal) -> str:
-    """Bind immutable transaction authority independently of mutable phase state."""
+    """Bind transaction authority independently of mutable progress fields."""
 
     value = asdict(journal)
-    for mutable in (
-        "phase",
-        "parent_pid",
-        "database_backup_path",
-        "database_backup_sha256",
-        "database_backup_size",
-        "updated_at",
-        "last_error_code",
-    ):
+    for mutable in ("phase", "updated_at", "last_error_code"):
         value.pop(mutable)
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
         "ascii"
@@ -468,17 +460,74 @@ def journal_handoff_identity(journal: UpdateJournal) -> str:
 
 
 def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
-    state = _read_json(Path(journal.state_path), MAX_STATE_BYTES)
+    state_path = Path(journal.state_path)
+    state = _read_json(state_path, MAX_STATE_BYTES)
     expected_path = journal_path.resolve()
     transaction_path = state.get("transaction_path")
     if (
         state.get("operation_id") != journal.operation_id
         or not isinstance(transaction_path, str)
         or Path(transaction_path).resolve() != expected_path
-        or state.get("handoff_identity") != journal_handoff_identity(journal)
     ):
         raise HelperError("application_state_mismatch")
-    return state
+    identity = journal_handoff_identity(journal)
+    current = state.get("handoff_identity")
+    pending = state.get("pending_handoff_identity")
+    if identity == current and _valid_digest(current):
+        if pending is not None:
+            if not _valid_digest(pending):
+                raise HelperError("application_state_mismatch")
+            state["pending_handoff_identity"] = None
+            _atomic_json(state_path, state)
+        return state
+    if identity == pending and _valid_digest(pending) and _valid_digest(current):
+        state["handoff_identity"] = pending
+        state["pending_handoff_identity"] = None
+        _atomic_json(state_path, state)
+        return state
+    raise HelperError("application_state_mismatch")
+
+
+def _transition_handoff_state(
+    journal: UpdateJournal,
+    journal_path: Path,
+    *,
+    previous_identity: str,
+) -> str:
+    """Publish an authority-changing journal update with crash reconciliation."""
+
+    state_path = Path(journal.state_path)
+    state = _read_json(state_path, MAX_STATE_BYTES)
+    transaction_path = state.get("transaction_path")
+    identity = journal_handoff_identity(journal)
+    if (
+        state.get("operation_id") != journal.operation_id
+        or not isinstance(transaction_path, str)
+        or Path(transaction_path).resolve() != journal_path.resolve()
+        or state.get("handoff_identity") != previous_identity
+        or state.get("pending_handoff_identity") is not None
+        or not _valid_digest(previous_identity)
+    ):
+        raise HelperError("application_state_mismatch")
+    if identity == previous_identity:
+        journal.save(journal_path)
+        return identity
+    state["pending_handoff_identity"] = identity
+    _atomic_json(state_path, state)
+    journal.save(journal_path)
+    promoted = _read_json(state_path, MAX_STATE_BYTES)
+    if (
+        promoted.get("operation_id") != journal.operation_id
+        or promoted.get("transaction_path") != transaction_path
+        or promoted.get("handoff_identity") != previous_identity
+        or promoted.get("pending_handoff_identity") != identity
+    ):
+        raise HelperError("application_state_mismatch")
+    promoted["handoff_identity"] = identity
+    promoted["pending_handoff_identity"] = None
+    _atomic_json(state_path, promoted)
+    _validate_handoff_state(journal, journal_path)
+    return identity
 
 
 def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
@@ -494,9 +543,12 @@ def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
         or not isinstance(transaction_path, str)
         or Path(transaction_path).resolve() != journal_path.resolve()
         or state.get("handoff_identity") not in {None, identity}
+        or state.get("pending_handoff_identity") is not None
     ):
         raise HelperError("application_state_mismatch")
     state["handoff_identity"] = identity
+    state["pending_handoff_identity"] = None
+    state["completed_handoff_identity"] = None
     _atomic_json(state_path, state)
     _validate_handoff_state(journal, journal_path)
     return identity
@@ -891,6 +943,7 @@ def _copy_verified(source: Path, target: Path, digest: str, size: int) -> None:
 def _refresh_database_backup(journal: UpdateJournal, journal_path: Path) -> None:
     """Capture the final stopped-Core database before any replacement can run."""
 
+    previous_identity = journal_handoff_identity(journal)
     database = Path(journal.database_path)
     initial_backup = Path(journal.database_backup_path)
     backup = initial_backup.parent / f"core-{journal.operation_id}-stopped.sqlite3"
@@ -919,7 +972,11 @@ def _refresh_database_backup(journal: UpdateJournal, journal_path: Path) -> None
         journal.database_backup_sha256 = digest
         journal.database_backup_size = size
         journal.last_error_code = None
-        journal.save(journal_path)
+        _transition_handoff_state(
+            journal,
+            journal_path,
+            previous_identity=previous_identity,
+        )
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -999,11 +1056,19 @@ def _update_state(
     if value.get("operation_id") != journal.operation_id:
         raise HelperError("application_state_mismatch")
     transaction_path = value.get("transaction_path")
+    journal_identity = journal_handoff_identity(journal)
+    if journal.phase in TERMINAL_PHASES and value.get("phase") != phase:
+        # Terminal cleanup is the second half of a state-first publication.
+        # A journal whose progress marker was changed directly must not skip
+        # cutover or rollback merely because progress fields are not authority.
+        raise HelperError("application_state_mismatch")
     if (
         transaction_path is None
         and clear_transaction
         and value.get("phase") == phase
         and value.get("handoff_identity") is None
+        and value.get("pending_handoff_identity") is None
+        and value.get("completed_handoff_identity") == journal_identity
     ):
         value.update(
             {
@@ -1013,6 +1078,8 @@ def _update_state(
                 "downloaded_path": None,
                 "last_error": error,
                 "handoff_identity": None,
+                "pending_handoff_identity": None,
+                "completed_handoff_identity": journal_identity,
             }
         )
         _atomic_json(path, value)
@@ -1035,6 +1102,8 @@ def _update_state(
             "last_error": error,
             "transaction_path": None if clear_transaction else transaction_path,
             "handoff_identity": None if clear_transaction else value["handoff_identity"],
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": journal_identity if clear_transaction else None,
         }
     )
     _atomic_json(path, value)
@@ -1172,8 +1241,13 @@ def run_transaction(journal_path: Path) -> int:
                 journal.phase = HelperPhase.WAITING_FOR_PARENT
                 journal.save(resolved)
                 _wait_for_parent(journal.parent_pid)
+                previous_identity = journal_handoff_identity(journal)
                 journal.parent_pid = 0
-                journal.save(resolved)
+                _transition_handoff_state(
+                    journal,
+                    resolved,
+                    previous_identity=previous_identity,
+                )
                 _refresh_database_backup(journal, resolved)
             if journal.phase in {
                 HelperPhase.WAITING_FOR_PARENT,
@@ -1252,8 +1326,13 @@ def ensure_recovery_before_core() -> bool:
                 "phase": "error",
                 "last_error": "The update stopped before installation and was reset safely",
                 "downloaded_path": None,
+                "backup_path": None,
+                "operation_id": None,
+                "manifest_identity": None,
                 "transaction_path": None,
                 "handoff_identity": None,
+                "pending_handoff_identity": None,
+                "completed_handoff_identity": None,
             }
         )
         try:

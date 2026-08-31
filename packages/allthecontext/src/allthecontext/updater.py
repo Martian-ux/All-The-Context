@@ -128,6 +128,8 @@ class UpdateState:
     recovery_attempts: int = 0
     manifest_identity: str | None = None
     handoff_identity: str | None = None
+    pending_handoff_identity: str | None = None
+    completed_handoff_identity: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -980,6 +982,8 @@ class UpdateManager:
                 state.transaction_path,
                 state.manifest_identity,
                 state.handoff_identity,
+                state.pending_handoff_identity,
+                state.completed_handoff_identity,
             )
             if any(item is not None and not isinstance(item, str) for item in optional_strings):
                 raise ValueError("invalid state string")
@@ -1006,14 +1010,16 @@ class UpdateManager:
                 or any(character not in "0123456789abcdef" for character in state.manifest_identity)
             ):
                 raise ValueError("invalid manifest identity")
-            if state.handoff_identity is not None and (
-                len(state.handoff_identity) != 64
-                or any(
-                    character not in "0123456789abcdef"
-                    for character in state.handoff_identity
-                )
+            for identity in (
+                state.handoff_identity,
+                state.pending_handoff_identity,
+                state.completed_handoff_identity,
             ):
-                raise ValueError("invalid handoff identity")
+                if identity is not None and (
+                    len(identity) != 64
+                    or any(character not in "0123456789abcdef" for character in identity)
+                ):
+                    raise ValueError("invalid handoff identity")
             return state
         except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
             if self.state_path.exists():
@@ -1066,10 +1072,20 @@ class UpdateManager:
             if not transaction_valid:
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 invalid = True
-        elif self.state.handoff_identity is not None:
+        elif (
+            self.state.handoff_identity is not None
+            or self.state.pending_handoff_identity is not None
+        ):
             self.state.handoff_identity = None
+            self.state.pending_handoff_identity = None
             invalid = True
+        elif self.state.completed_handoff_identity is not None:
+            # A completed binding exists only for the narrow terminal RunOnce
+            # replay interval; an initialized application no longer needs it.
+            self.state.completed_handoff_identity = None
         if invalid:
             self.state.phase = UpdatePhase.ERROR
             self.state.last_error = "Persisted update paths were invalid and were reset safely"
@@ -1090,6 +1106,8 @@ class UpdateManager:
         self.state.manifest_identity = None
         self.state.transaction_path = None
         self.state.handoff_identity = None
+        self.state.pending_handoff_identity = None
+        self.state.completed_handoff_identity = None
         self.state.last_error = None
 
     def _normalize_unpublished_channel_state(self) -> None:
@@ -1146,6 +1164,8 @@ class UpdateManager:
                 self.state.last_error = None
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._clean_operation()
                 self._save()
                 return self.public_status()
@@ -1156,6 +1176,8 @@ class UpdateManager:
                 )
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._clean_operation()
                 self._save()
                 return self.public_status()
@@ -1182,6 +1204,8 @@ class UpdateManager:
                 self.state.last_error = None
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._clean_operation()
                 self._save()
                 return self.public_status()
@@ -1193,6 +1217,8 @@ class UpdateManager:
                 )
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
             except UpdateError as exc:
                 self.state.phase = UpdatePhase.ERROR
                 self.state.last_error = (
@@ -1265,6 +1291,8 @@ class UpdateManager:
             result.pop("transaction_path", None)
             result.pop("manifest_identity", None)
             result.pop("handoff_identity", None)
+            result.pop("pending_handoff_identity", None)
+            result.pop("completed_handoff_identity", None)
             return result
 
     def configure(self, *, enabled: bool, channel: Channel) -> dict[str, Any]:
@@ -1285,6 +1313,8 @@ class UpdateManager:
                 self.state.manifest_identity = None
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
             if not enabled:
                 self._cancel.set()
                 self.state.phase = UpdatePhase.DISABLED
@@ -1653,6 +1683,8 @@ class UpdateManager:
                 self.state.downloaded_path = None
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._save()
                 return self.public_status()
             self._cancel.clear()
@@ -1681,6 +1713,8 @@ class UpdateManager:
                 transaction_dir = self.config.data_dir / "transactions" / operation_id
                 self.state.transaction_path = str(transaction_dir / "journal.json")
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self.state.phase = UpdatePhase.RESTART_REQUIRED
                 self._save()
                 core_host = os.environ.get("ATC_CORE_HOST", "127.0.0.1")
@@ -1712,5 +1746,7 @@ class UpdateManager:
                 self.state.downloaded_path = None
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._save()
                 return self.public_status()

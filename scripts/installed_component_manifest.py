@@ -519,7 +519,9 @@ def create_manifest(
             label="installed-component checksum",
         )
     except BaseException:
-        manifest_path.unlink(missing_ok=True)
+        # Retain the exclusively created manifest. A pathname can be replaced
+        # after an identity check and before unlink, so automatic rollback could
+        # delete a file this operation did not create.
         raise
     return manifest_path, checksum_path
 
@@ -891,7 +893,12 @@ def verify_archive(
                 )
             names: set[str] = set()
             for info in infos:
-                path = _zip_member_path(info.filename)
+                original_name = getattr(info, "orig_filename", info.filename)
+                if original_name != info.filename:
+                    raise InstalledComponentManifestError(
+                        "release ZIP contains a non-canonical member name"
+                    )
+                path = _zip_member_path(original_name)
                 folded = path.as_posix().casefold()
                 if folded in names or info.is_dir():
                     raise InstalledComponentManifestError(
@@ -903,7 +910,7 @@ def verify_archive(
                     raise InstalledComponentManifestError("release ZIP contains a symlink entry")
             by_basename: dict[str, zipfile.ZipInfo] = {}
             for info in infos:
-                basename = PurePosixPath(info.filename).name.casefold()
+                basename = PurePosixPath(info.orig_filename).name.casefold()
                 if basename in by_basename:
                     raise InstalledComponentManifestError(
                         "release ZIP contains duplicate component basenames"
