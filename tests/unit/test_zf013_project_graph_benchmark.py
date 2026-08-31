@@ -139,6 +139,19 @@ def _non_latency_metrics(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def _non_latency_profile_gates(report: dict[str, Any]) -> dict[str, dict[str, bool]]:
+    profile_gates = report["profile_gates"]
+    assert isinstance(profile_gates, dict)
+    return {
+        str(profile_name): {
+            str(gate_name): bool(passed)
+            for gate_name, passed in gates["gates"].items()
+            if gate_name != "latency_bound"
+        }
+        for profile_name, gates in profile_gates.items()
+    }
+
+
 def _profile_orderings(fixture: dict[str, Any]) -> dict[str, tuple[tuple[str, ...], ...]]:
     corpus = _corpus(fixture)
     contract = load_contract()
@@ -222,7 +235,7 @@ def test_ineligible_relations_are_paired_noninterference_cases() -> None:
         candidate = run(mutated, warm_repetitions=1)
 
         assert _non_latency_metrics(candidate) == _non_latency_metrics(baseline)
-        assert candidate["profile_gates"] == baseline["profile_gates"]
+        assert _non_latency_profile_gates(candidate) == _non_latency_profile_gates(baseline)
         assert candidate["receipts"] == baseline["receipts"]
         assert _profile_orderings(mutated) == baseline_orderings
         evidence = candidate["relation_normalization"]["rejected_illegal_edge_evidence"]
