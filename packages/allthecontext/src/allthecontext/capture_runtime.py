@@ -31,7 +31,9 @@ from .capture import CaptureCoordinator, CaptureError, CaptureSource
 from .config import CoreConfig
 from .experimental_local_git_workspace_connector import (
     LOCAL_GIT_WORKSPACE_PROVIDER,
+    MAX_DISCOVERED_FILES,
     LocalGitWorkspaceCaptureProviderAdapter,
+    WorkspaceStateReader,
 )
 from .ids import utc_now
 from .memory_policy import REGISTERED_SOURCE_CODE_OWNED_SCOPES
@@ -453,9 +455,73 @@ def write_scheduler_enabled(data_dir: Path, *, enabled: bool) -> CaptureSchedule
     return read_scheduler_durable_state(data_dir)
 
 
-def _build_adapter(root: Path) -> LocalGitWorkspaceCaptureProviderAdapter:
+_SOURCE_STATE_PAGE_SIZE = 500
+
+
+def _read_workspace_item_states(store: CoreStore, source_id: str) -> dict[str, bytes | None]:
+    """Read Core's bounded capture-item state without reading provider content."""
+
+    states: dict[str, bytes | None] = {}
+    offset = 0
+    with store.connect() as connection:
+        while True:
+            rows = connection.execute(
+                "SELECT i.provider_item_id,i.item_state,e.provider_event_id,e.operation "
+                "FROM capture_items AS i LEFT JOIN capture_events AS e "
+                "ON e.id=i.last_event_id AND e.source_id=i.source_id "
+                "WHERE i.source_id=? ORDER BY i.provider_item_id "
+                "LIMIT ? OFFSET ?",
+                (source_id, _SOURCE_STATE_PAGE_SIZE, offset),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                item_id = str(row["provider_item_id"])
+                if str(row["item_state"]) == "deleted":
+                    states[item_id] = None
+                    continue
+                if row["provider_event_id"] is None or str(row["operation"]) != "upsert":
+                    raise ValueError("workspace_state_unavailable")
+                encoded = str(row["provider_event_id"]).rsplit(":", 1)[-1]
+                try:
+                    state_token = bytes.fromhex(encoded)
+                except ValueError as error:
+                    raise ValueError("workspace_state_unavailable") from error
+                if len(state_token) != 16:
+                    raise ValueError("workspace_state_unavailable")
+                states[item_id] = state_token
+            offset += len(rows)
+            if len(states) > MAX_DISCOVERED_FILES:
+                raise ValueError("workspace_state_limit_exceeded")
+            if len(rows) < _SOURCE_STATE_PAGE_SIZE:
+                break
+            if offset >= MAX_DISCOVERED_FILES:
+                extra = connection.execute(
+                    "SELECT 1 FROM capture_items WHERE source_id=? LIMIT 1 OFFSET ?",
+                    (source_id, offset),
+                ).fetchone()
+                if extra is not None:
+                    raise ValueError("workspace_state_limit_exceeded")
+                break
+    return states
+
+
+def _workspace_state_reader(store: CoreStore) -> WorkspaceStateReader:
+    def read(source_id: str) -> dict[str, bytes | None]:
+        return _read_workspace_item_states(store, source_id)
+
+    return read
+
+
+def _build_adapter(
+    root: Path,
+    store: CoreStore | None = None,
+) -> LocalGitWorkspaceCaptureProviderAdapter:
     try:
-        adapter = LocalGitWorkspaceCaptureProviderAdapter((root,))
+        adapter = LocalGitWorkspaceCaptureProviderAdapter(
+            (root,),
+            state_reader=None if store is None else _workspace_state_reader(store),
+        )
     except (TypeError, ValueError, OSError, RuntimeError):
         adapter = None
     if adapter is None:
@@ -553,7 +619,7 @@ def _register_authorized_adapter_unlocked(
         return
     try:
         canonical = canonical_workspace_root(Path(document["canonical_root"]))
-        adapter = LocalGitWorkspaceCaptureProviderAdapter((canonical,))
+        adapter = _build_adapter(canonical, coordinator.ledger.store)
     except (CaptureError, TypeError, ValueError, OSError, RuntimeError):
         return
     if adapter.source_identity != document["source_identity"]:
