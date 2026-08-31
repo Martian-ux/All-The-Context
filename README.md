@@ -66,9 +66,9 @@ first-run wizard:
 2. creates the vault in the platform-appropriate per-user application-data
    directory;
 3. stores credentials through the operating-system credential abstraction;
-4. detects Codex, Claude Code, and Claude Desktop and connects only the apps
-   the user selects; optional Codex/Claude Code Continuous Capture is a
-   separate false-by-default choice;
+4. detects Codex, Claude Code, Claude Desktop, and Hermes Agent and connects
+   only the apps the user selects; optional Codex/Claude Code/Hermes
+   Continuous Capture is a separate false-by-default choice;
 5. enables per-user startup when selected;
 6. starts Core without opening the optional dashboard; and
 7. finishes without asking for timezone, hosting, provider accounts, or Edge
@@ -99,6 +99,12 @@ evidence exists. The initial release used the explicit six-gate
 remains a visible hardening track. Lean publication does not claim that every
 client, provider, browser, 2 GB, privacy, recovery, or replacement cell passed.
 
+The profile-aware Hermes integration described below is newer source-level
+work and is not present in the immutable beta.6 artifact. Its current evidence
+is limited to focused disposable-vault tests and a temporary-profile schema
+smoke against an installed Hermes CLI; packaged and live-conversation
+acceptance remain open.
+
 ## Implemented slice
 
 - typed Python 3.12+ Core with SQLite migrations and FTS5;
@@ -109,10 +115,11 @@ client, provider, browser, 2 GB, privacy, recovery, or replacement cell passed.
   import and automatic memory evaluation for ChatGPT, Claude, Grok, generic
   JSON/JSONL, Markdown, and text;
 - required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
-- one-click local Codex, Claude Code, and Claude Desktop configuration;
-- optional one-time Codex/Claude Code Continuous Capture: ordinary prompts and
-  rendered responses become local evidence without per-turn commands, while
-  Core alone decides what narrow user claims become memory;
+- one-click local Codex, Claude Code, Claude Desktop, and profile-aware Hermes
+  Agent source configuration;
+- optional one-time Codex/Claude Code/Hermes Continuous Capture: ordinary
+  prompts and rendered responses become local evidence without per-turn
+  commands, while Core alone decides what narrow user claims become memory;
 - deterministic Core-derived Project Context Capsules with automatic,
   principal-filtered MCP activation and explicit ambiguity abstention;
 - optional local context/activity/search/backup/update dashboard;

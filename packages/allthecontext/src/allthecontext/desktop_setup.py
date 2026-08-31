@@ -57,6 +57,13 @@ from .credentials import (
     require_development_file_credentials,
 )
 from .desktop_runtime import RuntimeCommand
+from .hermes_config import (
+    HERMES_CAPTURE_CLIENT_NAME,
+    HERMES_READ_CLIENT_NAME,
+    HermesConfigResult,
+    configure_hermes,
+    read_hermes_registration_ids,
+)
 from .instance_identity import ensure_instance_secret, proof_matches
 from .models import ClientCreate
 from .platform_compat import windows_creation_flags
@@ -98,6 +105,8 @@ CLAUDE_CODE_EXPLICIT_SCOPES = [
     "context:propose",
     "witness:explicit_user_statement",
 ]
+HERMES_READ_SCOPES = ["context:read"]
+HERMES_CAPTURE_SCOPES = ["context:capture"]
 ProgressCallback = Callable[[str, str], None]
 
 
@@ -118,6 +127,9 @@ class SetupOptions:
     configure_claude_code: bool = False
     configure_claude_code_continuous_capture: bool = False
     configure_claude_code_explicit_commands: bool = False
+    configure_hermes: bool = False
+    configure_hermes_continuous_capture: bool = False
+    hermes_profile: str | None = None
     start_at_login: bool = True
     workspace_root: Path | None = None
     workspace_local_only_acknowledged: bool = False
@@ -140,6 +152,7 @@ class SetupResult:
     continuous_capture_enabled: bool = False
     claude_code_explicit: ClaudeCodeConfigResult | None = None
     continuous_capture_clients: tuple[str, ...] = ()
+    hermes: HermesConfigResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -830,6 +843,66 @@ def _configure_claude_code_accesses(
     return accesses, result
 
 
+def _configure_hermes_accesses(
+    store: CoreStore,
+    config: CoreConfig,
+    runtime: RuntimeCommand,
+    *,
+    capture: bool,
+    profile: str | None,
+    target_url: str,
+) -> tuple[dict[str, DesktopAccess], HermesConfigResult]:
+    """Create separate Hermes read/capture principals and commit one profile."""
+
+    specifications = [(HERMES_READ_CLIENT_NAME, HERMES_READ_SCOPES)]
+    if capture:
+        specifications.append((HERMES_CAPTURE_CLIENT_NAME, HERMES_CAPTURE_SCOPES))
+    accesses: dict[str, DesktopAccess] = {}
+    created: list[DesktopAccess] = []
+    try:
+        for name, scopes in specifications:
+            access, was_created = _ensure_client_access_with_state(
+                store,
+                config,
+                name=name,
+                scopes=scopes,
+            )
+            accesses[name] = access
+            if was_created:
+                created.append(access)
+        result = configure_hermes(
+            runtime,
+            read_client_id=accesses[HERMES_READ_CLIENT_NAME].client_id,
+            capture_client_id=(accesses[HERMES_CAPTURE_CLIENT_NAME].client_id if capture else None),
+            profile=profile,
+            target_url=target_url,
+            core_data_dir=config.data_dir,
+            read_credential_storage=accesses[HERMES_READ_CLIENT_NAME].credential_storage,
+            capture_credential_storage=(
+                accesses[HERMES_CAPTURE_CLIENT_NAME].credential_storage if capture else None
+            ),
+        )
+    except BaseException:
+        rollback_error: BaseException | None = None
+        for access in reversed(created):
+            try:
+                store.revoke_client(access.client_id)
+                delete_client_credential(
+                    access.client_id,
+                    config,
+                    strict_storage=access.credential_storage,
+                )
+            except BaseException as candidate:
+                rollback_error = candidate
+                break
+        if rollback_error is not None:
+            raise RuntimeError(
+                "Hermes setup failed and its newly created client could not be rolled back"
+            ) from rollback_error
+        raise
+    return accesses, result
+
+
 def _desktop_client(store: CoreStore, config: CoreConfig) -> DesktopAccess:
     return ensure_client_access(
         store,
@@ -918,6 +991,30 @@ def migrate_existing_integrations(
                 config,
                 accesses=claude_code_accesses,
                 managed_names=(CLAUDE_CODE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_CLIENT_NAME),
+            )
+
+    try:
+        hermes_registrations = read_hermes_registration_ids()
+    except (OSError, ValueError):
+        hermes_registrations = {}
+    if "read" in hermes_registrations:
+        try:
+            hermes_accesses, _hermes_result = _configure_hermes_accesses(
+                store,
+                config,
+                runtime,
+                capture="capture" in hermes_registrations,
+                profile=None,
+                target_url=target_url,
+            )
+        except (OSError, ValueError):
+            pass
+        else:
+            retire_managed_client_group(
+                store,
+                config,
+                accesses=hermes_accesses,
+                managed_names=(HERMES_READ_CLIENT_NAME, HERMES_CAPTURE_CLIENT_NAME),
             )
 
     integrations = ((CLAUDE_CLIENT_NAME, claude_config_path, read_claude_config, configure_claude),)
@@ -1022,6 +1119,8 @@ def _validate_workspace_options(options: SetupOptions) -> None:
         raise ValueError("explicit Claude Code commands require the Claude Code connection")
     if options.configure_claude_code_continuous_capture and not options.configure_claude_code:
         raise ValueError("Claude Code Continuous Capture requires the Claude Code connection")
+    if options.configure_hermes_continuous_capture and not options.configure_hermes:
+        raise ValueError("Hermes Continuous Capture requires the Hermes connection")
     if options.workspace_root is None:
         if options.workspace_local_only_acknowledged:
             raise ValueError("workspace local-only acknowledgement requires a workspace root")
@@ -1277,6 +1376,33 @@ def perform_setup(
         except (OSError, RuntimeError, ValueError) as exc:
             warnings.append(f"Claude Code configuration was not changed: {exc}")
 
+    hermes_result: HermesConfigResult | None = None
+    if options.configure_hermes:
+        notify(
+            "hermes",
+            "Connecting Hermes Agent"
+            + (" with Continuous Capture" if options.configure_hermes_continuous_capture else ""),
+        )
+        try:
+            hermes_accesses, hermes_result = _configure_hermes_accesses(
+                store,
+                active_config,
+                active_runtime,
+                capture=options.configure_hermes_continuous_capture,
+                profile=options.hermes_profile,
+                target_url=f"http://{active_config.host}:{active_config.port}",
+            )
+            retire_managed_client_group(
+                store,
+                active_config,
+                accesses=hermes_accesses,
+                managed_names=(HERMES_READ_CLIENT_NAME, HERMES_CAPTURE_CLIENT_NAME),
+            )
+            if options.configure_hermes_continuous_capture:
+                continuous_capture_clients.append(HERMES_CAPTURE_CLIENT_NAME)
+        except (OSError, RuntimeError, ValueError) as exc:
+            warnings.append(f"Hermes configuration was not changed: {exc}")
+
     claude_code_explicit_result: ClaudeCodeConfigResult | None = None
     if options.configure_claude_code_explicit_commands:
         notify("claude_code_explicit", "Connecting Claude Code explicit memory commands")
@@ -1349,6 +1475,7 @@ def perform_setup(
         continuous_capture_enabled=continuous_capture_enabled,
         claude_code_explicit=claude_code_explicit_result,
         continuous_capture_clients=tuple(continuous_capture_clients),
+        hermes=hermes_result,
     )
 
 

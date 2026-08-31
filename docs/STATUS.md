@@ -21,9 +21,10 @@ instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth and the
 subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
-client read/explicit-memory foundations, and PR #95 Continuous Capture slice at
-exact SHA `29b3a19113e498a73c205d12ffff41faed02baa0`. Protected-main CI run
-`33254733214` and CodeQL run `33254733031` completed successfully for that exact
+client read/explicit-memory foundations, Continuous Capture, and replacement
+workflow hardening through PR #98 at exact SHA
+`76db4c87add09986da936963902f7fa5f0c2768d`. Protected-main CI run
+`33319966716` and CodeQL run `33319965969` completed successfully for that exact
 SHA. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
@@ -35,6 +36,52 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-30 — cross-client dogfood hardening candidate
+
+The local hardening candidate adds three bounded product slices on exact clean
+protected main `76db4c87add09986da936963902f7fa5f0c2768d`:
+
+- local-workspace capture now pages 128 items at a time beyond the historical
+  single-page ceiling, reconstructs restart state from Core-owned metadata,
+  pages mass deletions, and resets/reconciles a content-bound generation when
+  the workspace mutates between pages;
+- Hermes receives a profile-aware, one-time source setup path with a
+  read-only pre-generation MCP/bootstrap principal and an optional separate
+  post-generation `context:capture` principal. Tokens remain in the operating
+  system credential store, hook approval is exact-command only, and Hermes is
+  never granted explicit-memory mutation authority; and
+- one disposable-vault acceptance journey composes distinct Codex and Hermes
+  read/capture principals with a separate Codex explicit-write principal. It
+  exercises 13 ordinary lifecycle events and their idempotent replays,
+  cross-client formation/deduplication, two Core restarts, pre-generation
+  retrieval, explicit correction and forget, authority denials, and refusal of
+  an operational-secret canary from capture, SQLite/WAL, audit, retrieval, and
+  export surfaces.
+
+The workspace catalog safety ceiling is 16,384 discovered files, but the
+shared coordinator still limits one run to 100 pages and 10,000 events, so the
+effective completed-run ceiling is 10,000 items. Each page deliberately
+rescans and content-binds the bounded catalog; this favors mutation correctness
+over throughput and is approximately quadratic across a full large catalog.
+The source exposes those limits in content-free health diagnostics rather than
+claiming unbounded scalability.
+
+A disposable native smoke generated the candidate configuration under a fresh
+temporary `HERMES_HOME`; the installed Hermes CLI parsed one four-tool ATC MCP
+server plus the exact `pre_llm_call` and `post_llm_call` hooks and reported both
+commands allowlisted. That is local source/schema compatibility evidence only.
+The candidate does not touch the live ATC vault or live Hermes profile, wire
+Hermes disconnect into the dashboard, prove packaged-artifact behavior, prove a
+real Codex/Hermes provider conversation, use private context, release anything,
+or create Windows/Linux support acceptance. macOS remains deferred and
+unsupported.
+
+Final local candidate validation is green: repository-wide Ruff; mypy over all
+107 source files; 153 passed with three expected platform skips across the
+combined changed/adjacent focused surface; 61 passed across the migrated Packet
+H admission/truth/retrieval harnesses; and full pytest at 2,349 passed with nine
+expected platform skips and two pre-existing Starlette deprecation warnings.
 
 ### 2026-08-30 — replacement workflow contract re-review remediation
 

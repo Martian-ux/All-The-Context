@@ -55,6 +55,7 @@ from .desktop_setup import (
     recover_desktop_access,
 )
 from .edge_connection import EdgeConnectionStore, decommission_edge_connection
+from .hermes_config import HERMES_CAPTURE_CLIENT_NAME, HERMES_READ_CLIENT_NAME
 from .instance_identity import IDENTITY_FILENAME
 from .macos_bundle import MacOSBundleError, macos_bundle_fingerprint, validate_macos_bundle_links
 from .models import ClientCreate
@@ -90,6 +91,8 @@ def _retire_installed_ai_clients(
         CLAUDE_CLIENT_NAME,
         CLAUDE_CODE_CLIENT_NAME,
         CLAUDE_CODE_CAPTURE_CLIENT_NAME,
+        HERMES_READ_CLIENT_NAME,
+        HERMES_CAPTURE_CLIENT_NAME,
     }
     managed_client_ids = set(configured_client_storages)
     for client in clients:
@@ -784,6 +787,12 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
             setup_kwargs["configure_codex_explicit_commands"] = True
         if getattr(args, "configure_claude_code_continuous_capture", False):
             setup_kwargs["configure_claude_code_continuous_capture"] = True
+        if getattr(args, "configure_hermes", False):
+            setup_kwargs["configure_hermes"] = True
+        if getattr(args, "configure_hermes_continuous_capture", False):
+            setup_kwargs["configure_hermes_continuous_capture"] = True
+        if getattr(args, "hermes_profile", None):
+            setup_kwargs["hermes_profile"] = args.hermes_profile
         result = perform_setup(SetupOptions(**setup_kwargs), installed)
         report = asdict(result)
         for field_name in (
@@ -798,6 +807,8 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         report["claude"] = asdict(result.claude) if result.claude else None
         report["claude_code"] = _headless_claude_code_result(result)
         report["claude_code_explicit"] = _headless_claude_code_explicit_result(result)
+        hermes_result = getattr(result, "hermes", None)
+        report["hermes"] = asdict(hermes_result) if hermes_result else None
         report["startup"] = asdict(result.startup) if result.startup else None
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
@@ -1040,6 +1051,7 @@ def _parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--core", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--mcp-stdio", action="store_true", help=argparse.SUPPRESS)
+    mode.add_argument("--hermes-hook", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--setup", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--diagnostics", type=Path, help=argparse.SUPPRESS)
     mode.add_argument("--headless-setup", metavar="REPORT_PATH", help=argparse.SUPPRESS)
@@ -1086,6 +1098,15 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--recovery-doctor", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--vault-name", default="My Context", help=argparse.SUPPRESS)
     parser.add_argument("--timezone", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--hermes-role",
+        choices=("read", "capture"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--hermes-client-id", help=argparse.SUPPRESS)
+    parser.add_argument("--hermes-target-url", help=argparse.SUPPRESS)
+    parser.add_argument("--hermes-core-data-dir", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--hermes-core-command", help=argparse.SUPPRESS)
     parser.add_argument("--no-codex", action="store_true", help=argparse.SUPPRESS)
     codex_capture = parser.add_mutually_exclusive_group()
     codex_capture.add_argument(
@@ -1158,6 +1179,35 @@ def _parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.set_defaults(configure_claude_code_explicit_commands=False)
+    hermes = parser.add_mutually_exclusive_group()
+    hermes.add_argument(
+        "--hermes",
+        dest="configure_hermes",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    hermes.add_argument(
+        "--no-hermes",
+        dest="configure_hermes",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(configure_hermes=False)
+    hermes_capture = parser.add_mutually_exclusive_group()
+    hermes_capture.add_argument(
+        "--hermes-continuous-capture",
+        dest="configure_hermes_continuous_capture",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    hermes_capture.add_argument(
+        "--no-hermes-continuous-capture",
+        dest="configure_hermes_continuous_capture",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(configure_hermes_continuous_capture=False)
+    parser.add_argument("--hermes-profile", help=argparse.SUPPRESS)
     parser.add_argument("--no-startup", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--workspace-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -1277,6 +1327,16 @@ def _run_graphical(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.hermes_hook:
+        from .hermes_hook import main as hermes_hook_main
+
+        return hermes_hook_main(
+            role=args.hermes_role,
+            client_id=args.hermes_client_id,
+            target_url=args.hermes_target_url,
+            core_data_dir=args.hermes_core_data_dir,
+            core_command=args.hermes_core_command,
+        )
     if args.core:
         from .windows_update_helper import ensure_recovery_before_core
 

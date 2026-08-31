@@ -110,7 +110,11 @@ def _ensure_local_core(
 def _client() -> ContextHttpClient:
     target = os.environ.get("ATC_TARGET_URL", "http://127.0.0.1:7337")
     client_id = os.environ.get("ATC_CLIENT_ID", "")
-    token = os.environ.get("ATC_CLIENT_TOKEN", "")
+    token = (
+        ""
+        if os.environ.get("ATC_MCP_PROFILE") == "hermes_read"
+        else os.environ.get("ATC_CLIENT_TOKEN", "")
+    )
     if client_id and not token:
         token = KeyringCredentialStore().get(f"client:{client_id}") or ""
     if not client_id or not token:
@@ -469,6 +473,17 @@ def _server_for_profile() -> MCPServer:
                     "get_context_item",
                     "context_status",
                     CODEX_READ_HOOK_TOOL,
+                }
+            )
+        )
+    if profile == "hermes_read":
+        return build_mcp(
+            enabled_tools=frozenset(
+                {
+                    "bootstrap_context",
+                    "search_context",
+                    "get_context_item",
+                    "context_status",
                 }
             )
         )

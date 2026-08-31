@@ -38,6 +38,7 @@ from allthecontext.capture import (
     CaptureRunResult,
     CaptureSource,
 )
+from allthecontext.capture_runtime import _workspace_state_reader
 from allthecontext.experimental_local_git_workspace_connector import (
     LocalGitWorkspaceCaptureProviderAdapter,
 )
@@ -396,7 +397,10 @@ def _run_disposable(
             restarted_store,
             sink=RegisteredSourceCaptureApplicationSink(restarted_store),
         )
-        restarted_adapter = type(adapter)((workspace,))
+        restarted_adapter = type(adapter)(
+            (workspace,),
+            state_reader=_workspace_state_reader(restarted_store),
+        )
         _apply_manifest_override(restarted_adapter, capability_manifest_override)
         restarted_coordinator.register_adapter(source.provider, restarted_adapter)
         restarted_coordinator.resume(source.id)
@@ -477,7 +481,10 @@ def _run_disposable(
             post_delete_store,
             sink=RegisteredSourceCaptureApplicationSink(post_delete_store),
         )
-        post_delete_adapter = type(adapter)((workspace,))
+        post_delete_adapter = type(adapter)(
+            (workspace,),
+            state_reader=_workspace_state_reader(post_delete_store),
+        )
         _apply_manifest_override(post_delete_adapter, capability_manifest_override)
         post_delete_coordinator.register_adapter(source.provider, post_delete_adapter)
         post_delete_replay = post_delete_coordinator.run(source.id)

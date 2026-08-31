@@ -33,6 +33,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_LOCAL_SOURCE))
 
 from allthecontext.capture import CaptureCoordinator
+from allthecontext.capture_runtime import _workspace_state_reader
 from allthecontext.experimental_local_git_workspace_connector import (
     LOCAL_GIT_WORKSPACE_PROVIDER,
     LocalGitWorkspaceCaptureProviderAdapter,
@@ -232,7 +233,10 @@ def _run_disposable(
         )
         source = _select_admitted_source(coordinator)
         workspace = disposable_root / "workspace"
-        adapter = LocalGitWorkspaceCaptureProviderAdapter((workspace,))
+        adapter = LocalGitWorkspaceCaptureProviderAdapter(
+            (workspace,),
+            state_reader=_workspace_state_reader(store),
+        )
         coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, adapter)
         engine = RetrievalEngine(store)
 

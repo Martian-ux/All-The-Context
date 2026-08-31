@@ -25,6 +25,7 @@ from .desktop_setup import (
     perform_setup,
     recover_desktop_access,
 )
+from .hermes_config import HERMES_CAPTURE_CLIENT_NAME, hermes_is_detected
 
 INK = "#171a23"
 INK_SOFT = "#242936"
@@ -49,6 +50,7 @@ _PROGRESS_STEP_ALIASES = {
     "codex_capture": "client",
     "codex_explicit": "client",
     "claude_code_capture": "claude_code",
+    "hermes_capture": "hermes",
 }
 _PROGRESS_STATUS_COPY = {
     "vault": "Creating your private local Core",
@@ -57,6 +59,7 @@ _PROGRESS_STATUS_COPY = {
     "client": "Connecting your AI client",
     "claude_code": "Connecting the Claude Code hook",
     "claude_code_explicit": "Connecting Claude Code explicit memory commands",
+    "hermes": "Connecting Hermes Agent",
     "startup": "Enabling private per-user startup",
     "core": "Starting Core on this device",
     "complete": "All The Context is ready",
@@ -87,6 +90,9 @@ def build_setup_options(
     configure_claude_code_explicit_commands: bool = False,
     configure_codex_continuous_capture: bool = False,
     configure_codex_explicit_commands: bool = False,
+    configure_hermes: bool = False,
+    configure_hermes_continuous_capture: bool = False,
+    hermes_profile_text: str = "",
 ) -> SetupOptions:
     """Build immutable setup options from the wizard's user-entered values."""
 
@@ -113,6 +119,12 @@ def build_setup_options(
         setup_kwargs["configure_codex_continuous_capture"] = True
     if configure_codex_explicit_commands:
         setup_kwargs["configure_codex_explicit_commands"] = True
+    if configure_hermes:
+        setup_kwargs["configure_hermes"] = True
+    if configure_hermes_continuous_capture:
+        setup_kwargs["configure_hermes_continuous_capture"] = True
+    if hermes_profile_text.strip():
+        setup_kwargs["hermes_profile"] = hermes_profile_text.strip()
     return SetupOptions(
         **setup_kwargs,
     )
@@ -224,6 +236,7 @@ class SetupWizard:
         self.codex_detected = codex_is_detected()
         self.claude_detected = claude_is_detected()
         self.claude_code_detected = claude_code_is_detected()
+        self.hermes_detected = hermes_is_detected()
         self.configure_codex = tk.BooleanVar(value=self.codex_detected)
         self.configure_codex_continuous_capture = tk.BooleanVar(value=False)
         self.configure_codex_explicit_commands = tk.BooleanVar(value=False)
@@ -231,6 +244,9 @@ class SetupWizard:
         self.configure_claude_code = tk.BooleanVar(value=self.claude_code_detected)
         self.configure_claude_code_continuous_capture = tk.BooleanVar(value=False)
         self.configure_claude_code_explicit_commands = tk.BooleanVar(value=False)
+        self.configure_hermes = tk.BooleanVar(value=self.hermes_detected)
+        self.configure_hermes_continuous_capture = tk.BooleanVar(value=False)
+        self.hermes_profile = tk.StringVar(value="")
         self.start_at_login = tk.BooleanVar(value=True)
         self.workspace_root = tk.StringVar(value="")
         self.workspace_local_only_acknowledged = tk.BooleanVar(value=False)
@@ -240,6 +256,8 @@ class SetupWizard:
         self.claude_code_requested = False
         self.claude_code_capture_requested = False
         self.claude_code_explicit_requested = False
+        self.hermes_requested = False
+        self.hermes_capture_requested = False
         self.codex_capture_requested = False
         self.codex_explicit_requested = False
 
@@ -671,6 +689,33 @@ class SetupWizard:
             enabled=self.claude_code_detected,
         )
         self._check(
+            "Connect Hermes Agent",
+            (
+                "Adds a read-only MCP connection and a pre-generation hook through the private "
+                "Core."
+                if self.hermes_detected
+                else "Hermes was not found. Install it, then rerun setup to connect it."
+            ),
+            self.configure_hermes,
+            enabled=self.hermes_detected,
+        )
+        if self.hermes_detected:
+            self._field("Hermes profile (optional)", self.hermes_profile)
+            tk.Label(
+                self.content,
+                text="Leave blank for Hermes' active profile; otherwise enter one named profile.",
+                bg=PAPER,
+                fg=MUTED,
+                anchor="w",
+                font=("Segoe UI", 8),
+            ).pack(fill="x", pady=(4, 0))
+            self._check(
+                "Enable Continuous Capture for Hermes",
+                "One-time opt-in: observe direct prompts and assistant responses after generation.",
+                self.configure_hermes_continuous_capture,
+                enabled=self.hermes_detected,
+            )
+        self._check(
             "Start Core when I sign in",
             "Runs in your user account; no administrator access or Docker.",
             self.start_at_login,
@@ -694,6 +739,9 @@ class SetupWizard:
                 configure_claude_code_explicit_commands=self.configure_claude_code_explicit_commands.get(),
                 configure_codex_continuous_capture=self.configure_codex_continuous_capture.get(),
                 configure_codex_explicit_commands=self.configure_codex_explicit_commands.get(),
+                configure_hermes=self.configure_hermes.get(),
+                configure_hermes_continuous_capture=self.configure_hermes_continuous_capture.get(),
+                hermes_profile_text=self.hermes_profile.get(),
             )
         except (RuntimeError, ValueError) as error:
             messagebox.showerror("Workspace choice required", str(error), parent=self.root)
@@ -708,6 +756,10 @@ class SetupWizard:
         self.codex_explicit_requested = getattr(options, "configure_codex_explicit_commands", False)
         self.claude_code_explicit_requested = getattr(
             options, "configure_claude_code_explicit_commands", False
+        )
+        self.hermes_requested = getattr(options, "configure_hermes", False)
+        self.hermes_capture_requested = getattr(
+            options, "configure_hermes_continuous_capture", False
         )
         self._eyebrow("Installing")
         self._heading(
@@ -724,6 +776,10 @@ class SetupWizard:
             self.skipped_progress_steps.add("claude_code_capture")
         if not self.claude_code_explicit_requested:
             self.skipped_progress_steps.add("claude_code_explicit")
+        if not self.hermes_requested:
+            self.skipped_progress_steps.add("hermes")
+        if not self.hermes_capture_requested:
+            self.skipped_progress_steps.add("hermes_capture")
         progress_steps = [
             ("vault", "Private local vault"),
             ("credential", "Secure client credential"),
@@ -742,6 +798,10 @@ class SetupWizard:
                 if self.claude_code_capture_requested
                 else ("", ""),
                 ("claude_code_explicit", "Claude Code explicit commands"),
+                ("hermes", "Hermes Agent hook"),
+                ("hermes_capture", "Hermes Continuous Capture")
+                if self.hermes_capture_requested
+                else ("", ""),
                 ("startup", "Background startup"),
                 ("core", "Core health check"),
             )
@@ -873,6 +933,23 @@ class SetupWizard:
                         and "Claude Code" in getattr(self.result, "continuous_capture_clients", ())
                     ),
                 ),
+            ),
+            (
+                "Hermes",
+                "Connected"
+                if self.result and getattr(self.result, "hermes", None)
+                else ("Not connected" if self.hermes_requested else "Not selected"),
+            ),
+            (
+                "Hermes capture",
+                "Enabled"
+                if self.hermes_capture_requested
+                and bool(
+                    self.result
+                    and HERMES_CAPTURE_CLIENT_NAME
+                    in getattr(self.result, "continuous_capture_clients", ())
+                )
+                else ("Not connected" if self.hermes_capture_requested else "Not enabled"),
             ),
             (
                 "Memory commands",
