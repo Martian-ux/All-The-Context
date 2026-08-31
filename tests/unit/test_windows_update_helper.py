@@ -161,6 +161,7 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         created_at=now,
         updated_at=now,
     ).save(journal_path)
+    helper_module.bind_handoff_state(UpdateJournal.load(journal_path), journal_path)
     return TransactionFixture(
         journal_path,
         application,
@@ -285,6 +286,9 @@ def test_independent_helper_commits_after_real_state_and_database_transition(
     # Simulate power loss after the terminal journal save but before the state
     # pointer was cleared; terminal replay must finish cleanup idempotently.
     state["transaction_path"] = str(fixture.journal_path)
+    state["handoff_identity"] = helper_module.journal_handoff_identity(
+        UpdateJournal.load(fixture.journal_path)
+    )
     fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
     assert run_transaction(fixture.journal_path) == 0
     replayed_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
@@ -313,6 +317,44 @@ def test_power_loss_after_binary_replacement_resumes_from_journal(
     monkeypatch.delenv("ATC_UPDATE_FAULT_AFTER_PHASE")
     assert run_transaction(fixture.journal_path) == 0
     assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.COMMITTED
+
+
+def test_cutover_started_resume_reapplies_every_packaged_component(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.phase = HelperPhase.CUTOVER_STARTED
+    journal.save(fixture.journal_path)
+    fixture.application.write_bytes(fixture.replacement)
+    fixture.mcp.write_bytes(b"incomplete cutover")
+
+    assert run_transaction(fixture.journal_path) == 0
+
+    assert fixture.mcp.read_bytes() == b"new mcp binary"
+    assert fixture.recovery.read_bytes() == b"new recovery helper binary"
+    assert fixture.update_helper.read_bytes() == b"new update helper binary"
+    assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.COMMITTED
+
+
+def test_same_operation_forged_journal_is_rejected_by_state_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    forged = b"forged replacement"
+    journal = json.loads(fixture.journal_path.read_text(encoding="utf-8"))
+    Path(str(journal["replacement_path"])).write_bytes(forged)
+    journal["replacement_sha256"] = hashlib.sha256(forged).hexdigest()
+    journal["replacement_size"] = len(forged)
+    fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
+
+    with pytest.raises(HelperError, match="application_state_mismatch"):
+        run_transaction(fixture.journal_path)
+
+    assert fixture.application.read_bytes() == fixture.old_application
 
 
 def test_failed_health_restores_previous_binary_mcp_and_database(
@@ -542,6 +584,23 @@ def test_core_start_guard_resumes_active_transaction_and_allows_health_child(
     journal.save(fixture.journal_path)
     assert ensure_recovery_before_core() is False
     assert len(launched) == 2
+
+
+def test_core_start_guard_recovers_interrupted_unbound_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is True
+
+    recovered = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert recovered["phase"] == "error"
+    assert recovered["transaction_path"] is None
+    assert recovered["handoff_identity"] is None
 
 
 @pytest.mark.parametrize(

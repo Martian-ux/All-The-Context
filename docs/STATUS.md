@@ -73,14 +73,20 @@ SHA-256 and size; registration and detached launch verify that binding before
 touching RunOnce or creating a process. Replacement and installed-application
 files receive the same bounded digest/identity checks before subprocess and
 Core launch, and rollback sources reject linked or multi-link files.
+Application state independently binds the immutable journal handoff authority;
+recovery registration, launch, active state updates, and the Core startup guard
+reject a same-operation replacement journal. An interrupted preparation that
+never publishes this binding resets before cutover and leaves the old app
+available. Recovery from `cutover_started` re-runs the packaged installer and
+revalidates all four installed components instead of trusting the main binary
+as proof of a complete cutover.
 
-The focused updater/recovery suite passes 87 tests on Windows Python 3.14.3.
+The focused updater/recovery suite passes 90 tests on Windows Python 3.14.3.
 This is source-level synthetic/mock evidence only. It does not close the
-prepared-journal publication crash window, journal replacement/generation
-binding, recursive cleanup race, database-backup identity, final
-validation-to-process-creation interval, exact packaged/live-client behavior,
-or release acceptance. Existing version-1 recovery journals fail closed and
-require a fresh update transaction.
+cross-file publication interval, recursive cleanup race, database-backup
+identity, final validation-to-process-creation interval, exact packaged/live-
+client behavior, or release acceptance. Existing version-1 recovery journals
+fail closed and require a fresh update transaction.
 
 ### 2026-08-30 — cross-client dogfood hardening candidate
 

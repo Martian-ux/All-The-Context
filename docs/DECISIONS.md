@@ -15,12 +15,20 @@ artifact. The recovery journal is schema version 2 and records the copied
 recovery-helper digest and size. RunOnce registration, detached helper launch,
 replacement execution, diagnostics/health, rollback copies, and Core launch
 fail closed when the recorded file binding is absent or no longer matches.
+The application state also records a SHA-256 identity over the journal's
+immutable replacement, rollback, helper, path, version, and Core handoff
+authority. Recovery registration, launch, active state mutation, and the Core
+startup guard require that independently persisted identity. An interrupted
+preparation that never published the binding is reset before cutover so the
+unchanged old application may start. A `cutover_started` recovery always
+re-runs the packaged installer and validates its complete application, MCP,
+recovery, and updater report; it may not infer a complete cutover from the main
+application alone.
 
-This decision intentionally does not claim the broader prepared-journal
-publication protocol, journal generation/identity reconciliation, recursive
-cleanup race closure, database-backup identity binding, or elimination of the
-portable validation-to-process-creation interval. Version-1 recovery journals
-are rejected rather than silently upgraded.
+This decision intentionally does not claim cross-file atomic publication,
+recursive cleanup race closure, database-backup identity binding, or
+elimination of the portable validation-to-process-creation interval. Version-1
+recovery journals are rejected rather than silently upgraded.
 
 ## ADR-177: Hermes integration is profile-local and splits retrieval from capture
 

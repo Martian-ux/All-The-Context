@@ -447,6 +447,61 @@ class UpdateJournal:
             raise HelperError("journal_path_invalid")
 
 
+def journal_handoff_identity(journal: UpdateJournal) -> str:
+    """Bind immutable transaction authority independently of mutable phase state."""
+
+    value = asdict(journal)
+    for mutable in (
+        "phase",
+        "parent_pid",
+        "database_backup_path",
+        "database_backup_sha256",
+        "database_backup_size",
+        "updated_at",
+        "last_error_code",
+    ):
+        value.pop(mutable)
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+        "ascii"
+    )
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
+    state = _read_json(Path(journal.state_path), MAX_STATE_BYTES)
+    expected_path = journal_path.resolve()
+    transaction_path = state.get("transaction_path")
+    if (
+        state.get("operation_id") != journal.operation_id
+        or not isinstance(transaction_path, str)
+        or Path(transaction_path).resolve() != expected_path
+        or state.get("handoff_identity") != journal_handoff_identity(journal)
+    ):
+        raise HelperError("application_state_mismatch")
+    return state
+
+
+def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
+    """Publish one prepared journal identity before recovery can be registered."""
+
+    state_path = Path(journal.state_path)
+    state = _read_json(state_path, MAX_STATE_BYTES)
+    transaction_path = state.get("transaction_path")
+    identity = journal_handoff_identity(journal)
+    if (
+        state.get("operation_id") != journal.operation_id
+        or state.get("phase") != "restart_required"
+        or not isinstance(transaction_path, str)
+        or Path(transaction_path).resolve() != journal_path.resolve()
+        or state.get("handoff_identity") not in {None, identity}
+    ):
+        raise HelperError("application_state_mismatch")
+    state["handoff_identity"] = identity
+    _atomic_json(state_path, state)
+    _validate_handoff_state(journal, journal_path)
+    return identity
+
+
 def transaction_outcome(path: Path) -> str:
     try:
         phase = UpdateJournal.load(path).phase
@@ -474,6 +529,7 @@ def register_recovery(helper: Path, journal: Path, operation_id: str) -> None:
     if platform.system() != "Windows":
         raise HelperError("windows_required")
     loaded = UpdateJournal.load(journal)
+    _validate_handoff_state(loaded, journal)
     expected_helper = journal.parent / "AllTheContextUpdater.exe"
     if loaded.operation_id != operation_id or helper.resolve() != expected_helper.resolve():
         raise HelperError("recovery_identity_invalid")
@@ -532,6 +588,7 @@ def _creation_flags() -> int:
 
 def launch_recovery_helper(helper: Path, journal: Path) -> None:
     loaded = UpdateJournal.load(journal)
+    _validate_handoff_state(loaded, journal)
     expected_helper = journal.parent / "AllTheContextUpdater.exe"
     if helper.resolve() != expected_helper.resolve() or not _verified(
         helper,
@@ -667,13 +724,6 @@ def _validate_application(journal: UpdateJournal, digest: str, size: int) -> Non
 def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
     application = Path(journal.application_path)
     _validate_replacement(journal, journal_path)
-    if journal.phase is HelperPhase.CUTOVER_STARTED and _verified(
-        application, journal.replacement_sha256, journal.replacement_size
-    ):
-        journal.phase = HelperPhase.BINARY_REPLACED
-        journal.last_error_code = None
-        journal.save(journal_path)
-        return
     journal.phase = HelperPhase.CUTOVER_STARTED
     journal.save(journal_path)
     report = journal_path.parent / "apply-report.json"
@@ -944,11 +994,17 @@ def _update_state(
     clear_transaction: bool,
 ) -> None:
     path = Path(journal.state_path)
+    journal_path = Path(journal.helper_path).parent / "journal.json"
     value = _read_json(path, MAX_STATE_BYTES)
     if value.get("operation_id") != journal.operation_id:
         raise HelperError("application_state_mismatch")
     transaction_path = value.get("transaction_path")
-    if transaction_path is None and clear_transaction and value.get("phase") == phase:
+    if (
+        transaction_path is None
+        and clear_transaction
+        and value.get("phase") == phase
+        and value.get("handoff_identity") is None
+    ):
         value.update(
             {
                 "current_version": (
@@ -956,10 +1012,13 @@ def _update_state(
                 ),
                 "downloaded_path": None,
                 "last_error": error,
+                "handoff_identity": None,
             }
         )
         _atomic_json(path, value)
         return
+    value = _validate_handoff_state(journal, journal_path)
+    transaction_path = value["transaction_path"]
     if (
         not isinstance(transaction_path, str)
         or Path(transaction_path).resolve()
@@ -975,6 +1034,7 @@ def _update_state(
             "downloaded_path": None,
             "last_error": error,
             "transaction_path": None if clear_transaction else transaction_path,
+            "handoff_identity": None if clear_transaction else value["handoff_identity"],
         }
     )
     _atomic_json(path, value)
@@ -1171,9 +1231,40 @@ def ensure_recovery_before_core() -> bool:
         return True
     if not isinstance(transaction, str) or not _valid_operation_id(operation_id):
         return False
+    if not _valid_digest(state.get("handoff_identity")):
+        expected = (
+            _data_directory()
+            / "updates"
+            / "transactions"
+            / cast(str, operation_id)
+            / "journal.json"
+        )
+        try:
+            transaction_matches = Path(transaction).resolve() == expected.resolve()
+        except OSError:
+            transaction_matches = False
+        if state.get("phase") != "restart_required" or not transaction_matches:
+            return False
+        # No helper from this schema can cross cutover without the parent-published
+        # binding, so an interrupted preparation can safely return to the old app.
+        state.update(
+            {
+                "phase": "error",
+                "last_error": "The update stopped before installation and was reset safely",
+                "downloaded_path": None,
+                "transaction_path": None,
+                "handoff_identity": None,
+            }
+        )
+        try:
+            _atomic_json(state_path, state)
+        except OSError:
+            return False
+        return True
     try:
         journal_path = Path(transaction).resolve()
         journal = UpdateJournal.load(journal_path)
+        _validate_handoff_state(journal, journal_path)
     except (HelperError, OSError):
         return False
     if journal.operation_id != operation_id:

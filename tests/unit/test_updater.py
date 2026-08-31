@@ -33,7 +33,11 @@ from allthecontext.updater import (
     UpdatePhase,
     UpdateState,
 )
-from allthecontext.windows_update_helper import HelperPhase, UpdateJournal
+from allthecontext.windows_update_helper import (
+    HelperPhase,
+    UpdateJournal,
+    journal_handoff_identity,
+)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SEED = bytes(range(32))
@@ -1043,7 +1047,9 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     installer.handoff(plan)
 
     journal = UpdateJournal.load(journal_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     assert journal.phase is HelperPhase.PREPARED
+    assert state["handoff_identity"] == journal_handoff_identity(journal)
     assert Path(journal.rollback_application_path).read_bytes() == b"old application"
     assert Path(journal.rollback_mcp_path or "").read_bytes() == b"old mcp"
     assert Path(journal.rollback_recovery_path or "").read_bytes() == b"old recovery"
