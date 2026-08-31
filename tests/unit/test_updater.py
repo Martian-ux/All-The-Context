@@ -33,7 +33,11 @@ from allthecontext.updater import (
     UpdatePhase,
     UpdateState,
 )
-from allthecontext.windows_update_helper import HelperPhase, UpdateJournal
+from allthecontext.windows_update_helper import (
+    HelperPhase,
+    UpdateJournal,
+    journal_handoff_identity,
+)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SEED = bytes(range(32))
@@ -633,6 +637,43 @@ def test_install_preflight_lock_and_crash_are_truthful(
     assert message in status["last_error"]
 
 
+def test_install_rejects_artifact_swapped_after_preflight(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+
+    class SwapAfterPreflight(FakeInstaller):
+        def preflight(self, path: Path, required_bytes: int) -> None:
+            super().preflight(path, required_bytes)
+            path.write_bytes(b"attacker-controlled archive")
+
+    installer = SwapAfterPreflight()
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.download()
+
+    status = manager.install()
+
+    assert status["phase"] == "error"
+    assert "artifact" in (status["last_error"] or "").casefold()
+    assert manager.state.downloaded_path is None
+    assert installer.handed_off is False
+
+
+def test_install_rejects_persisted_manifest_replacement(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manifest_path = manager._operation_directory() / "manifest.json"
+    value = json.loads(manifest_path.read_text(encoding="utf-8"))
+    value["release_notes_url"] = "https://updates.example.test/releases/forged"
+    manifest_path.write_text(json.dumps(value), encoding="utf-8")
+
+    status = manager.install()
+
+    assert status["phase"] == "error"
+    assert "metadata" in (status["last_error"] or "").casefold()
+
+
 def test_manual_platform_fails_closed_after_verified_download(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     installer = FakeInstaller(supported=False)
@@ -999,12 +1040,16 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
         state_path=state_path,
         core_host="127.0.0.1",
         core_port=7337,
+        artifact_sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        artifact_size=artifact.stat().st_size,
     )
 
     installer.handoff(plan)
 
     journal = UpdateJournal.load(journal_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     assert journal.phase is HelperPhase.PREPARED
+    assert state["handoff_identity"] == journal_handoff_identity(journal)
     assert Path(journal.rollback_application_path).read_bytes() == b"old application"
     assert Path(journal.rollback_mcp_path or "").read_bytes() == b"old mcp"
     assert Path(journal.rollback_recovery_path or "").read_bytes() == b"old recovery"

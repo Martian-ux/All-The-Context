@@ -13,6 +13,7 @@ import os
 import platform
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,13 +30,14 @@ from platformdirs import user_data_path
 from .platform_compat import windows_dll, windows_registry
 from .release_manifest import ManifestError, ReleaseVersion
 
-JOURNAL_SCHEMA_VERSION = 1
+JOURNAL_SCHEMA_VERSION = 2
 MAX_JOURNAL_BYTES = 64 * 1024
 MAX_STATE_BYTES = 64 * 1024
 PROCESS_TIMEOUT_SECONDS = 90
 PARENT_EXIT_TIMEOUT_SECONDS = 60
 WINDOWS_RUNONCE_KEY = r"Software\Microsoft\Windows\CurrentVersion\RunOnce"
 SMOKE_FLAG = "ATC_PACKAGED_SMOKE"
+WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
 class HelperPhase(StrEnum):
@@ -151,6 +153,49 @@ def _sha256(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _plain_file_stat(path: Path, code: str) -> os.stat_result:
+    """Return a single-link regular file without following reparse paths."""
+
+    try:
+        value = path.lstat()
+    except OSError as exc:
+        raise HelperError(code) from exc
+    if (
+        bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
+        or stat.S_ISLNK(value.st_mode)
+        or not stat.S_ISREG(value.st_mode)
+        or getattr(value, "st_nlink", 1) != 1
+    ):
+        raise HelperError(code)
+    return value
+
+
+def _plain_directory_stat(path: Path, code: str) -> os.stat_result:
+    try:
+        value = path.lstat()
+    except OSError as exc:
+        raise HelperError(code) from exc
+    if bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT) or not stat.S_ISDIR(
+        value.st_mode
+    ):
+        raise HelperError(code)
+    return value
+
+
+def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(
+        same
+        and stat.S_ISREG(observed.st_mode)
+        and getattr(observed, "st_nlink", 1) == 1
+        and expected.st_size == observed.st_size
+        and getattr(expected, "st_mtime_ns", None) == getattr(observed, "st_mtime_ns", None)
+    )
+
+
 def _valid_digest(value: object) -> bool:
     return (
         isinstance(value, str)
@@ -227,6 +272,8 @@ class UpdateJournal:
     helper_path: str
     core_host: str
     core_port: int
+    recovery_helper_sha256: str
+    recovery_helper_size: int
     created_at: str
     updated_at: str
     last_error_code: str | None = None
@@ -234,6 +281,8 @@ class UpdateJournal:
 
     @classmethod
     def load(cls, path: Path) -> UpdateJournal:
+        _plain_file_stat(path, "journal_untrusted")
+        _plain_directory_stat(path.parent, "journal_untrusted")
         value = _read_json(path, MAX_JOURNAL_BYTES)
         expected = set(cls.__dataclass_fields__)
         if set(value) != expected:
@@ -285,6 +334,7 @@ class UpdateJournal:
             (self.rollback_application_sha256, self.rollback_application_size),
             (self.rollback_update_helper_sha256, self.rollback_update_helper_size),
             (self.database_backup_sha256, self.database_backup_size),
+            (self.recovery_helper_sha256, self.recovery_helper_size),
         ):
             if (
                 not _valid_digest(digest)
@@ -396,6 +446,113 @@ class UpdateJournal:
             raise HelperError("journal_path_invalid")
 
 
+def journal_handoff_identity(journal: UpdateJournal) -> str:
+    """Bind transaction authority independently of mutable progress fields."""
+
+    value = asdict(journal)
+    for mutable in ("phase", "updated_at", "last_error_code"):
+        value.pop(mutable)
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+        "ascii"
+    )
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
+    state_path = Path(journal.state_path)
+    state = _read_json(state_path, MAX_STATE_BYTES)
+    expected_path = journal_path.resolve()
+    transaction_path = state.get("transaction_path")
+    if (
+        state.get("operation_id") != journal.operation_id
+        or not isinstance(transaction_path, str)
+        or Path(transaction_path).resolve() != expected_path
+    ):
+        raise HelperError("application_state_mismatch")
+    identity = journal_handoff_identity(journal)
+    current = state.get("handoff_identity")
+    pending = state.get("pending_handoff_identity")
+    if identity == current and _valid_digest(current):
+        if pending is not None:
+            if not _valid_digest(pending):
+                raise HelperError("application_state_mismatch")
+            state["pending_handoff_identity"] = None
+            _atomic_json(state_path, state)
+        return state
+    if identity == pending and _valid_digest(pending) and _valid_digest(current):
+        state["handoff_identity"] = pending
+        state["pending_handoff_identity"] = None
+        _atomic_json(state_path, state)
+        return state
+    raise HelperError("application_state_mismatch")
+
+
+def _transition_handoff_state(
+    journal: UpdateJournal,
+    journal_path: Path,
+    *,
+    previous_identity: str,
+) -> str:
+    """Publish an authority-changing journal update with crash reconciliation."""
+
+    state_path = Path(journal.state_path)
+    state = _read_json(state_path, MAX_STATE_BYTES)
+    transaction_path = state.get("transaction_path")
+    identity = journal_handoff_identity(journal)
+    if (
+        state.get("operation_id") != journal.operation_id
+        or not isinstance(transaction_path, str)
+        or Path(transaction_path).resolve() != journal_path.resolve()
+        or state.get("handoff_identity") != previous_identity
+        or state.get("pending_handoff_identity") is not None
+        or not _valid_digest(previous_identity)
+    ):
+        raise HelperError("application_state_mismatch")
+    if identity == previous_identity:
+        journal.save(journal_path)
+        return identity
+    state["pending_handoff_identity"] = identity
+    _atomic_json(state_path, state)
+    journal.save(journal_path)
+    promoted = _read_json(state_path, MAX_STATE_BYTES)
+    if (
+        promoted.get("operation_id") != journal.operation_id
+        or promoted.get("transaction_path") != transaction_path
+        or promoted.get("handoff_identity") != previous_identity
+        or promoted.get("pending_handoff_identity") != identity
+    ):
+        raise HelperError("application_state_mismatch")
+    promoted["handoff_identity"] = identity
+    promoted["pending_handoff_identity"] = None
+    _atomic_json(state_path, promoted)
+    _validate_handoff_state(journal, journal_path)
+    return identity
+
+
+def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
+    """Publish one prepared journal identity before recovery can be registered."""
+
+    state_path = Path(journal.state_path)
+    state = _read_json(state_path, MAX_STATE_BYTES)
+    transaction_path = state.get("transaction_path")
+    identity = journal_handoff_identity(journal)
+    if (
+        state.get("operation_id") != journal.operation_id
+        or state.get("phase") != "restart_required"
+        or not isinstance(transaction_path, str)
+        or Path(transaction_path).resolve() != journal_path.resolve()
+        or state.get("handoff_identity") not in {None, identity}
+        or state.get("pending_handoff_identity") is not None
+    ):
+        raise HelperError("application_state_mismatch")
+    state["handoff_identity"] = identity
+    state["pending_handoff_identity"] = None
+    state["completed_handoff_identity"] = None
+    _atomic_json(state_path, state)
+    _validate_handoff_state(journal, journal_path)
+    return identity
+
+
 def transaction_outcome(path: Path) -> str:
     try:
         phase = UpdateJournal.load(path).phase
@@ -422,6 +579,13 @@ def _runonce_key() -> str:
 def register_recovery(helper: Path, journal: Path, operation_id: str) -> None:
     if platform.system() != "Windows":
         raise HelperError("windows_required")
+    loaded = UpdateJournal.load(journal)
+    _validate_handoff_state(loaded, journal)
+    expected_helper = journal.parent / "AllTheContextUpdater.exe"
+    if loaded.operation_id != operation_id or helper.resolve() != expected_helper.resolve():
+        raise HelperError("recovery_identity_invalid")
+    if not _verified(helper, loaded.recovery_helper_sha256, loaded.recovery_helper_size):
+        raise HelperError("recovery_helper_untrusted")
     winreg = windows_registry()
 
     command = subprocess.list2cmdline((str(helper), "--journal", str(journal)))
@@ -474,6 +638,15 @@ def _creation_flags() -> int:
 
 
 def launch_recovery_helper(helper: Path, journal: Path) -> None:
+    loaded = UpdateJournal.load(journal)
+    _validate_handoff_state(loaded, journal)
+    expected_helper = journal.parent / "AllTheContextUpdater.exe"
+    if helper.resolve() != expected_helper.resolve() or not _verified(
+        helper,
+        loaded.recovery_helper_sha256,
+        loaded.recovery_helper_size,
+    ):
+        raise HelperError("recovery_helper_untrusted")
     environment = os.environ.copy()
     environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     subprocess.Popen(
@@ -533,10 +706,35 @@ def _wait_for_parent(pid: int) -> None:
 
 
 def _verified(path: Path, digest: str, size: int) -> bool:
-    if not path.is_file():
+    if (
+        not _valid_digest(digest)
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or size <= 0
+    ):
         return False
-    actual_digest, actual_size = _sha256(path)
-    return actual_digest == digest and actual_size == size
+    try:
+        path_stat = _plain_file_stat(path, "trusted_file_invalid")
+        if path_stat.st_size != size:
+            return False
+        digest_value = hashlib.sha256()
+        actual_size = 0
+        with path.open("rb") as stream:
+            if not _same_file(path_stat, os.fstat(stream.fileno())):
+                return False
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest_value.update(chunk)
+                actual_size += len(chunk)
+            if not _same_file(path_stat, os.fstat(stream.fileno())):
+                return False
+        final_stat = _plain_file_stat(path, "trusted_file_invalid")
+        return bool(
+            _same_file(path_stat, final_stat)
+            and actual_size == size
+            and digest_value.hexdigest() == digest
+        )
+    except (HelperError, OSError, ValueError):
+        return False
 
 
 def _run_bounded(command: tuple[str, ...], environment: dict[str, str]) -> int:
@@ -556,15 +754,27 @@ def _run_bounded(command: tuple[str, ...], environment: dict[str, str]) -> int:
     return completed.returncode
 
 
+def _validate_replacement(journal: UpdateJournal, journal_path: Path) -> None:
+    expected = journal_path.parent / "replacement" / "AllTheContextSetup.exe"
+    replacement = Path(journal.replacement_path)
+    if replacement.resolve() != expected.resolve() or not _verified(
+        replacement,
+        journal.replacement_sha256,
+        journal.replacement_size,
+    ):
+        raise HelperError("replacement_untrusted")
+
+
+def _validate_application(journal: UpdateJournal, digest: str, size: int) -> None:
+    application = Path(journal.application_path)
+    expected = _install_directory() / "AllTheContext.exe"
+    if application.resolve() != expected.resolve() or not _verified(application, digest, size):
+        raise HelperError("application_untrusted")
+
+
 def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
     application = Path(journal.application_path)
-    if journal.phase is HelperPhase.CUTOVER_STARTED and _verified(
-        application, journal.replacement_sha256, journal.replacement_size
-    ):
-        journal.phase = HelperPhase.BINARY_REPLACED
-        journal.last_error_code = None
-        journal.save(journal_path)
-        return
+    _validate_replacement(journal, journal_path)
     journal.phase = HelperPhase.CUTOVER_STARTED
     journal.save(journal_path)
     report = journal_path.parent / "apply-report.json"
@@ -646,6 +856,7 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
 
 
 def _verify_diagnostics(journal: UpdateJournal, journal_path: Path) -> None:
+    _validate_application(journal, journal.replacement_sha256, journal.replacement_size)
     report = journal_path.parent / "diagnostics.json"
     report.unlink(missing_ok=True)
     if (
@@ -675,6 +886,7 @@ def _verify_diagnostics(journal: UpdateJournal, journal_path: Path) -> None:
 
 
 def _verify_health(journal: UpdateJournal, journal_path: Path) -> None:
+    _validate_application(journal, journal.replacement_sha256, journal.replacement_size)
     report = journal_path.parent / "health.json"
     report.unlink(missing_ok=True)
     if (
@@ -704,13 +916,23 @@ def _copy_verified(source: Path, target: Path, digest: str, size: int) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f"{target.name}.atc-rollback-new")
     temporary.unlink(missing_ok=True)
+    source_stat = _plain_file_stat(source, "rollback_source_invalid")
     try:
         with source.open("rb") as input_stream, temporary.open("xb") as output_stream:
+            if not _same_file(source_stat, os.fstat(input_stream.fileno())):
+                raise HelperError("rollback_source_changed")
             shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
+            if not _same_file(source_stat, os.fstat(input_stream.fileno())):
+                raise HelperError("rollback_source_changed")
             output_stream.flush()
             os.fsync(output_stream.fileno())
         if not _verified(temporary, digest, size):
             raise HelperError("rollback_copy_invalid")
+        if not _same_file(
+            source_stat,
+            _plain_file_stat(source, "rollback_source_changed"),
+        ):
+            raise HelperError("rollback_source_changed")
         temporary.replace(target)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -720,6 +942,7 @@ def _copy_verified(source: Path, target: Path, digest: str, size: int) -> None:
 def _refresh_database_backup(journal: UpdateJournal, journal_path: Path) -> None:
     """Capture the final stopped-Core database before any replacement can run."""
 
+    previous_identity = journal_handoff_identity(journal)
     database = Path(journal.database_path)
     initial_backup = Path(journal.database_backup_path)
     backup = initial_backup.parent / f"core-{journal.operation_id}-stopped.sqlite3"
@@ -748,7 +971,11 @@ def _refresh_database_backup(journal: UpdateJournal, journal_path: Path) -> None
         journal.database_backup_sha256 = digest
         journal.database_backup_size = size
         journal.last_error_code = None
-        journal.save(journal_path)
+        _transition_handoff_state(
+            journal,
+            journal_path,
+            previous_identity=previous_identity,
+        )
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -823,11 +1050,25 @@ def _update_state(
     clear_transaction: bool,
 ) -> None:
     path = Path(journal.state_path)
+    journal_path = Path(journal.helper_path).parent / "journal.json"
     value = _read_json(path, MAX_STATE_BYTES)
     if value.get("operation_id") != journal.operation_id:
         raise HelperError("application_state_mismatch")
     transaction_path = value.get("transaction_path")
-    if transaction_path is None and clear_transaction and value.get("phase") == phase:
+    journal_identity = journal_handoff_identity(journal)
+    if journal.phase in TERMINAL_PHASES and value.get("phase") != phase:
+        # Terminal cleanup is the second half of a state-first publication.
+        # A journal whose progress marker was changed directly must not skip
+        # cutover or rollback merely because progress fields are not authority.
+        raise HelperError("application_state_mismatch")
+    if (
+        transaction_path is None
+        and clear_transaction
+        and value.get("phase") == phase
+        and value.get("handoff_identity") is None
+        and value.get("pending_handoff_identity") is None
+        and value.get("completed_handoff_identity") == journal_identity
+    ):
         value.update(
             {
                 "current_version": (
@@ -835,10 +1076,15 @@ def _update_state(
                 ),
                 "downloaded_path": None,
                 "last_error": error,
+                "handoff_identity": None,
+                "pending_handoff_identity": None,
+                "completed_handoff_identity": journal_identity,
             }
         )
         _atomic_json(path, value)
         return
+    value = _validate_handoff_state(journal, journal_path)
+    transaction_path = value["transaction_path"]
     if (
         not isinstance(transaction_path, str)
         or Path(transaction_path).resolve()
@@ -854,12 +1100,22 @@ def _update_state(
             "downloaded_path": None,
             "last_error": error,
             "transaction_path": None if clear_transaction else transaction_path,
+            "handoff_identity": None if clear_transaction else value["handoff_identity"],
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": journal_identity if clear_transaction else None,
         }
     )
     _atomic_json(path, value)
 
 
 def _launch_core(journal: UpdateJournal) -> None:
+    if journal.phase is HelperPhase.COMMITTED:
+        digest, size = journal.replacement_sha256, journal.replacement_size
+    elif journal.phase is HelperPhase.ROLLED_BACK:
+        digest, size = journal.rollback_application_sha256, journal.rollback_application_size
+    else:
+        raise HelperError("application_phase_invalid")
+    _validate_application(journal, digest, size)
     environment = _child_environment(journal)
     subprocess.Popen(
         (journal.application_path, "--core"),
@@ -984,8 +1240,13 @@ def run_transaction(journal_path: Path) -> int:
                 journal.phase = HelperPhase.WAITING_FOR_PARENT
                 journal.save(resolved)
                 _wait_for_parent(journal.parent_pid)
+                previous_identity = journal_handoff_identity(journal)
                 journal.parent_pid = 0
-                journal.save(resolved)
+                _transition_handoff_state(
+                    journal,
+                    resolved,
+                    previous_identity=previous_identity,
+                )
                 _refresh_database_backup(journal, resolved)
             if journal.phase in {
                 HelperPhase.WAITING_FOR_PARENT,
@@ -1043,9 +1304,45 @@ def ensure_recovery_before_core() -> bool:
         return True
     if not isinstance(transaction, str) or not _valid_operation_id(operation_id):
         return False
+    if not _valid_digest(state.get("handoff_identity")):
+        expected = (
+            _data_directory()
+            / "updates"
+            / "transactions"
+            / cast(str, operation_id)
+            / "journal.json"
+        )
+        try:
+            transaction_matches = Path(transaction).resolve() == expected.resolve()
+        except OSError:
+            transaction_matches = False
+        if state.get("phase") != "restart_required" or not transaction_matches:
+            return False
+        # No helper from this schema can cross cutover without the parent-published
+        # binding, so an interrupted preparation can safely return to the old app.
+        state.update(
+            {
+                "phase": "error",
+                "last_error": "The update stopped before installation and was reset safely",
+                "downloaded_path": None,
+                "backup_path": None,
+                "operation_id": None,
+                "manifest_identity": None,
+                "transaction_path": None,
+                "handoff_identity": None,
+                "pending_handoff_identity": None,
+                "completed_handoff_identity": None,
+            }
+        )
+        try:
+            _atomic_json(state_path, state)
+        except OSError:
+            return False
+        return True
     try:
         journal_path = Path(transaction).resolve()
         journal = UpdateJournal.load(journal_path)
+        _validate_handoff_state(journal, journal_path)
     except (HelperError, OSError):
         return False
     if journal.operation_id != operation_id:

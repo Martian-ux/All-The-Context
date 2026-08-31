@@ -1,5 +1,41 @@
 # Architecture decisions
 
+## ADR-178: Bind staged artifacts and detached recovery binaries at use time
+
+**Status:** implemented locally on 2026-08-31; this records source and test
+facts only and is not a release, packaged-artifact, live-client, or security
+acceptance claim.
+
+Install revalidates the exact persisted signed manifest and its identity before
+use, then hashes the staged artifact as a plain, single-link file before and
+after installer preflight. The Windows handoff repeats the digest and identity
+check while the archive remains open, extracts only from that opened stream,
+and rejects a changed, linked, reparse-backed, hardlinked, or oversized
+artifact. The recovery journal is schema version 2 and records the copied
+recovery-helper digest and size. RunOnce registration, detached helper launch,
+replacement execution, diagnostics/health, rollback copies, and Core launch
+fail closed when the recorded file binding is absent or no longer matches.
+The application state also records current, pending, and narrowly retained
+completed SHA-256 identities over the journal's replacement, rollback,
+database-backup, helper, parent-process, path, version, and Core handoff
+authority. Authority-changing parent and stopped-database updates use a
+two-phase state/journal publication that reconciles a crash on either side.
+Recovery registration, launch, active state mutation, terminal replay, and the
+Core startup guard require the appropriate independently persisted identity.
+Terminal cleanup also requires the state-first terminal phase marker, so a
+journal-only progress mutation cannot skip cutover or rollback.
+An interrupted preparation that never published the binding clears its
+operation identity before cutover so the unchanged old application may start
+and the same candidate can be retried. A `cutover_started` recovery always
+re-runs the packaged installer and validates its complete application, MCP,
+recovery, and updater report; it may not infer a complete cutover from the main
+application alone.
+
+This decision intentionally does not claim literal cross-file atomicity,
+recursive cleanup race closure, or elimination of the portable validation-to-
+process-creation interval. Version-1 recovery journals are rejected rather
+than silently upgraded.
+
 ## ADR-177: Hermes integration is profile-local and splits retrieval from capture
 
 **Status:** accepted locally on 2026-08-30 as source-level dogfood hardening;
@@ -5204,3 +5240,34 @@ production integration; scripted host trace checks are not operator telemetry.
 The receipt is developer evidence only. It does not imply a real connector,
 provider integration, network/OAuth behavior, stable SDK/export contract,
 dashboard independence in production, or acceptance against private/live data.
+
+## ADR-131: Windows security reassessment preparation is identity-bound and content-free
+
+**Status:** accepted locally on 2026-08-31; this is preparation evidence only,
+not Microsoft, malware, signing, release, or provider acceptance.
+
+The private Windows security-bundle preparer verifies the exact archive,
+installer, direct package, four installed components, canonical manifest and
+checksum, source root, source commit, and explicit candidate version. Manifest
+and archive verification are separate checks, but they run under one captured
+and revalidated source-root/ancestry/component identity binding so a phase
+boundary cannot silently switch inputs. JSON parsing rejects duplicate keys,
+non-finite values including exponent overflow, and structural counts that are
+not exact integers. ZIP members reject traversal, links, backslashes, NULs,
+and Windows drive-qualified names.
+
+The emitted JSON contains no candidate bytes, paths, credentials, logs, user
+context, or vendor assertion: only exact digests, sizes, filenames, roles,
+provenance binding, hold status, and empty detection placeholders. Publication
+creates a new output directory, binds the exclusively created handle before
+writing, revalidates every input after the final write, then re-reads and binds
+the exact final bytes of both outputs to their created handles and pathnames.
+Existing output, symlink/reparse redirection, hardlinked output,
+directory identity changes, and pathname replacement fail closed. A failed
+operation deliberately retains its bounded content-free output instead of
+attempting a raceable pathname unlink. Direct CLI execution selects its sibling
+manifest verifier without consulting an unrelated installed `scripts` package.
+The script does not execute binaries,
+open a release archive as an executable, contact Microsoft, or submit/upload
+anything. A fresh exact artifact and the physical Defender reassessment remain
+required before any release decision.

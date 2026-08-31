@@ -14,6 +14,7 @@ import os
 import platform
 import shutil
 import sqlite3
+import stat
 import struct
 import sys
 import tempfile
@@ -27,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Protocol, cast
+from typing import Any, BinaryIO, Literal, Protocol, cast
 from urllib.parse import urljoin, urlsplit
 
 from platformdirs import user_data_path
@@ -45,6 +46,7 @@ from .windows_update_helper import (
     HelperError,
     HelperPhase,
     UpdateJournal,
+    bind_handoff_state,
     launch_recovery_helper,
     register_recovery,
     request_rollback,
@@ -63,6 +65,7 @@ MAX_CLEANUP_ENTRIES = 32
 DEFAULT_BETA_MANIFEST_URL = (
     "https://martian-ux.github.io/All-The-Context/beta/windows/x86_64/manifest-v1.json"
 )
+WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 Channel = Literal["stable", "beta"]
 
@@ -123,6 +126,10 @@ class UpdateState:
     operation_id: str | None = None
     transaction_path: str | None = None
     recovery_attempts: int = 0
+    manifest_identity: str | None = None
+    handoff_identity: str | None = None
+    pending_handoff_identity: str | None = None
+    completed_handoff_identity: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +152,8 @@ class InstallPlan:
     state_path: Path
     core_host: str
     core_port: int
+    artifact_sha256: str | None = None
+    artifact_size: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +251,65 @@ def _parse_time(value: str | None) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _is_link_or_reparse(value: os.stat_result | Any) -> bool:
+    return stat.S_ISLNK(value.st_mode) or bool(
+        getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+    )
+
+
+def _plain_file_stat(path: Path, message: str) -> os.stat_result:
+    try:
+        value = path.lstat()
+    except OSError as exc:
+        raise UpdateError(message) from exc
+    if (
+        _is_link_or_reparse(value)
+        or not stat.S_ISREG(value.st_mode)
+        or getattr(value, "st_nlink", 1) != 1
+    ):
+        raise UpdateError(message)
+    return value
+
+
+def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(
+        same
+        and stat.S_ISREG(observed.st_mode)
+        and getattr(observed, "st_nlink", 1) == 1
+        and expected.st_size == observed.st_size
+        and getattr(expected, "st_mtime_ns", None) == getattr(observed, "st_mtime_ns", None)
+    )
+
+
+def _hash_stable_file(path: Path, *, maximum_bytes: int) -> tuple[str, int]:
+    before = _plain_file_stat(path, "The verified update artifact is not a plain file")
+    if before.st_size > maximum_bytes:
+        raise UpdateError("The verified update artifact exceeds the safety limit")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("rb") as stream:
+            if not _same_file(before, os.fstat(stream.fileno())):
+                raise UpdateError("The verified update artifact changed while it was checked")
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                size += len(chunk)
+                if size > maximum_bytes:
+                    raise UpdateError("The verified update artifact exceeds the safety limit")
+                digest.update(chunk)
+            if not _same_file(before, os.fstat(stream.fileno())):
+                raise UpdateError("The verified update artifact changed while it was checked")
+    except OSError as exc:
+        raise UpdateError("The verified update artifact is unreadable") from exc
+    after = _plain_file_stat(path, "The verified update artifact changed while it was checked")
+    if not _same_file(before, after):
+        raise UpdateError("The verified update artifact changed while it was checked")
+    return digest.hexdigest(), size
 
 
 class UpdateTransport(Protocol):
@@ -547,7 +615,7 @@ class PlatformInstaller:
             raise UpdateError("The Windows release artifact is not a valid ZIP archive")
 
     @staticmethod
-    def _extract_windows_setup(archive: Path, target: Path) -> Path:
+    def _extract_windows_setup(archive: Path | BinaryIO, target: Path) -> Path:
         target.mkdir(parents=True, exist_ok=False)
         setup: Path | None = None
         with zipfile.ZipFile(archive) as bundle:
@@ -579,15 +647,37 @@ class PlatformInstaller:
         return setup
 
     @staticmethod
+    def _hash_archive_stream(stream: BinaryIO) -> tuple[str, int]:
+        stream.seek(0)
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := stream.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_ARTIFACT_BYTES:
+                raise UpdateError("Release artifact exceeded the safety limit at handoff")
+            digest.update(chunk)
+        return digest.hexdigest(), size
+
+    @staticmethod
     def _copy_verified(source: Path, target: Path) -> tuple[str, int]:
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(f"{target.name}.atc-new")
         temporary.unlink(missing_ok=True)
+        source_stat = _plain_file_stat(source, "The installed update source is not trusted")
         try:
             with source.open("rb") as input_stream, temporary.open("xb") as output_stream:
+                if not _same_file(source_stat, os.fstat(input_stream.fileno())):
+                    raise UpdateError("The installed update source changed during copy")
                 shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
+                if not _same_file(source_stat, os.fstat(input_stream.fileno())):
+                    raise UpdateError("The installed update source changed during copy")
                 output_stream.flush()
                 os.fsync(output_stream.fileno())
+            if not _same_file(
+                source_stat,
+                _plain_file_stat(source, "The installed update source changed during copy"),
+            ):
+                raise UpdateError("The installed update source changed during copy")
             digest, size = sha256_file(temporary)
             temporary.replace(target)
             return digest, size
@@ -599,10 +689,51 @@ class PlatformInstaller:
         if not self.supported:
             raise UpdateError(self.unsupported_reason)
         assert self.helper_path is not None
+        if (
+            not isinstance(plan.artifact_sha256, str)
+            or len(plan.artifact_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in plan.artifact_sha256)
+            or isinstance(plan.artifact_size, bool)
+            or not isinstance(plan.artifact_size, int)
+            or plan.artifact_size <= 0
+            or plan.artifact_size > MAX_ARTIFACT_BYTES
+        ):
+            raise UpdateError("Verified release archive evidence is missing at handoff")
         recovery_registered = False
         try:
-            plan.transaction_dir.mkdir(parents=True, exist_ok=False)
-            setup = self._extract_windows_setup(plan.artifact, plan.operation_dir / "extracted")
+            _plain_file_stat(
+                plan.artifact,
+                "The verified release archive is unavailable at handoff",
+            )
+            with plan.artifact.open("rb") as archive_stream:
+                opened_stat = os.fstat(archive_stream.fileno())
+                archive_path_stat = _plain_file_stat(
+                    plan.artifact,
+                    "The verified release archive is unavailable at handoff",
+                )
+                if not _same_file(archive_path_stat, opened_stat):
+                    raise UpdateError("The verified release archive changed during handoff")
+                digest, size = self._hash_archive_stream(archive_stream)
+                if digest != plan.artifact_sha256 or size != plan.artifact_size:
+                    raise UpdateError(
+                        "Release artifact checksum does not match signed metadata at handoff"
+                    )
+                plan.transaction_dir.mkdir(parents=True, exist_ok=False)
+                setup = self._extract_windows_setup(
+                    archive_stream,
+                    plan.operation_dir / "extracted",
+                )
+                final_digest, final_size = self._hash_archive_stream(archive_stream)
+                if not _same_file(opened_stat, os.fstat(archive_stream.fileno())) or not _same_file(
+                    opened_stat,
+                    _plain_file_stat(
+                        plan.artifact,
+                        "The verified release archive changed during extraction",
+                    ),
+                ):
+                    raise UpdateError("The verified release archive changed during extraction")
+                if final_digest != plan.artifact_sha256 or final_size != plan.artifact_size:
+                    raise UpdateError("The verified release archive changed during extraction")
             replacement = plan.transaction_dir / "replacement" / "AllTheContextSetup.exe"
             replacement_digest, replacement_size = self._copy_verified(setup, replacement)
             rollback_application = plan.transaction_dir / "rollback" / "AllTheContext.exe"
@@ -630,7 +761,10 @@ class PlatformInstaller:
                 self.stable_update_helper_path, rollback_update_helper
             )
             copied_helper = plan.transaction_dir / "AllTheContextUpdater.exe"
-            self._copy_verified(self.helper_path, copied_helper)
+            recovery_helper_digest, recovery_helper_size = self._copy_verified(
+                self.helper_path,
+                copied_helper,
+            )
             backup_digest, backup_size = sha256_file(plan.database_backup_path)
             journal_path = plan.transaction_dir / "journal.json"
             now = _utc_now()
@@ -667,11 +801,14 @@ class PlatformInstaller:
                 helper_path=str(copied_helper),
                 core_host=plan.core_host,
                 core_port=plan.core_port,
+                recovery_helper_sha256=recovery_helper_digest,
+                recovery_helper_size=recovery_helper_size,
                 created_at=now,
                 updated_at=now,
             )
             journal.validate(journal_path)
             journal.save(journal_path)
+            bind_handoff_state(journal, journal_path)
             register_recovery(copied_helper, journal_path, plan.operation_id)
             recovery_registered = True
             launch_recovery_helper(copied_helper, journal_path)
@@ -770,6 +907,10 @@ class UpdateManager:
             self._save()
 
     @staticmethod
+    def _render_json(value: Mapping[str, Any]) -> str:
+        return json.dumps(value, sort_keys=True, indent=2) + "\n"
+
+    @staticmethod
     def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
@@ -778,7 +919,7 @@ class UpdateManager:
         temporary = Path(temporary_name)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
+                stream.write(UpdateManager._render_json(value))
                 stream.flush()
                 os.fsync(stream.fileno())
             temporary.replace(path)
@@ -838,6 +979,10 @@ class UpdateManager:
                 state.last_error,
                 state.operation_id,
                 state.transaction_path,
+                state.manifest_identity,
+                state.handoff_identity,
+                state.pending_handoff_identity,
+                state.completed_handoff_identity,
             )
             if any(item is not None and not isinstance(item, str) for item in optional_strings):
                 raise ValueError("invalid state string")
@@ -859,6 +1004,21 @@ class UpdateManager:
                 or any(character not in "0123456789abcdef" for character in state.operation_id)
             ):
                 raise ValueError("invalid operation ID")
+            if state.manifest_identity is not None and (
+                len(state.manifest_identity) != 64
+                or any(character not in "0123456789abcdef" for character in state.manifest_identity)
+            ):
+                raise ValueError("invalid manifest identity")
+            for identity in (
+                state.handoff_identity,
+                state.pending_handoff_identity,
+                state.completed_handoff_identity,
+            ):
+                if identity is not None and (
+                    len(identity) != 64
+                    or any(character not in "0123456789abcdef" for character in identity)
+                ):
+                    raise ValueError("invalid handoff identity")
             return state
         except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
             if self.state_path.exists():
@@ -910,7 +1070,21 @@ class UpdateManager:
                 transaction_valid = False
             if not transaction_valid:
                 self.state.transaction_path = None
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 invalid = True
+        elif (
+            self.state.handoff_identity is not None
+            or self.state.pending_handoff_identity is not None
+        ):
+            self.state.handoff_identity = None
+            self.state.pending_handoff_identity = None
+            invalid = True
+        elif self.state.completed_handoff_identity is not None:
+            # A completed binding exists only for the narrow terminal RunOnce
+            # replay interval; an initialized application no longer needs it.
+            self.state.completed_handoff_identity = None
         if invalid:
             self.state.phase = UpdatePhase.ERROR
             self.state.last_error = "Persisted update paths were invalid and were reset safely"
@@ -928,7 +1102,11 @@ class UpdateManager:
         self.state.mandatory = False
         self.state.release_notes_url = None
         self.state.operation_id = None
+        self.state.manifest_identity = None
         self.state.transaction_path = None
+        self.state.handoff_identity = None
+        self.state.pending_handoff_identity = None
+        self.state.completed_handoff_identity = None
         self.state.last_error = None
 
     def _normalize_unpublished_channel_state(self) -> None:
@@ -984,6 +1162,9 @@ class UpdateManager:
                 self.state.phase = UpdatePhase.INSTALLED
                 self.state.last_error = None
                 self.state.transaction_path = None
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._clean_operation()
                 self._save()
                 return self.public_status()
@@ -993,6 +1174,9 @@ class UpdateManager:
                     "The update did not become healthy; the previous app and vault were restored"
                 )
                 self.state.transaction_path = None
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._clean_operation()
                 self._save()
                 return self.public_status()
@@ -1018,6 +1202,9 @@ class UpdateManager:
                 self.state.phase = UpdatePhase.INSTALLED
                 self.state.last_error = None
                 self.state.transaction_path = None
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._clean_operation()
                 self._save()
                 return self.public_status()
@@ -1028,6 +1215,9 @@ class UpdateManager:
                     "The new version failed its health check and was rolled back"
                 )
                 self.state.transaction_path = None
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
             except UpdateError as exc:
                 self.state.phase = UpdatePhase.ERROR
                 self.state.last_error = (
@@ -1098,6 +1288,10 @@ class UpdateManager:
             result.pop("backup_path", None)
             result.pop("operation_id", None)
             result.pop("transaction_path", None)
+            result.pop("manifest_identity", None)
+            result.pop("handoff_identity", None)
+            result.pop("pending_handoff_identity", None)
+            result.pop("completed_handoff_identity", None)
             return result
 
     def configure(self, *, enabled: bool, channel: Channel) -> dict[str, Any]:
@@ -1115,7 +1309,11 @@ class UpdateManager:
                 self.state.mandatory = False
                 self.state.release_notes_url = None
                 self.state.operation_id = None
+                self.state.manifest_identity = None
                 self.state.transaction_path = None
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
             if not enabled:
                 self._cancel.set()
                 self.state.phase = UpdatePhase.DISABLED
@@ -1202,12 +1400,14 @@ class UpdateManager:
                     raise UpdateError("Signed update metadata targets a different architecture")
                 offered = cast(str, manifest["version"])
                 operation_id = hashlib.sha256(raw).hexdigest()[:24]
+                persisted_manifest = self._render_json(manifest).encode("utf-8")
                 self._prune_directory(self.config.data_dir / "staging", keep=operation_id)
                 self.state.last_checked_at = _utc_now()
                 self.state.offered_version = offered
                 self.state.mandatory = cast(bool, manifest["mandatory"])
                 self.state.release_notes_url = cast(str, manifest["release_notes_url"])
                 self.state.operation_id = operation_id
+                self.state.manifest_identity = hashlib.sha256(persisted_manifest).hexdigest()
                 self.state.downloaded_path = None
                 self._atomic_json(self._operation_directory() / "manifest.json", manifest)
                 if ReleaseVersion.parse(offered) == ReleaseVersion.parse(
@@ -1434,19 +1634,70 @@ class UpdateManager:
                 raise UpdateError("A completely verified update must be ready before install")
             artifact = Path(self.state.downloaded_path)
             try:
-                manifest = json.loads(
-                    (self._operation_directory() / "manifest.json").read_text(encoding="utf-8")
+                manifest_path = self._operation_directory() / "manifest.json"
+                manifest_bytes = manifest_path.read_bytes()
+                manifest = json.loads(manifest_bytes.decode("utf-8"))
+                if not isinstance(manifest, dict):
+                    raise UpdateError("Verified update metadata is invalid; check again")
+                if (
+                    self.state.manifest_identity is None
+                    or hashlib.sha256(manifest_bytes).hexdigest() != self.state.manifest_identity
+                ):
+                    raise UpdateError("Verified update metadata changed; check again")
+                verify_manifest(
+                    manifest,
+                    load_keyring(self.config.keyring_path),
+                    current_version=self.config.current_version,
+                    expected_channel=self.preferences.channel,
                 )
-            except (OSError, ValueError, json.JSONDecodeError) as exc:
-                raise UpdateError(
-                    "Verified update metadata is no longer available; check again"
-                ) from exc
+                if manifest["platform"] != self.config.platform_name:
+                    raise UpdateError("Signed update metadata targets a different platform")
+                if manifest["architecture"] != self.config.architecture:
+                    raise UpdateError("Signed update metadata targets a different architecture")
+                if (
+                    manifest["version"] != self.state.offered_version
+                    or manifest["mandatory"] != self.state.mandatory
+                    or manifest["release_notes_url"] != self.state.release_notes_url
+                ):
+                    raise UpdateError("Verified update state no longer matches its metadata")
+                expected_artifact = self._operation_directory() / "artifact.zip"
+                if artifact.resolve() != expected_artifact.resolve():
+                    raise UpdateError("Verified update artifact identity changed; check again")
+                artifact_digest, artifact_size = _hash_stable_file(
+                    artifact,
+                    maximum_bytes=MAX_ARTIFACT_BYTES,
+                )
+                if artifact_size != manifest["size"] or artifact_digest != manifest["sha256"]:
+                    raise UpdateError("Release artifact checksum does not match signed metadata")
+            except (
+                ManifestError,
+                OSError,
+                TypeError,
+                UnicodeError,
+                ValueError,
+                UpdateError,
+            ) as exc:
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = str(exc)[:500]
+                self.state.downloaded_path = None
+                self.state.transaction_path = None
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
+                self._save()
+                return self.public_status()
             self._cancel.clear()
             self.state.phase = UpdatePhase.INSTALLING
             self.state.last_error = None
             self._save()
             try:
                 self.installer.preflight(artifact, cast(int, manifest["size"]))
+                final_digest, final_size = _hash_stable_file(
+                    artifact,
+                    maximum_bytes=MAX_ARTIFACT_BYTES,
+                )
+                if final_size != manifest["size"] or final_digest != manifest["sha256"]:
+                    raise UpdateError("Release artifact changed after preflight")
                 backup_path = (
                     self.config.data_dir
                     / "backups"
@@ -1460,6 +1711,9 @@ class UpdateManager:
                     raise UpdateError("Verified update transaction identity is unavailable")
                 transaction_dir = self.config.data_dir / "transactions" / operation_id
                 self.state.transaction_path = str(transaction_dir / "journal.json")
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self.state.phase = UpdatePhase.RESTART_REQUIRED
                 self._save()
                 core_host = os.environ.get("ATC_CORE_HOST", "127.0.0.1")
@@ -1480,12 +1734,18 @@ class UpdateManager:
                         state_path=self.state_path,
                         core_host=core_host,
                         core_port=core_port,
+                        artifact_sha256=cast(str, manifest["sha256"]),
+                        artifact_size=cast(int, manifest["size"]),
                     )
                 )
                 return self.public_status()
             except (OSError, ValueError, UpdateError) as exc:
                 self.state.phase = UpdatePhase.ERROR
                 self.state.last_error = str(exc)[:500]
+                self.state.downloaded_path = None
                 self.state.transaction_path = None
+                self.state.handoff_identity = None
+                self.state.pending_handoff_identity = None
+                self.state.completed_handoff_identity = None
                 self._save()
                 return self.public_status()

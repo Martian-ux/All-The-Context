@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from scripts import installed_component_manifest as manifest_module
 from scripts.build_release_assets import build_archive
 from scripts.installed_component_manifest import (
     CHECKSUM_FILE_NAME,
@@ -112,6 +114,33 @@ def test_installed_component_manifest_is_canonical_and_verifiable(tmp_path: Path
         )
         == payload
     )
+
+
+def test_checksum_failure_never_unlinks_replaced_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package, direct, components = _stage(tmp_path)
+    original_write = manifest_module._write_new
+
+    def fail_checksum(path: Path, payload: bytes, *, label: str) -> None:
+        if label == "installed-component checksum":
+            (path.parent / MANIFEST_FILE_NAME).write_bytes(b"concurrent replacement")
+            raise OSError("simulated checksum failure")
+        original_write(path, payload, label=label)
+
+    monkeypatch.setattr(manifest_module, "_write_new", fail_checksum)
+    with pytest.raises(OSError, match="simulated checksum failure"):
+        create_manifest(
+            output_dir=package.parent,
+            package_path=package,
+            direct_package_path=direct,
+            component_paths=components,
+            source_root=tmp_path,
+            version=VERSION,
+            source_commit=SOURCE_COMMIT,
+        )
+
+    assert (package.parent / MANIFEST_FILE_NAME).read_bytes() == b"concurrent replacement"
 
 
 def test_manifest_is_bound_to_deterministic_archive_member(tmp_path: Path) -> None:
@@ -364,6 +393,128 @@ def test_archive_verifier_rejects_escape_and_symlink_entries(tmp_path: Path) -> 
             source_root=tmp_path,
         )
 
+
+@pytest.mark.parametrize("component_count", ["true", "4.0", "1e10000", "NaN"])
+def test_manifest_rejects_non_integer_or_non_finite_component_count(
+    tmp_path: Path, component_count: str
+) -> None:
+    package, direct, components = _stage(tmp_path)
+    manifest_path, checksum_path = create_manifest(
+        output_dir=package.parent,
+        package_path=package,
+        direct_package_path=direct,
+        component_paths=components,
+        source_root=tmp_path,
+        version=VERSION,
+        source_commit=SOURCE_COMMIT,
+    )
+    raw = manifest_path.read_bytes().replace(
+        b'"component_count": 4',
+        f'"component_count": {component_count}'.encode("ascii"),
+        1,
+    )
+    manifest_path.write_bytes(raw)
+    checksum_path.write_text(
+        f"{hashlib.sha256(raw).hexdigest()}  {MANIFEST_FILE_NAME}\n",
+        encoding="ascii",
+        newline="\n",
+    )
+
+    with pytest.raises(InstalledComponentManifestError, match=r"manifest|count"):
+        verify_manifest(
+            manifest_path=manifest_path,
+            package_path=package,
+            direct_package_path=direct,
+            component_paths=components,
+            source_root=tmp_path,
+        )
+
+
+@pytest.mark.parametrize("member_name", ["C:/AllTheContextSetup.exe", "C:AllTheContextSetup.exe"])
+def test_archive_verifier_rejects_windows_drive_qualified_members(
+    tmp_path: Path, member_name: str
+) -> None:
+    package, direct, components = _stage(tmp_path)
+    create_manifest(
+        output_dir=package.parent,
+        package_path=package,
+        direct_package_path=direct,
+        component_paths=components,
+        source_root=tmp_path,
+        version=VERSION,
+        source_commit=SOURCE_COMMIT,
+    )
+    archive = tmp_path / "drive-qualified.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(member_name, package.read_bytes())
+        bundle.writestr(
+            MANIFEST_FILE_NAME,
+            package.parent.joinpath(MANIFEST_FILE_NAME).read_bytes(),
+        )
+        bundle.writestr(
+            CHECKSUM_FILE_NAME,
+            package.parent.joinpath(CHECKSUM_FILE_NAME).read_bytes(),
+        )
+
+    with pytest.raises(InstalledComponentManifestError, match="unsafe path"):
+        verify_archive(
+            archive_path=archive,
+            direct_package_path=direct,
+            component_paths=components,
+            source_root=tmp_path,
+        )
+
+
+def test_archive_verifier_rejects_nul_truncated_member_name(tmp_path: Path) -> None:
+    package, direct, components = _stage(tmp_path)
+    create_manifest(
+        output_dir=package.parent,
+        package_path=package,
+        direct_package_path=direct,
+        component_paths=components,
+        source_root=tmp_path,
+        version=VERSION,
+        source_commit=SOURCE_COMMIT,
+    )
+    archive = tmp_path / "nul-member.zip"
+    poisoned_name = b"AllTheContextSetup.exeXhidden"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(poisoned_name.decode("ascii"), package.read_bytes())
+        bundle.writestr(
+            MANIFEST_FILE_NAME,
+            package.parent.joinpath(MANIFEST_FILE_NAME).read_bytes(),
+        )
+        bundle.writestr(
+            CHECKSUM_FILE_NAME,
+            package.parent.joinpath(CHECKSUM_FILE_NAME).read_bytes(),
+        )
+    raw = archive.read_bytes()
+    replacement = b"AllTheContextSetup.exe\x00hidden"
+    assert len(replacement) == len(poisoned_name)
+    assert raw.count(poisoned_name) == 2
+    archive.write_bytes(raw.replace(poisoned_name, replacement))
+
+    with pytest.raises(InstalledComponentManifestError, match="non-canonical"):
+        verify_archive(
+            archive_path=archive,
+            direct_package_path=direct,
+            component_paths=components,
+            source_root=tmp_path,
+        )
+
+
+def test_archive_verifier_rejects_symlink_entry(tmp_path: Path) -> None:
+    package, direct, components = _stage(tmp_path)
+    create_manifest(
+        output_dir=package.parent,
+        package_path=package,
+        direct_package_path=direct,
+        component_paths=components,
+        source_root=tmp_path,
+        version=VERSION,
+        source_commit=SOURCE_COMMIT,
+    )
+    archive = tmp_path / "symlink.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
         link = zipfile.ZipInfo("AllTheContextSetup.exe")
         link.external_attr = 0o120777 << 16

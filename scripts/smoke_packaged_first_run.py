@@ -43,6 +43,7 @@ from allthecontext.release_manifest import sha256_file
 from allthecontext.windows_update_helper import (
     HelperPhase,
     UpdateJournal,
+    bind_handoff_state,
     journal_failure_diagnostic,
 )
 from mcp import ClientSession, StdioServerParameters
@@ -260,6 +261,7 @@ def prepare_packaged_update_transaction(
     rollback_mcp_digest, rollback_mcp_size = sha256_file(rollback_mcp)
     rollback_recovery_digest, rollback_recovery_size = sha256_file(rollback_recovery)
     rollback_update_digest, rollback_update_size = sha256_file(rollback_update_helper)
+    recovery_helper_digest, recovery_helper_size = sha256_file(transaction_helper)
     backup_digest, backup_size = sha256_file(backup)
     now = "2026-07-22T12:00:00+00:00"
     journal = UpdateJournal(
@@ -295,10 +297,13 @@ def prepare_packaged_update_transaction(
         helper_path=str(transaction_helper),
         core_host="127.0.0.1",
         core_port=core_port,
+        recovery_helper_sha256=recovery_helper_digest,
+        recovery_helper_size=recovery_helper_size,
         created_at=now,
         updated_at=now,
     )
     journal.save(journal_path)
+    bind_handoff_state(journal, journal_path)
     return transaction_helper, journal_path
 
 
