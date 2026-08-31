@@ -87,14 +87,14 @@ class _InputIdentity:
 class _BoundInput:
     label: str
     path: Path
-    ancestors: tuple[tuple[Path, _InputIdentity], ...]
+    ancestors: tuple[tuple[Path, _DirectoryIdentity], ...]
     identity: _InputIdentity
 
 
 @dataclass(frozen=True)
 class _InputBinding:
     source_root: Path
-    source_root_identity: _InputIdentity
+    source_root_identity: _DirectoryIdentity
     inputs: tuple[_BoundInput, ...]
 
 
@@ -143,6 +143,29 @@ def _input_identity(path: Path, *, label: str, directory: bool) -> _InputIdentit
     )
 
 
+def _input_directory_identity(path: Path, *, label: str) -> _DirectoryIdentity:
+    """Bind a directory entry without treating expected child writes as swaps."""
+
+    try:
+        information = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        raise WindowsSecuritySubmissionError(f"{label} cannot be verified") from exc
+    attributes = int(getattr(information, "st_file_attributes", 0))
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if (
+        stat.S_ISLNK(information.st_mode)
+        or bool(attributes & reparse_flag)
+        or not stat.S_ISDIR(information.st_mode)
+    ):
+        raise WindowsSecuritySubmissionError(f"{label} cannot be verified")
+    return _DirectoryIdentity(
+        device=int(information.st_dev),
+        inode=int(information.st_ino),
+        file_type=stat.S_IFMT(information.st_mode),
+        file_attributes=attributes,
+    )
+
+
 def _capture_input_binding(
     *, source_root: Path, inputs: Mapping[str, Path]
 ) -> _InputBinding:
@@ -150,7 +173,7 @@ def _capture_input_binding(
         lexical_root, _resolved_root = manifest_module._validate_root(source_root)
     except (manifest_module.InstalledComponentManifestError, OSError) as exc:
         raise WindowsSecuritySubmissionError("source root cannot be verified") from exc
-    root_identity = _input_identity(lexical_root, label="source root", directory=True)
+    root_identity = _input_directory_identity(lexical_root, label="source root")
     bound: list[_BoundInput] = []
     for label, value in inputs.items():
         lexical = manifest_module._absolute(value)
@@ -159,12 +182,15 @@ def _capture_input_binding(
             relative = lexical.relative_to(lexical_root)
         except (ValueError, manifest_module.InstalledComponentManifestError) as exc:
             raise WindowsSecuritySubmissionError(f"{label} cannot be verified") from exc
-        ancestors: list[tuple[Path, _InputIdentity]] = [(lexical_root, root_identity)]
+        ancestors: list[tuple[Path, _DirectoryIdentity]] = [(lexical_root, root_identity)]
         current = lexical_root
         for part in relative.parts[:-1]:
             current /= part
             ancestors.append(
-                (current, _input_identity(current, label=f"{label} directory", directory=True))
+                (
+                    current,
+                    _input_directory_identity(current, label=f"{label} directory"),
+                )
             )
         identity = _input_identity(lexical, label=label, directory=False)
         bound.append(_BoundInput(label, lexical, tuple(ancestors), identity))
@@ -172,13 +198,13 @@ def _capture_input_binding(
 
 
 def _revalidate_input_binding(binding: _InputBinding) -> None:
-    if _input_identity(binding.source_root, label="source root", directory=True) != (
+    if _input_directory_identity(binding.source_root, label="source root") != (
         binding.source_root_identity
     ):
         raise WindowsSecuritySubmissionError("source root changed while it was verified")
     for item in binding.inputs:
         for path, expected in item.ancestors:
-            if _input_identity(path, label=item.label, directory=True) != expected:
+            if _input_directory_identity(path, label=item.label) != expected:
                 raise WindowsSecuritySubmissionError(
                     f"{item.label} path ancestry changed while it was verified"
                 )
@@ -220,11 +246,23 @@ def _output_file_identity(path: Path) -> _OutputFileIdentity:
         information = path.stat(follow_symlinks=False)
     except OSError as exc:
         raise WindowsSecuritySubmissionError("output file cannot be verified") from exc
+    return _output_identity_from_stat(information)
+
+
+def _output_stream_identity(stream: Any) -> _OutputFileIdentity:
+    try:
+        information = os.fstat(stream.fileno())
+    except OSError as exc:
+        raise WindowsSecuritySubmissionError("output file cannot be verified") from exc
+    return _output_identity_from_stat(information)
+
+
+def _output_identity_from_stat(information: os.stat_result) -> _OutputFileIdentity:
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     attributes = int(getattr(information, "st_file_attributes", 0))
     if (
-        path.is_symlink()
-        or bool(attributes & reparse_flag)
+        bool(attributes & reparse_flag)
+        or stat.S_ISLNK(information.st_mode)
         or not stat.S_ISREG(information.st_mode)
         or int(information.st_nlink) != 1
     ):
@@ -238,6 +276,24 @@ def _output_file_identity(path: Path) -> _OutputFileIdentity:
         modified_ns=int(information.st_mtime_ns),
         changed_ns=int(information.st_ctime_ns),
         file_attributes=attributes,
+    )
+
+
+def _same_output_object(left: _OutputFileIdentity, right: _OutputFileIdentity) -> bool:
+    """Compare handle/path ownership fields that remain stable across close."""
+
+    return (
+        left.device,
+        left.inode,
+        stat.S_IFMT(left.mode),
+        left.links,
+        left.file_attributes,
+    ) == (
+        right.device,
+        right.inode,
+        stat.S_IFMT(right.mode),
+        right.links,
+        right.file_attributes,
     )
 
 
@@ -408,6 +464,10 @@ def _verify_inputs(
                 "release archive": archive_path,
                 "archive package": package_path,
                 "direct package": direct_package_path,
+                **{
+                    f"{role} executable": path
+                    for role, path in component_paths.items()
+                },
                 "manifest": manifest,
                 "manifest checksum": checksum,
             }
@@ -417,7 +477,7 @@ def _verify_inputs(
     return manifest, checksum, manifest_payload, binding, measurements
 
 
-def build_bundle(
+def _build_bundle_with_binding(
     *,
     archive_path: Path,
     package_path: Path,
@@ -432,7 +492,7 @@ def build_bundle(
     role: str,
     source_commit: str,
     version: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], _InputBinding]:
     """Build a content-free bundle after proving every release input."""
 
     if not isinstance(role, str) or role not in COMPONENT_ROLES:
@@ -452,7 +512,7 @@ def build_bundle(
         recovery_path=recovery_path,
         updater_path=updater_path,
     )
-    _manifest, _checksum, manifest_payload, _binding, measurements = _verify_inputs(
+    _manifest, _checksum, manifest_payload, input_binding, measurements = _verify_inputs(
         archive_path=archive_path,
         package_path=package_path,
         direct_package_path=direct_package_path,
@@ -464,12 +524,22 @@ def build_bundle(
         source_commit=source_commit,
     )
     component = _manifest_component(manifest_payload, role)
+    selected_measurement = measurements[f"{role} executable"]
+    selected_path = component_paths[role]
+    if (
+        component["filename"] != selected_path.name
+        or component["sha256"] != selected_measurement.digest
+        or component["size"] != selected_measurement.size
+    ):
+        raise WindowsSecuritySubmissionError(
+            "requested helper differs from the verified component measurement"
+        )
     candidate = {
         "authenticode_status": component["authenticode"]["status"],
-        "filename": component["filename"],
+        "filename": selected_path.name,
         "role": component["role"],
-        "sha256": component["sha256"],
-        "size": component["size"],
+        "sha256": selected_measurement.digest,
+        "size": selected_measurement.size,
     }
     binding = {
         "architecture": manifest_payload["architecture"],
@@ -503,7 +573,7 @@ def build_bundle(
         "source_commit": manifest_payload["source_commit"],
         "version": manifest_payload["version"],
     }
-    return {
+    payload = {
         "architecture": WINDOWS_ARCHITECTURE,
         "bundle_type": BUNDLE_TYPE,
         "candidate": candidate,
@@ -532,6 +602,43 @@ def build_bundle(
         },
         "version": manifest_payload["version"],
     }
+    return payload, input_binding
+
+
+def build_bundle(
+    *,
+    archive_path: Path,
+    package_path: Path,
+    direct_package_path: Path,
+    main_path: Path,
+    mcp_path: Path,
+    recovery_path: Path,
+    updater_path: Path,
+    manifest_path: Path,
+    manifest_checksum_path: Path,
+    source_root: Path,
+    role: str,
+    source_commit: str,
+    version: str,
+) -> dict[str, Any]:
+    """Build a content-free bundle after proving every release input."""
+
+    payload, _binding = _build_bundle_with_binding(
+        archive_path=archive_path,
+        package_path=package_path,
+        direct_package_path=direct_package_path,
+        main_path=main_path,
+        mcp_path=mcp_path,
+        recovery_path=recovery_path,
+        updater_path=updater_path,
+        manifest_path=manifest_path,
+        manifest_checksum_path=manifest_checksum_path,
+        source_root=source_root,
+        role=role,
+        source_commit=source_commit,
+        version=version,
+    )
+    return payload
 
 
 def _write_owned_new(
@@ -543,31 +650,49 @@ def _write_owned_new(
     label: str,
     expected_names: set[str],
 ) -> _OutputFileIdentity:
-    # Path.open is the portable exclusive-write primitive. The directory checks
-    # before and after it fail closed on detectable swaps; they cannot eliminate
-    # an interleaving race where a platform lacks a relative directory handle.
     _assert_owned_output_directory(output, identity, expected_names=expected_names)
     path = output / filename
     if os.path.lexists(str(path)):
         raise WindowsSecuritySubmissionError(f"refusing to replace existing {label}")
     created = False
     file_identity: _OutputFileIdentity | None = None
+    stream: Any | None = None
     try:
-        with path.open("xb") as stream:
-            created = True
-            _write_all(stream, content)
-        file_identity = _output_file_identity(path)
+        stream = path.open("xb")
+        created = True
+        # Bind the exclusively created handle before the pathname can be trusted.
+        file_identity = _output_stream_identity(stream)
+        _write_all(stream, content)
+        file_identity = _output_stream_identity(stream)
+        stream.close()
+        stream = None
+        path_identity = _output_file_identity(path)
+        if not _same_output_object(path_identity, file_identity):
+            raise WindowsSecuritySubmissionError("output file identity changed")
+        file_identity = path_identity
         _assert_owned_output_directory(output, identity, expected_names={*expected_names, filename})
         return file_identity
     except FileExistsError as exc:
         raise WindowsSecuritySubmissionError(f"refusing to replace existing {label}") from exc
-    except OSError as exc:
+    except BaseException as exc:
+        if stream is not None:
+            try:
+                file_identity = _output_stream_identity(stream)
+            except WindowsSecuritySubmissionError:
+                file_identity = None
+            with suppress(OSError):
+                stream.close()
+        if file_identity is not None:
+            try:
+                path_identity = _output_file_identity(path)
+                file_identity = (
+                    path_identity
+                    if _same_output_object(path_identity, file_identity)
+                    else None
+                )
+            except WindowsSecuritySubmissionError:
+                file_identity = None
         if created:
-            if file_identity is None:
-                try:
-                    file_identity = _output_file_identity(path)
-                except WindowsSecuritySubmissionError:
-                    file_identity = None
             _best_effort_remove_owned_new_file(
                 output,
                 identity,
@@ -575,21 +700,8 @@ def _write_owned_new(
                 expected_identity=file_identity,
                 expected_names={*expected_names, filename},
             )
-        raise WindowsSecuritySubmissionError(f"could not write {label}") from exc
-    except WindowsSecuritySubmissionError:
-        if created:
-            if file_identity is None:
-                try:
-                    file_identity = _output_file_identity(path)
-                except WindowsSecuritySubmissionError:
-                    file_identity = None
-            _best_effort_remove_owned_new_file(
-                output,
-                identity,
-                path,
-                expected_identity=file_identity,
-                expected_names={*expected_names, filename},
-            )
+        if isinstance(exc, OSError):
+            raise WindowsSecuritySubmissionError(f"could not write {label}") from exc
         raise
 
 
@@ -689,7 +801,7 @@ def create_bundle(
 ) -> tuple[Path, Path]:
     """Write a new bundle and detached checksum without replacing existing files."""
 
-    payload = build_bundle(
+    payload, input_binding = _build_bundle_with_binding(
         archive_path=archive_path,
         package_path=package_path,
         direct_package_path=direct_package_path,
@@ -705,6 +817,7 @@ def create_bundle(
         version=version,
     )
     raw_bundle = manifest_module.canonical_json(payload)
+    _revalidate_input_binding(input_binding)
     output, output_identity = _create_owned_output_directory(
         output_dir, source_root=source_root
     )
@@ -713,6 +826,7 @@ def create_bundle(
     bundle_identity: _OutputFileIdentity | None = None
     checksum_identity: _OutputFileIdentity | None = None
     try:
+        _revalidate_input_binding(input_binding)
         bundle_identity = _write_owned_new(
             output,
             output_identity,
@@ -722,6 +836,7 @@ def create_bundle(
             expected_names=set(),
         )
         digest = hashlib.sha256(raw_bundle).hexdigest()
+        _revalidate_input_binding(input_binding)
         checksum_identity = _write_owned_new(
             output,
             output_identity,
@@ -730,6 +845,7 @@ def create_bundle(
             label="security submission checksum",
             expected_names={BUNDLE_FILE_NAME},
         )
+        _revalidate_input_binding(input_binding)
     except BaseException:
         if checksum_identity is not None:
             with suppress(WindowsSecuritySubmissionError):

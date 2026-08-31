@@ -523,6 +523,102 @@ def test_source_root_identity_is_revalidated_between_verification_phases(
     assert not (tmp_path / "source-root" / "submission").exists()
 
 
+def test_component_change_after_last_validation_before_first_write_is_removed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    stage = _stage(tmp_path)
+    original = submission_module._write_owned_new
+    changed = False
+
+    def mutate_before_first_write(*args, **kwargs):
+        nonlocal changed
+        if not changed:
+            changed = True
+            component = stage.components["mcp"]
+            component.write_bytes(component.read_bytes() + b"changed-after-validation")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(submission_module, "_write_owned_new", mutate_before_first_write)
+    output = stage.root / "submission"
+    with pytest.raises(WindowsSecuritySubmissionError, match="mcp executable"):
+        create_bundle(**_bundle_kwargs(stage, output))
+    assert not output.exists()
+
+
+def test_component_change_after_final_write_is_removed(tmp_path: Path, monkeypatch) -> None:
+    stage = _stage(tmp_path)
+    original = submission_module._write_owned_new
+
+    def mutate_after_checksum(*args, **kwargs):
+        identity = original(*args, **kwargs)
+        if args[2] == BUNDLE_CHECKSUM_FILE_NAME:
+            component = stage.components["mcp"]
+            component.write_bytes(component.read_bytes() + b"changed-after-write")
+        return identity
+
+    monkeypatch.setattr(submission_module, "_write_owned_new", mutate_after_checksum)
+    output = stage.root / "submission"
+    with pytest.raises(WindowsSecuritySubmissionError, match="mcp executable"):
+        create_bundle(**_bundle_kwargs(stage, output))
+    assert not output.exists()
+
+
+def test_selected_candidate_uses_stable_component_measurement(
+    tmp_path: Path, monkeypatch
+) -> None:
+    stage = _stage(tmp_path)
+    original = submission_module.manifest_module._stable_measurements
+
+    def fabricate_selected_measurement(paths):
+        measurements = original(paths)
+        selected = measurements["mcp executable"]
+        measurements["mcp executable"] = dataclass_replace(selected, digest="0" * 64)
+        return measurements
+
+    monkeypatch.setattr(
+        submission_module.manifest_module,
+        "_stable_measurements",
+        fabricate_selected_measurement,
+    )
+    output = stage.root / "submission"
+    with pytest.raises(WindowsSecuritySubmissionError, match="verified component"):
+        create_bundle(**_bundle_kwargs(stage, output))
+    assert not output.exists()
+
+
+def test_exclusive_output_handle_is_bound_before_first_write(
+    tmp_path: Path, monkeypatch
+) -> None:
+    stage = _stage(tmp_path)
+    output, identity = submission_module._create_owned_output_directory(
+        stage.root / "submission", source_root=stage.root
+    )
+    original_identity = submission_module._output_stream_identity
+    original_write = submission_module._write_all
+    events: list[str] = []
+
+    def capture_identity(stream):
+        events.append("capture")
+        return original_identity(stream)
+
+    def observe_write(stream, content):
+        assert events == ["capture"]
+        events.append("write")
+        return original_write(stream, content)
+
+    monkeypatch.setattr(submission_module, "_output_stream_identity", capture_identity)
+    monkeypatch.setattr(submission_module, "_write_all", observe_write)
+    submission_module._write_owned_new(
+        output,
+        identity,
+        BUNDLE_FILE_NAME,
+        b"synthetic bundle",
+        label="security submission bundle",
+        expected_names=set(),
+    )
+    assert events == ["capture", "write", "capture"]
+
+
 def test_failed_exclusive_write_cleans_only_owned_output(tmp_path: Path, monkeypatch) -> None:
     stage = _stage(tmp_path)
     original = submission_module._write_all
