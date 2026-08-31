@@ -12,6 +12,7 @@ from allthecontext.desktop import (
     _copy_atomically,
     _copy_macos_bundle_atomically,
     _install_mcp_helper,
+    _run_silent_internal_mode,
     _schedule_windows_install_removal,
     _stop_installed_core_for_upgrade,
     _uninstall,
@@ -474,6 +475,15 @@ def test_internal_update_child_failure_returns_nonzero_without_escaping(
     )
 
     assert main(arguments) == 1
+
+
+def test_internal_update_child_preserves_deliberate_process_exit() -> None:
+    """Crash injection must remain visible to the recovery transaction."""
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_silent_internal_mode(lambda: (_ for _ in ()).throw(SystemExit(86)))
+
+    assert exc_info.value.code == 86
 
 
 def test_graphical_install_failure_is_reported_with_retry_and_diagnostics(

@@ -81,11 +81,11 @@ listed.
 
 One injected harness misconfiguration also demonstrated that a failed
 windowed internal update child can present a blocking PyInstaller traceback
-dialog before the helper times out and rolls back. This candidate fixes that
+dialog before the helper times out and rolls back. This source change fixes that
 local source boundary by converting diagnostics, apply-update, and update-
 health exceptions into nonzero child exit codes; focused tests require the
 failure not to escape. Repository-wide Ruff formatting/checks and mypy over
-107 source files pass; full pytest passes 2,401 tests with nine expected
+107 source files pass; full pytest passes 2,402 tests with nine expected
 platform skips and two pre-existing Starlette deprecation warnings. The source
 fix still needs merge, hosted validation, and a new exact candidate before it
 receives packaged-artifact credit.
