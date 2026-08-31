@@ -366,9 +366,7 @@ def test_same_operation_forged_mutable_authority_is_rejected(
     if authority == "parent_pid":
         journal["parent_pid"] = 123
     else:
-        replacement_backup = Path(journal["database_backup_path"]).with_name(
-            "unrelated.sqlite3"
-        )
+        replacement_backup = Path(journal["database_backup_path"]).with_name("unrelated.sqlite3")
         replacement_backup.write_bytes(b"unrelated database authority")
         digest, size = _digest(replacement_backup)
         journal["database_backup_path"] = str(replacement_backup)
@@ -567,11 +565,14 @@ def test_hardlinked_recovery_helper_is_not_trusted(
         pytest.skip("hardlinks are unavailable on this filesystem")
 
     journal = UpdateJournal.load(fixture.journal_path)
-    assert helper_module._verified(
-        linked,
-        journal.recovery_helper_sha256,
-        journal.recovery_helper_size,
-    ) is False
+    assert (
+        helper_module._verified(
+            linked,
+            journal.recovery_helper_sha256,
+            journal.recovery_helper_size,
+        )
+        is False
+    )
 
 
 def test_helper_rejects_arbitrary_journal_location_before_creating_lock(

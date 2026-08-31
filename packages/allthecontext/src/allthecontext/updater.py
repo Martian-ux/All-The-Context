@@ -283,8 +283,7 @@ def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:
         and stat.S_ISREG(observed.st_mode)
         and getattr(observed, "st_nlink", 1) == 1
         and expected.st_size == observed.st_size
-        and getattr(expected, "st_mtime_ns", None)
-        == getattr(observed, "st_mtime_ns", None)
+        and getattr(expected, "st_mtime_ns", None) == getattr(observed, "st_mtime_ns", None)
     )
 
 

@@ -859,12 +859,7 @@ def verify_manifest(
 
 
 def _zip_member_path(name: str) -> PurePosixPath:
-    if (
-        not name
-        or "\\" in name
-        or "\x00" in name
-        or re.match(r"^[A-Za-z]:", name) is not None
-    ):
+    if not name or "\\" in name or "\x00" in name or re.match(r"^[A-Za-z]:", name) is not None:
         raise InstalledComponentManifestError("release ZIP contains an unsafe path")
     path = PurePosixPath(name)
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):

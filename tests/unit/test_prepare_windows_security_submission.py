@@ -48,9 +48,7 @@ def _pe_image(*, certificate_offset: int = 0, certificate_size: int = 0) -> byte
     image[optional_offset + 108 : optional_offset + 112] = (16).to_bytes(4, "little")
     certificate_entry = optional_offset + 112 + (4 * 8)
     image[certificate_entry : certificate_entry + 4] = certificate_offset.to_bytes(4, "little")
-    image[certificate_entry + 4 : certificate_entry + 8] = certificate_size.to_bytes(
-        4, "little"
-    )
+    image[certificate_entry + 4 : certificate_entry + 8] = certificate_size.to_bytes(4, "little")
     return bytes(image)
 
 
@@ -214,9 +212,10 @@ def test_main_candidate_accepts_verified_setup_source_name(tmp_path: Path) -> No
 
     payload = json.loads(bundle_path.read_bytes())
     assert payload["candidate"]["filename"] == "AllTheContextSetup.exe"
-    assert payload["candidate"]["sha256"] == hashlib.sha256(
-        stage.components["main"].read_bytes()
-    ).hexdigest()
+    assert (
+        payload["candidate"]["sha256"]
+        == hashlib.sha256(stage.components["main"].read_bytes()).hexdigest()
+    )
 
 
 def test_component_mutation_fails_closed_without_writing_output(tmp_path: Path) -> None:
@@ -231,26 +230,19 @@ def test_component_mutation_fails_closed_without_writing_output(tmp_path: Path) 
 
 def test_manifest_checksum_and_source_binding_are_required(tmp_path: Path) -> None:
     stage = _stage(tmp_path)
-    stage.manifest_checksum.write_text(
-        "0" * 64 + f"  {MANIFEST_FILE_NAME}\n", encoding="ascii"
-    )
+    stage.manifest_checksum.write_text("0" * 64 + f"  {MANIFEST_FILE_NAME}\n", encoding="ascii")
 
     with pytest.raises(WindowsSecuritySubmissionError, match="verification cannot be verified"):
-        create_bundle(
-            **_bundle_kwargs(stage, stage.root / "bad-checksum", source_commit="b" * 40)
-        )
+        create_bundle(**_bundle_kwargs(stage, stage.root / "bad-checksum", source_commit="b" * 40))
     _assert_no_bundle(stage.root / "bad-checksum")
 
     stage.manifest_checksum.write_text(
-        f"{hashlib.sha256(stage.manifest.read_bytes()).hexdigest()}  "
-        f"{MANIFEST_FILE_NAME}\n",
+        f"{hashlib.sha256(stage.manifest.read_bytes()).hexdigest()}  {MANIFEST_FILE_NAME}\n",
         encoding="ascii",
         newline="\n",
     )
     with pytest.raises(WindowsSecuritySubmissionError, match="verification cannot be verified"):
-        create_bundle(
-            **_bundle_kwargs(stage, stage.root / "bad-source", source_commit="b" * 40)
-        )
+        create_bundle(**_bundle_kwargs(stage, stage.root / "bad-source", source_commit="b" * 40))
     _assert_no_bundle(stage.root / "bad-source")
 
 
@@ -258,20 +250,14 @@ def test_manifest_version_binding_is_required_and_exact(tmp_path: Path) -> None:
     stage = _stage(tmp_path)
 
     with pytest.raises(WindowsSecuritySubmissionError, match="product version is invalid"):
-        create_bundle(
-            **_bundle_kwargs(stage, stage.root / "bad-format", version="not-a-version")
-        )
+        create_bundle(**_bundle_kwargs(stage, stage.root / "bad-format", version="not-a-version"))
     _assert_no_bundle(stage.root / "bad-format")
 
     with pytest.raises(WindowsSecuritySubmissionError, match="verification cannot be verified"):
-        create_bundle(
-            **_bundle_kwargs(stage, stage.root / "bad-match", version="0.1.0-beta.8")
-        )
+        create_bundle(**_bundle_kwargs(stage, stage.root / "bad-match", version="0.1.0-beta.8"))
     _assert_no_bundle(stage.root / "bad-match")
 
-    bundle_path, _checksum_path = create_bundle(
-        **_bundle_kwargs(stage, stage.root / "valid")
-    )
+    bundle_path, _checksum_path = create_bundle(**_bundle_kwargs(stage, stage.root / "valid"))
     payload = json.loads(bundle_path.read_bytes())
     assert payload["status"] == "hold"
     assert payload["trust"]["clearance"] == "not-claimed"
@@ -301,9 +287,7 @@ def test_malformed_manifest_fails_closed_through_canonical_verifier(tmp_path: Pa
     ],
     ids=["self-authored-selected-manifest", "fabricated-unselected-component"],
 )
-def test_self_authored_or_fabricated_manifest_cannot_produce_bundle(
-    tmp_path: Path, mutate
-) -> None:
+def test_self_authored_or_fabricated_manifest_cannot_produce_bundle(tmp_path: Path, mutate) -> None:
     stage = _stage(tmp_path)
     _rewrite_manifest(stage, mutate)
 
@@ -313,9 +297,7 @@ def test_self_authored_or_fabricated_manifest_cannot_produce_bundle(
 
 
 @pytest.mark.parametrize("field", ["package", "direct_package"])
-def test_wrong_package_or_direct_package_cannot_produce_bundle(
-    tmp_path: Path, field: str
-) -> None:
+def test_wrong_package_or_direct_package_cannot_produce_bundle(tmp_path: Path, field: str) -> None:
     stage = _stage(tmp_path)
     replacement = _pe_image(certificate_offset=400, certificate_size=8)
     if field == "package":
@@ -332,14 +314,13 @@ def test_wrong_archive_cannot_produce_bundle(tmp_path: Path) -> None:
     stage = _stage(tmp_path)
     wrong_archive = stage.root / "wrong-archive.zip"
     replacement = _pe_image(certificate_offset=400, certificate_size=8)
-    with zipfile.ZipFile(stage.archive, "r") as source, zipfile.ZipFile(
-        wrong_archive, "w", compression=zipfile.ZIP_DEFLATED
-    ) as destination:
+    with (
+        zipfile.ZipFile(stage.archive, "r") as source,
+        zipfile.ZipFile(wrong_archive, "w", compression=zipfile.ZIP_DEFLATED) as destination,
+    ):
         for info in source.infolist():
             data = (
-                replacement
-                if Path(info.filename).name == stage.package.name
-                else source.read(info)
+                replacement if Path(info.filename).name == stage.package.name else source.read(info)
             )
             destination.writestr(info, data)
 
@@ -582,9 +563,7 @@ def test_in_place_output_mutation_after_final_write_fails_closed(
     assert (output / target_name).is_file()
 
 
-def test_selected_candidate_uses_stable_component_measurement(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_selected_candidate_uses_stable_component_measurement(tmp_path: Path, monkeypatch) -> None:
     stage = _stage(tmp_path)
     original = submission_module.manifest_module._stable_measurements
 
@@ -605,9 +584,7 @@ def test_selected_candidate_uses_stable_component_measurement(
     assert not output.exists()
 
 
-def test_exclusive_output_handle_is_bound_before_first_write(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_exclusive_output_handle_is_bound_before_first_write(tmp_path: Path, monkeypatch) -> None:
     stage = _stage(tmp_path)
     output, identity = submission_module._create_owned_output_directory(
         stage.root / "submission", source_root=stage.root

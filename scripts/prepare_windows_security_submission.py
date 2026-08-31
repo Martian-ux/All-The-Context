@@ -166,9 +166,7 @@ def _input_directory_identity(path: Path, *, label: str) -> _DirectoryIdentity:
     )
 
 
-def _capture_input_binding(
-    *, source_root: Path, inputs: Mapping[str, Path]
-) -> _InputBinding:
+def _capture_input_binding(*, source_root: Path, inputs: Mapping[str, Path]) -> _InputBinding:
     try:
         lexical_root, _resolved_root = manifest_module._validate_root(source_root)
     except (manifest_module.InstalledComponentManifestError, OSError) as exc:
@@ -464,10 +462,7 @@ def _verify_inputs(
                 "release archive": archive_path,
                 "archive package": package_path,
                 "direct package": direct_package_path,
-                **{
-                    f"{role} executable": path
-                    for role, path in component_paths.items()
-                },
+                **{f"{role} executable": path for role, path in component_paths.items()},
                 "manifest": manifest,
                 "manifest checksum": checksum,
             }
@@ -709,10 +704,9 @@ def _verify_owned_output(
     try:
         with path.open("rb") as stream:
             opened_identity = _output_stream_identity(stream)
-            if (
-                not _same_output_object(opened_identity, expected_identity)
-                or opened_identity.size != len(expected_content)
-            ):
+            if not _same_output_object(
+                opened_identity, expected_identity
+            ) or opened_identity.size != len(expected_content):
                 raise WindowsSecuritySubmissionError(f"{label} changed after it was written")
             actual = stream.read(len(expected_content) + 1)
             if actual != expected_content:
@@ -722,9 +716,8 @@ def _verify_owned_output(
     except OSError as exc:
         raise WindowsSecuritySubmissionError(f"{label} cannot be revalidated") from exc
     path_identity = _output_file_identity(path)
-    if (
-        not _same_output_object(path_identity, expected_identity)
-        or path_identity.size != len(expected_content)
+    if not _same_output_object(path_identity, expected_identity) or path_identity.size != len(
+        expected_content
     ):
         raise WindowsSecuritySubmissionError(f"{label} changed after it was written")
     _assert_owned_output_directory(output, identity, expected_names=expected_names)
@@ -766,9 +759,7 @@ def create_bundle(
     )
     raw_bundle = manifest_module.canonical_json(payload)
     _revalidate_input_binding(input_binding)
-    output, output_identity = _create_owned_output_directory(
-        output_dir, source_root=source_root
-    )
+    output, output_identity = _create_owned_output_directory(output_dir, source_root=source_root)
     bundle_path = output / BUNDLE_FILE_NAME
     checksum_path = output / BUNDLE_CHECKSUM_FILE_NAME
     try:
