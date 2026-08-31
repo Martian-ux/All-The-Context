@@ -31,7 +31,7 @@ from .lifecycle_contract import (
 )
 from .secret_boundary import contains_secret_like_text
 
-LifecycleProvider = Literal["claude_code", "codex"]
+LifecycleProvider = Literal["claude_code", "codex", "hermes"]
 LifecycleEventFamily = Literal["user_turn_observed", "assistant_response_observed"]
 LifecycleContentRole = Literal["user_prompt", "assistant_response"]
 CaptureStatus = Literal["captured", "replayed", "unavailable", "rejected"]
@@ -118,7 +118,7 @@ class LifecycleProvenance:
     formation_policy: Literal["event_only"] = "event_only"
 
     def __post_init__(self) -> None:
-        if self.provider not in {"claude_code", "codex"}:
+        if self.provider not in {"claude_code", "codex", "hermes"}:
             raise LifecycleRuntimeError("unknown lifecycle provider")
         _bounded_identifier(self.client_id, label="client ID")
         expected_witness = (
@@ -148,7 +148,7 @@ class LifecycleCaptureRequest:
     schema_version: Literal[1] = LIFECYCLE_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.provider not in {"claude_code", "codex"}:
+        if self.provider not in {"claude_code", "codex", "hermes"}:
             raise LifecycleRuntimeError("unknown lifecycle provider")
         if self.event_family not in {"user_turn_observed", "assistant_response_observed"}:
             raise LifecycleRuntimeError("unknown lifecycle event family")
@@ -473,7 +473,7 @@ class LifecycleRuntimeAdapter:
         core: object | None,
         correlations: OpaqueCorrelationStore | None = None,
     ) -> None:
-        if provider not in {"claude_code", "codex"}:
+        if provider not in {"claude_code", "codex", "hermes"}:
             raise ValueError("unknown lifecycle provider")
         _bounded_identifier(client_id, label="client ID")
         self.provider = provider
