@@ -130,6 +130,60 @@ def test_headless_setup_forwards_explicit_claude_code_choice(
     assert options.configure_claude_code is True
 
 
+def test_headless_setup_forwards_explicit_hermes_choices_only_when_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    _stub_setup(monkeypatch, runtime, FakeSetupResult())
+    supplied: list[dict[str, object]] = []
+
+    def options_factory(**kwargs: object) -> FakeSetupOptions:
+        supplied.append(kwargs)
+        legacy = {
+            key: value
+            for key, value in kwargs.items()
+            if key
+            not in {
+                "configure_hermes",
+                "configure_hermes_continuous_capture",
+                "hermes_profile",
+            }
+        }
+        return FakeSetupOptions(**legacy)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(desktop, "SetupOptions", options_factory)
+    report_path = tmp_path / "setup-report.json"
+
+    assert (
+        desktop.main(
+            [
+                "--headless-setup",
+                str(report_path),
+                "--hermes",
+                "--hermes-continuous-capture",
+                "--hermes-profile",
+                "work",
+            ]
+        )
+        == 0
+    )
+    assert supplied == [
+        {
+            "vault_name": "My Context",
+            "timezone": desktop.local_timezone(),
+            "configure_codex": True,
+            "configure_claude": True,
+            "configure_claude_code": False,
+            "start_at_login": True,
+            "workspace_root": None,
+            "workspace_local_only_acknowledged": False,
+            "configure_hermes": True,
+            "configure_hermes_continuous_capture": True,
+            "hermes_profile": "work",
+        }
+    ]
+
+
 def test_headless_setup_projects_claude_code_result_without_user_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

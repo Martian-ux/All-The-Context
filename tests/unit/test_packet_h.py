@@ -18,6 +18,7 @@ from typing import Self, cast
 import pytest
 from allthecontext.experimental_local_git_workspace_connector import (
     LocalGitWorkspaceCaptureProviderAdapter,
+    WorkspaceStateReader,
 )
 from allthecontext.memory_policy import (
     REGISTERED_SOURCE_EXTRACTOR_ID,
@@ -92,7 +93,7 @@ def test_packet_h_repeat_is_deterministic_and_overflow_truthful() -> None:
     assert isinstance(overflow, dict)
     assert overflow["manifest_coverage"] == "partial"
     assert overflow["run"]["status"] == "failed"
-    assert overflow["run"]["error_code"] == "capture_page_limit_exceeded"
+    assert overflow["run"]["error_code"] == "capture_adapter_unavailable"
     assert overflow["scan_incomplete"] is True
     assert overflow["scan_items_emitted"] == 0
     assert overflow["candidate_count"] == 0
@@ -228,8 +229,13 @@ def test_packet_h_receipt_rejects_controlled_non_local_manifest_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class UnsafeManifestAdapter(LocalGitWorkspaceCaptureProviderAdapter):
-        def __init__(self, roots: Iterable[Path]) -> None:
-            super().__init__(roots)
+        def __init__(
+            self,
+            roots: Iterable[Path],
+            *,
+            state_reader: WorkspaceStateReader | None = None,
+        ) -> None:
+            super().__init__(roots, state_reader=state_reader)
             self._capability_manifest = replace(
                 self._capability_manifest,
                 network_access="allowed",

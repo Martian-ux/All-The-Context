@@ -45,8 +45,10 @@ from allthecontext.capture import (
     CaptureRunResult,
     CaptureSource,
 )
+from allthecontext.capture_runtime import _workspace_state_reader
 from allthecontext.experimental_local_git_workspace_connector import (
     LOCAL_GIT_WORKSPACE_PROVIDER,
+    MAX_SCAN_DEPTH,
     LocalGitWorkspaceCaptureProviderAdapter,
 )
 from allthecontext.memory_policy import (
@@ -557,12 +559,15 @@ def _query_capture_aggregate(store: CoreStore, source_id: str) -> dict[str, obje
 
 
 def _overflow_probe(root: Path, store: CoreStore) -> dict[str, object]:
-    overflow_root = root / "overflow-workspace"
+    overflow_root = root / "incomplete-workspace"
     overflow_root.mkdir()
-    for index in range(21):
-        (overflow_root / f"item-{index:02d}.txt").write_text(
-            "sanitized overflow fixture\n", encoding="utf-8", newline="\n"
-        )
+    too_deep = overflow_root
+    for index in range(MAX_SCAN_DEPTH + 2):
+        too_deep = too_deep / f"level-{index:02d}"
+        too_deep.mkdir()
+    (too_deep / "item.txt").write_text(
+        "sanitized incomplete fixture\n", encoding="utf-8", newline="\n"
+    )
 
     adapter = LocalGitWorkspaceCaptureProviderAdapter((overflow_root,))
     coordinator = CaptureCoordinator(store, sink=RegisteredSourceCaptureApplicationSink(store))
@@ -631,7 +636,12 @@ def _validate_run(value: object) -> bool:
         return False
     if run["error_code"] is not None and (
         type(run["error_code"]) is not str
-        or run["error_code"] not in {"capture_sink_failed", "capture_page_limit_exceeded"}
+        or run["error_code"]
+        not in {
+            "capture_adapter_unavailable",
+            "capture_page_limit_exceeded",
+            "capture_sink_failed",
+        }
     ):
         return False
     if not all(_nonnegative_int(run[field]) for field in ("pages", "events")):
@@ -830,7 +840,7 @@ def _packet_h_a_report_ready(report: object, *, require_passing: bool = True) ->
                 overflow_run,
                 {
                     "status": "failed",
-                    "error_code": "capture_page_limit_exceeded",
+                    "error_code": "capture_adapter_unavailable",
                     "pages": 0,
                     "events": 0,
                     "applied_events": 0,
@@ -926,7 +936,10 @@ def _run_disposable(
             restarted_store,
             sink=RegisteredSourceCaptureApplicationSink(restarted_store),
         )
-        restarted_adapter = LocalGitWorkspaceCaptureProviderAdapter((workspace,))
+        restarted_adapter = LocalGitWorkspaceCaptureProviderAdapter(
+            (workspace,),
+            state_reader=_workspace_state_reader(restarted_store),
+        )
         restarted_coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, restarted_adapter)
         restarted_coordinator.resume(source.id)
         recovery = restarted_coordinator.run(source.id)
@@ -983,7 +996,7 @@ def _run_disposable(
             "local_only_capability": _accepts_local_only_capability(manifest),
             "incomplete_fails_closed": (
                 overflow_run["status"] == "failed"
-                and overflow_run["error_code"] == "capture_page_limit_exceeded"
+                and overflow_run["error_code"] == "capture_adapter_unavailable"
                 and overflow["scan_incomplete"] is True
                 and overflow["candidate_count"] == 0
                 and overflow["record_count"] == 0

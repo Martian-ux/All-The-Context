@@ -775,7 +775,6 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
             "configure_codex": not args.no_codex,
             "configure_claude": not args.no_claude,
             "configure_claude_code": args.configure_claude_code,
-            "configure_hermes": getattr(args, "configure_hermes", False),
             "start_at_login": not args.no_startup,
             "workspace_root": args.workspace_root,
             "workspace_local_only_acknowledged": args.acknowledge_local_workspace,
@@ -788,6 +787,8 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
             setup_kwargs["configure_codex_explicit_commands"] = True
         if getattr(args, "configure_claude_code_continuous_capture", False):
             setup_kwargs["configure_claude_code_continuous_capture"] = True
+        if getattr(args, "configure_hermes", False):
+            setup_kwargs["configure_hermes"] = True
         if getattr(args, "configure_hermes_continuous_capture", False):
             setup_kwargs["configure_hermes_continuous_capture"] = True
         if getattr(args, "hermes_profile", None):

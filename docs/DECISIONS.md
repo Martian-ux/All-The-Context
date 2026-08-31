@@ -1,5 +1,75 @@
 # Architecture decisions
 
+## ADR-177: Hermes integration is profile-local and splits retrieval from capture
+
+**Status:** accepted locally on 2026-08-30 as source-level dogfood hardening;
+packaged/live Hermes acceptance and dashboard disconnect remain open.
+
+ATC may configure exactly one explicit or active Hermes profile after setup
+opt-in. Profile resolution follows Hermes's own bounded local layout: the
+Windows non-roaming local-application-data root, the POSIX `~/.hermes` root, or
+an explicit `HERMES_HOME`; a profile-valued `HERMES_HOME` normalizes back to
+its owning root. The active profile is a bounded UTF-8 name in
+`<Hermes root>/active_profile`. Missing, malformed, ambiguous, anchored,
+tagged, block-scalar, or structurally incompatible configuration fails before
+mutation rather than guessing a profile or rewriting unrelated YAML.
+
+The configured MCP server exposes only the `hermes_read` tool profile. A
+`pre_llm_call` hook performs bounded authenticated bootstrap with a principal
+whose scopes are exactly `context:read`; an optional `post_llm_call` hook sends
+ordinary user/assistant lifecycle evidence with a different principal whose
+scopes are exactly `context:capture`. Neither surface receives
+`context:propose` or `witness:explicit_user_statement`. Operational failure
+returns no ATC context/capture result and does not take the Hermes turn down;
+it never widens authority or falls back to an inline credential.
+
+Both client tokens must be recorded as operating-system credential storage
+before either Hermes file is read or written. Missing, unknown, plaintext
+fallback, and caller-supplied inline-token metadata are refused. Setup edits
+only marker-owned `mcp_servers` and `hooks` entries plus the exact-command
+shell-hook allowlist, writes the two files as one rollback-capable transaction,
+preserves unrelated configuration and approvals byte-for-byte, and never sets
+global hook auto-accept or passes `--accept-hooks`. It does not start, restart,
+or reconfigure the Hermes gateway/service. A narrow source-level disconnect
+primitive removes only ATC-owned entries; dashboard/uninstall orchestration is
+not yet claimed.
+
+Hermes inputs are ordinary client observations and remain untrusted data. The
+pre-generation result is explicitly framed as untrusted context, while the
+post-generation path reuses the Core-authoritative lifecycle contract and its
+secret refusal. Windows and supported Linux source portability are preserved;
+macOS support remains deferred rather than passed.
+
+## ADR-176: Workspace pagination reconstructs state from Core and binds every page to content
+
+**Status:** accepted locally on 2026-08-30 as bounded source-level hardening;
+large private-workspace and packaged acceptance remain open.
+
+The local-workspace adapter may no longer serialize a complete manifest into a
+cursor or create a second durable sidecar/ledger. Core composition supplies a
+read-only, metadata-only state reader reconstructed from authoritative capture
+items and events. It is bounded to the same 16,384-item discovery ceiling and
+returns only opaque item IDs plus state tokens/deletion state. A newly created
+adapter without that reader fails closed for restart continuation rather than
+pretending it can detect incremental changes or deletions.
+
+The v1 cursor carries only bounded generation, root-set, content-bound snapshot,
+mode/phase, offset, event position, and last-item metadata. Pages contain at
+most 128 items. Every page rescans and re-reads the bounded catalog to compute
+the same content-bound snapshot, including same-length changes whose mtime was
+restored. If the catalog mutates between pages, a Core-composed adapter resets
+to a new full generation and reconciles items already admitted from the old
+generation; without Core state it fails closed. Incremental updates and mass
+deletions use the same bounded paging/replay contract.
+
+This is a correctness-first ceiling, not an unbounded performance claim. One
+catalog pass considers at most 16,384 files, while the shared coordinator caps
+a run at 100 pages and 10,000 events, making 10,000 the effective maximum for a
+completed all-event run. Re-reading the catalog per page is approximately
+quadratic for a large unchanged workspace. Capability health reports the
+catalog-rescan posture and all four limits without paths or content so a later
+performance redesign cannot silently inherit a false scalability claim.
+
 ## ADR-169: Keep the private replacement workflow contract closed to semantic bypasses
 
 **Status:** accepted locally on 2026-08-30 after the replacement-workflow
