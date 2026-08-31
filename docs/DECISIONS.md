@@ -1,5 +1,33 @@
 # Architecture decisions
 
+## ADR-181: Internal Windows update children fail by exit code, never a modal traceback
+
+**Status:** accepted locally on 2026-08-31 after exact-candidate disposable
+acceptance exposed the blocking failure mode and repository-wide local
+validation passed. Packaged credit requires a new exact candidate after merge.
+
+The Windows updater owns recovery state, timeout, rollback, and the bounded
+user-facing failure message. Its windowed replacement application is a child
+implementation detail. If the child raises through PyInstaller's windowed
+entrypoint, the bootloader can present an `Unhandled exception` dialog and
+wait for user input. The helper eventually times out and rolls back, but the
+modal dialog violates unattended recovery and can remain after cleanup.
+
+Diagnostics, `--apply-update`, and `--update-health-check` therefore catch
+ordinary exceptions at the desktop dispatch boundary and return nonzero to the
+updater. They do not display UI, log exception content, claim success, alter
+the helper's timeout/rollback authority, or catch process-level exits such as
+the updater's deliberate crash-injection code. Focused dispatch regressions
+require all three modes to contain an injected exception and return `1`.
+
+This decision does not make an invalid update succeed. The helper still
+validates reports and component identities, retries the bounded replacement
+window, records a closed failure code, and rolls back. The exact protected-main
+beta.7 candidate at `e9cf314f7a3af1c55ab118f1a850a067b6447336`
+demonstrated successful crash recovery and forced rollback before this source
+change; it does not contain the dialog fix. A new exact candidate is required
+to prove the packaged behavior.
+
 ## ADR-180: Treat private candidate handoff failures as non-candidate evidence
 
 **Status:** accepted on 2026-08-31 after exact protected-main workflow run

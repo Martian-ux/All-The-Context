@@ -18,6 +18,7 @@ import time
 import tkinter
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -640,6 +641,27 @@ def write_diagnostics(path: Path) -> None:
         temporary.replace(target)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _run_silent_internal_mode(operation: Callable[[], int | None]) -> int:
+    """Keep windowed updater child failures on the helper's exit-code boundary."""
+
+    try:
+        result = operation()
+    except Exception:
+        # PyInstaller's windowed bootloader otherwise presents a blocking
+        # "Unhandled exception" dialog. The updater owns the user-facing,
+        # content-free failure state and rollback decision.
+        return 1
+    return 0 if result is None else result
+
+
+def _run_packaged_update_health_check(report_value: str) -> int:
+    operation = _valid_update_operation()
+    report_path = _update_report_path(report_value, operation, "health.json")
+    from .core.app import run_update_health_check
+
+    return run_update_health_check(report_path)
 
 
 def _packaged_credential_acceptance(report_value: str) -> int:
@@ -1352,8 +1374,7 @@ def main(argv: list[str] | None = None) -> int:
         mcp_main()
         return 0
     if args.diagnostics:
-        write_diagnostics(args.diagnostics)
-        return 0
+        return _run_silent_internal_mode(lambda: write_diagnostics(args.diagnostics))
     if (
         args.recovery_help
         or args.recovery_export
@@ -1371,13 +1392,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.packaged_provider_acceptance:
         return _packaged_provider_acceptance(args)
     if args.apply_update:
-        return _apply_packaged_update(args.apply_update)
+        return _run_silent_internal_mode(lambda: _apply_packaged_update(args.apply_update))
     if args.update_health_check:
-        operation = _valid_update_operation()
-        report_path = _update_report_path(args.update_health_check, operation, "health.json")
-        from .core.app import run_update_health_check
-
-        return run_update_health_check(report_path)
+        return _run_silent_internal_mode(
+            lambda: _run_packaged_update_health_check(args.update_health_check)
+        )
     if args.packaged_smoke_uninstall:
         if os.environ.get("ATC_PACKAGED_SMOKE") != "1":
             raise RuntimeError("Packaged smoke uninstall is disabled")

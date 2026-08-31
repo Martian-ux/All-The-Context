@@ -23,9 +23,10 @@ At this boundary, protected main contains the merged Import Truth and the
 subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
 client read/explicit-memory foundations, Continuous Capture, replacement
 workflow hardening, updater/recovery trust hardening, the Windows timing test
-correction, and exact candidate-evidence reconciliation through PR #102 at
-exact SHA `daac4e2964daf60885969f6ddd83f6abea9ac721`. Protected-main CI run
-`33414796180` and CodeQL run `33414795653` completed successfully for that exact
+correction, exact candidate-evidence reconciliation, and the private handoff
+guard correction through PR #103 at exact SHA
+`e9cf314f7a3af1c55ab118f1a850a067b6447336`. Protected-main CI run
+`33442280360` and CodeQL run `33442280066` completed successfully for that exact
 SHA. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
@@ -37,6 +38,57 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-31 — exact replacement candidate install/recovery/uninstall acceptance
+
+The approval-gated private replacement workflow dispatched exact protected-main
+SHA `e9cf314f7a3af1c55ab118f1a850a067b6447336` once in run `33444357750` and
+uploaded private artifact `9777536856`. The exact 18-file allowlist, source,
+version `0.1.0-beta.7`, run identity, content-hygiene report, hosted eight-job
+matrix, component manifest, checksum sidecars, archive contents, and file
+identities passed both repository verification and a separate strict verifier.
+The archive SHA-256 is
+`2de4ba2a2cb7e9236fd2c38a8cbfee72f2b98160477cf432deb60ba2ddd4014d`.
+The installed main, MCP, recovery, and updater SHA-256 values are, respectively:
+
+- `d81a8089473796eac7b249006557e99c90b4d091a3fba9c138ee27ce524fd46e`;
+- `3771b63824082d748b567a5c1b358ccaff9d06d01700482705ca3070023e85f0`;
+- `c8f07e75fce472470a93118a376d2567b9f62902089459a556a298c4d520be4e`;
+  and
+- `d23401444d84c64facfce2a214200ee4ae22175824b5e49b62bddbf594bc6cd0`.
+
+On the Windows host, Defender antivirus and real-time protection were enabled
+with signature `1.457.430.0`. A custom scan of the exact staged tree produced
+zero new detection/quarantine events; all 18 allowlisted files remained and
+their sizes and hashes were unchanged. A network-disabled disposable Windows
+Sandbox then passed exact component identity, packaged diagnostics, a real
+Windows Credential Manager set/get/delete round trip, current-user install,
+HKCU startup, Start Menu/Desktop and Apps & Features registration, Core health,
+and loopback-only binding. A same-version safe transaction using only beta.7
+bytes persisted an injected `binary_replaced` crash with exit `86`, resumed to
+`committed` with exit `0`, and restored healthy Core service. A separate forced
+health failure returned `2`, reached `rolled_back`, restored all four component
+identities, removed the injected database schema sentinel from the database and
+WAL, and restarted healthy Core. Uninstall removed application files, startup,
+shortcuts, registration, and the listener while preserving the local vault.
+
+Windows Sandbox did not provide an active Defender service, so no in-Sandbox AV
+scan is credited; the receipt records `not_exercised_defender_unavailable`.
+SmartScreen reputation, Microsoft reassessment, signing, a literal beta.6-to-
+beta.7 run, public release, publication, and live dogfood remain outside this
+evidence. The flagged beta.6 helper was never restored, executed, or allow-
+listed.
+
+One injected harness misconfiguration also demonstrated that a failed
+windowed internal update child can present a blocking PyInstaller traceback
+dialog before the helper times out and rolls back. This candidate fixes that
+local source boundary by converting diagnostics, apply-update, and update-
+health exceptions into nonzero child exit codes; focused tests require the
+failure not to escape. Repository-wide Ruff formatting/checks and mypy over
+107 source files pass; full pytest passes 2,401 tests with nine expected
+platform skips and two pre-existing Starlette deprecation warnings. The source
+fix still needs merge, hosted validation, and a new exact candidate before it
+receives packaged-artifact credit.
 
 ### 2026-08-31 — private replacement handoff guard correction
 

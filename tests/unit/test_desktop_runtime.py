@@ -455,6 +455,27 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
         assert evidence not in captured.out
 
 
+@pytest.mark.parametrize(
+    ("arguments", "target"),
+    [
+        (["--diagnostics", "diagnostics.json"], "write_diagnostics"),
+        (["--apply-update", "apply-report.json"], "_apply_packaged_update"),
+        (["--update-health-check", "health.json"], "_run_packaged_update_health_check"),
+    ],
+)
+def test_internal_update_child_failure_returns_nonzero_without_escaping(
+    arguments: list[str], target: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windowed updater children must never block rollback on a traceback dialog."""
+
+    monkeypatch.setattr(
+        f"allthecontext.desktop.{target}",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("injected failure")),
+    )
+
+    assert main(arguments) == 1
+
+
 def test_graphical_install_failure_is_reported_with_retry_and_diagnostics(
     tmp_path: Path, monkeypatch
 ) -> None:
