@@ -5204,3 +5204,28 @@ production integration; scripted host trace checks are not operator telemetry.
 The receipt is developer evidence only. It does not imply a real connector,
 provider integration, network/OAuth behavior, stable SDK/export contract,
 dashboard independence in production, or acceptance against private/live data.
+
+## ADR-131: Windows security reassessment preparation is identity-bound and content-free
+
+**Status:** accepted locally on 2026-08-31; this is preparation evidence only,
+not Microsoft, malware, signing, release, or provider acceptance.
+
+The private Windows security-bundle preparer verifies the exact archive,
+installer, direct package, four installed components, canonical manifest and
+checksum, source root, source commit, and explicit candidate version. Manifest
+and archive verification are separate checks, but they run under one captured
+and revalidated source-root/ancestry/component identity binding so a phase
+boundary cannot silently switch inputs. JSON parsing rejects duplicate keys,
+non-finite values including exponent overflow, and structural counts that are
+not exact integers. ZIP members reject traversal, links, backslashes, NULs,
+and Windows drive-qualified names.
+
+The emitted JSON contains no candidate bytes, paths, credentials, logs, user
+context, or vendor assertion: only exact digests, sizes, filenames, roles,
+provenance binding, hold status, and empty detection placeholders. Publication
+creates a new output directory and exclusively creates its two files; existing
+output, symlink/reparse redirection, hardlinked output, directory identity
+changes, and cleanup races fail closed. The script does not execute binaries,
+open a release archive as an executable, contact Microsoft, or submit/upload
+anything. A fresh exact artifact and the physical Defender reassessment remain
+required before any release decision.

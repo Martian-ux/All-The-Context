@@ -37,6 +37,27 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-08-31 — private Windows Defender submission-bundle preparer
+
+Protected main now contains a content-free, fail-closed preparer for a future
+Windows x86_64 candidate security reassessment. It verifies the release archive,
+installer, direct package, all four installed executables, canonical installed-
+component manifest/checksum, source commit, and explicit candidate version before
+emitting only bounded digests, sizes, roles, and non-claiming hold metadata.
+Manifest parsing rejects duplicate, non-finite—including exponent-overflow—and
+non-integer structural values; ZIP member validation rejects Windows drive-
+qualified paths. The two verification phases share an operation-wide source-root
+and component identity binding, and output publication refuses replacement,
+symlink/reparse redirection, hardlinked output, and unsafe cleanup after an
+ownership change.
+
+The preparer never executes a candidate or treats an archive as executable,
+contacts Microsoft, uploads or publishes anything, or asserts Defender,
+malware, signing, clearance, or release acceptance. Focused synthetic coverage
+passes 43 tests locally, including adversarial phase swaps and partial-write
+cleanup. A fresh exact Windows candidate, Defender submission/reassessment, and
+release acceptance remain open.
+
 ### 2026-08-30 — cross-client dogfood hardening candidate
 
 The local hardening candidate adds three bounded product slices on exact clean

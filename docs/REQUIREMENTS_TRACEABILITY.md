@@ -6,6 +6,14 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-08-31 private Windows Defender reassessment preparation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| WIN-AV-03 — prepare a private, content-free candidate security bundle without creating trust claims | `scripts/prepare_windows_security_submission.py`; `tests/unit/test_prepare_windows_security_submission.py` | Implemented locally: exact archive/package/direct-package/component/manifest/checksum/source-root/source-commit/version inputs are verified; output contains only bounded digest/size/provenance and hold metadata, with no candidate bytes, paths, credentials, logs, or user context. The preparer does not execute, upload, publish, contact Microsoft, or claim signing/malware clearance |
+| WIN-AV-04 — bind all verification phases and output ownership fail closed | operation-wide input identity/ancestry revalidation; exclusive owned output creation/cleanup; adversarial phase-swap, root-swap, existing-output, identity-change, partial-write, hardlink, and redirection tests | Implemented locally: source-root and component TOCTOU swaps, output replacement/redirection, and unsafe cleanup are rejected. A fresh exact Windows artifact, Microsoft Defender submission/reassessment, and release acceptance remain open |
+| WIN-AV-05 — reject hostile manifest numbers and archive paths | `scripts/installed_component_manifest.py`; focused strict-count, NaN, exponent-overflow, duplicate-key, symlink, traversal, and drive-qualified ZIP tests | Implemented locally: canonical parsing rejects duplicate/non-finite/non-integer structural values and ZIP validation rejects Windows drive-qualified members. This is source/test evidence only; no Defender or malware result is inferred |
+
 ### 2026-08-30 cross-client dogfood hardening candidate
 
 | Requirement | Implementation/evidence | Status |

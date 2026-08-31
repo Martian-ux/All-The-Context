@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -12,7 +13,7 @@ import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, NoReturn, cast
 
 from allthecontext.release_manifest import ReleaseVersion
 
@@ -532,10 +533,30 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _reject_non_finite_json_number(value: str) -> NoReturn:
+    raise InstalledComponentManifestError(
+        "installed-component manifest contains a non-finite JSON number"
+    )
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise InstalledComponentManifestError(
+            "installed-component manifest contains a non-finite JSON number"
+        )
+    return parsed
+
+
 def _load_manifest_bytes(raw: bytes) -> dict[str, Any]:
     try:
         text = raw.decode("utf-8")
-        value = json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
+        value = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_non_finite_json_number,
+            parse_float=_parse_finite_json_float,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise InstalledComponentManifestError(
             "installed-component manifest is not UTF-8 JSON"
@@ -573,7 +594,13 @@ def _validate_shape(value: Mapping[str, Any]) -> None:
         "source_commit",
         "version",
     }
-    if set(value) != required or value.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+    schema_version = value.get("schema_version")
+    if (
+        set(value) != required
+        or isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != MANIFEST_SCHEMA_VERSION
+    ):
         raise InstalledComponentManifestError(
             "installed-component manifest fields or schema are invalid"
         )
@@ -606,9 +633,8 @@ def _validate_shape(value: Mapping[str, Any]) -> None:
     direct = _descriptor(package_value.get("direct_package"), label="direct package")
     if direct["filename"].casefold() == package["filename"].casefold():
         raise InstalledComponentManifestError("archive and direct package names must differ")
-    if isinstance(value.get("component_count"), bool) or value.get("component_count") != len(
-        COMPONENTS
-    ):
+    component_count = value.get("component_count")
+    if type(component_count) is not int or component_count != len(COMPONENTS):
         raise InstalledComponentManifestError("installed-component count is invalid")
     components = value.get("components")
     if not isinstance(components, list) or len(components) != len(COMPONENTS):
@@ -831,7 +857,12 @@ def verify_manifest(
 
 
 def _zip_member_path(name: str) -> PurePosixPath:
-    if not name or "\\" in name or "\x00" in name:
+    if (
+        not name
+        or "\\" in name
+        or "\x00" in name
+        or re.match(r"^[A-Za-z]:", name) is not None
+    ):
         raise InstalledComponentManifestError("release ZIP contains an unsafe path")
     path = PurePosixPath(name)
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
