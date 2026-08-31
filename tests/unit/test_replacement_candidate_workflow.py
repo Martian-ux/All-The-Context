@@ -14,7 +14,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "replacement-candidate.yml"
 # This digest is deliberately owned by the reviewed test code, not by the
 # workflow. It covers the complete file as UTF-8 bytes, including comments,
 # whitespace, scalar syntax, and Unicode. No YAML parser is an authority here.
-EXPECTED_WORKFLOW_SHA256 = "c469bedbfe13e74a5831cd50ba5cd51616057c955d29398a2a98b0dfcd7527dc"
+EXPECTED_WORKFLOW_SHA256 = "fb74d52e116cb4bf79a63b798de13e5db1d09ec05fd9f92e9a4946df5817ce11"
 
 INDEPENDENT_VERIFIER_SCRIPT = "verify_installed_component_manifest_independent.py"
 INDEPENDENT_VERIFIER_NAME = "Independently verify exact Windows candidate archive and manifest"
@@ -243,6 +243,16 @@ def _assert_workflow_semantics(text: str) -> None:
     assert "Copy-Item -Path" not in stage
     assert "dist/release/*" not in stage
     assert all(mapping in stage for mapping in EXPECTED_HANDOFF_MAPPINGS)
+    inventory_guard = (
+        "          if (\n"
+        "            (Test-Path -LiteralPath $inventoryPath) -or\n"
+        "            (Test-Path -LiteralPath $inventoryChecksumPath)\n"
+        "          ) {\n"
+        '            throw "refusing to replace an existing handoff inventory"\n'
+        "          }\n"
+    )
+    assert inventory_guard in stage
+    assert "Test-Path -LiteralPath $inventoryPath -or Test-Path -LiteralPath" not in stage
 
     rehash = _step_block(text, "Rehash every allowlisted handoff file after content-hygiene scan")
     scan = _step_block(text, "Run content-hygiene scan (not malware or Defender scanning)")
@@ -311,7 +321,7 @@ def test_workflow_matches_code_owned_raw_byte_digest() -> None:
     text = _read_workflow()
 
     assert _workflow_sha256(text) == EXPECTED_WORKFLOW_SHA256
-    assert len(text.encode("utf-8")) == 19676
+    assert len(text.encode("utf-8")) == 19716
     assert "\ufeff" not in text
     assert "\u2028" not in text
     assert "\u2029" not in text
