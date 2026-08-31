@@ -1,5 +1,40 @@
 # Architecture decisions
 
+## ADR-179: Freeze exact beta.7 Windows candidate evidence without release credit
+
+**Status:** accepted on 2026-08-31 as private exact-artifact engineering
+evidence. No candidate was uploaded, submitted, published, tagged, released,
+or installed into live dogfood state.
+
+The Windows x86_64 `0.1.0-beta.7` evidence set is bound to exact protected-main
+SHA `af3b6a15c2c10289bb89f62199b359041f2ea73d`, whose protected-main CI run
+`33404631149` and CodeQL run `33404630078` passed. A clean isolated Python
+3.12.10/PyInstaller 6.21.0 build produced a canonical installed-component
+archive with SHA-256
+`784c7372af44543855cd544e5a48303d3b96c621f26a7eb6d0f2ddface289d74`.
+Canonical and independent archive verification passed. Disposable packaged
+desktop, recovery, and first-run/update/rollback/uninstall smokes passed, and a
+separate packaged credential acceptance completed a real isolated Windows
+Credential Manager set/get/delete round trip.
+
+With Windows Defender antivirus and real-time protection enabled at signature
+`1.457.423.0`, disposable custom scans left the exact local archive and its
+four manifest-bound executables present with zero target detections. The exact
+post-merge CI Windows direct executable and archive were also left present with
+zero target detections. Four content-free Microsoft security manifests were
+prepared for the local main, MCP, recovery, and updater components, but remain
+on hold and were not submitted.
+
+These observations are deliberately narrower than acceptance. They are not a
+Microsoft no-malware reassessment, do not prove SmartScreen reputation, do not
+create a clean fresh-Windows receipt, and do not turn a local PyInstaller build
+or ordinary CI artifact into the release-candidate workflow's SLSA artifact.
+They authorize no release, upload, publication, live dogfood mutation, signing,
+or antivirus exclusion. The immutable public beta.6 Defender incident remains
+open. Physical beta.6-to-beta.7 N-1 execution remains blocked because the
+flagged beta.6 helper must not be restored or executed; a future N-1 receipt
+must use a vendor-cleared prior artifact or a separately reviewed safe fixture.
+
 ## ADR-178: Bind staged artifacts and detached recovery binaries at use time
 
 **Status:** implemented locally on 2026-08-31; this records source and test
@@ -139,12 +174,14 @@ Windows Defender incident.
 
 The immutable `0.1.0-beta.6` prerelease remains the current public downloadable
 release. Source metadata uses `0.1.0-beta.7` only for a private
-replacement-source/candidate slot. No beta.7 candidate has been built,
-executed, scanned, submitted, approved, published, tagged, uploaded, or
-released. The private replacement workflow is artifact-only, exact-allowlist,
-and approval-gated; it is not publication, execution, or AV evidence. Future
-beta.7+ acceptance requires exact candidate-bound Microsoft closed no-malware
-reassessment evidence, and none exists.
+replacement-source/candidate slot. At the time of this decision, no beta.7
+candidate had been built, executed, scanned, submitted, approved, published,
+tagged, uploaded, or released. ADR-179 later records bounded private engineering
+build, execution, and Defender-scan evidence without changing the public or
+release status. The private replacement workflow is artifact-only,
+exact-allowlist, and approval-gated; it is not publication, execution, or AV
+evidence. Future beta.7+ acceptance still requires exact candidate-bound
+Microsoft closed no-malware reassessment evidence, and none exists.
 
 Codex pre-generation retrieval uses a separate `context:read` principal, exact
 `${prompt}` `mcp_tool` templating, optional `required=false` read/capture/

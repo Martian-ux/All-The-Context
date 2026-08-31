@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-As of 2026-08-29 UTC, protected main integrates false-by-default Continuous
+As of 2026-08-31 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
 boundaries. After one setup opt-in, ordinary user prompts and rendered
 assistant responses are observed locally without per-turn commands. Core alone
@@ -21,10 +21,11 @@ instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth and the
 subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
-client read/explicit-memory foundations, Continuous Capture, and replacement
-workflow hardening through PR #98 at exact SHA
-`76db4c87add09986da936963902f7fa5f0c2768d`. Protected-main CI run
-`33319966716` and CodeQL run `33319965969` completed successfully for that exact
+client read/explicit-memory foundations, Continuous Capture, replacement
+workflow hardening, updater/recovery trust hardening, and the Windows timing
+test correction through PR #101 at exact SHA
+`af3b6a15c2c10289bb89f62199b359041f2ea73d`. Protected-main CI run
+`33404631149` and CodeQL run `33404630078` completed successfully for that exact
 SHA. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
@@ -36,6 +37,45 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-31 — exact protected-main beta.7 Windows candidate evidence
+
+A private Windows x86_64 `0.1.0-beta.7` engineering candidate was built in a
+clean isolated worktree from exact protected-main SHA
+`af3b6a15c2c10289bb89f62199b359041f2ea73d` with Python 3.12.10 and PyInstaller
+6.21.0. The canonical installed-component archive has SHA-256
+`784c7372af44543855cd544e5a48303d3b96c621f26a7eb6d0f2ddface289d74`.
+Its unsigned installed main, MCP, recovery, and updater executables are bound by
+the canonical manifest to these SHA-256 values, respectively:
+
+- `205c9b1d1a75c8f80a5ba7e5d9fef4aa7c0cd017318e8b8194a70c35d7e878d7`;
+- `2fde3d8d4108d7f74c10413e09cf1ba84c82be7ccbaa87115e8dc3090defc6dd`;
+- `6eff0e2f64559d2d270ba1ac06d3de98cf1e255662ae48f7e9aa175659cd421b`;
+  and
+- `65d2e559799e4817e072cbb44782b972b181f648f434d1d0edc62819cbab7f52`.
+
+Canonical and independent archive verification passed. Packaged desktop,
+recovery, and first-run/update/rollback/uninstall smokes passed in disposable
+state. The packaged credential acceptance path separately completed a real
+isolated Windows Credential Manager set/get/delete round trip. Windows Defender
+custom scans, with antivirus and real-time protection enabled and signature
+`1.457.423.0`, left the archive and all four executables present with zero
+target detections. The exact post-merge CI Windows artifact from run
+`33404631149` was also scanned as disposable copies: its direct executable
+(`28283edbfe62c5581f953ca61c09a79029024a0b45020e7029e16c712a4eb5d5`)
+and archive
+(`b56eb4c1c34d74b2bf419c629b6c91078ad0a3da21fd6c51af4f3c9510e704b1`)
+remained present with zero target detections.
+
+Four content-free preparation-only Microsoft security manifests were generated
+for the exact local main, MCP, recovery, and updater components. They remain on
+hold and were not uploaded or submitted. This evidence is not Microsoft
+reassessment or a no-malware determination, does not establish a clean fresh-
+Windows acceptance receipt, and is not a release-candidate workflow/SLSA
+artifact, tag, draft, publication, release, or live dogfood acceptance. The
+public immutable beta.6 Defender incident remains unresolved. A literal
+beta.6-to-beta.7 N-1 run was not attempted because the prior beta.6 helper is
+still flagged and must not be restored, executed, or allow-listed.
 
 ### 2026-08-31 — private Windows Defender submission-bundle preparer
 
@@ -63,9 +103,9 @@ contacts Microsoft, uploads or publishes anything, or asserts Defender,
 malware, signing, clearance, or release acceptance. Focused synthetic coverage
 passes 52 tests locally, including deterministic direct CLI import under an
 unrelated installed `scripts` package, adversarial phase/final-write swaps,
-pathname retention, main-source naming, and partial writes. A fresh exact Windows
-candidate, Defender submission/reassessment, and
-release acceptance remain open.
+pathname retention, main-source naming, and partial writes. ADR-179 records the
+later exact private candidate and local Defender observation; Microsoft
+submission/reassessment and release acceptance remain open.
 
 ### 2026-08-31 — focused updater/recovery trust hardening
 
@@ -157,9 +197,10 @@ sources, and verifier-before-upload ordering. The focused replacement-workflow
 contract suite passes 35 tests, including quoted control keys, alternate paths,
 post-verifier mutation, duplicate steps/keys, YAML indirection and tags,
 scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
-source and contract-test hardening only: no beta.7 candidate has been built,
-executed, scanned, submitted, approved, published, tagged, uploaded, or
-released, and no Defender or release-acceptance claim is made.
+source and contract-test hardening only: at that boundary no beta.7 candidate
+had been built, executed, scanned, submitted, approved, published, tagged,
+uploaded, or released. ADR-179 records later bounded private engineering
+evidence without adding Microsoft or release-acceptance credit.
 
 ### 2026-08-30 — Packet A L0 specification is frozen and independently approved
 
