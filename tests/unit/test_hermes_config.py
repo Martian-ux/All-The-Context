@@ -189,9 +189,7 @@ def test_setup_reports_hermes_capture_principal_and_no_startup_side_effect(
     monkeypatch.setattr(
         desktop_setup,
         "_persist_client_token",
-        lambda client_id, token, _config: DesktopAccess(
-            client_id, token, OS_CREDENTIAL_STORAGE
-        ),
+        lambda client_id, token, _config: DesktopAccess(client_id, token, OS_CREDENTIAL_STORAGE),
     )
     monkeypatch.setattr(
         desktop_setup,
@@ -235,9 +233,9 @@ def test_profile_resolution_and_absence_detection_are_safe(
 
     monkeypatch.delenv("HERMES_HOME", raising=False)
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    assert hermes_config._user_data_root(
-        platform_name="posix", home=tmp_path
-    ) == tmp_path / ".hermes"
+    assert (
+        hermes_config._user_data_root(platform_name="posix", home=tmp_path) == tmp_path / ".hermes"
+    )
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
     assert hermes_config._user_data_root(platform_name="win32", home=tmp_path) == (
         tmp_path / "LocalAppData" / "hermes"

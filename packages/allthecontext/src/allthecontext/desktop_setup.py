@@ -873,9 +873,7 @@ def _configure_hermes_accesses(
         result = configure_hermes(
             runtime,
             read_client_id=accesses[HERMES_READ_CLIENT_NAME].client_id,
-            capture_client_id=(
-                accesses[HERMES_CAPTURE_CLIENT_NAME].client_id if capture else None
-            ),
+            capture_client_id=(accesses[HERMES_CAPTURE_CLIENT_NAME].client_id if capture else None),
             profile=profile,
             target_url=target_url,
             core_data_dir=config.data_dir,

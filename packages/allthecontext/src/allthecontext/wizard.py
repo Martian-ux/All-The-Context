@@ -949,11 +949,7 @@ class SetupWizard:
                     and HERMES_CAPTURE_CLIENT_NAME
                     in getattr(self.result, "continuous_capture_clients", ())
                 )
-                else (
-                    "Not connected"
-                    if self.hermes_capture_requested
-                    else "Not enabled"
-                ),
+                else ("Not connected" if self.hermes_capture_requested else "Not enabled"),
             ),
             (
                 "Memory commands",

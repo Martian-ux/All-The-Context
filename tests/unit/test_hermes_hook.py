@@ -29,7 +29,7 @@ def _arguments() -> dict[str, object]:
     return {
         "target_url": "http://127.0.0.1:7337",
         "core_data_dir": Path("C:/ATC/data"),
-        "core_command": "[\"C:/ATC/all-the-context.exe\", \"--core\"]",
+        "core_command": '["C:/ATC/all-the-context.exe", "--core"]',
         "client_id": "hermes-read",
     }
 

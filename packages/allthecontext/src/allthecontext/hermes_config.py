@@ -183,9 +183,7 @@ def _user_data_root(*, platform_name: str | None = None, home: Path | None = Non
     if active_platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA")
         base = (
-            Path(local_app_data).expanduser()
-            if local_app_data
-            else user_home / "AppData" / "Local"
+            Path(local_app_data).expanduser() if local_app_data else user_home / "AppData" / "Local"
         )
         return _absolute_path(base / "hermes")
     return _absolute_path(user_home / ".hermes")
@@ -380,9 +378,7 @@ def _top_sections(lines: list[str]) -> dict[str, _Section]:
         if re.search(r"(^|[\s:])[&*!][A-Za-z0-9_-]+", body) or re.search(
             r":\s*[|>]\s*(?:#.*)?$", body
         ):
-            raise HermesConfigError(
-                "Hermes configuration contains an unsupported YAML feature"
-            )
+            raise HermesConfigError("Hermes configuration contains an unsupported YAML feature")
         if body.startswith((" ", "\t")):
             continue
         match = _TOP_LEVEL_KEY.fullmatch(body)
@@ -440,9 +436,7 @@ def _child_end(lines: list[str], section: _Section, child_index: int) -> int:
     return section.end
 
 
-def _remove_marker(
-    lines: list[str], begin: str, end: str
-) -> tuple[list[str], tuple[str, ...]]:
+def _remove_marker(lines: list[str], begin: str, end: str) -> tuple[list[str], tuple[str, ...]]:
     begins = [index for index, line in enumerate(lines) if _line_body(line).strip() == begin]
     ends = [index for index, line in enumerate(lines) if _line_body(line).strip() == end]
     if len(begins) != len(ends):
@@ -563,7 +557,7 @@ def _remove_empty_managed_section(
         for line in lines[section.start + 1 : ends[0]]
     ):
         return lines
-    return lines[:starts[0]] + lines[ends[0] + 1 :]
+    return lines[: starts[0]] + lines[ends[0] + 1 :]
 
 
 def _yaml_scalar(value: str) -> str:
@@ -615,8 +609,11 @@ def _validate_loopback_url(value: str) -> str:
 
 
 def _validate_client_id(value: str, label: str) -> str:
-    if type(value) is not str or not value or len(value) > 1_000 or any(
-        ord(character) < 32 or ord(character) == 127 for character in value
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > 1_000
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise HermesConfigError(f"Hermes {label} is outside its bound")
     return value
@@ -670,9 +667,7 @@ def _hook_block(begin: str, end: str, command: str, newline: str) -> str:
     )
 
 
-def _insert_mcp(
-    lines: list[str], section: _Section, block: str, newline: str
-) -> list[str]:
+def _insert_mcp(lines: list[str], section: _Section, block: str, newline: str) -> list[str]:
     if _direct_child(lines, section, HERMES_MCP_SERVER_KEY) is not None:
         raise HermesConfigError("Hermes MCP server name belongs to an unrelated entry")
     return _append_at(
@@ -740,9 +735,7 @@ def _render_config(
         section = sections.get(section_name)
         if section is not None:
             _section_is_mapping(lines, section)
-    has_mcp_marker = any(
-        _line_body(line).strip() == HERMES_CONFIG_MARKER_BEGIN for line in lines
-    )
+    has_mcp_marker = any(_line_body(line).strip() == HERMES_CONFIG_MARKER_BEGIN for line in lines)
     has_read_marker = any(
         _line_body(line).strip() == HERMES_READ_HOOK_MARKER_BEGIN for line in lines
     )
@@ -888,9 +881,7 @@ def _render_allowlist(
         if not (isinstance(item, dict) and item.get("command") in removals)
     ]
     existing = {
-        (item.get("event"), item.get("command"))
-        for item in approvals
-        if isinstance(item, dict)
+        (item.get("event"), item.get("command")) for item in approvals if isinstance(item, dict)
     }
     for event, command in desired:
         if (event, command) not in existing:
@@ -956,8 +947,7 @@ def _apply_transaction(plans: tuple[tuple[_TextDocument, str], ...]) -> tuple[Pa
             ) from rollback_error
         raise
     by_path = {
-        document.path: backup
-        for (document, _content), backup in zip(changed, backups, strict=True)
+        document.path: backup for (document, _content), backup in zip(changed, backups, strict=True)
     }
     return tuple(by_path.get(document.path) for document, _content in plans)
 
