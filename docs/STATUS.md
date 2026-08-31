@@ -61,7 +61,8 @@ installed or setup source naming while remaining digest-bound to the manifest.
 The preparer never executes a candidate or treats an archive as executable,
 contacts Microsoft, uploads or publishes anything, or asserts Defender,
 malware, signing, clearance, or release acceptance. Focused synthetic coverage
-passes 51 tests locally, including adversarial phase/final-write swaps,
+passes 52 tests locally, including deterministic direct CLI import under an
+unrelated installed `scripts` package, adversarial phase/final-write swaps,
 pathname retention, main-source naming, and partial writes. A fresh exact Windows
 candidate, Defender submission/reassessment, and
 release acceptance remain open.

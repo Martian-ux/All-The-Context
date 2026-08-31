@@ -5,6 +5,9 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
+import subprocess
+import sys
 import zipfile
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
@@ -449,6 +452,32 @@ def test_preparer_has_no_process_or_archive_execution_surface() -> None:
         and node.func.attr == "unlink"
         for node in ast.walk(tree)
     )
+
+
+def test_direct_cli_ignores_unrelated_scripts_package(tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "scripts" / "prepare_windows_security_submission.py"
+    shadow = tmp_path / "shadow" / "scripts"
+    shadow.mkdir(parents=True)
+    (shadow / "__init__.py").write_text("# unrelated installed package\n", encoding="utf-8")
+    environment = os.environ.copy()
+    inherited = environment.get("PYTHONPATH")
+    package_source = source.parents[1] / "packages" / "allthecontext" / "src"
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [str(shadow.parent), str(package_source), *([inherited] if inherited else [])]
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(source), "--help"],
+        cwd=source.parents[1],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--output-dir" in completed.stdout
 
 
 def test_component_identity_is_revalidated_between_verification_phases(

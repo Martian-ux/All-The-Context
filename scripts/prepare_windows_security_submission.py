@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Never, cast
 
-try:
+if __package__:
     from scripts import installed_component_manifest as manifest_module
-except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+else:  # Direct ``python scripts/...`` execution must use the sibling module.
     import installed_component_manifest as manifest_module
 
 MANIFEST_FILE_NAME = manifest_module.MANIFEST_FILE_NAME

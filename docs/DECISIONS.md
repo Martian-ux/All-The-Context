@@ -5265,7 +5265,9 @@ the exact final bytes of both outputs to their created handles and pathnames.
 Existing output, symlink/reparse redirection, hardlinked output,
 directory identity changes, and pathname replacement fail closed. A failed
 operation deliberately retains its bounded content-free output instead of
-attempting a raceable pathname unlink. The script does not execute binaries,
+attempting a raceable pathname unlink. Direct CLI execution selects its sibling
+manifest verifier without consulting an unrelated installed `scripts` package.
+The script does not execute binaries,
 open a release archive as an executable, contact Microsoft, or submit/upload
 anything. A fresh exact artifact and the physical Defender reassessment remain
 required before any release decision.
