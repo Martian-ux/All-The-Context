@@ -51,7 +51,8 @@ operation-wide source-root and file identity binding. The selected component
 digest and size come from stable measurements of the actual verified bytes.
 Output publication captures the exclusively-created handle before the first
 write, refuses replacement, symlink/reparse redirection and hardlinked output,
-then revalidates every input after the final write. Unsafe cleanup after an
+then revalidates every input and re-reads both exact outputs after the final
+write. In-place output mutation therefore fails before success. Unsafe cleanup after an
 ownership change is refused: failed bounded content-free output is retained
 rather than unlinked through a raceable pathname. NUL-truncated ZIP member
 names are rejected, and a verified main candidate may use either canonical
@@ -60,7 +61,7 @@ installed or setup source naming while remaining digest-bound to the manifest.
 The preparer never executes a candidate or treats an archive as executable,
 contacts Microsoft, uploads or publishes anything, or asserts Defender,
 malware, signing, clearance, or release acceptance. Focused synthetic coverage
-passes 49 tests locally, including adversarial phase/final-write swaps,
+passes 51 tests locally, including adversarial phase/final-write swaps,
 pathname retention, main-source naming, and partial writes. A fresh exact Windows
 candidate, Defender submission/reassessment, and
 release acceptance remain open.

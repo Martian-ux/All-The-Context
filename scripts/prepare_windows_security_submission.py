@@ -692,6 +692,44 @@ def _write_all(stream: Any, content: bytes) -> None:
     os.fsync(stream.fileno())
 
 
+def _verify_owned_output(
+    output: Path,
+    identity: _DirectoryIdentity,
+    filename: str,
+    expected_identity: _OutputFileIdentity,
+    expected_content: bytes,
+    *,
+    label: str,
+    expected_names: set[str],
+) -> None:
+    """Re-read exact output bytes while binding the handle and pathname."""
+
+    _assert_owned_output_directory(output, identity, expected_names=expected_names)
+    path = output / filename
+    try:
+        with path.open("rb") as stream:
+            opened_identity = _output_stream_identity(stream)
+            if (
+                not _same_output_object(opened_identity, expected_identity)
+                or opened_identity.size != len(expected_content)
+            ):
+                raise WindowsSecuritySubmissionError(f"{label} changed after it was written")
+            actual = stream.read(len(expected_content) + 1)
+            if actual != expected_content:
+                raise WindowsSecuritySubmissionError(f"{label} changed after it was written")
+            if _output_stream_identity(stream) != opened_identity:
+                raise WindowsSecuritySubmissionError(f"{label} changed after it was written")
+    except OSError as exc:
+        raise WindowsSecuritySubmissionError(f"{label} cannot be revalidated") from exc
+    path_identity = _output_file_identity(path)
+    if (
+        not _same_output_object(path_identity, expected_identity)
+        or path_identity.size != len(expected_content)
+    ):
+        raise WindowsSecuritySubmissionError(f"{label} changed after it was written")
+    _assert_owned_output_directory(output, identity, expected_names=expected_names)
+
+
 def create_bundle(
     *,
     output_dir: Path,
@@ -735,7 +773,7 @@ def create_bundle(
     checksum_path = output / BUNDLE_CHECKSUM_FILE_NAME
     try:
         _revalidate_input_binding(input_binding)
-        _write_owned_new(
+        bundle_identity = _write_owned_new(
             output,
             output_identity,
             BUNDLE_FILE_NAME,
@@ -743,17 +781,64 @@ def create_bundle(
             label="security submission bundle",
             expected_names=set(),
         )
+        _verify_owned_output(
+            output,
+            output_identity,
+            BUNDLE_FILE_NAME,
+            bundle_identity,
+            raw_bundle,
+            label="security submission bundle",
+            expected_names={BUNDLE_FILE_NAME},
+        )
         digest = hashlib.sha256(raw_bundle).hexdigest()
+        raw_checksum = f"{digest}  {BUNDLE_FILE_NAME}\n".encode("ascii")
         _revalidate_input_binding(input_binding)
-        _write_owned_new(
+        checksum_identity = _write_owned_new(
             output,
             output_identity,
             BUNDLE_CHECKSUM_FILE_NAME,
-            f"{digest}  {BUNDLE_FILE_NAME}\n".encode("ascii"),
+            raw_checksum,
             label="security submission checksum",
             expected_names={BUNDLE_FILE_NAME},
         )
+        complete_names = {BUNDLE_FILE_NAME, BUNDLE_CHECKSUM_FILE_NAME}
+        _verify_owned_output(
+            output,
+            output_identity,
+            BUNDLE_FILE_NAME,
+            bundle_identity,
+            raw_bundle,
+            label="security submission bundle",
+            expected_names=complete_names,
+        )
+        _verify_owned_output(
+            output,
+            output_identity,
+            BUNDLE_CHECKSUM_FILE_NAME,
+            checksum_identity,
+            raw_checksum,
+            label="security submission checksum",
+            expected_names=complete_names,
+        )
         _revalidate_input_binding(input_binding)
+        _verify_owned_output(
+            output,
+            output_identity,
+            BUNDLE_FILE_NAME,
+            bundle_identity,
+            raw_bundle,
+            label="security submission bundle",
+            expected_names=complete_names,
+        )
+        _verify_owned_output(
+            output,
+            output_identity,
+            BUNDLE_CHECKSUM_FILE_NAME,
+            checksum_identity,
+            raw_checksum,
+            label="security submission checksum",
+            expected_names=complete_names,
+        )
     except BaseException:
         # A pathname can be replaced after any identity check and before an
         # unlink. Retain failed operation-owned output rather than risk deleting

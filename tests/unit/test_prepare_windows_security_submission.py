@@ -530,6 +530,29 @@ def test_component_change_after_final_write_retains_failed_output(
     assert (output / BUNDLE_CHECKSUM_FILE_NAME).is_file()
 
 
+@pytest.mark.parametrize("target_name", [BUNDLE_FILE_NAME, BUNDLE_CHECKSUM_FILE_NAME])
+def test_in_place_output_mutation_after_final_write_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_name: str
+) -> None:
+    stage = _stage(tmp_path)
+    original = submission_module._write_owned_new
+
+    def mutate_after_checksum(*args, **kwargs):
+        identity = original(*args, **kwargs)
+        if args[2] == BUNDLE_CHECKSUM_FILE_NAME:
+            target = args[0] / target_name
+            content = target.read_bytes()
+            target.write_bytes(bytes([content[0] ^ 1]) + content[1:])
+        return identity
+
+    monkeypatch.setattr(submission_module, "_write_owned_new", mutate_after_checksum)
+    output = stage.root / "submission"
+    with pytest.raises(WindowsSecuritySubmissionError, match="changed after it was written"):
+        create_bundle(**_bundle_kwargs(stage, output))
+
+    assert (output / target_name).is_file()
+
+
 def test_selected_candidate_uses_stable_component_measurement(
     tmp_path: Path, monkeypatch
 ) -> None:

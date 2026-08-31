@@ -5260,8 +5260,9 @@ The emitted JSON contains no candidate bytes, paths, credentials, logs, user
 context, or vendor assertion: only exact digests, sizes, filenames, roles,
 provenance binding, hold status, and empty detection placeholders. Publication
 creates a new output directory, binds the exclusively created handle before
-writing, revalidates every input after the final write, and exclusively creates
-its two files. Existing output, symlink/reparse redirection, hardlinked output,
+writing, revalidates every input after the final write, then re-reads and binds
+the exact final bytes of both outputs to their created handles and pathnames.
+Existing output, symlink/reparse redirection, hardlinked output,
 directory identity changes, and pathname replacement fail closed. A failed
 operation deliberately retains its bounded content-free output instead of
 attempting a raceable pathname unlink. The script does not execute binaries,
