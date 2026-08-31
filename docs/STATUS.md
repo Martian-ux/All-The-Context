@@ -39,24 +39,48 @@ only, not as evidence for this integrated checkout.
 
 ### 2026-08-31 — private Windows Defender submission-bundle preparer
 
-Protected main now contains a content-free, fail-closed preparer for a future
+This hardening candidate contains a content-free, fail-closed preparer for a future
 Windows x86_64 candidate security reassessment. It verifies the release archive,
 installer, direct package, all four installed executables, canonical installed-
 component manifest/checksum, source commit, and explicit candidate version before
 emitting only bounded digests, sizes, roles, and non-claiming hold metadata.
 Manifest parsing rejects duplicate, non-finite—including exponent-overflow—and
 non-integer structural values; ZIP member validation rejects Windows drive-
-qualified paths. The two verification phases share an operation-wide source-root
-and component identity binding, and output publication refuses replacement,
-symlink/reparse redirection, hardlinked output, and unsafe cleanup after an
-ownership change.
+qualified paths. The two verification phases and both output writes share one
+operation-wide source-root and file identity binding. The selected component
+digest and size come from stable measurements of the actual verified bytes.
+Output publication captures the exclusively-created handle before the first
+write, refuses replacement, symlink/reparse redirection and hardlinked output,
+then revalidates every input after the final write. Unsafe cleanup after an
+ownership change is refused.
 
 The preparer never executes a candidate or treats an archive as executable,
 contacts Microsoft, uploads or publishes anything, or asserts Defender,
 malware, signing, clearance, or release acceptance. Focused synthetic coverage
-passes 43 tests locally, including adversarial phase swaps and partial-write
+passes 47 tests locally, including adversarial phase/final-write swaps and partial-write
 cleanup. A fresh exact Windows candidate, Defender submission/reassessment, and
 release acceptance remain open.
+
+### 2026-08-31 — focused updater/recovery trust hardening
+
+This hardening candidate revalidates the exact persisted manifest and staged artifact
+before installation, repeats the artifact checksum and stable-file identity
+check after preflight, and keeps the final Windows archive extraction on the
+same opened file. ZIP artifacts that are linked, reparse-backed, hardlinked,
+changed, oversized, or substituted fail closed before handoff. The Windows
+recovery journal is schema version 2 and records the copied recovery-helper
+SHA-256 and size; registration and detached launch verify that binding before
+touching RunOnce or creating a process. Replacement and installed-application
+files receive the same bounded digest/identity checks before subprocess and
+Core launch, and rollback sources reject linked or multi-link files.
+
+The focused updater/recovery suite passes 87 tests on Windows Python 3.14.3.
+This is source-level synthetic/mock evidence only. It does not close the
+prepared-journal publication crash window, journal replacement/generation
+binding, recursive cleanup race, database-backup identity, final
+validation-to-process-creation interval, exact packaged/live-client behavior,
+or release acceptance. Existing version-1 recovery journals fail closed and
+require a fresh update transaction.
 
 ### 2026-08-30 — cross-client dogfood hardening candidate
 

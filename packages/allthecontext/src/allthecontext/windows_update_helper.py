@@ -13,6 +13,7 @@ import os
 import platform
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,13 +30,14 @@ from platformdirs import user_data_path
 from .platform_compat import windows_dll, windows_registry
 from .release_manifest import ManifestError, ReleaseVersion
 
-JOURNAL_SCHEMA_VERSION = 1
+JOURNAL_SCHEMA_VERSION = 2
 MAX_JOURNAL_BYTES = 64 * 1024
 MAX_STATE_BYTES = 64 * 1024
 PROCESS_TIMEOUT_SECONDS = 90
 PARENT_EXIT_TIMEOUT_SECONDS = 60
 WINDOWS_RUNONCE_KEY = r"Software\Microsoft\Windows\CurrentVersion\RunOnce"
 SMOKE_FLAG = "ATC_PACKAGED_SMOKE"
+WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
 class HelperPhase(StrEnum):
@@ -151,6 +153,50 @@ def _sha256(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _plain_file_stat(path: Path, code: str) -> os.stat_result:
+    """Return a single-link regular file without following reparse paths."""
+
+    try:
+        value = path.lstat()
+    except OSError as exc:
+        raise HelperError(code) from exc
+    if (
+        bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
+        or stat.S_ISLNK(value.st_mode)
+        or not stat.S_ISREG(value.st_mode)
+        or getattr(value, "st_nlink", 1) != 1
+    ):
+        raise HelperError(code)
+    return value
+
+
+def _plain_directory_stat(path: Path, code: str) -> os.stat_result:
+    try:
+        value = path.lstat()
+    except OSError as exc:
+        raise HelperError(code) from exc
+    if bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT) or not stat.S_ISDIR(
+        value.st_mode
+    ):
+        raise HelperError(code)
+    return value
+
+
+def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(
+        same
+        and stat.S_ISREG(observed.st_mode)
+        and getattr(observed, "st_nlink", 1) == 1
+        and expected.st_size == observed.st_size
+        and getattr(expected, "st_mtime_ns", None)
+        == getattr(observed, "st_mtime_ns", None)
+    )
+
+
 def _valid_digest(value: object) -> bool:
     return (
         isinstance(value, str)
@@ -227,6 +273,8 @@ class UpdateJournal:
     helper_path: str
     core_host: str
     core_port: int
+    recovery_helper_sha256: str
+    recovery_helper_size: int
     created_at: str
     updated_at: str
     last_error_code: str | None = None
@@ -234,6 +282,8 @@ class UpdateJournal:
 
     @classmethod
     def load(cls, path: Path) -> UpdateJournal:
+        _plain_file_stat(path, "journal_untrusted")
+        _plain_directory_stat(path.parent, "journal_untrusted")
         value = _read_json(path, MAX_JOURNAL_BYTES)
         expected = set(cls.__dataclass_fields__)
         if set(value) != expected:
@@ -285,6 +335,7 @@ class UpdateJournal:
             (self.rollback_application_sha256, self.rollback_application_size),
             (self.rollback_update_helper_sha256, self.rollback_update_helper_size),
             (self.database_backup_sha256, self.database_backup_size),
+            (self.recovery_helper_sha256, self.recovery_helper_size),
         ):
             if (
                 not _valid_digest(digest)
@@ -422,6 +473,12 @@ def _runonce_key() -> str:
 def register_recovery(helper: Path, journal: Path, operation_id: str) -> None:
     if platform.system() != "Windows":
         raise HelperError("windows_required")
+    loaded = UpdateJournal.load(journal)
+    expected_helper = journal.parent / "AllTheContextUpdater.exe"
+    if loaded.operation_id != operation_id or helper.resolve() != expected_helper.resolve():
+        raise HelperError("recovery_identity_invalid")
+    if not _verified(helper, loaded.recovery_helper_sha256, loaded.recovery_helper_size):
+        raise HelperError("recovery_helper_untrusted")
     winreg = windows_registry()
 
     command = subprocess.list2cmdline((str(helper), "--journal", str(journal)))
@@ -474,6 +531,14 @@ def _creation_flags() -> int:
 
 
 def launch_recovery_helper(helper: Path, journal: Path) -> None:
+    loaded = UpdateJournal.load(journal)
+    expected_helper = journal.parent / "AllTheContextUpdater.exe"
+    if helper.resolve() != expected_helper.resolve() or not _verified(
+        helper,
+        loaded.recovery_helper_sha256,
+        loaded.recovery_helper_size,
+    ):
+        raise HelperError("recovery_helper_untrusted")
     environment = os.environ.copy()
     environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     subprocess.Popen(
@@ -533,10 +598,35 @@ def _wait_for_parent(pid: int) -> None:
 
 
 def _verified(path: Path, digest: str, size: int) -> bool:
-    if not path.is_file():
+    if (
+        not _valid_digest(digest)
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or size <= 0
+    ):
         return False
-    actual_digest, actual_size = _sha256(path)
-    return actual_digest == digest and actual_size == size
+    try:
+        path_stat = _plain_file_stat(path, "trusted_file_invalid")
+        if path_stat.st_size != size:
+            return False
+        digest_value = hashlib.sha256()
+        actual_size = 0
+        with path.open("rb") as stream:
+            if not _same_file(path_stat, os.fstat(stream.fileno())):
+                return False
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest_value.update(chunk)
+                actual_size += len(chunk)
+            if not _same_file(path_stat, os.fstat(stream.fileno())):
+                return False
+        final_stat = _plain_file_stat(path, "trusted_file_invalid")
+        return bool(
+            _same_file(path_stat, final_stat)
+            and actual_size == size
+            and digest_value.hexdigest() == digest
+        )
+    except (HelperError, OSError, ValueError):
+        return False
 
 
 def _run_bounded(command: tuple[str, ...], environment: dict[str, str]) -> int:
@@ -556,8 +646,27 @@ def _run_bounded(command: tuple[str, ...], environment: dict[str, str]) -> int:
     return completed.returncode
 
 
+def _validate_replacement(journal: UpdateJournal, journal_path: Path) -> None:
+    expected = journal_path.parent / "replacement" / "AllTheContextSetup.exe"
+    replacement = Path(journal.replacement_path)
+    if replacement.resolve() != expected.resolve() or not _verified(
+        replacement,
+        journal.replacement_sha256,
+        journal.replacement_size,
+    ):
+        raise HelperError("replacement_untrusted")
+
+
+def _validate_application(journal: UpdateJournal, digest: str, size: int) -> None:
+    application = Path(journal.application_path)
+    expected = _install_directory() / "AllTheContext.exe"
+    if application.resolve() != expected.resolve() or not _verified(application, digest, size):
+        raise HelperError("application_untrusted")
+
+
 def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
     application = Path(journal.application_path)
+    _validate_replacement(journal, journal_path)
     if journal.phase is HelperPhase.CUTOVER_STARTED and _verified(
         application, journal.replacement_sha256, journal.replacement_size
     ):
@@ -646,6 +755,7 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
 
 
 def _verify_diagnostics(journal: UpdateJournal, journal_path: Path) -> None:
+    _validate_application(journal, journal.replacement_sha256, journal.replacement_size)
     report = journal_path.parent / "diagnostics.json"
     report.unlink(missing_ok=True)
     if (
@@ -675,6 +785,7 @@ def _verify_diagnostics(journal: UpdateJournal, journal_path: Path) -> None:
 
 
 def _verify_health(journal: UpdateJournal, journal_path: Path) -> None:
+    _validate_application(journal, journal.replacement_sha256, journal.replacement_size)
     report = journal_path.parent / "health.json"
     report.unlink(missing_ok=True)
     if (
@@ -704,13 +815,23 @@ def _copy_verified(source: Path, target: Path, digest: str, size: int) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f"{target.name}.atc-rollback-new")
     temporary.unlink(missing_ok=True)
+    source_stat = _plain_file_stat(source, "rollback_source_invalid")
     try:
         with source.open("rb") as input_stream, temporary.open("xb") as output_stream:
+            if not _same_file(source_stat, os.fstat(input_stream.fileno())):
+                raise HelperError("rollback_source_changed")
             shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
+            if not _same_file(source_stat, os.fstat(input_stream.fileno())):
+                raise HelperError("rollback_source_changed")
             output_stream.flush()
             os.fsync(output_stream.fileno())
         if not _verified(temporary, digest, size):
             raise HelperError("rollback_copy_invalid")
+        if not _same_file(
+            source_stat,
+            _plain_file_stat(source, "rollback_source_changed"),
+        ):
+            raise HelperError("rollback_source_changed")
         temporary.replace(target)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -860,6 +981,13 @@ def _update_state(
 
 
 def _launch_core(journal: UpdateJournal) -> None:
+    if journal.phase is HelperPhase.COMMITTED:
+        digest, size = journal.replacement_sha256, journal.replacement_size
+    elif journal.phase is HelperPhase.ROLLED_BACK:
+        digest, size = journal.rollback_application_sha256, journal.rollback_application_size
+    else:
+        raise HelperError("application_phase_invalid")
+    _validate_application(journal, digest, size)
     environment = _child_environment(journal)
     subprocess.Popen(
         (journal.application_path, "--core"),

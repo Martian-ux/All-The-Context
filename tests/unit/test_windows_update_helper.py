@@ -99,6 +99,7 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
     rollback_mcp_digest, rollback_mcp_size = _digest(rollback_mcp)
     rollback_recovery_digest, rollback_recovery_size = _digest(rollback_recovery)
     rollback_update_digest, rollback_update_size = _digest(rollback_update_helper)
+    recovery_helper_digest, recovery_helper_size = _digest(helper_path)
     backup_digest, backup_size = _digest(database_backup)
     state_path = updates / "state.json"
     journal_path = transaction_dir / "journal.json"
@@ -155,6 +156,8 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         helper_path=str(helper_path),
         core_host="127.0.0.1",
         core_port=7337,
+        recovery_helper_sha256=recovery_helper_digest,
+        recovery_helper_size=recovery_helper_size,
         created_at=now,
         updated_at=now,
     ).save(journal_path)
@@ -432,6 +435,76 @@ def test_journal_rejects_paths_outside_per_user_transaction(
     fixture.journal_path.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(HelperError, match="journal_path_invalid"):
         UpdateJournal.load(fixture.journal_path)
+
+
+def test_journal_rejects_missing_recovery_helper_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    value = json.loads(fixture.journal_path.read_text(encoding="utf-8"))
+    value.pop("recovery_helper_sha256")
+    fixture.journal_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(HelperError, match="journal_shape_invalid"):
+        UpdateJournal.load(fixture.journal_path)
+
+
+def test_recovery_helper_swap_is_rejected_before_detached_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    helper = fixture.journal_path.parent / "AllTheContextUpdater.exe"
+    helper.write_bytes(b"tampered helper")
+    launches: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        helper_module.subprocess,
+        "Popen",
+        lambda command, **_kwargs: launches.append(command),
+    )
+
+    with pytest.raises(HelperError, match="recovery_helper_untrusted"):
+        helper_module.launch_recovery_helper(helper, fixture.journal_path)
+    assert launches == []
+
+
+def test_replacement_swap_is_rejected_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    replacement = fixture.journal_path.parent / "replacement" / "AllTheContextSetup.exe"
+    replacement.write_bytes(b"tampered replacement")
+    executed: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_run_bounded",
+        lambda command, _environment: executed.append(command) or 0,
+    )
+
+    with pytest.raises(HelperError, match="replacement_untrusted"):
+        helper_module._apply_replacement(
+            UpdateJournal.load(fixture.journal_path),
+            fixture.journal_path,
+        )
+    assert executed == []
+
+
+def test_hardlinked_recovery_helper_is_not_trusted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    helper = fixture.journal_path.parent / "AllTheContextUpdater.exe"
+    linked = helper.with_name("linked-helper.exe")
+    try:
+        linked.hardlink_to(helper)
+    except OSError:
+        pytest.skip("hardlinks are unavailable on this filesystem")
+
+    journal = UpdateJournal.load(fixture.journal_path)
+    assert helper_module._verified(
+        linked,
+        journal.recovery_helper_sha256,
+        journal.recovery_helper_size,
+    ) is False
 
 
 def test_helper_rejects_arbitrary_journal_location_before_creating_lock(

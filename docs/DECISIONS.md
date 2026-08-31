@@ -1,5 +1,27 @@
 # Architecture decisions
 
+## ADR-178: Bind staged artifacts and detached recovery binaries at use time
+
+**Status:** implemented locally on 2026-08-31; this records source and test
+facts only and is not a release, packaged-artifact, live-client, or security
+acceptance claim.
+
+Install revalidates the exact persisted signed manifest and its identity before
+use, then hashes the staged artifact as a plain, single-link file before and
+after installer preflight. The Windows handoff repeats the digest and identity
+check while the archive remains open, extracts only from that opened stream,
+and rejects a changed, linked, reparse-backed, hardlinked, or oversized
+artifact. The recovery journal is schema version 2 and records the copied
+recovery-helper digest and size. RunOnce registration, detached helper launch,
+replacement execution, diagnostics/health, rollback copies, and Core launch
+fail closed when the recorded file binding is absent or no longer matches.
+
+This decision intentionally does not claim the broader prepared-journal
+publication protocol, journal generation/identity reconciliation, recursive
+cleanup race closure, database-backup identity binding, or elimination of the
+portable validation-to-process-creation interval. Version-1 recovery journals
+are rejected rather than silently upgraded.
+
 ## ADR-177: Hermes integration is profile-local and splits retrieval from capture
 
 **Status:** accepted locally on 2026-08-30 as source-level dogfood hardening;
