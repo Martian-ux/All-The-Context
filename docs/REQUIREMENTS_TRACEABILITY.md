@@ -6,6 +6,13 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-09-01 Windows startup/recovery containment and rollback preservation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| UPDATER-04 — frozen Windows Core must not start across unsafe persisted recovery state | `windows_update_helper.py::ensure_recovery_before_core`; plain-file and bounded-state validation; atomic `updates/startup-recovery.json`; packaged `--recovery-doctor`; `test_core_start_guard_blocks_unreadable_state_and_records_safe_diagnostic`; `test_core_start_guard_blocks_invalid_journal_and_keeps_core_down`; ADR-183 | Implemented and locally tested. Unreadable or invalid state/journal blocks Core before vault startup, leaves the original state/database untouched, and records only sanitized recovery facts. The packaged doctor exposes those facts without paths, IDs, exception text, credentials, or context. Exact packaged and hosted evidence remain open |
+| UPDATER-05 — rollback must preserve the user vault boundary and prevent stale SQLite sidecar replay | `windows_update_helper.py::_restore_database`; `test_power_loss_after_each_post_cutover_phase_replays_safely`; `test_rollback_removes_all_sqlite_sidecars_and_preserves_unrelated_user_files`; existing verified database backup and rollback-retry tests; ADR-183 | Implemented and locally tested. Replay after diagnostics/health process loss reaches commit; failed-health rollback restores the verified pre-update database, removes WAL/SHM/rollback-journal sidecars, and leaves unrelated user files intact. No release, live-dogfood, Defender, Microsoft, or N-1 credit is created |
+
 ### 2026-09-01 protected-main Windows test coordination stabilization
 
 | Requirement | Implementation/evidence | Status |

@@ -319,6 +319,29 @@ def test_power_loss_after_binary_replacement_resumes_from_journal(
     assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.COMMITTED
 
 
+@pytest.mark.parametrize("fault_phase", ["diagnostics_passed", "health_passed"])
+def test_power_loss_after_each_post_cutover_phase_replays_safely(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault_phase: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    monkeypatch.setenv("ATC_PACKAGED_SMOKE", "1")
+    monkeypatch.setenv("ATC_UPDATE_FAULT_AFTER_PHASE", fault_phase)
+
+    with pytest.raises(SystemExit, match="86"):
+        run_transaction(fixture.journal_path)
+    assert UpdateJournal.load(fixture.journal_path).phase.value == fault_phase
+
+    monkeypatch.delenv("ATC_UPDATE_FAULT_AFTER_PHASE")
+    assert run_transaction(fixture.journal_path) == 0
+    assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.COMMITTED
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "installed"
+    assert state["transaction_path"] is None
+
+
 def test_cutover_started_resume_reapplies_every_packaged_component(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -420,6 +443,35 @@ def test_failed_health_restores_previous_binary_mcp_and_database(
             is None
         )
     assert launched == ["0.1.0"]
+
+
+def test_rollback_removes_all_sqlite_sidecars_and_preserves_unrelated_user_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    user_file = fixture.database.parent / "user-settings.json"
+    user_file.write_text('{"theme":"dark"}\n', encoding="utf-8")
+    stale_journal = fixture.database.with_name(f"{fixture.database.name}-journal")
+    stale_journal.write_bytes(b"stale rollback journal")
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(
+        helper_module,
+        "_run_bounded",
+        _fake_commands(fixture, health_result=1),
+    )
+
+    assert run_transaction(fixture.journal_path) == 2
+    assert not stale_journal.exists()
+    assert user_file.read_text(encoding="utf-8") == '{"theme":"dark"}\n'
+    with sqlite3.connect(fixture.database) as connection:
+        assert connection.execute("SELECT value FROM facts").fetchall() == [("before",)]
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='migrated'"
+            ).fetchone()
+            is None
+        )
 
 
 def test_failure_before_cutover_never_restores_the_older_database_backup(
@@ -628,6 +680,88 @@ def test_core_start_guard_recovers_interrupted_unbound_preparation(
     assert recovered["transaction_path"] is None
     assert recovered["operation_id"] is None
     assert recovered["handoff_identity"] is None
+
+
+def test_core_start_guard_blocks_unreadable_state_and_records_safe_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    original_database = fixture.database.read_bytes()
+    fixture.state_path.write_bytes(b"{\"phase\":")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal: launched.append((helper, journal)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == []
+    assert fixture.state_path.read_bytes() == b"{\"phase\":"
+    assert fixture.database.read_bytes() == original_database
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["status"] == "blocked"
+    assert diagnostic["code"] == "metadata_unreadable"
+    assert diagnostic["phase"] is None
+    assert "application_path" not in json.dumps(diagnostic)
+
+
+def test_core_start_guard_blocks_invalid_journal_and_keeps_core_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = json.loads(fixture.journal_path.read_text(encoding="utf-8"))
+    journal["phase"] = "not-a-real-phase"
+    fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == []
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["status"] == "blocked"
+    assert diagnostic["code"] == "journal_value_invalid"
+
+
+def test_core_start_guard_blocks_impossible_transaction_state_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["phase"] = "idle"
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == []
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["status"] == "blocked"
+    assert diagnostic["code"] == "startup_state_invalid"
+    assert diagnostic["phase"] == "idle"
 
 
 def test_pending_handoff_transition_reconciles_either_crash_side(

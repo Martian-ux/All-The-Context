@@ -1,5 +1,40 @@
 # Architecture decisions
 
+## ADR-183: Frozen Windows startup must contain unsafe update state
+
+**Status:** accepted locally on 2026-09-01 as the first broad Windows GA
+hardening slice; hosted and exact-artifact validation remain required.
+
+The persisted Windows update state is part of the unattended recovery trust
+boundary. If a packaged Core starts while `state.json` is unreadable,
+malformed, active without a transaction, or paired with an invalid journal,
+the normal startup path cannot know whether application files or the vault are
+mid-cutover. Starting Core in that condition could compound a partial update;
+silently resetting the state could discard the only recovery pointer.
+
+`ensure_recovery_before_core()` therefore validates the state file as a plain,
+bounded file and checks its phase, transaction identity, handoff binding, and
+journal before allowing normal Core startup. Unsafe state returns a blocked
+startup result and leaves the state and vault untouched. The helper writes a
+separate atomic `startup-recovery.json` marker containing only a schema version,
+status, fixed-format failure code, safe phase, and timestamp. The packaged
+recovery doctor reads and sanitizes that marker, so an operator can distinguish
+blocked startup from a clean state without exposing paths, journal contents,
+credentials, or personal context. A known unbound pre-cutover preparation
+remains the narrow exception: it is reset to an error state because the helper
+has not received the parent-published handoff binding and cannot have crossed
+cutover.
+
+Rollback also owns the SQLite `-journal` sidecar in addition to WAL/SHM. A
+stale rollback journal could replay against a newly restored main file on a
+later Core start, so leaving it behind is not a safe preservation strategy.
+The verified backup remains the only database replacement source, while
+unrelated files in the per-user data directory are never removed by update
+rollback. Post-cutover phase crash tests and sidecar/user-file preservation
+tests are required evidence for this source-level contract. This decision
+does not claim exact packaged acceptance, real N-1 safety, release readiness,
+or malware/vendor clearance.
+
 ## ADR-182: Import heartbeat tests separate worker coordination from heartbeat timing
 
 **Status:** accepted locally on 2026-09-01 after protected-main Windows CI exposed

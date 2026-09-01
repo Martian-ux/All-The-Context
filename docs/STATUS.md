@@ -43,6 +43,32 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-01 — Windows startup recovery containment and rollback preservation slice
+
+The first broad Windows GA hardening slice selected the remaining unattended
+failure boundary rather than repeating the already-implemented artifact,
+journal, helper-trust, or ordinary uninstall work. A frozen Windows Core now
+fails closed before Core initialization when its persisted update state is
+unreadable, malformed, active without a transaction, or bound to an invalid
+recovery journal. It does not guess a journal, open the vault, or start a
+possibly unsafe application state. The guard writes a durable
+`updates/startup-recovery.json` diagnostic containing only a bounded status,
+fixed-format code, and phase; packaged `--recovery-doctor` exposes the same
+sanitized fields for an operator without returning local paths, update IDs,
+exception text, credentials, or context.
+
+Rollback now removes the SQLite rollback-journal sidecar as well as WAL/SHM
+before installing the verified backup. This closes the stale-journal replay
+path against the restored database. Failure-injection coverage now resumes
+after `diagnostics_passed` and `health_passed` process loss, and proves that
+rollback restores the pre-update database while retaining an unrelated user
+file and removing all database sidecars. The focused Windows updater,
+recovery, packaged doctor, startup, installer, and desktop-runtime tests pass
+locally with the expected symlink-capability skips. Full repository Ruff and
+mypy pass, and the full pytest suite passes with the repository's expected
+platform skips and existing deprecation warnings. No packaged, release,
+Microsoft, Defender, or live-dogfood acceptance is inferred.
+
 ### 2026-09-01 — protected-main Windows import-heartbeat CI stabilization
 
 PR #104 merged the update-child dialog containment change at exact SHA

@@ -33,6 +33,31 @@ from .release_manifest import ManifestError, ReleaseVersion
 JOURNAL_SCHEMA_VERSION = 2
 MAX_JOURNAL_BYTES = 64 * 1024
 MAX_STATE_BYTES = 64 * 1024
+STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1
+STARTUP_RECOVERY_DIAGNOSTIC_NAME = "startup-recovery.json"
+STARTUP_RECOVERY_PHASES = frozenset(
+    {
+        "idle",
+        "disabled",
+        "checking",
+        "current",
+        "unpublished",
+        "available",
+        "deferred",
+        "downloading",
+        "ready",
+        "installing",
+        "restart_required",
+        "installed",
+        "rolled_back",
+        "manual_required",
+        "error",
+        "cancelled",
+    }
+)
+STARTUP_RECOVERY_TRANSACTION_PHASES = frozenset(
+    {"restart_required", "installed", "rolled_back"}
+)
 PROCESS_TIMEOUT_SECONDS = 90
 PARENT_EXIT_TIMEOUT_SECONDS = 60
 WINDOWS_RUNONCE_KEY = r"Software\Microsoft\Windows\CurrentVersion\RunOnce"
@@ -138,6 +163,61 @@ def journal_failure_diagnostic(path: Path) -> str:
         },
         sort_keys=True,
     )
+
+
+def _startup_recovery_diagnostic_path(state_path: Path) -> Path:
+    return state_path.with_name(STARTUP_RECOVERY_DIAGNOSTIC_NAME)
+
+
+def _write_startup_recovery_diagnostic(
+    state_path: Path,
+    *,
+    status: str,
+    code: str,
+    phase: str | None = None,
+) -> None:
+    """Persist only bounded startup-recovery facts, never state or local paths."""
+
+    safe_phase = phase if phase in STARTUP_RECOVERY_PHASES else None
+    payload = {
+        "schema_version": STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
+        "status": status,
+        "code": code,
+        "phase": safe_phase,
+        "updated_at": _utc_now(),
+    }
+    try:
+        _atomic_json(_startup_recovery_diagnostic_path(state_path), payload)
+    except OSError:
+        # Startup containment remains fail-closed when diagnostics cannot be written.
+        return
+
+
+def startup_recovery_diagnostic(path: Path) -> dict[str, str] | None:
+    """Read a sanitized startup diagnostic for the packaged recovery doctor."""
+
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        _plain_file_stat(path, "startup_diagnostic_untrusted")
+        value = _read_json(path, MAX_STATE_BYTES)
+    except HelperError:
+        return {"status": "unreadable", "code": "diagnostic_unreadable"}
+    status = value.get("status")
+    code = value.get("code")
+    phase = value.get("phase")
+    if (
+        value.get("schema_version") != STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION
+        or status not in {"blocked", "cleared"}
+        or not isinstance(code, str)
+    ):
+        return {"status": "unreadable", "code": "diagnostic_invalid"}
+    if len(code) > 64 or not code.replace("_", "").isalnum():
+        return {"status": "unreadable", "code": "diagnostic_invalid"}
+    result = {"status": status, "code": code}
+    if isinstance(phase, str) and phase in STARTUP_RECOVERY_PHASES:
+        result["phase"] = phase
+    return result
 
 
 def _sha256(path: Path) -> tuple[str, int]:
@@ -1002,7 +1082,10 @@ def _restore_database(journal: UpdateJournal) -> None:
         if result is None or result[0] != "ok":
             raise HelperError("database_backup_invalid")
         database = Path(journal.database_path)
-        for suffix in ("-wal", "-shm"):
+        # A failed Core may leave any SQLite sidecar behind.  In particular,
+        # rollback journals can replay against the restored main file on the
+        # next Core start, so they are part of the rollback boundary too.
+        for suffix in ("-wal", "-shm", "-journal"):
             database.with_name(f"{database.name}{suffix}").unlink(missing_ok=True)
         temporary.replace(database)
     finally:
@@ -1292,17 +1375,75 @@ def ensure_recovery_before_core() -> bool:
     if platform.system() != "Windows" or not bool(getattr(sys, "frozen", False)):
         return True
     state_path = _data_directory() / "updates" / "state.json"
-    if not state_path.is_file():
+    if not state_path.exists() and not state_path.is_symlink():
         return True
     try:
+        _plain_file_stat(state_path, "startup_state_untrusted")
         state = _read_json(state_path, MAX_STATE_BYTES)
-    except HelperError:
-        return True
+    except HelperError as error:
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code=error.code,
+        )
+        return False
+    phase = state.get("phase")
     transaction = state.get("transaction_path")
     operation_id = state.get("operation_id")
+    if not isinstance(phase, str) or phase not in STARTUP_RECOVERY_PHASES:
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_invalid",
+        )
+        return False
     if transaction is None:
+        if phase in {"installing", "restart_required"} or any(
+            state.get(name) is not None
+            for name in (
+                "handoff_identity",
+                "pending_handoff_identity",
+            )
+        ):
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_active_without_transaction",
+                phase=phase,
+            )
+            return False
+        if _startup_recovery_diagnostic_path(state_path).is_file():
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="cleared",
+                code="none",
+                phase=phase,
+            )
         return True
     if not isinstance(transaction, str) or not _valid_operation_id(operation_id):
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_invalid",
+            phase=phase,
+        )
+        return False
+    if phase not in STARTUP_RECOVERY_TRANSACTION_PHASES:
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_invalid",
+            phase=phase,
+        )
+        return False
+    pending_identity = state.get("pending_handoff_identity")
+    if pending_identity is not None and not _valid_digest(pending_identity):
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_invalid",
+            phase=phase,
+        )
         return False
     if not _valid_digest(state.get("handoff_identity")):
         expected = (
@@ -1317,6 +1458,12 @@ def ensure_recovery_before_core() -> bool:
         except OSError:
             transaction_matches = False
         if state.get("phase") != "restart_required" or not transaction_matches:
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_invalid",
+                phase=phase,
+            )
             return False
         # No helper from this schema can cross cutover without the parent-published
         # binding, so an interrupted preparation can safely return to the old app.
@@ -1337,25 +1484,74 @@ def ensure_recovery_before_core() -> bool:
         try:
             _atomic_json(state_path, state)
         except OSError:
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_reset_failed",
+                phase=phase,
+            )
             return False
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="cleared",
+            code="unbound_preparation_reset",
+            phase="error",
+        )
         return True
     try:
         journal_path = Path(transaction).resolve()
         journal = UpdateJournal.load(journal_path)
         _validate_handoff_state(journal, journal_path)
-    except (HelperError, OSError):
+    except (HelperError, OSError) as error:
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code=error.code if isinstance(error, HelperError) else "journal_unreadable",
+            phase=phase,
+        )
         return False
     if journal.operation_id != operation_id:
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_mismatch",
+            phase=phase,
+        )
         return False
     if journal.phase in TERMINAL_PHASES:
         # A power loss can land after the terminal journal save but before the
         # state pointer and RunOnce entry are cleared. Let the idempotent helper
         # finish that cleanup before an ordinary Core creates a new updater.
-        launch_recovery_helper(Path(journal.helper_path), journal_path)
+        try:
+            launch_recovery_helper(Path(journal.helper_path), journal_path)
+        except (HelperError, OSError):
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="helper_launch_failed",
+                phase=phase,
+            )
+            return False
         return False
     if os.environ.get("ATC_UPDATE_HEALTH_OPERATION") == journal.operation_id:
+        if _startup_recovery_diagnostic_path(state_path).is_file():
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="cleared",
+                code="health_child_allowed",
+                phase=phase,
+            )
         return True
-    launch_recovery_helper(Path(journal.helper_path), journal_path)
+    try:
+        launch_recovery_helper(Path(journal.helper_path), journal_path)
+    except (HelperError, OSError):
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="helper_launch_failed",
+            phase=phase,
+        )
+        return False
     return False
 
 

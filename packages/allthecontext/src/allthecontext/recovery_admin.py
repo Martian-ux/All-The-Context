@@ -32,6 +32,10 @@ from .export import (
     restore_export,
 )
 from .storage import CoreStore, InvalidStateError, _normalize_actor
+from .windows_update_helper import (
+    STARTUP_RECOVERY_DIAGNOSTIC_NAME,
+    startup_recovery_diagnostic,
+)
 
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
 VAULT_FILE_NAMES = (
@@ -1073,6 +1077,9 @@ def doctor(*, data_dir: Path | None = None) -> dict[str, Any]:
     integrity: dict[str, Any] | None = None
     if paths.active_database.is_file() and not lock_held:
         integrity = verify_vault_integrity(paths.active_database)
+    startup_diagnostic = startup_recovery_diagnostic(
+        paths.config.data_dir / "updates" / STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    )
     return {
         "version": __version__,
         "application": "All The Context",
@@ -1085,6 +1092,7 @@ def doctor(*, data_dir: Path | None = None) -> dict[str, Any]:
         "recovery_console_helper": recovery_console_helper_name(),
         "python_checkout_required": False,
         "integrity": integrity,
+        "startup_recovery": startup_diagnostic,
     }
 
 
