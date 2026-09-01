@@ -1,5 +1,33 @@
 # Architecture decisions
 
+## ADR-183: Packaged uninstall smoke observes the full cleanup contract
+
+**Status:** accepted locally on 2026-09-01 after exact protected-main Windows
+desktop CI exposed a shorter observer window and repository-wide validation
+passed; hosted revalidation is required.
+
+Windows uninstall must detach cleanup because a frozen one-file executable and
+transient antivirus or indexer handles can keep the installation directory open
+after the Python child exits. Product cleanup already retries 300 times at
+100-millisecond intervals, a bounded 30-second contract. The packaged first-run
+smoke observed for only 15 seconds before declaring retained application files,
+so it could fail while the authorized cleanup helper was still within its
+normal retry budget.
+
+The retry count, interval, and derived timeout are now shared constants used by
+the unchanged cleanup script. The packaged smoke observes that 30-second budget
+plus a five-second harness margin. It still fails if the installation directory
+exists after the product budget, and it continues to require removal of startup,
+shortcuts, Apps & Features registration, managed client configuration and
+credentials while preserving the vault.
+
+This changes no runtime retry count, interval, removal target, authority, or
+user-visible uninstall behavior. Protected-main SHA
+`4005039db9eb2c837648669df423120b281e5374` is not candidate-eligible because
+CI run `33459729438` failed the Windows desktop smoke at its former 15-second
+observation boundary. A reviewed merge and terminal-green exact protected-main
+CI/CodeQL remain required before candidate dispatch.
+
 ## ADR-182: Import heartbeat tests separate worker coordination from heartbeat timing
 
 **Status:** accepted locally on 2026-09-01 after protected-main Windows CI exposed

@@ -39,6 +39,7 @@ from allthecontext.credentials import (
     DEVELOPMENT_FALLBACK_ENV,
     FALLBACK_CREDENTIAL_STORAGE,
 )
+from allthecontext.desktop import WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS
 from allthecontext.release_manifest import sha256_file
 from allthecontext.windows_update_helper import (
     HelperPhase,
@@ -52,6 +53,7 @@ from smoke_desktop_artifact import ROOT, artifact_executable
 
 # Explicit, isolated, non-secret smoke only. Production installs never set this.
 ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
+WINDOWS_INSTALL_REMOVAL_OBSERVATION_SECONDS = WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS + 5.0
 
 # Work-tree artifacts inspected only for presence / closed-schema projection.
 _DIAGNOSTIC_RELATIVE_NAMES = (
@@ -1157,7 +1159,10 @@ def main() -> int:
             raise SystemExit(f"unexpected packaged uninstall report: {uninstall_report}")
 
         install_dir = Path(environment["ATC_INSTALL_DIR"])
-        delete_deadline = time.monotonic() + 15
+        # The product's detached helper may spend its full bounded retry window
+        # waiting for the one-file bootloader and antivirus/indexer handles.
+        # Observe beyond that contract before declaring retained app files.
+        delete_deadline = time.monotonic() + WINDOWS_INSTALL_REMOVAL_OBSERVATION_SECONDS
         while install_dir.exists() and time.monotonic() < delete_deadline:
             time.sleep(0.1)
         if install_dir.exists():
