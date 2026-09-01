@@ -68,6 +68,11 @@ WINDOWS_APP_NAME = "AllTheContext.exe"
 WINDOWS_MCP_NAME = "AllTheContextMCP.exe"
 WINDOWS_RECOVERY_NAME = "AllTheContextRecovery.exe"
 WINDOWS_UPDATE_HELPER_NAME = "AllTheContextUpdater.exe"
+WINDOWS_INSTALL_REMOVAL_ATTEMPTS = 300
+WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS = 100
+WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
+    WINDOWS_INSTALL_REMOVAL_ATTEMPTS * WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS / 1000
+)
 MACOS_APP_NAME = "All The Context.app"
 
 
@@ -940,14 +945,15 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         # has the installed executable open, so one removal attempt can leave
         # only AllTheContext.exe behind.  Retry for a bounded period while the
         # final process and transient antivirus/indexer handles unwind.
-        "for($atcAttempt=0;$atcAttempt -lt 300;$atcAttempt++){"
+        f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};"
+        "$atcAttempt++){"
         "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){exit 0};"
         "try{"
         "Remove-Item -LiteralPath $env:ATC_UNINSTALL_DIR -Recurse -Force "
         "-ErrorAction Stop;"
         "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){exit 0}"
         "}catch{};"
-        "Start-Sleep -Milliseconds 100"
+        f"Start-Sleep -Milliseconds {WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS}"
         "};"
         "exit 1"
     )

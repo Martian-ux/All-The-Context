@@ -6,6 +6,12 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-09-01 packaged Windows uninstall observation stabilization
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| WIN-CI-02 — packaged uninstall observation must cover the full bounded cleanup contract | `_schedule_windows_install_removal`; shared 300-attempt/100-millisecond/30-second constants; `smoke_packaged_first_run.py`; focused desktop runtime and packaged-first-run tests; full 2,403-test suite; ADR-183; protected-main CI run `33459729438` | Corrected and validated locally after exact protected main passed seven CI jobs and CodeQL but the Windows desktop smoke found the install directory at its former 15-second deadline. The product cleanup behavior remains 30 seconds; only the smoke observer uses that contract plus a five-second harness margin. Directory, startup, shortcut, Apps & Features, managed-client, credential, listener, and vault-preservation assertions remain mandatory. Repository-wide Ruff, mypy, documentation checks, and full pytest with nine expected platform skips pass. Reviewed merge and green exact protected-main CI/CodeQL are required before private candidate dispatch |
+
 ### 2026-09-01 protected-main Windows test coordination stabilization
 
 | Requirement | Implementation/evidence | Status |

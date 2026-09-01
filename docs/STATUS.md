@@ -24,13 +24,15 @@ subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
 client read/explicit-memory foundations, Continuous Capture, replacement
 workflow hardening, updater/recovery trust hardening, the Windows timing test
 correction, exact candidate-evidence reconciliation, the private handoff guard
-correction, and the update-child dialog containment change through PR #104 at
-exact SHA `91d847458e4d5d95f21aa4ae49add989e588d524`. CodeQL run
-`33454651086` passed that exact SHA, but protected-main CI run `33454650627`
-failed its Windows Python job on two order/resource-sensitive import-heartbeat
-test coordination assertions. A test-only stabilization is locally validated
-and awaits review and hosted validation; the exact SHA is not eligible for
-replacement-candidate dispatch. Source and
+correction, the update-child dialog containment change, and the import-heartbeat
+test stabilization through PR #105 at exact SHA
+`4005039db9eb2c837648669df423120b281e5374`. PR-head CI run `33458046592`
+and CodeQL run `33458045131` passed, including Windows Python and desktop
+artifacts. Protected-main CodeQL run `33459729367` also passed, but CI run
+`33459729438` failed only the Windows desktop packaged uninstall smoke at a
+15-second observation boundary shorter than the product's unchanged 30-second
+cleanup budget. A test-only correction is locally validated; the exact SHA is
+not eligible for replacement-candidate dispatch. Source and
 hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
@@ -42,6 +44,30 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-09-01 — packaged Windows uninstall observation stabilization
+
+PR #105 merged the import-heartbeat stabilization at exact protected-main SHA
+`4005039db9eb2c837648669df423120b281e5374`. Its protected-main CodeQL run
+`33459729367` passed. CI run `33459729438` passed seven of eight jobs, including
+Windows Python, and failed only `Desktop artifact - windows-latest`. The exact
+failure occurred after the packaged uninstaller returned its successful,
+vault-preserving report: the smoke still found the isolated installation
+directory after its 15-second observation window. The same immutable tree's PR
+Windows desktop job passed.
+
+The product cleanup helper already retries removal for 300 100-millisecond
+intervals so its one-file bootloader and transient antivirus/indexer handles may
+unwind. The focused correction gives that unchanged 30-second product contract
+named constants and makes the packaged observer wait the contract plus a
+five-second harness margin. It does not extend runtime cleanup or make retained
+files pass: the directory and every existing registration, shortcut, startup,
+managed-client, credential, and vault-preservation assertion remain mandatory.
+Focused desktop-runtime and packaged-first-run tests, repository-wide Ruff and
+mypy, documentation checks, and full pytest with 2,403 passes and nine expected
+platform skips pass locally. ADR-183 records the boundary. Candidate dispatch
+remains closed until reviewed merge and terminal-green exact protected-main
+CI/CodeQL.
 
 ### 2026-09-01 — protected-main Windows import-heartbeat CI stabilization
 
@@ -65,8 +91,9 @@ the heartbeat thread must close. Twenty repeated two-test Python 3.12 runs, the
 57-test import-operations file, repository-wide Ruff and mypy, documentation
 checks, and full pytest with 2,402 passes and nine expected platform skips all
 pass locally. This changes no runtime timeout or import behavior. ADR-182
-records the boundary. A reviewed merge and green exact protected-main CI/CodeQL
-remain required before building the next private replacement candidate.
+records the boundary. PR #105 exact-head CI and CodeQL passed and the correction
+merged; the later packaged-uninstall observer failure above is the current
+protected-main blocker.
 
 ### 2026-08-31 — exact replacement candidate install/recovery/uninstall acceptance
 
