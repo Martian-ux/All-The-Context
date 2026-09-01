@@ -639,7 +639,7 @@ def test_helper_rejects_arbitrary_journal_location_before_creating_lock(
     assert not outside.with_suffix(".lock").exists()
 
 
-def test_core_start_guard_resumes_active_transaction_and_allows_health_child(
+def test_core_start_guard_resumes_active_transaction_and_ignores_health_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixture = _transaction(tmp_path, monkeypatch)
@@ -654,14 +654,15 @@ def test_core_start_guard_resumes_active_transaction_and_allows_health_child(
     assert ensure_recovery_before_core() is False
     assert launched and launched[0][1] == fixture.journal_path
     monkeypatch.setenv("ATC_UPDATE_HEALTH_OPERATION", "a" * 24)
-    assert ensure_recovery_before_core() is True
+    assert ensure_recovery_before_core() is False
+    assert len(launched) == 2
 
     monkeypatch.delenv("ATC_UPDATE_HEALTH_OPERATION")
     journal = UpdateJournal.load(fixture.journal_path)
     journal.phase = HelperPhase.COMMITTED
     journal.save(fixture.journal_path)
     assert ensure_recovery_before_core() is False
-    assert len(launched) == 2
+    assert len(launched) == 3
 
 
 def test_core_start_guard_recovers_interrupted_unbound_preparation(
@@ -680,6 +681,136 @@ def test_core_start_guard_recovers_interrupted_unbound_preparation(
     assert recovered["transaction_path"] is None
     assert recovered["operation_id"] is None
     assert recovered["handoff_identity"] is None
+
+
+def test_core_start_guard_resets_pre_cutover_install_without_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    original_database = fixture.database.read_bytes()
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "installing",
+            "transaction_path": None,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    fixture.journal_path.unlink()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is True
+    assert launched == []
+    recovered = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert recovered["phase"] == "error"
+    assert recovered["operation_id"] is None
+    assert recovered["transaction_path"] is None
+    assert fixture.database.read_bytes() == original_database
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["status"] == "cleared"
+    assert diagnostic["code"] == "pre_cutover_install_reset"
+
+
+def test_core_start_guard_does_not_reset_pre_cutover_install_with_journal_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "installing",
+            "transaction_path": None,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == []
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_active_without_transaction"
+
+
+@pytest.mark.parametrize("invalid_identity", ["", 17, "a" * 63, "not-a-digest"])
+def test_core_start_guard_rejects_invalid_handoff_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_identity: object
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = invalid_identity
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == []
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_invalid"
+
+
+def test_core_start_guard_does_not_treat_pending_identity_as_unbound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    state["pending_handoff_identity"] = "b" * 64
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == []
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_invalid"
 
 
 def test_core_start_guard_blocks_unreadable_state_and_records_safe_diagnostic(
@@ -734,7 +865,7 @@ def test_core_start_guard_blocks_invalid_journal_and_keeps_core_down(
         )
     )
     assert diagnostic["status"] == "blocked"
-    assert diagnostic["code"] == "journal_value_invalid"
+    assert diagnostic["code"] == "journal_invalid"
 
 
 def test_core_start_guard_blocks_impossible_transaction_state_phase(

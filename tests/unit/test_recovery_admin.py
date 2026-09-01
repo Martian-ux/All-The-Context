@@ -617,7 +617,34 @@ def test_desktop_recovery_doctor_reports_only_sanitized_startup_diagnostic(
         "code": "journal_invalid",
         "phase": "restart_required",
     }
+    assert payload["data_dir"] == str(data_dir)
     assert "never-report-this" not in captured.out
+
+
+def test_desktop_recovery_doctor_rejects_unallowlisted_startup_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "vault"
+    updates = data_dir / "updates"
+    updates.mkdir(parents=True)
+    (updates / "startup-recovery.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "blocked",
+                "code": "attacker_controlled_code",
+                "phase": "error",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert desktop_main(["--recovery-doctor", "--recovery-data-dir", str(data_dir)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["startup_recovery"] == {
+        "status": "unreadable",
+        "code": "diagnostic_invalid",
+    }
 
 
 def test_desktop_recovery_export_restore_purge_modes(

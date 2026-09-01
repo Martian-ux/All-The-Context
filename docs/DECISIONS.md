@@ -15,15 +15,17 @@ silently resetting the state could discard the only recovery pointer.
 `ensure_recovery_before_core()` therefore validates the state file as a plain,
 bounded file and checks its phase, transaction identity, handoff binding, and
 journal before allowing normal Core startup. Unsafe state returns a blocked
-startup result and leaves the state and vault untouched. The helper writes a
-separate atomic `startup-recovery.json` marker containing only a schema version,
-status, fixed-format failure code, safe phase, and timestamp. The packaged
-recovery doctor reads and sanitizes that marker, so an operator can distinguish
-blocked startup from a clean state without exposing paths, journal contents,
-credentials, or personal context. A known unbound pre-cutover preparation
-remains the narrow exception: it is reset to an error state because the helper
-has not received the parent-published handoff binding and cannot have crossed
-cutover.
+startup result and leaves the state and vault untouched. The one deterministic
+exception is a valid pre-cutover `installing` state with no transaction,
+handoff identity, or transaction journal; it is reset to an error state because
+the helper cannot have crossed cutover. Any evidence of an active handoff
+blocks instead. The helper writes a separate atomic `startup-recovery.json`
+marker containing only a schema version, blocked/cleared status, fixed
+allowlisted failure code, safe phase, and timestamp. The `startup_recovery`
+field of the packaged recovery doctor reads and sanitizes that marker, while
+the general operator doctor retains its existing local path fields. The
+health-check environment flag is scheduler suppression only and is never
+startup authority for an ordinary `--core` process.
 
 Rollback also owns the SQLite `-journal` sidecar in addition to WAL/SHM. A
 stale rollback journal could replay against a newly restored main file on a

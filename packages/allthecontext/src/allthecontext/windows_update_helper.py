@@ -58,6 +58,26 @@ STARTUP_RECOVERY_PHASES = frozenset(
 STARTUP_RECOVERY_TRANSACTION_PHASES = frozenset(
     {"restart_required", "installed", "rolled_back"}
 )
+STARTUP_RECOVERY_DIAGNOSTIC_CODES = frozenset(
+    {
+        "none",
+        "metadata_too_large",
+        "metadata_unreadable",
+        "metadata_invalid",
+        "startup_state_untrusted",
+        "startup_state_invalid",
+        "startup_state_active_without_transaction",
+        "startup_state_reset_failed",
+        "pre_cutover_install_reset",
+        "unbound_preparation_reset",
+        "journal_unreadable",
+        "journal_invalid",
+        "startup_state_mismatch",
+        "helper_launch_failed",
+        "diagnostic_unreadable",
+        "diagnostic_invalid",
+    }
+)
 PROCESS_TIMEOUT_SECONDS = 90
 PARENT_EXIT_TIMEOUT_SECONDS = 60
 WINDOWS_RUNONCE_KEY = r"Software\Microsoft\Windows\CurrentVersion\RunOnce"
@@ -179,10 +199,11 @@ def _write_startup_recovery_diagnostic(
     """Persist only bounded startup-recovery facts, never state or local paths."""
 
     safe_phase = phase if phase in STARTUP_RECOVERY_PHASES else None
+    safe_code = code if code in STARTUP_RECOVERY_DIAGNOSTIC_CODES else "startup_state_invalid"
     payload = {
         "schema_version": STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
         "status": status,
-        "code": code,
+        "code": safe_code,
         "phase": safe_phase,
         "updated_at": _utc_now(),
     }
@@ -207,12 +228,13 @@ def startup_recovery_diagnostic(path: Path) -> dict[str, str] | None:
     code = value.get("code")
     phase = value.get("phase")
     if (
-        value.get("schema_version") != STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION
+        isinstance(value.get("schema_version"), bool)
+        or value.get("schema_version") != STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION
+        or not isinstance(status, str)
         or status not in {"blocked", "cleared"}
         or not isinstance(code, str)
+        or code not in STARTUP_RECOVERY_DIAGNOSTIC_CODES
     ):
-        return {"status": "unreadable", "code": "diagnostic_invalid"}
-    if len(code) > 64 or not code.replace("_", "").isalnum():
         return {"status": "unreadable", "code": "diagnostic_invalid"}
     result = {"status": status, "code": code}
     if isinstance(phase, str) and phase in STARTUP_RECOVERY_PHASES:
@@ -705,6 +727,8 @@ def _child_environment(journal: UpdateJournal, *, health: bool = False) -> dict[
         }
     )
     if health:
+        # This flag suppresses capture scheduling in the probe process only;
+        # startup recovery never treats an environment variable as authority.
         environment["ATC_UPDATE_HEALTH_OPERATION"] = journal.operation_id
     else:
         environment.pop("ATC_UPDATE_HEALTH_OPERATION", None)
@@ -1397,7 +1421,83 @@ def ensure_recovery_before_core() -> bool:
             code="startup_state_invalid",
         )
         return False
+    handoff_identity = state.get("handoff_identity")
+    pending_identity = state.get("pending_handoff_identity")
+    completed_identity = state.get("completed_handoff_identity")
+    if any(
+        identity is not None and not _valid_digest(identity)
+        for identity in (handoff_identity, pending_identity, completed_identity)
+    ):
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_invalid",
+            phase=phase,
+        )
+        return False
     if transaction is None:
+        if phase == "installing":
+            identities = (
+                state.get("handoff_identity"),
+                state.get("pending_handoff_identity"),
+                state.get("completed_handoff_identity"),
+            )
+            operation_is_valid = operation_id is None or _valid_operation_id(operation_id)
+            expected_journal = (
+                _data_directory()
+                / "updates"
+                / "transactions"
+                / cast(str, operation_id)
+                / "journal.json"
+                if operation_is_valid and operation_id is not None
+                else None
+            )
+            journal_exists = expected_journal is not None and (
+                expected_journal.exists() or expected_journal.is_symlink()
+            )
+            if (
+                not operation_is_valid
+                or any(identity is not None for identity in identities)
+                or journal_exists
+            ):
+                _write_startup_recovery_diagnostic(
+                    state_path,
+                    status="blocked",
+                    code="startup_state_active_without_transaction",
+                    phase=phase,
+                )
+                return False
+            state.update(
+                {
+                    "phase": "error",
+                    "last_error": "The update stopped before installation and was reset safely",
+                    "downloaded_path": None,
+                    "backup_path": None,
+                    "operation_id": None,
+                    "manifest_identity": None,
+                    "transaction_path": None,
+                    "handoff_identity": None,
+                    "pending_handoff_identity": None,
+                    "completed_handoff_identity": None,
+                }
+            )
+            try:
+                _atomic_json(state_path, state)
+            except OSError:
+                _write_startup_recovery_diagnostic(
+                    state_path,
+                    status="blocked",
+                    code="startup_state_reset_failed",
+                    phase=phase,
+                )
+                return False
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="cleared",
+                code="pre_cutover_install_reset",
+                phase="error",
+            )
+            return True
         if phase in {"installing", "restart_required"} or any(
             state.get(name) is not None
             for name in (
@@ -1436,8 +1536,7 @@ def ensure_recovery_before_core() -> bool:
             phase=phase,
         )
         return False
-    pending_identity = state.get("pending_handoff_identity")
-    if pending_identity is not None and not _valid_digest(pending_identity):
+    if completed_identity is not None:
         _write_startup_recovery_diagnostic(
             state_path,
             status="blocked",
@@ -1445,7 +1544,15 @@ def ensure_recovery_before_core() -> bool:
             phase=phase,
         )
         return False
-    if not _valid_digest(state.get("handoff_identity")):
+    if handoff_identity is None:
+        if pending_identity is not None:
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_invalid",
+                phase=phase,
+            )
+            return False
         expected = (
             _data_directory()
             / "updates"
@@ -1506,7 +1613,7 @@ def ensure_recovery_before_core() -> bool:
         _write_startup_recovery_diagnostic(
             state_path,
             status="blocked",
-            code=error.code if isinstance(error, HelperError) else "journal_unreadable",
+            code=("journal_invalid" if isinstance(error, HelperError) else "journal_unreadable"),
             phase=phase,
         )
         return False
@@ -1533,15 +1640,9 @@ def ensure_recovery_before_core() -> bool:
             )
             return False
         return False
-    if os.environ.get("ATC_UPDATE_HEALTH_OPERATION") == journal.operation_id:
-        if _startup_recovery_diagnostic_path(state_path).is_file():
-            _write_startup_recovery_diagnostic(
-                state_path,
-                status="cleared",
-                code="health_child_allowed",
-                phase=phase,
-            )
-        return True
+    # The legitimate health probe starts an embedded loopback Core through
+    # ``--update-health-check`` and never re-enters this ordinary ``--core``
+    # startup guard. Do not trust a forgeable environment variable here.
     try:
         launch_recovery_helper(Path(journal.helper_path), journal_path)
     except (HelperError, OSError):
