@@ -698,6 +698,13 @@ def test_core_start_guard_resets_pre_cutover_install_without_transaction(
             "completed_handoff_identity": None,
         }
     )
+    staging_dir = fixture.state_path.parent / "staging" / ("a" * 24)
+    staging_dir.mkdir(parents=True)
+    manifest = staging_dir / "manifest.json"
+    manifest.write_text("{}\n", encoding="utf-8")
+    (staging_dir / "artifact.zip").write_bytes(b"verified staged artifact")
+    state["downloaded_path"] = str(staging_dir / "artifact.zip")
+    state["manifest_identity"] = _digest(manifest)[0]
     fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
     shutil.rmtree(fixture.journal_path.parent)
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
@@ -760,6 +767,48 @@ def test_core_start_guard_does_not_reset_pre_cutover_install_without_valid_opera
         )
     )
     assert diagnostic["code"] == "startup_state_active_without_transaction"
+
+
+def test_core_start_guard_does_not_reset_valid_format_unknown_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    operation_id = "b" * 24
+    state.update(
+        {
+            "phase": "installing",
+            "operation_id": operation_id,
+            "transaction_path": None,
+            "downloaded_path": str(
+                fixture.state_path.parent / "staging" / operation_id / "artifact.zip"
+            ),
+            "manifest_identity": "c" * 64,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    shutil.rmtree(fixture.journal_path.parent)
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == []
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "pre_cutover_evidence_missing"
 
 
 def test_core_start_guard_does_not_reset_pre_cutover_install_with_journal_evidence(

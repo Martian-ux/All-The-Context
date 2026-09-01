@@ -52,9 +52,10 @@ fails closed before Core initialization when its persisted update state is
 unreadable, malformed, active without a transaction, or bound to an invalid
 recovery journal. It does not guess a journal, open the vault, or start a
 possibly unsafe application state. A valid pre-cutover `installing` state with
-a valid operation ID and no transaction, handoff identity, or transaction
-directory is reset to a fixed error state; missing/invalid identity or
-operation evidence still blocks. The guard writes
+a valid operation ID, matching staged manifest/artifact evidence, and no
+transaction, handoff identity, or transaction directory is reset to a fixed
+error state; missing/invalid identity or operation evidence still blocks. The
+guard writes
 a durable `updates/startup-recovery.json` diagnostic containing only a bounded
 status, fixed allowlisted code, and phase. The `startup_recovery` field of
 packaged `--recovery-doctor` exposes only those sanitized fields; the general

@@ -16,11 +16,12 @@ silently resetting the state could discard the only recovery pointer.
 bounded file and checks its phase, transaction identity, handoff binding, and
 journal before allowing normal Core startup. Unsafe state returns a blocked
 startup result and leaves the state and vault untouched. The one deterministic
-exception is a valid pre-cutover `installing` state with a valid operation ID
-and no transaction, handoff identity, or transaction directory; it is reset to
-an error state because the helper cannot have crossed cutover. Missing or
-malformed operation/identity evidence and any active-handoff evidence block
-instead. The helper writes a separate atomic `startup-recovery.json`
+exception is a valid pre-cutover `installing` state with a valid operation ID,
+matching operation-owned staged manifest/artifact evidence, and no
+transaction, handoff identity, or transaction directory; it is reset to an
+error state because the helper cannot have crossed cutover. Missing or
+malformed operation/identity/staging evidence and any active-handoff evidence
+block instead. The helper writes a separate atomic `startup-recovery.json`
 marker containing only a schema version, blocked/cleared status, fixed
 allowlisted failure code, safe phase, and timestamp. The `startup_recovery`
 field of the packaged recovery doctor reads and sanitizes that marker, while

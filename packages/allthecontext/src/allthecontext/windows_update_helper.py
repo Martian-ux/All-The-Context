@@ -33,6 +33,7 @@ from .release_manifest import ManifestError, ReleaseVersion
 JOURNAL_SCHEMA_VERSION = 2
 MAX_JOURNAL_BYTES = 64 * 1024
 MAX_STATE_BYTES = 64 * 1024
+MAX_STAGING_MANIFEST_BYTES = 128 * 1024
 STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1
 STARTUP_RECOVERY_DIAGNOSTIC_NAME = "startup-recovery.json"
 STARTUP_RECOVERY_PHASES = frozenset(
@@ -69,6 +70,7 @@ STARTUP_RECOVERY_DIAGNOSTIC_CODES = frozenset(
         "startup_state_active_without_transaction",
         "startup_state_reset_failed",
         "pre_cutover_install_reset",
+        "pre_cutover_evidence_missing",
         "unbound_preparation_reset",
         "journal_unreadable",
         "journal_invalid",
@@ -282,6 +284,28 @@ def _plain_directory_stat(path: Path, code: str) -> os.stat_result:
     ):
         raise HelperError(code)
     return value
+
+
+def _pre_cutover_staging_evidence(operation_id: str, state: dict[str, Any]) -> bool:
+    operation_dir = _data_directory() / "updates" / "staging" / operation_id
+    expected_artifact = operation_dir / "artifact.zip"
+    manifest = operation_dir / "manifest.json"
+    downloaded_path = state.get("downloaded_path")
+    manifest_identity = state.get("manifest_identity")
+    if not isinstance(downloaded_path, str) or not _valid_digest(manifest_identity):
+        return False
+    try:
+        if Path(downloaded_path).resolve() != expected_artifact.resolve():
+            return False
+        _plain_directory_stat(operation_dir, "startup_state_untrusted")
+        manifest_stat = _plain_file_stat(manifest, "startup_state_untrusted")
+        artifact_stat = _plain_file_stat(expected_artifact, "startup_state_untrusted")
+        if manifest_stat.st_size > MAX_STAGING_MANIFEST_BYTES or artifact_stat.st_size <= 0:
+            return False
+        digest, size = _sha256(manifest)
+    except (HelperError, OSError, ValueError):
+        return False
+    return size == manifest_stat.st_size and digest == manifest_identity
 
 
 def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:
@@ -1463,6 +1487,14 @@ def ensure_recovery_before_core() -> bool:
                     state_path,
                     status="blocked",
                     code="startup_state_active_without_transaction",
+                    phase=phase,
+                )
+                return False
+            if not _pre_cutover_staging_evidence(cast(str, operation_id), state):
+                _write_startup_recovery_diagnostic(
+                    state_path,
+                    status="blocked",
+                    code="pre_cutover_evidence_missing",
                     phase=phase,
                 )
                 return False
