@@ -6,6 +6,12 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-09-01 protected-main Windows test coordination stabilization
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| WIN-CI-01 — hosted Windows heartbeat tests distinguish scheduler/worker coordination from product liveness | `tests/unit/test_import_operations.py`; `CANCEL_QUIESCE_SECONDS`; 20 repeated focused Python 3.12 runs; 57-test import-operations file; full 2,402-test suite; ADR-182; protected-main CI run `33454650627` | Corrected and validated locally after exact protected main passed CodeQL and all CI jobs except Windows Python. Test-only worker entry/cleanup uses the documented quiescence budget plus a five-second harness margin and fails early on worker exit. The original one- and two-second durable-heartbeat observation windows, exact byte-progress checks, terminal outcomes, and heartbeat-thread cleanup assertions remain unchanged. Repository-wide Ruff, mypy, documentation checks, and full pytest with nine expected platform skips pass. A reviewed merge and green exact protected-main CI/CodeQL are required before private candidate dispatch |
+
 ### 2026-08-31 exact protected-main replacement acceptance and dialog containment
 
 | Requirement | Implementation/evidence | Status |
