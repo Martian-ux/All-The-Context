@@ -19,7 +19,10 @@ startup result and leaves the state and vault untouched. The one deterministic
 exception is a valid pre-cutover `installing` state with a valid operation ID,
 matching operation-owned staged manifest/artifact evidence, and no
 transaction, handoff identity, or transaction directory; it is reset to an
-error state because the helper cannot have crossed cutover. Missing or
+error state because the helper cannot have crossed cutover. The staged evidence
+is operation-path bound, uses a bounded manifest verified with the bundled
+updater keyring, matches the persisted state fields, and matches the signed
+artifact SHA-256/size through reparse-safe plain-file checks. Missing or
 malformed operation/identity/staging evidence and any active-handoff evidence
 block instead. The helper writes a separate atomic `startup-recovery.json`
 marker containing only a schema version, blocked/cleared status, fixed

@@ -27,13 +27,15 @@ from typing import Any, cast
 from filelock import FileLock, Timeout
 from platformdirs import user_data_path
 
+from . import __version__
 from .platform_compat import windows_dll, windows_registry
-from .release_manifest import ManifestError, ReleaseVersion
+from .release_manifest import ManifestError, ReleaseVersion, load_keyring, verify_manifest
 
 JOURNAL_SCHEMA_VERSION = 2
 MAX_JOURNAL_BYTES = 64 * 1024
 MAX_STATE_BYTES = 64 * 1024
 MAX_STAGING_MANIFEST_BYTES = 128 * 1024
+MAX_STAGING_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1
 STARTUP_RECOVERY_DIAGNOSTIC_NAME = "startup-recovery.json"
 STARTUP_RECOVERY_PHASES = frozenset(
@@ -286,8 +288,33 @@ def _plain_directory_stat(path: Path, code: str) -> os.stat_result:
     return value
 
 
+def _plain_directory_chain(path: Path, code: str) -> None:
+    """Reject reparse points in every parent of a recovery-owned directory."""
+
+    for directory in reversed((path, *path.parents)):
+        _plain_directory_stat(directory, code)
+
+
+def _update_keyring_path() -> Path:
+    """Return the bundled keyring used by the normal updater."""
+
+    return Path(__file__).resolve().with_name("update_keys.json")
+
+
+def _update_architecture() -> str | None:
+    machine = platform.machine().casefold()
+    if machine in {"amd64", "x86_64", "x64"}:
+        return "x86_64"
+    if machine in {"arm64", "aarch64"}:
+        return "arm64"
+    return None
+
+
 def _pre_cutover_staging_evidence(operation_id: str, state: dict[str, Any]) -> bool:
-    operation_dir = _data_directory() / "updates" / "staging" / operation_id
+    data_dir = _data_directory()
+    updates_dir = data_dir / "updates"
+    staging_dir = updates_dir / "staging"
+    operation_dir = staging_dir / operation_id
     expected_artifact = operation_dir / "artifact.zip"
     manifest = operation_dir / "manifest.json"
     downloaded_path = state.get("downloaded_path")
@@ -295,17 +322,44 @@ def _pre_cutover_staging_evidence(operation_id: str, state: dict[str, Any]) -> b
     if not isinstance(downloaded_path, str) or not _valid_digest(manifest_identity):
         return False
     try:
-        if Path(downloaded_path).resolve() != expected_artifact.resolve():
+        if os.path.normcase(os.path.abspath(downloaded_path)) != os.path.normcase(
+            os.path.abspath(expected_artifact)
+        ):
             return False
-        _plain_directory_stat(operation_dir, "startup_state_untrusted")
+        _plain_directory_chain(operation_dir, "startup_state_untrusted")
         manifest_stat = _plain_file_stat(manifest, "startup_state_untrusted")
         artifact_stat = _plain_file_stat(expected_artifact, "startup_state_untrusted")
-        if manifest_stat.st_size > MAX_STAGING_MANIFEST_BYTES or artifact_stat.st_size <= 0:
+        if (
+            manifest_stat.st_size > MAX_STAGING_MANIFEST_BYTES
+            or artifact_stat.st_size <= 0
+            or artifact_stat.st_size > MAX_STAGING_ARTIFACT_BYTES
+        ):
             return False
-        digest, size = _sha256(manifest)
-    except (HelperError, OSError, ValueError):
+        if not _verified(manifest, cast(str, manifest_identity), manifest_stat.st_size):
+            return False
+        value = _read_json(manifest, MAX_STAGING_MANIFEST_BYTES)
+        verify_manifest(
+            value,
+            load_keyring(_update_keyring_path()),
+            current_version=__version__,
+        )
+        if (
+            value["platform"] != "windows"
+            or value["architecture"] != _update_architecture()
+            or value["version"] != state.get("offered_version")
+            or value["mandatory"] != state.get("mandatory")
+            or value["release_notes_url"] != state.get("release_notes_url")
+        ):
+            return False
+        if not _verified(
+            expected_artifact,
+            cast(str, value["sha256"]),
+            cast(int, value["size"]),
+        ):
+            return False
+    except (HelperError, ManifestError, OSError, TypeError, UnicodeError, ValueError):
         return False
-    return size == manifest_stat.st_size and digest == manifest_identity
+    return True
 
 
 def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:

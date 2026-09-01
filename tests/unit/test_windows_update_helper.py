@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -12,6 +13,11 @@ from typing import Any
 
 import allthecontext.windows_update_helper as helper_module
 import pytest
+from allthecontext.release_manifest import (
+    create_manifest,
+    public_key_fingerprint,
+    public_key_value,
+)
 from allthecontext.windows_update_helper import (
     HelperError,
     HelperPhase,
@@ -20,11 +26,86 @@ from allthecontext.windows_update_helper import (
     journal_failure_diagnostic,
     run_transaction,
 )
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 def _digest(path: Path) -> tuple[str, int]:
     value = path.read_bytes()
     return hashlib.sha256(value).hexdigest(), len(value)
+
+
+def _signed_staging(
+    fixture: TransactionFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    operation_id: str = "a" * 24,
+    artifact_bytes: bytes = b"verified staged artifact",
+) -> tuple[dict[str, Any], Path, Path]:
+    staging_dir = fixture.state_path.parent / "staging" / operation_id
+    staging_dir.mkdir(parents=True)
+    artifact = staging_dir / "artifact.zip"
+    artifact.write_bytes(artifact_bytes)
+    private_key = Ed25519PrivateKey.generate()
+    public_value = public_key_value(private_key)
+    keyring = fixture.state_path.parent / "test-update-keys.json"
+    keyring.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "keys": [
+                    {
+                        "key_id": "test-release-key",
+                        "algorithm": "Ed25519",
+                        "public_key": public_value,
+                        "public_key_sha256": public_key_fingerprint(public_value),
+                        "channels": ["stable"],
+                        "status": "active",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = create_manifest(
+        artifact=artifact,
+        version="0.2.0",
+        channel="stable",
+        platform_name="windows",
+        architecture="x86_64",
+        artifact_url=(
+            "https://updates.example.test/releases/v0.2.0/"
+            "all-the-context-0.2.0-windows-x86_64.zip"
+        ),
+        minimum_supported_version="0.1.0-beta.7",
+        mandatory=False,
+        release_notes_url="https://updates.example.test/releases/v0.2.0",
+        key_id="test-release-key",
+        private_key=private_key,
+    )
+    manifest_path = staging_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "installing",
+            "operation_id": operation_id,
+            "transaction_path": None,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+            "offered_version": manifest["version"],
+            "mandatory": manifest["mandatory"],
+            "release_notes_url": manifest["release_notes_url"],
+            "downloaded_path": str(artifact),
+            "manifest_identity": _digest(manifest_path)[0],
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(helper_module, "_update_keyring_path", lambda: keyring)
+    monkeypatch.setattr(helper_module, "_update_architecture", lambda: "x86_64")
+    return manifest, manifest_path, artifact
 
 
 @dataclass
@@ -688,24 +769,7 @@ def test_core_start_guard_resets_pre_cutover_install_without_transaction(
 ) -> None:
     fixture = _transaction(tmp_path, monkeypatch)
     original_database = fixture.database.read_bytes()
-    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
-    state.update(
-        {
-            "phase": "installing",
-            "transaction_path": None,
-            "handoff_identity": None,
-            "pending_handoff_identity": None,
-            "completed_handoff_identity": None,
-        }
-    )
-    staging_dir = fixture.state_path.parent / "staging" / ("a" * 24)
-    staging_dir.mkdir(parents=True)
-    manifest = staging_dir / "manifest.json"
-    manifest.write_text("{}\n", encoding="utf-8")
-    (staging_dir / "artifact.zip").write_bytes(b"verified staged artifact")
-    state["downloaded_path"] = str(staging_dir / "artifact.zip")
-    state["manifest_identity"] = _digest(manifest)[0]
-    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    _signed_staging(fixture, monkeypatch)
     shutil.rmtree(fixture.journal_path.parent)
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
     launched: list[tuple[Path, Path]] = []
@@ -729,6 +793,128 @@ def test_core_start_guard_resets_pre_cutover_install_without_transaction(
     )
     assert diagnostic["status"] == "cleared"
     assert diagnostic["code"] == "pre_cutover_install_reset"
+
+
+def test_core_start_guard_rejects_unsigned_pre_cutover_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _, manifest_path, _ = _signed_staging(fixture, monkeypatch)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["signature"] = base64.urlsafe_b64encode(b"\0" * 64).rstrip(b"=").decode()
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["manifest_identity"] = _digest(manifest_path)[0]
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    shutil.rmtree(fixture.journal_path.parent)
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "pre_cutover_evidence_missing"
+
+
+def test_core_start_guard_rejects_staged_artifact_digest_or_size_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _, _, artifact = _signed_staging(fixture, monkeypatch)
+    artifact.write_bytes(b"tampered staged artifact with a different size")
+    shutil.rmtree(fixture.journal_path.parent)
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "pre_cutover_evidence_missing"
+
+
+def test_core_start_guard_rejects_stale_staging_for_a_different_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _signed_staging(fixture, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    stale_operation_id = "b" * 24
+    state["operation_id"] = stale_operation_id
+    state["downloaded_path"] = str(
+        fixture.state_path.parent / "staging" / stale_operation_id / "artifact.zip"
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    shutil.rmtree(fixture.journal_path.parent)
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "pre_cutover_evidence_missing"
+
+
+@pytest.mark.parametrize(
+    "reparse_target",
+    ["data_root", "staging_root", "operation_dir", "manifest", "artifact"],
+)
+def test_core_start_guard_rejects_reparse_staging_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reparse_target: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _signed_staging(fixture, monkeypatch)
+    data_root = fixture.state_path.parent.parent
+    staging_root = fixture.state_path.parent / "staging"
+    operation_dir = staging_root / ("a" * 24)
+    manifest = operation_dir / "manifest.json"
+    artifact = operation_dir / "artifact.zip"
+    original_directory_stat = helper_module._plain_directory_stat
+    original_file_stat = helper_module._plain_file_stat
+
+    def reject_directory(path: Path, code: str) -> os.stat_result:
+        if reparse_target == "data_root" and path == data_root:
+            raise HelperError(code)
+        if reparse_target == "staging_root" and path == staging_root:
+            raise HelperError(code)
+        if reparse_target == "operation_dir" and path == operation_dir:
+            raise HelperError(code)
+        return original_directory_stat(path, code)
+
+    def reject_file(path: Path, code: str) -> os.stat_result:
+        if reparse_target == "manifest" and path == manifest:
+            raise HelperError(code)
+        if reparse_target == "artifact" and path == artifact:
+            raise HelperError(code)
+        return original_file_stat(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_directory_stat", reject_directory)
+    monkeypatch.setattr(helper_module, "_plain_file_stat", reject_file)
+    shutil.rmtree(fixture.journal_path.parent)
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "pre_cutover_evidence_missing"
 
 
 @pytest.mark.parametrize("operation_id", [None, "", "a" * 23, 17])

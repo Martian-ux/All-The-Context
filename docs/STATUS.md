@@ -55,7 +55,10 @@ possibly unsafe application state. A valid pre-cutover `installing` state with
 a valid operation ID, matching staged manifest/artifact evidence, and no
 transaction, handoff identity, or transaction directory is reset to a fixed
 error state; missing/invalid identity or operation evidence still blocks. The
-guard writes
+staged evidence must be operation-path bound, use a bounded manifest whose
+signature validates against the bundled updater keyring, match the persisted
+state fields, and have an artifact SHA-256/size match from a reparse-safe plain
+file. The guard writes
 a durable `updates/startup-recovery.json` diagnostic containing only a bounded
 status, fixed allowlisted code, and phase. The `startup_recovery` field of
 packaged `--recovery-doctor` exposes only those sanitized fields; the general
