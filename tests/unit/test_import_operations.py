@@ -19,6 +19,7 @@ import pytest
 from allthecontext.core.service import CoreService
 from allthecontext.import_boundary import (
     BOUNDARY_PLUS_ONE_BYTES,
+    CANCEL_QUIESCE_SECONDS,
     PROGRESS_HEARTBEAT_SECONDS,
     ImportCancelledError,
     ImportCancelRegistry,
@@ -30,6 +31,8 @@ from allthecontext.storage import (
     InvalidStateError,
     NotFoundError,
 )
+
+_TEST_WORKER_COORDINATION_SECONDS = CANCEL_QUIESCE_SECONDS + 5.0
 
 
 def _ops(
@@ -52,6 +55,35 @@ def _ops(
         cancel_registry=registry,
     )
     return core, ops
+
+
+def _wait_for_test_worker_boundary(
+    event: threading.Event,
+    thread: threading.Thread,
+    failures: list[BaseException],
+    *,
+    message: str,
+) -> None:
+    """Wait through hosted-runner jitter without hiding an exited worker."""
+
+    deadline = time.monotonic() + _TEST_WORKER_COORDINATION_SECONDS
+    while thread.is_alive():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if event.wait(timeout=min(0.1, remaining)):
+            return
+    failure_types = [type(error).__name__ for error in failures]
+    pytest.fail(
+        f"{message}; worker_alive={thread.is_alive()}; worker_failure_types={failure_types}"
+    )
+
+
+def _join_test_worker(thread: threading.Thread, *, message: str) -> None:
+    """Allow the worker's documented quiescence budget, then require closure."""
+
+    thread.join(timeout=_TEST_WORKER_COORDINATION_SECONDS)
+    assert not thread.is_alive(), message
 
 
 def test_start_operation_creates_id_before_bytes_and_refuses_boundary_plus_one(
@@ -1639,7 +1671,9 @@ def test_upload_promotion_starts_and_closes_operation_heartbeats(
 
     def blocked_finalize(**kwargs):  # type: ignore[no-untyped-def]
         finalize_entered.set()
-        assert release_finalize.wait(timeout=5), "test did not release finalization"
+        assert release_finalize.wait(timeout=_TEST_WORKER_COORDINATION_SECONDS), (
+            "test did not release finalization"
+        )
         return original_finalize(**kwargs)
 
     monkeypatch.setattr(core.store, "finalize_source_blob", blocked_finalize)
@@ -1668,7 +1702,12 @@ def test_upload_promotion_starts_and_closes_operation_heartbeats(
     thread = threading.Thread(target=upload, daemon=True)
     thread.start()
     try:
-        assert finalize_entered.wait(timeout=5), "source finalization did not start"
+        _wait_for_test_worker_boundary(
+            finalize_entered,
+            thread,
+            failures,
+            message="source finalization did not start",
+        )
         stamps: list[str] = []
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline and len(set(stamps)) < 3:
@@ -1677,9 +1716,8 @@ def test_upload_promotion_starts_and_closes_operation_heartbeats(
         assert len(set(stamps)) >= 3
     finally:
         release_finalize.set()
-        thread.join(timeout=5)
+        _join_test_worker(thread, message="upload worker did not quiesce")
 
-    assert not thread.is_alive()
     assert failures == []
     assert outcomes[0]["status"] == "processing"
     assert trackers
@@ -1706,7 +1744,9 @@ def test_parse_stall_heartbeats_durably_without_false_byte_progress(
 
     def stalled_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
         parser_entered.set()
-        assert release_parser.wait(timeout=5), "test did not release stalled parser"
+        assert release_parser.wait(timeout=_TEST_WORKER_COORDINATION_SECONDS), (
+            "test did not release stalled parser"
+        )
         return original_parse(*args, **kwargs)
 
     monkeypatch.setattr(importers_module, "parse_archive_path", stalled_parse)
@@ -1735,7 +1775,12 @@ def test_parse_stall_heartbeats_durably_without_false_byte_progress(
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
     try:
-        assert parser_entered.wait(timeout=5), "parser did not enter synchronous stall"
+        _wait_for_test_worker_boundary(
+            parser_entered,
+            thread,
+            failures,
+            message="parser did not enter synchronous stall",
+        )
         stamps: list[str] = []
         observed_bytes: list[int] = []
         deadline = time.monotonic() + 2.0
@@ -1750,9 +1795,8 @@ def test_parse_stall_heartbeats_durably_without_false_byte_progress(
         assert set(observed_bytes) == {len(payload)}
     finally:
         release_parser.set()
-        thread.join(timeout=10)
+        _join_test_worker(thread, message="parse worker did not quiesce")
 
-    assert not thread.is_alive()
     assert failures == []
     assert outcomes[0]["status"] == "complete"
 

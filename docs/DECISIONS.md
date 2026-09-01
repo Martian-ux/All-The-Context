@@ -1,5 +1,33 @@
 # Architecture decisions
 
+## ADR-182: Import heartbeat tests separate worker coordination from heartbeat timing
+
+**Status:** accepted locally on 2026-09-01 after protected-main Windows CI exposed
+an order/resource-sensitive synchronization failure; hosted revalidation is
+required before candidate dispatch.
+
+The import heartbeat regressions test two different time domains. Their product
+assertions must observe multiple durable heartbeat timestamps within one or two
+seconds while an injected synchronous boundary is held. Their test harness must
+also wait for and quiesce a worker that may traverse SQLite and filesystem work
+on a loaded hosted Windows runner. A five-second worker boundary timeout mixed
+those domains and could fail before the injected boundary was reached; its
+cleanup then allowed a daemon worker to overlap the next test.
+
+Test-only worker coordination therefore uses the product's documented
+`CANCEL_QUIESCE_SECONDS` budget plus a five-second harness margin. The wait fails
+early when the worker exits and reports only exception type names; cleanup must
+still prove that the worker terminates. The one- and two-second durable-heartbeat
+observation windows, byte-progress invariants, terminal outcomes, and heartbeat
+thread cleanup assertions are unchanged.
+
+This is not a product timeout increase and does not weaken import liveness,
+cancellation, SQLite durability, or user-visible behavior. Protected-main SHA
+`91d847458e4d5d95f21aa4ae49add989e588d524` remains ineligible for private
+candidate dispatch because CI run `33454650627` failed the Windows Python job.
+A reviewed merge and green exact protected-main CI/CodeQL are required before a
+new packaged candidate can receive any evidence.
+
 ## ADR-181: Internal Windows update children fail by exit code, never a modal traceback
 
 **Status:** accepted locally on 2026-08-31 after exact-candidate disposable
