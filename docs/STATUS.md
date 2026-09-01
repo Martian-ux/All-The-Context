@@ -52,8 +52,9 @@ fails closed before Core initialization when its persisted update state is
 unreadable, malformed, active without a transaction, or bound to an invalid
 recovery journal. It does not guess a journal, open the vault, or start a
 possibly unsafe application state. A valid pre-cutover `installing` state with
-no transaction, handoff identity, or transaction journal is reset to a fixed
-error state; any evidence of an active handoff still blocks. The guard writes
+a valid operation ID and no transaction, handoff identity, or transaction
+directory is reset to a fixed error state; missing/invalid identity or
+operation evidence still blocks. The guard writes
 a durable `updates/startup-recovery.json` diagnostic containing only a bounded
 status, fixed allowlisted code, and phase. The `startup_recovery` field of
 packaged `--recovery-doctor` exposes only those sanitized fields; the general
@@ -65,7 +66,8 @@ path against the restored database. Failure-injection coverage now resumes
 after `diagnostics_passed` and `health_passed` process loss, and proves that
 rollback restores the pre-update database while retaining an unrelated user
 file and removing all database sidecars. The health-check environment remains
-a scheduler-suppression flag and is not startup authority. The focused Windows updater,
+a scheduler-suppression flag and is not startup authority. The focused Windows
+updater,
 recovery, packaged doctor, startup, installer, and desktop-runtime tests pass
 locally with the expected symlink-capability skips. Full repository Ruff and
 mypy pass, and the full pytest suite passes with the repository's expected

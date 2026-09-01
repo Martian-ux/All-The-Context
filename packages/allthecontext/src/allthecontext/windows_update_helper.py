@@ -1442,23 +1442,22 @@ def ensure_recovery_before_core() -> bool:
                 state.get("pending_handoff_identity"),
                 state.get("completed_handoff_identity"),
             )
-            operation_is_valid = operation_id is None or _valid_operation_id(operation_id)
-            expected_journal = (
+            operation_is_valid = _valid_operation_id(operation_id)
+            expected_transaction_dir = (
                 _data_directory()
                 / "updates"
                 / "transactions"
                 / cast(str, operation_id)
-                / "journal.json"
                 if operation_is_valid and operation_id is not None
                 else None
             )
-            journal_exists = expected_journal is not None and (
-                expected_journal.exists() or expected_journal.is_symlink()
+            transaction_evidence = expected_transaction_dir is not None and (
+                expected_transaction_dir.exists() or expected_transaction_dir.is_symlink()
             )
             if (
                 not operation_is_valid
                 or any(identity is not None for identity in identities)
-                or journal_exists
+                or transaction_evidence
             ):
                 _write_startup_recovery_diagnostic(
                     state_path,
