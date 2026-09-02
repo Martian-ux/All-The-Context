@@ -42,6 +42,13 @@ tests are required evidence for this source-level contract. This decision
 does not claim exact packaged acceptance, real N-1 safety, release readiness,
 or malware/vendor clearance.
 
+Pre-cutover aborts publish a durable `abort_requested` journal phase before
+publishing `rolled_back` state. Recovery recognizes that phase as an abort-only
+path and never re-enters parent wait, replacement, diagnostics, health, or
+commit. Startup checks use lstat-based plain directory chains and plain-file
+boundaries for state, staging, and transaction paths; missing paths are treated
+as absent only after every existing parent has been checked for reparse points.
+
 ## ADR-182: Import heartbeat tests separate worker coordination from heartbeat timing
 
 **Status:** accepted locally on 2026-09-01 after protected-main Windows CI exposed

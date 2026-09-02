@@ -591,6 +591,66 @@ def test_failure_before_cutover_never_restores_the_older_database_backup(
     assert launched == ["0.1.0"]
 
 
+def test_pre_cutover_abort_replay_cannot_resume_forward_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    connection = sqlite3.connect(fixture.database)
+    try:
+        connection.execute("INSERT INTO facts VALUES ('still-current')")
+        connection.commit()
+    finally:
+        connection.close()
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    run_commands: list[tuple[str, ...]] = []
+    fake_commands = _fake_commands(fixture)
+
+    def record_commands(command: tuple[str, ...], environment: dict[str, str]) -> int:
+        run_commands.append(command)
+        return fake_commands(command, environment)
+
+    monkeypatch.setattr(helper_module, "_run_bounded", record_commands)
+    wait_calls = 0
+
+    def fail_first_wait(_pid: int) -> None:
+        nonlocal wait_calls
+        wait_calls += 1
+        if wait_calls == 1:
+            raise HelperError("parent_exit_timeout")
+
+    monkeypatch.setattr(helper_module, "_wait_for_parent", fail_first_wait)
+    monkeypatch.setenv(helper_module.SMOKE_FLAG, "1")
+    monkeypatch.setenv("ATC_UPDATE_FAULT_AFTER_ABORT_STATE", "1")
+
+    with pytest.raises(SystemExit, match="86"):
+        run_transaction(fixture.journal_path)
+
+    interrupted_journal = UpdateJournal.load(fixture.journal_path)
+    assert interrupted_journal.phase is HelperPhase.ABORT_REQUESTED
+    interrupted_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert interrupted_state["phase"] == "rolled_back"
+    assert interrupted_state["transaction_path"] == str(fixture.journal_path)
+    assert fixture.application.read_bytes() == fixture.old_application
+
+    monkeypatch.delenv("ATC_UPDATE_FAULT_AFTER_ABORT_STATE")
+    assert run_transaction(fixture.journal_path) == 2
+
+    replayed_journal = UpdateJournal.load(fixture.journal_path)
+    assert replayed_journal.phase is HelperPhase.ROLLED_BACK
+    replayed_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert replayed_state["phase"] == "rolled_back"
+    assert replayed_state["transaction_path"] is None
+    assert fixture.application.read_bytes() == fixture.old_application
+    with sqlite3.connect(fixture.database) as connection:
+        assert connection.execute("SELECT value FROM facts ORDER BY rowid").fetchall() == [
+            ("before",),
+            ("still-current",),
+        ]
+    assert run_commands == []
+    assert launched == ["0.1.0"]
+
+
 def test_interrupted_rollback_stays_pending_and_retries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1085,6 +1145,54 @@ def test_core_start_guard_does_not_treat_pending_identity_as_unbound(
         )
     )
     assert diagnostic["code"] == "startup_state_invalid"
+
+
+def test_core_start_guard_rejects_reparse_state_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    original_chain = helper_module._plain_directory_chain_if_present
+    state_parent = fixture.state_path.parent
+
+    def reject_reparse(path: Path, code: str) -> bool:
+        if path == state_parent:
+            raise HelperError(code)
+        return original_chain(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_directory_chain_if_present", reject_reparse)
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    diagnostic = json.loads(
+        (state_parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_untrusted"
+
+
+def test_core_start_guard_rejects_reparse_transaction_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    original_chain = helper_module._plain_directory_chain
+    transaction_parent = fixture.journal_path.parent
+
+    def reject_reparse(path: Path, code: str) -> None:
+        if path == transaction_parent:
+            raise HelperError(code)
+        original_chain(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_directory_chain", reject_reparse)
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_untrusted"
 
 
 def test_core_start_guard_blocks_unreadable_state_and_records_safe_diagnostic(

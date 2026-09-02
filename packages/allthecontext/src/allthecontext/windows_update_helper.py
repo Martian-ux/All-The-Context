@@ -92,6 +92,7 @@ WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 class HelperPhase(StrEnum):
     PREPARED = "prepared"
     WAITING_FOR_PARENT = "waiting_for_parent"
+    ABORT_REQUESTED = "abort_requested"
     CUTOVER_STARTED = "cutover_started"
     BINARY_REPLACED = "binary_replaced"
     DIAGNOSTICS_PASSED = "diagnostics_passed"
@@ -105,6 +106,7 @@ class HelperPhase(StrEnum):
 ACTIVE_PHASES = {
     HelperPhase.PREPARED,
     HelperPhase.WAITING_FOR_PARENT,
+    HelperPhase.ABORT_REQUESTED,
     HelperPhase.CUTOVER_STARTED,
     HelperPhase.BINARY_REPLACED,
     HelperPhase.DIAGNOSTICS_PASSED,
@@ -221,10 +223,9 @@ def _write_startup_recovery_diagnostic(
 def startup_recovery_diagnostic(path: Path) -> dict[str, str] | None:
     """Read a sanitized startup diagnostic for the packaged recovery doctor."""
 
-    if not path.exists() and not path.is_symlink():
-        return None
     try:
-        _plain_file_stat(path, "startup_diagnostic_untrusted")
+        if _plain_file_stat_if_present(path, "startup_diagnostic_untrusted") is None:
+            return None
         value = _read_json(path, MAX_STATE_BYTES)
     except HelperError:
         return {"status": "unreadable", "code": "diagnostic_unreadable"}
@@ -293,6 +294,41 @@ def _plain_directory_chain(path: Path, code: str) -> None:
 
     for directory in reversed((path, *path.parents)):
         _plain_directory_stat(directory, code)
+
+
+def _plain_directory_chain_if_present(path: Path, code: str) -> bool:
+    """Validate existing parents without following a missing path component."""
+
+    for directory in reversed((path, *path.parents)):
+        try:
+            value = directory.lstat()
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise HelperError(code) from exc
+        has_reparse = bool(
+            getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+        )
+        if has_reparse or not stat.S_ISDIR(value.st_mode):
+            raise HelperError(code)
+    return True
+
+
+def _plain_file_stat_if_present(path: Path, code: str) -> os.stat_result | None:
+    try:
+        value = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise HelperError(code) from exc
+    if (
+        bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
+        or stat.S_ISLNK(value.st_mode)
+        or not stat.S_ISREG(value.st_mode)
+        or getattr(value, "st_nlink", 1) != 1
+    ):
+        raise HelperError(code)
+    return value
 
 
 def _update_keyring_path() -> Path:
@@ -1328,12 +1364,19 @@ def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code
     """End a failed handoff without overwriting binaries or the live database."""
 
     message = "The update stopped before installation; the existing app and vault are unchanged"
+    # Publish an abort authority before changing state. If power is lost after
+    # state publication, replay must remain on the abort path and never resume
+    # the forward cutover from a pre-cutover journal phase.
+    journal.phase = HelperPhase.ABORT_REQUESTED
+    journal.last_error_code = error_code
+    journal.save(journal_path)
     _update_state(
         journal,
         phase="rolled_back",
         error=message,
         clear_transaction=False,
     )
+    _fault_after_abort_state()
     journal.phase = HelperPhase.ROLLED_BACK
     journal.last_error_code = error_code
     journal.save(journal_path)
@@ -1385,6 +1428,14 @@ def _fault_after_phase(journal: UpdateJournal) -> None:
         raise SystemExit(86)
 
 
+def _fault_after_abort_state() -> None:
+    if (
+        os.environ.get("ATC_UPDATE_FAULT_AFTER_ABORT_STATE") == "1"
+        and os.environ.get(SMOKE_FLAG) == "1"
+    ):
+        raise SystemExit(86)
+
+
 def run_transaction(journal_path: Path) -> int:
     resolved = journal_path.expanduser().resolve()
     expected_root = _data_directory() / "updates" / "transactions"
@@ -1417,6 +1468,9 @@ def run_transaction(journal_path: Path) -> int:
             _launch_core(journal)
             return 0
         register_recovery(Path(journal.helper_path), resolved, journal.operation_id)
+        if journal.phase is HelperPhase.ABORT_REQUESTED:
+            _abort_before_cutover(journal, resolved, journal.last_error_code or "cutover_failed")
+            return 2
         if journal.phase in {HelperPhase.ROLLBACK_REQUESTED, HelperPhase.ROLLING_BACK}:
             _rollback(journal, resolved, journal.last_error_code or "rollback_requested")
             return 0
@@ -1477,10 +1531,11 @@ def ensure_recovery_before_core() -> bool:
     if platform.system() != "Windows" or not bool(getattr(sys, "frozen", False)):
         return True
     state_path = _data_directory() / "updates" / "state.json"
-    if not state_path.exists() and not state_path.is_symlink():
-        return True
     try:
-        _plain_file_stat(state_path, "startup_state_untrusted")
+        if not _plain_directory_chain_if_present(state_path.parent, "startup_state_untrusted"):
+            return True
+        if _plain_file_stat_if_present(state_path, "startup_state_untrusted") is None:
+            return True
         state = _read_json(state_path, MAX_STATE_BYTES)
     except HelperError as error:
         _write_startup_recovery_diagnostic(
@@ -1529,9 +1584,20 @@ def ensure_recovery_before_core() -> bool:
                 if operation_is_valid and operation_id is not None
                 else None
             )
-            transaction_evidence = expected_transaction_dir is not None and (
-                expected_transaction_dir.exists() or expected_transaction_dir.is_symlink()
-            )
+            try:
+                transaction_evidence = expected_transaction_dir is not None and (
+                    _plain_directory_chain_if_present(
+                        expected_transaction_dir, "startup_state_untrusted"
+                    )
+                )
+            except HelperError:
+                _write_startup_recovery_diagnostic(
+                    state_path,
+                    status="blocked",
+                    code="startup_state_untrusted",
+                    phase=phase,
+                )
+                return False
             if (
                 not operation_is_valid
                 or any(identity is not None for identity in identities)
@@ -1597,7 +1663,8 @@ def ensure_recovery_before_core() -> bool:
                 phase=phase,
             )
             return False
-        if _startup_recovery_diagnostic_path(state_path).is_file():
+        diagnostic_path = _startup_recovery_diagnostic_path(state_path)
+        if _plain_file_stat_if_present(diagnostic_path, "startup_diagnostic_untrusted") is not None:
             _write_startup_recovery_diagnostic(
                 state_path,
                 status="cleared",
@@ -1646,8 +1713,13 @@ def ensure_recovery_before_core() -> bool:
             / "journal.json"
         )
         try:
-            transaction_matches = Path(transaction).resolve() == expected.resolve()
-        except OSError:
+            transaction_matches = os.path.normcase(os.path.abspath(transaction)) == (
+                os.path.normcase(os.path.abspath(expected))
+            )
+            if transaction_matches:
+                _plain_directory_chain(expected.parent, "startup_state_untrusted")
+                _plain_file_stat(expected, "startup_state_untrusted")
+        except (HelperError, OSError, ValueError):
             transaction_matches = False
         if state.get("phase") != "restart_required" or not transaction_matches:
             _write_startup_recovery_diagnostic(
@@ -1690,15 +1762,35 @@ def ensure_recovery_before_core() -> bool:
             phase="error",
         )
         return True
+    expected = (
+        _data_directory()
+        / "updates"
+        / "transactions"
+        / cast(str, operation_id)
+        / "journal.json"
+    )
     try:
-        journal_path = Path(transaction).resolve()
+        transaction_matches = os.path.normcase(os.path.abspath(transaction)) == (
+            os.path.normcase(os.path.abspath(expected))
+        )
+        _plain_directory_chain(expected.parent, "startup_state_untrusted")
+        _plain_file_stat(expected, "startup_state_untrusted")
+        if not transaction_matches:
+            raise HelperError("startup_state_mismatch")
+        journal_path = expected
         journal = UpdateJournal.load(journal_path)
         _validate_handoff_state(journal, journal_path)
     except (HelperError, OSError) as error:
+        if isinstance(error, OSError):
+            diagnostic_code = "journal_unreadable"
+        elif error.code in {"startup_state_untrusted", "startup_state_mismatch"}:
+            diagnostic_code = error.code
+        else:
+            diagnostic_code = "journal_invalid"
         _write_startup_recovery_diagnostic(
             state_path,
             status="blocked",
-            code=("journal_invalid" if isinstance(error, HelperError) else "journal_unreadable"),
+            code=diagnostic_code,
             phase=phase,
         )
         return False

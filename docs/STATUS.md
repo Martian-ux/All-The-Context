@@ -69,7 +69,12 @@ before installing the verified backup. This closes the stale-journal replay
 path against the restored database. Failure-injection coverage now resumes
 after `diagnostics_passed` and `health_passed` process loss, and proves that
 rollback restores the pre-update database while retaining an unrelated user
-file and removing all database sidecars. The health-check environment remains
+file and removing all database sidecars. Pre-cutover abort now publishes a
+durable abort-requested journal phase before marking state rolled back, so a
+crash between those writes cannot replay forward into installation. Startup
+state, staging, and transaction directory checks use lstat-based plain-file /
+directory boundaries; actual symlink/junction creation remains host-capability
+dependent. The health-check environment remains
 a scheduler-suppression flag and is not startup authority. The focused Windows
 updater,
 recovery, packaged doctor, startup, installer, and desktop-runtime tests pass
