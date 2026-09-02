@@ -45,6 +45,62 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-01 — Windows startup recovery containment and rollback preservation slice
+
+The first broad Windows GA hardening slice selected the remaining unattended
+failure boundary rather than repeating the already-implemented artifact,
+journal, helper-trust, or ordinary uninstall work. A frozen Windows Core now
+fails closed before Core initialization when its persisted update state is
+unreadable, malformed, active without a transaction, or bound to an invalid
+recovery journal. It does not guess a journal, open the vault, or start a
+possibly unsafe application state. A valid pre-cutover `installing` state with
+a valid operation ID, matching staged manifest/artifact evidence, and no
+transaction, handoff identity, or transaction directory is reset to a fixed
+error state; missing/invalid identity or operation evidence still blocks. The
+staged evidence must be operation-path bound, use a bounded manifest whose
+signature validates against the bundled updater keyring, match the persisted
+state fields, and have an artifact SHA-256/size match from a reparse-safe plain
+file. The guard writes
+a durable `updates/startup-recovery.json` diagnostic containing only a bounded
+status, fixed allowlisted code, and phase. The `startup_recovery` field of
+packaged `--recovery-doctor` exposes only those sanitized fields; the general
+operator doctor continues to include its existing local path fields.
+
+Rollback now removes the SQLite rollback-journal sidecar as well as WAL/SHM
+before installing the verified backup. This closes the stale-journal replay
+path against the restored database. Failure-injection coverage now resumes
+after `diagnostics_passed` and `health_passed` process loss, and proves that
+rollback restores the pre-update database while retaining an unrelated user
+file and removing all database sidecars. Pre-cutover abort now publishes a
+durable abort-requested journal phase before marking state rolled back, so a
+crash between those writes cannot replay forward into installation. Handoff
+transitions use a candidate journal, so failed state publication cannot leave a
+changed parent identity or backup identity behind for abort recovery. Startup
+recovery validates the complete persisted state schema, including inactive
+phases; a missing state file is blocked when the plain `updates/transactions`
+directory contains evidence, while an absent or empty transaction root permits
+an ordinary first start. Startup state, staging, transaction, backup, database,
+helper, install, target, and SQLite sidecar checks use lstat-based plain-file /
+directory boundaries and repeat immediately before replacement or deletion.
+Existing symlink/junction/reparse redirection is therefore blocked
+deterministically; concurrent same-user mutation between a check and the
+following Windows filesystem syscall remains a documented residual race because
+this architecture does not claim handle-based no-follow atomicity. Helper
+forward-cutover and rollback writes also validate the install root and every
+parent as a plain directory before and after replacement. A prospective install
+target may create only a contiguous missing tail below the deepest verified
+ancestor, one component at a time, and the full resulting chain is revalidated
+before writes, replacement, or child launch; existing junctions/reparse points
+are never treated as missing. The same source-level checks cover simulated
+install-root and parent junctions.
+The health-check environment remains
+a scheduler-suppression flag and is not startup authority. The focused Windows
+updater,
+recovery, packaged doctor, startup, installer, and desktop-runtime tests pass
+locally with the expected symlink-capability skips. Full repository Ruff and
+mypy pass, and the full pytest suite passes with the repository's expected
+platform skips and existing deprecation warnings. No packaged, release,
+Microsoft, Defender, or live-dogfood acceptance is inferred.
 ### 2026-09-01 — packaged Windows uninstall observation stabilization
 
 PR #105 merged the import-heartbeat stabilization at exact protected-main SHA

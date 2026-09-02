@@ -6,6 +6,37 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+The UPDATER-04 and UPDATER-05 rows below refer to ADR-184, the startup-
+recovery decision in this checkout. ADR-183 is retained for the separately
+merged packaged-uninstall observation decision.
+
+The startup-recovery evidence also includes install-root and install-parent
+reparse simulations before forward child launch and rollback copy/replace;
+privileged native junction creation remains host-capability dependent.
+
+ADR-184 also covers complete persisted-state schema validation, including
+fail-closed handling for malformed inactive phases; missing state is blocked
+when the plain `updates/transactions` root contains evidence, while an absent
+or empty root permits an ordinary first start. Journal-bound storage is
+checked as a complete path family (transaction, backup, database, state,
+staging evidence, install/helper/target, and SQLite sidecars), with the
+boundary repeated immediately before replacement or deletion. Candidate
+journal publication prevents a pre-cutover transition failure from mutating
+the parent or backup identity used by abort recovery. These checks block
+existing reparse redirection; concurrent same-user mutation between a check
+and the following filesystem syscall remains an explicit residual race because
+the architecture does not claim handle-based no-follow atomicity.
+Prospective write targets may create only a contiguous missing tail below the
+deepest verified plain ancestor, one component at a time, followed by complete
+chain revalidation before the write or child launch; existing reparse paths are
+not treated as missing.
+
+### 2026-09-01 Windows startup/recovery containment and rollback preservation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| UPDATER-04 — frozen Windows Core must not start across unsafe persisted recovery state | `windows_update_helper.py::ensure_recovery_before_core`; bounded state/manifest validation; bundled-keyring signature verification; operation-owned signed manifest and artifact SHA-256/size evidence; reparse-safe directory-chain and plain-file checks; atomic `updates/startup-recovery.json`; packaged `--recovery-doctor`; `test_core_start_guard_blocks_unreadable_state_and_records_safe_diagnostic`; `test_core_start_guard_blocks_invalid_journal_and_keeps_core_down`; `test_core_start_guard_resets_pre_cutover_install_without_transaction`; `test_core_start_guard_rejects_unsigned_pre_cutover_manifest`; `test_core_start_guard_rejects_staged_artifact_digest_or_size_mismatch`; `test_core_start_guard_rejects_stale_staging_for_a_different_operation`; `test_core_start_guard_rejects_reparse_staging_paths`; `test_core_start_guard_rejects_reparse_state_parent`; `test_core_start_guard_rejects_reparse_transaction_parent`; `test_core_start_guard_does_not_reset_pre-cutover_install_without_valid_operation`; `test_core_start_guard_does_not_reset_valid_format_unknown_operation`; `test_core_start_guard_rejects_invalid_handoff_identity`; `test_core_start_guard_does_not_treat_pending_identity_as_unbound`; ADR-184 | Implemented and locally tested. Unreadable or invalid state/journal blocks Core before vault startup, leaves the original state/database untouched, and records only fixed allowlisted recovery facts. A valid pre-cutover `installing` state with a valid operation ID, operation-path-bound signed manifest, state-field match, signed artifact digest/size match, and no transaction/directory/identity evidence resets to an error state without touching the vault; missing/invalid operation, signature, staging, artifact, reparse-path, or active-handoff evidence still blocks. A pre-cutover abort persists an abort authority before rolled-back state and replay stays on the abort path. The health-check environment is scheduler suppression only and cannot bypass this guard. Only the packaged doctor's `startup_recovery` field is content-free; its existing operator path fields remain. Exact packaged and hosted evidence remain open |
+| UPDATER-05 — rollback must preserve the user vault boundary and prevent stale SQLite sidecar replay | `windows_update_helper.py::_restore_database`; `test_power_loss_after_each_post_cutover_phase_replays_safely`; `test_rollback_removes_all_sqlite_sidecars_and_preserves_unrelated_user_files`; existing verified database backup and rollback-retry tests; ADR-184 | Implemented and locally tested. Replay after diagnostics/health process loss reaches commit; failed-health rollback restores the verified pre-update database, removes WAL/SHM/rollback-journal sidecars, and leaves unrelated user files intact. No release, live-dogfood, Defender, Microsoft, or N-1 credit is created |
 ### 2026-09-01 packaged Windows uninstall observation stabilization
 
 | Requirement | Implementation/evidence | Status |

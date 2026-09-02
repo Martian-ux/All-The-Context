@@ -27,8 +27,8 @@ import subprocess
 import tempfile
 import time
 import tomllib
-from collections.abc import Mapping
-from contextlib import suppress
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -54,6 +54,21 @@ from smoke_desktop_artifact import ROOT, artifact_executable
 # Explicit, isolated, non-secret smoke only. Production installs never set this.
 ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
 WINDOWS_INSTALL_REMOVAL_OBSERVATION_SECONDS = WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS + 5.0
+
+
+@contextmanager
+def _temporary_environment(values: Mapping[str, str]) -> Iterator[None]:
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        os.environ.update(values)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
 
 # Work-tree artifacts inspected only for presence / closed-schema projection.
 _DIAGNOSTIC_RELATIVE_NAMES = (
@@ -1039,14 +1054,19 @@ def main() -> int:
 
     packaged_update_result = "not_applicable"
     if system == "Windows":
-        crash_helper, crash_journal = prepare_packaged_update_transaction(
-            data_dir=data_dir,
-            installed_app=installed_app,
-            release_app=executable,
-            operation_id="d" * 24,
-            core_port=port,
-            target_version=__version__,
-        )
+        helper_authority = {
+            "ATC_CORE_DATA_DIR": environment["ATC_CORE_DATA_DIR"],
+            "ATC_INSTALL_DIR": environment["ATC_INSTALL_DIR"],
+        }
+        with _temporary_environment(helper_authority):
+            crash_helper, crash_journal = prepare_packaged_update_transaction(
+                data_dir=data_dir,
+                installed_app=installed_app,
+                release_app=executable,
+                operation_id="d" * 24,
+                core_port=port,
+                target_version=__version__,
+            )
         interrupted_environment = dict(environment)
         interrupted_environment["ATC_UPDATE_FAULT_AFTER_PHASE"] = "binary_replaced"
         interrupted = subprocess.run(
@@ -1075,14 +1095,15 @@ def main() -> int:
             raise SystemExit("packaged updater did not commit after crash recovery")
         stop_core(base_url, admin_token)
 
-        rollback_helper, rollback_journal = prepare_packaged_update_transaction(
-            data_dir=data_dir,
-            installed_app=installed_app,
-            release_app=executable,
-            operation_id="e" * 24,
-            core_port=port,
-            target_version=__version__,
-        )
+        with _temporary_environment(helper_authority):
+            rollback_helper, rollback_journal = prepare_packaged_update_transaction(
+                data_dir=data_dir,
+                installed_app=installed_app,
+                release_app=executable,
+                operation_id="e" * 24,
+                core_port=port,
+                target_version=__version__,
+            )
         rollback_environment = dict(environment)
         rollback_environment.update(
             {

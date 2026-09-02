@@ -587,6 +587,66 @@ def test_desktop_recovery_doctor_mode(
     assert payload["python_checkout_required"] is False
 
 
+def test_desktop_recovery_doctor_reports_only_sanitized_startup_diagnostic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "vault"
+    _seed_vault(data_dir)
+    updates = data_dir / "updates"
+    updates.mkdir()
+    (updates / "startup-recovery.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "blocked",
+                "code": "journal_invalid",
+                "phase": "restart_required",
+                "updated_at": "2026-09-01T12:00:00+00:00",
+                "application_path": "C:/Users/private/never-report-this",
+                "token": "never-report-this-secret",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert desktop_main(["--recovery-doctor", "--recovery-data-dir", str(data_dir)]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["startup_recovery"] == {
+        "status": "blocked",
+        "code": "journal_invalid",
+        "phase": "restart_required",
+    }
+    assert payload["data_dir"] == str(data_dir)
+    assert "never-report-this" not in captured.out
+
+
+def test_desktop_recovery_doctor_rejects_unallowlisted_startup_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "vault"
+    updates = data_dir / "updates"
+    updates.mkdir(parents=True)
+    (updates / "startup-recovery.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "blocked",
+                "code": "attacker_controlled_code",
+                "phase": "error",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert desktop_main(["--recovery-doctor", "--recovery-data-dir", str(data_dir)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["startup_recovery"] == {
+        "status": "unreadable",
+        "code": "diagnostic_invalid",
+    }
+
+
 def test_desktop_recovery_export_restore_purge_modes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
