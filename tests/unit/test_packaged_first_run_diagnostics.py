@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 from allthecontext.credentials import FALLBACK_CREDENTIAL_STORAGE
+from allthecontext.windows_update_helper import HelperError
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -40,6 +43,89 @@ DASHBOARD_CANARY = (
     f"http://127.0.0.1:18765/v1/browser/connect?ticket={TICKET_CANARY}&atc_token={TOKEN_CANARY}"
 )
 RAW_STATEMENT = "User said their password is hunter2-never-store"
+
+
+def test_packaged_transaction_scopes_disposable_helper_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "packaged"
+    data_dir = work / "data"
+    install_dir = work / "installed"
+    updates = data_dir / "updates"
+    data_dir.mkdir(parents=True)
+    install_dir.mkdir()
+    updates.mkdir()
+    installed_app = install_dir / "AllTheContext.exe"
+    for name, content in (
+        ("AllTheContext.exe", b"installed app"),
+        ("AllTheContextMCP.exe", b"installed mcp"),
+        ("AllTheContextRecovery.exe", b"installed recovery"),
+        ("AllTheContextUpdater.exe", b"installed updater"),
+    ):
+        (install_dir / name).write_bytes(content)
+    release_app = work / "AllTheContextSetup.exe"
+    release_app.write_bytes(b"replacement app")
+    database = data_dir / "core.sqlite3"
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("CREATE TABLE facts(value TEXT NOT NULL)")
+        connection.commit()
+    finally:
+        connection.close()
+    (updates / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "idle",
+                "current_version": smoke.__version__,
+                "offered_version": None,
+                "mandatory": False,
+                "release_notes_url": None,
+                "downloaded_path": None,
+                "backup_path": None,
+                "last_checked_at": None,
+                "last_error": None,
+                "operation_id": None,
+                "transaction_path": None,
+                "recovery_attempts": 0,
+                "manifest_identity": None,
+                "handoff_identity": None,
+                "pending_handoff_identity": None,
+                "completed_handoff_identity": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("ATC_INSTALL_DIR", raising=False)
+    monkeypatch.delenv("ATC_CORE_DATA_DIR", raising=False)
+    helper_authority = {
+        "ATC_CORE_DATA_DIR": str(data_dir),
+        "ATC_INSTALL_DIR": str(install_dir),
+    }
+
+    assert "ATC_INSTALL_DIR" not in os.environ
+    with smoke._temporary_environment(helper_authority):
+        assert os.environ["ATC_INSTALL_DIR"] == str(install_dir)
+        helper, journal_path = smoke.prepare_packaged_update_transaction(
+            data_dir=data_dir,
+            installed_app=installed_app,
+            release_app=release_app,
+            operation_id="f" * 24,
+            core_port=7337,
+            target_version=smoke.__version__,
+        )
+        journal = smoke.UpdateJournal.load(journal_path)
+        assert Path(journal.helper_path) == helper
+        assert Path(journal.application_path) == installed_app
+        journal.application_path = str(work / "outside" / "AllTheContext.exe")
+        with pytest.raises(HelperError, match="application_state_untrusted"):
+            journal.validate(journal_path, boundary_code="application_state_untrusted")
+    assert "ATC_INSTALL_DIR" not in os.environ
+    assert "ATC_CORE_DATA_DIR" not in os.environ
+
+    with pytest.raises(RuntimeError), smoke._temporary_environment(helper_authority):
+        raise RuntimeError("scope test")
+    assert "ATC_INSTALL_DIR" not in os.environ
+    assert "ATC_CORE_DATA_DIR" not in os.environ
 
 
 def test_read_http_response_rejects_oversized_content_without_logging_body(
