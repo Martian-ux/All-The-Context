@@ -1,5 +1,47 @@
 # Architecture decisions
 
+## ADR-187: Primary updater metadata is bounded, contained, and revalidated
+
+**Status:** accepted locally on 2026-09-02 from the exact `origin/main` merge
+base `466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb`; hosted, exact-artifact, and
+vendor acceptance remain required.
+
+The primary `UpdateManager` treats preferences, persisted state, and staged
+release manifests as untrusted authority-bearing metadata. They share one
+cross-platform boundary with explicit 16 KiB preference, 64 KiB state, and
+128 KiB manifest limits. A read performs one binary limit-plus-one sentinel
+read, checks the plain-file descriptor and path identity before and after the
+read, and never follows with an unbounded read. UTF-8 failures, malformed JSON,
+integer digit-limit `ValueError`, and parser-depth `RecursionError` become
+stable updater errors; non-dict roots are rejected. Process-control exceptions,
+memory exhaustion, and unexpected programming errors are not swallowed.
+
+The persisted target and every existing parent must be a single-link regular
+file or plain directory with no symlink, junction, or reparse redirection.
+Atomic metadata replacement validates the target and parent again immediately
+before replacement and retains the previous target on failure. Corrupt
+preferences fall back without an unrelated rewrite. Unsafe state returns a
+controlled error, blocks later state-changing/network operations, and preserves
+the last-good state plus any recovery-tree evidence needed by the frozen
+`ensure_recovery_before_core` guard.
+
+`_revalidate_persisted_manifest()` is the only primary consumer of staged
+manifest authority. Before download URL/size use, artifact export, installer
+preflight, database backup, or handoff, it re-reads and hashes the bounded
+manifest, verifies the bundled keyring signature, requested channel, platform,
+architecture, release version, bounded artifact size, and the persisted
+offered/mandatory/release-note state binding. A changed, substituted,
+non-regular, oversized, or invalid manifest fails closed before transport or
+installer use. Check responses map
+bounded network-parser failures to content-free public errors.
+
+This closes the primary updater lifecycle boundary but does not claim
+handle-based no-follow atomicity across a concurrent same-user filesystem race,
+a separate JSON depth/CPU budget, signing, SmartScreen, Defender, Microsoft
+submission, publication, release readiness, or downloaded-candidate execution.
+The focused updater/recovery/desktop tests and full local suite are source-level
+evidence only.
+
 ## ADR-184: Frozen Windows startup must contain unsafe update state
 
 **Status:** accepted locally on 2026-09-01 as the first broad Windows GA

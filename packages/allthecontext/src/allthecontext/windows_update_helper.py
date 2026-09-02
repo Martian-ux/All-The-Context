@@ -208,12 +208,22 @@ def _read_json(
     boundary_code: str = "metadata_unreadable",
 ) -> dict[str, Any]:
     try:
-        if _plain_file_stat(path, boundary_code).st_size > maximum_bytes:
+        before = _plain_file_stat(path, boundary_code)
+        if before.st_size > maximum_bytes:
             raise HelperError("metadata_too_large")
         with path.open("rb") as stream:
             raw = stream.read(maximum_bytes + 1)
-        if len(raw) > maximum_bytes:
-            raise HelperError("metadata_too_large")
+            if len(raw) > maximum_bytes:
+                raise HelperError("metadata_too_large")
+            opened = os.fstat(stream.fileno())
+            if not _same_file(before, opened):
+                raise HelperError(boundary_code)
+            observed = os.fstat(stream.fileno())
+            if not _same_file(before, observed):
+                raise HelperError(boundary_code)
+        after = _plain_file_stat(path, boundary_code)
+        if not _same_file(before, after):
+            raise HelperError(boundary_code)
     except HelperError:
         raise
     except OSError as exc:

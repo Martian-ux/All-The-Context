@@ -10,7 +10,9 @@ The UPDATER-04 and UPDATER-05 rows below refer to ADR-184, the startup-
 recovery decision in this checkout. ADR-183 is retained for the separately
 merged packaged-uninstall observation decision. The follow-up JSON parser
 containment row refers to ADR-186 and preserves the distinct optional-marker
-boundary in ADR-185.
+boundary in ADR-185. The primary updater metadata-authority row refers to
+ADR-187 and starts from the exact `origin/main` merge base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb`.
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;
@@ -48,6 +50,22 @@ invalid UTF-8, malformed JSON, integer digit-limit `ValueError`, and deep-parser
 non-dict roots, catches no process-control or arbitrary programming exception,
 and leaves the limit-plus-one read contract unchanged. Caller outcomes remain
 fail-closed or controlled at their existing authority boundary.
+
+ADR-187 covers the primary `UpdateManager` lifecycle after the helper parser
+boundary. Preferences, state, and staged manifests use explicit 16 KiB, 64 KiB,
+and 128 KiB limits with one sentinel read, descriptor/path identity checks, and
+plain-file/parent-chain containment. Atomic replacement preserves an existing
+target when the target or parent is unsafe. Manifest consumers revalidate the
+persisted identity, signature/keyring, channel, platform, architecture, version,
+and state binding before using URL/size or entering export, preflight, backup,
+or handoff. The signed artifact size is also bounded before use. Unsafe state blocks later writes/network operations and preserves
+recovery evidence; public parser failures remain bounded and content-free.
+
+### 2026-09-02 Primary updater metadata authority containment
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| UPDATER-07 — primary updater metadata must remain bounded, path-contained, and revalidated before authority use | `updater.py::_decode_bounded_json`; `updater.py::_read_bounded_json`; `updater.py::_atomic_json`; `UpdateManager::_revalidate_persisted_manifest`; recovery helper plain-file/directory and atomic primitives; `tests/unit/test_updater.py::test_update_metadata_boundary_contains_real_parser_and_root_failures`; `test_update_metadata_boundary_reads_exact_limit_plus_one_and_accepts_multibyte`; `test_update_metadata_boundary_rejects_growth_after_initial_stat`; `test_update_json_decoder_does_not_swallow_process_control_exceptions`; `test_update_json_decoder_does_not_swallow_unexpected_programming_errors`; `test_network_manifest_parser_failures_are_bounded_public_errors`; `test_verified_manifest_artifact_size_is_bounded`; `test_download_rejects_nonregular_persisted_manifest_without_transport`; `test_oversized_persisted_update_metadata_fails_closed_without_raw_content`; `test_corrupt_state_preserves_recovery_evidence_and_last_good_file`; `test_substituted_persisted_manifest_never_controls_download_transport`; `test_update_atomic_metadata_failure_preserves_last_good_target`; `test_update_atomic_metadata_rejects_nonregular_parent_without_touching_siblings`; `test_hostile_persisted_state_symlink_stays_last_good_and_blocks_network`; ADR-187 | Implemented and locally tested. Preferences/state/manifest reads are bounded at 16 KiB/64 KiB/128 KiB and request no more than one limit-plus-one sentinel read; expected UTF-8/JSON parser failures become stable updater errors while process-control and unexpected programming failures propagate. Reparse/non-regular/hostile-parent metadata is rejected, unsafe state remains last-good and blocks later network/state mutation, and atomic replacement retains the prior target. Persisted manifests are re-read, identity-hashed, signature/keyring/channel/platform/architecture/version/bounded-size/state-bound, and rejected before download URL/size use, export, preflight, backup, or handoff. Focused updater/recovery/desktop tests passed 265 tests with five expected capability skips; full pytest passed 2,527 tests with 12 expected capability skips and two existing deprecation warnings. Ruff format/lint and mypy over 107 source files passed. Source-level evidence only; no handle-based no-follow guarantee, signing, SmartScreen, Defender, Microsoft, release, or downloaded-candidate execution acceptance is claimed |
 
 ### 2026-09-02 Windows updater/recovery JSON parser containment
 

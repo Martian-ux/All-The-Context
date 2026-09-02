@@ -53,9 +53,26 @@ from .windows_update_helper import (
     transaction_outcome,
     unregister_recovery,
 )
+from .windows_update_helper import (
+    _atomic_json as _helper_atomic_json,
+)
+from .windows_update_helper import (
+    _plain_directory_chain_if_present as _helper_plain_directory_chain_if_present,
+)
+from .windows_update_helper import (
+    _plain_file_stat as _helper_plain_file_stat,
+)
+from .windows_update_helper import (
+    _plain_file_stat_if_present as _helper_plain_file_stat_if_present,
+)
+from .windows_update_helper import (
+    _prepare_plain_directory_chain as _helper_prepare_plain_directory_chain,
+)
 
 CURRENT_VERSION = __version__
 MAX_MANIFEST_BYTES = 128 * 1024
+MAX_PREFERENCES_BYTES = 16 * 1024
+MAX_STATE_BYTES = 64 * 1024
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 20.0
@@ -72,6 +89,25 @@ Channel = Literal["stable", "beta"]
 
 class UpdateError(RuntimeError):
     """A safe, operator-facing update failure without sensitive detail."""
+
+
+class _PersistedMetadataError(UpdateError):
+    """A bounded metadata failure with a conservative replacement decision."""
+
+    def __init__(self, message: str, *, safe_to_replace: bool, missing: bool = False) -> None:
+        self.safe_to_replace = safe_to_replace
+        self.missing = missing
+        super().__init__(message)
+
+
+class _BoundedJsonError(UpdateError):
+    """Expected bounded JSON boundary failure, distinct from programming errors."""
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedJson:
+    raw: bytes
+    value: dict[str, Any]
 
 
 class UpdateEndpointHttpError(UpdateError):
@@ -261,15 +297,9 @@ def _is_link_or_reparse(value: os.stat_result | Any) -> bool:
 
 def _plain_file_stat(path: Path, message: str) -> os.stat_result:
     try:
-        value = path.lstat()
-    except OSError as exc:
+        value = _helper_plain_file_stat(path, "metadata_untrusted")
+    except (HelperError, OSError) as exc:
         raise UpdateError(message) from exc
-    if (
-        _is_link_or_reparse(value)
-        or not stat.S_ISREG(value.st_mode)
-        or getattr(value, "st_nlink", 1) != 1
-    ):
-        raise UpdateError(message)
     return value
 
 
@@ -285,6 +315,126 @@ def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:
         and expected.st_size == observed.st_size
         and getattr(expected, "st_mtime_ns", None) == getattr(observed, "st_mtime_ns", None)
     )
+
+
+def _metadata_error(
+    message: str, *, safe_to_replace: bool = False, missing: bool = False
+) -> _PersistedMetadataError:
+    return _PersistedMetadataError(
+        message,
+        safe_to_replace=safe_to_replace,
+        missing=missing,
+    )
+
+
+def _decode_bounded_json(raw: bytes, maximum_bytes: int, *, label: str) -> _BoundedJson:
+    """Decode one bounded JSON object without exposing parser or payload detail."""
+
+    if not isinstance(raw, bytes):
+        raise _BoundedJsonError(f"{label} could not be decoded safely")
+    if len(raw) > maximum_bytes:
+        raise _BoundedJsonError(f"{label} exceeds the size limit")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise _BoundedJsonError(f"{label} could not be decoded safely") from exc
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        raise _BoundedJsonError(f"{label} could not be decoded safely") from exc
+    if not isinstance(value, dict):
+        raise _BoundedJsonError(f"{label} must be a JSON object")
+    return _BoundedJson(raw, cast(dict[str, Any], value))
+
+
+def _read_bounded_json(path: Path, maximum_bytes: int, *, label: str) -> _BoundedJson:
+    """Read one stable, plain-file JSON object with a limit+1 sentinel read.
+
+    The recovery helper owns the platform-specific plain-path primitives.  The
+    updater adds the file-descriptor identity and post-read checks here so a
+    growth or replacement race cannot turn an authority read into a stable
+    value merely because the initial ``lstat`` looked safe.
+    """
+
+    try:
+        before = _helper_plain_file_stat_if_present(path, "metadata_untrusted")
+    except HelperError as exc:
+        raise _metadata_error(f"{label} is not a trusted plain file") from exc
+    if before is None:
+        raise _metadata_error(f"{label} is unavailable", safe_to_replace=True, missing=True)
+    if before.st_size > maximum_bytes:
+        raise _metadata_error(f"{label} exceeds the size limit", safe_to_replace=True)
+
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(maximum_bytes + 1)
+            if len(raw) > maximum_bytes:
+                raise _metadata_error(f"{label} exceeds the size limit")
+            opened = os.fstat(stream.fileno())
+            if not _same_file(before, opened):
+                raise _metadata_error(f"{label} changed while it was read")
+            observed = os.fstat(stream.fileno())
+            if not _same_file(before, observed):
+                raise _metadata_error(f"{label} changed while it was read")
+    except _PersistedMetadataError:
+        raise
+    except OSError as exc:
+        raise _metadata_error(f"{label} could not be read safely") from exc
+
+    try:
+        after = _helper_plain_file_stat(path, "metadata_untrusted")
+    except HelperError as exc:
+        raise _metadata_error(f"{label} changed while it was read") from exc
+    if not _same_file(before, after):
+        raise _metadata_error(f"{label} changed while it was read")
+    try:
+        return _decode_bounded_json(raw, maximum_bytes, label=label)
+    except _BoundedJsonError as exc:
+        raise _metadata_error(str(exc), safe_to_replace=True) from exc
+
+
+def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
+    """Persist updater metadata without replacing an unsafe target or parent."""
+
+    try:
+        _helper_atomic_json(path, dict(value), boundary_code="metadata_write_untrusted")
+    except HelperError as exc:
+        raise UpdateError("Persisted update metadata could not be saved safely") from exc
+    except OSError as exc:
+        raise UpdateError("Persisted update metadata could not be saved safely") from exc
+
+
+def _prepare_plain_directory(path: Path, message: str) -> None:
+    try:
+        _helper_prepare_plain_directory_chain(path, "metadata_write_untrusted")
+    except (HelperError, OSError) as exc:
+        raise UpdateError(message) from exc
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return os.path.normcase(os.path.abspath(os.fspath(left))) == os.path.normcase(
+            os.path.abspath(os.fspath(right))
+        )
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _within_path(path: Path, root: Path) -> bool:
+    try:
+        path_value = os.path.normcase(os.path.abspath(os.fspath(path)))
+        root_value = os.path.normcase(os.path.abspath(os.fspath(root)))
+        return os.path.commonpath((path_value, root_value)) == root_value
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _unlink_plain_file(path: Path, message: str) -> None:
+    try:
+        if _helper_plain_file_stat_if_present(path, "metadata_untrusted") is not None:
+            path.unlink()
+    except (HelperError, OSError) as exc:
+        raise UpdateError(message) from exc
 
 
 def _hash_stable_file(path: Path, *, maximum_bytes: int) -> tuple[str, int]:
@@ -503,7 +653,8 @@ class HttpsTransport:
                 raise UpdateError("Release download was truncated")
             return digest.hexdigest(), received
         except BaseException:
-            target.unlink(missing_ok=True)
+            with suppress(OSError, UpdateError):
+                _unlink_plain_file(target, "The partial release artifact is not a plain file")
             raise
 
 
@@ -885,9 +1036,14 @@ class UpdateManager:
         self._operation_gate = threading.Lock()
         self._operation_lock = threading.RLock()
         self._cancel = threading.Event()
-        self.config.data_dir.mkdir(parents=True, exist_ok=True)
+        _prepare_plain_directory(
+            self.config.data_dir,
+            "The updater data directory is not a trusted plain directory",
+        )
         self.preferences_path = self.config.data_dir / "preferences.json"
         self.state_path = self.config.data_dir / "state.json"
+        self._preferences_write_allowed = True
+        self._state_write_allowed = True
         with self._operation_lock:
             self.preferences = self._load_preferences()
             self.state = self._load_state()
@@ -895,16 +1051,20 @@ class UpdateManager:
             self._validate_internal_state()
             self._normalize_unpublished_channel_state()
             self._recover_interrupted()
-            self._prune_directory(self.config.data_dir / "staging", keep=self.state.operation_id)
-            active_transaction = (
-                Path(self.state.transaction_path).parent.name
-                if self.state.transaction_path is not None
-                else self.state.operation_id
-            )
-            self._prune_directory(self.config.data_dir / "transactions", keep=active_transaction)
-            self._prune_directory(self.config.data_dir / "exports", keep=None)
-            self._atomic_json(self.preferences_path, asdict(self.preferences))
-            self._save()
+            if self._state_write_allowed:
+                self._prune_directory(
+                    self.config.data_dir / "staging", keep=self.state.operation_id
+                )
+                active_transaction = (
+                    Path(self.state.transaction_path).parent.name
+                    if self.state.transaction_path is not None
+                    else self.state.operation_id
+                )
+                self._prune_directory(
+                    self.config.data_dir / "transactions", keep=active_transaction
+                )
+                self._prune_directory(self.config.data_dir / "exports", keep=None)
+                self._save()
 
     @staticmethod
     def _render_json(value: Mapping[str, Any]) -> str:
@@ -912,25 +1072,16 @@ class UpdateManager:
 
     @staticmethod
     def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f"{path.name}.", suffix=".atc-new", dir=path.parent
-        )
-        temporary = Path(temporary_name)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write(UpdateManager._render_json(value))
-                stream.flush()
-                os.fsync(stream.fileno())
-            temporary.replace(path)
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
+        _atomic_json(path, value)
 
     def _load_preferences(self) -> UpdatePreferences:
         default_preferences = self._default_preferences()
         try:
-            value = json.loads(self.preferences_path.read_text(encoding="utf-8"))
+            value = _read_bounded_json(
+                self.preferences_path,
+                MAX_PREFERENCES_BYTES,
+                label="Persisted update preferences",
+            ).value
             if not isinstance(value, dict) or not isinstance(value.get("enabled", True), bool):
                 raise ValueError("invalid preferences")
             channel = value.get("channel")
@@ -953,7 +1104,10 @@ class UpdateManager:
                 channel=selected_channel,
                 deferred_version=deferred,
             )
-        except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+        except _PersistedMetadataError as exc:
+            self._preferences_write_allowed = exc.safe_to_replace
+            return default_preferences
+        except (ValueError, TypeError, KeyError):
             return default_preferences
 
     def _default_preferences(self) -> UpdatePreferences:
@@ -962,9 +1116,24 @@ class UpdateManager:
             return UpdatePreferences(channel="beta")
         return UpdatePreferences()
 
+    def _recovery_evidence_present(self) -> bool:
+        """Conservatively retain state authority when a recovery tree exists."""
+
+        transactions = self.config.data_dir / "transactions"
+        try:
+            if not _helper_plain_directory_chain_if_present(transactions, "metadata_untrusted"):
+                return False
+            return any(transactions.iterdir())
+        except (HelperError, OSError):
+            return True
+
     def _load_state(self) -> UpdateState:
         try:
-            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+            value = _read_bounded_json(
+                self.state_path,
+                MAX_STATE_BYTES,
+                label="Persisted update state",
+            ).value
             if not isinstance(value, dict):
                 raise ValueError("invalid state")
             value["phase"] = UpdatePhase(value["phase"])
@@ -1020,17 +1189,67 @@ class UpdateManager:
                 ):
                     raise ValueError("invalid handoff identity")
             return state
-        except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
-            if self.state_path.exists():
+        except _PersistedMetadataError as exc:
+            if self._recovery_evidence_present():
+                self._state_write_allowed = False
+                return UpdateState(
+                    phase=UpdatePhase.ERROR,
+                    current_version=self.config.current_version,
+                    last_error=(
+                        "Persisted update state could not be read safely; recovery evidence "
+                        "was preserved"
+                    ),
+                )
+            self._state_write_allowed = exc.safe_to_replace
+            if exc.missing:
+                return UpdateState(current_version=self.config.current_version)
+            if exc.safe_to_replace:
                 return UpdateState(
                     phase=UpdatePhase.ERROR,
                     current_version=self.config.current_version,
                     last_error="Persisted update state was corrupt and was reset safely",
                 )
-            return UpdateState(current_version=self.config.current_version)
+            return UpdateState(
+                phase=UpdatePhase.ERROR,
+                current_version=self.config.current_version,
+                last_error="Persisted update state could not be read safely",
+            )
+        except (ValueError, TypeError, KeyError):
+            if self._recovery_evidence_present():
+                self._state_write_allowed = False
+                return UpdateState(
+                    phase=UpdatePhase.ERROR,
+                    current_version=self.config.current_version,
+                    last_error=(
+                        "Persisted update state was invalid; recovery evidence was preserved"
+                    ),
+                )
+            return UpdateState(
+                phase=UpdatePhase.ERROR,
+                current_version=self.config.current_version,
+                last_error="Persisted update state was corrupt and was reset safely",
+            )
 
     def _validate_internal_state(self) -> None:
         invalid = False
+        recovery_fields_present = (
+            self.state.transaction_path is not None
+            or self.state.handoff_identity is not None
+            or self.state.pending_handoff_identity is not None
+            or self.state.completed_handoff_identity is not None
+        )
+        active_recovery = recovery_fields_present or self.state.phase in {
+            UpdatePhase.INSTALLING,
+            UpdatePhase.RESTART_REQUIRED,
+        }
+
+        def preserve_recovery_authority() -> None:
+            self._state_write_allowed = False
+            self.state.phase = UpdatePhase.ERROR
+            self.state.last_error = (
+                "Persisted update recovery metadata was unsafe; recovery evidence was preserved"
+            )
+
         operation = self.state.operation_id
         expected_artifact = (
             self.config.data_dir / "staging" / operation / "artifact.zip"
@@ -1038,37 +1257,52 @@ class UpdateManager:
             else None
         )
         if self.state.downloaded_path is not None:
-            try:
-                downloaded_path_valid = (
-                    expected_artifact is not None
-                    and Path(self.state.downloaded_path).resolve() == expected_artifact.resolve()
-                )
-            except OSError:
-                downloaded_path_valid = False
+            downloaded_path_valid = expected_artifact is not None and _same_path(
+                Path(self.state.downloaded_path), expected_artifact
+            )
+            if downloaded_path_valid and expected_artifact is not None:
+                try:
+                    _helper_plain_file_stat_if_present(expected_artifact, "metadata_untrusted")
+                except HelperError:
+                    downloaded_path_valid = False
             if not downloaded_path_valid:
+                if active_recovery:
+                    preserve_recovery_authority()
+                    return
                 self.state.downloaded_path = None
                 invalid = True
         if self.state.backup_path is not None:
-            backup_root = (self.config.data_dir / "backups").resolve()
-            try:
-                Path(self.state.backup_path).resolve().relative_to(backup_root)
-            except (OSError, ValueError):
+            backup_root = self.config.data_dir / "backups"
+            backup_path = Path(self.state.backup_path)
+            backup_valid = _within_path(backup_path, backup_root)
+            if backup_valid:
+                try:
+                    _helper_plain_file_stat_if_present(backup_path, "metadata_untrusted")
+                except HelperError:
+                    backup_valid = False
+            if not backup_valid:
+                if active_recovery:
+                    preserve_recovery_authority()
+                    return
                 self.state.backup_path = None
                 invalid = True
         if self.state.transaction_path is not None:
-            transaction_root = (self.config.data_dir / "transactions").resolve()
+            transaction_root = self.config.data_dir / "transactions"
             expected_transaction = (
                 transaction_root / operation / "journal.json" if operation is not None else None
             )
-            try:
-                transaction_valid = (
-                    expected_transaction is not None
-                    and Path(self.state.transaction_path).resolve()
-                    == expected_transaction.resolve()
-                )
-            except OSError:
-                transaction_valid = False
+            transaction_valid = expected_transaction is not None and _same_path(
+                Path(self.state.transaction_path), expected_transaction
+            )
+            if transaction_valid and expected_transaction is not None:
+                try:
+                    _helper_plain_file_stat_if_present(expected_transaction, "metadata_untrusted")
+                except HelperError:
+                    transaction_valid = False
             if not transaction_valid:
+                if active_recovery:
+                    preserve_recovery_authority()
+                    return
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
                 self.state.pending_handoff_identity = None
@@ -1078,6 +1312,9 @@ class UpdateManager:
             self.state.handoff_identity is not None
             or self.state.pending_handoff_identity is not None
         ):
+            if active_recovery:
+                preserve_recovery_authority()
+                return
             self.state.handoff_identity = None
             self.state.pending_handoff_identity = None
             invalid = True
@@ -1111,16 +1348,25 @@ class UpdateManager:
 
     def _normalize_unpublished_channel_state(self) -> None:
         if (
-            self._uses_canonical_beta_channel()
+            self._state_write_allowed
+            and self._uses_canonical_beta_channel()
             and self.state.phase == UpdatePhase.ERROR
             and self.state.last_error == "Update endpoint returned HTTP 404"
         ):
             self._set_unpublished_channel_state()
 
     def _save(self) -> None:
+        if not self._state_write_allowed:
+            raise UpdateError("Persisted update state cannot be changed safely")
         value = asdict(self.state)
         value["phase"] = self.state.phase.value
         self._atomic_json(self.state_path, value)
+
+    def _require_metadata_writes_allowed(self, *, preferences: bool = False) -> None:
+        if not self._state_write_allowed:
+            raise UpdateError("Persisted update state cannot be changed safely")
+        if preferences and not self._preferences_write_allowed:
+            raise UpdateError("Persisted update preferences cannot be changed safely")
 
     def _require_no_active_handoff(self) -> None:
         if self.state.transaction_path is not None and self.state.phase in {
@@ -1155,6 +1401,7 @@ class UpdateManager:
                 UpdatePhase.RESTART_REQUIRED,
             }:
                 return self.public_status()
+            self._require_metadata_writes_allowed()
             recovery_outcome = self.installer.recovery_outcome(self.state)
             if recovery_outcome == "pending":
                 return self.public_status()
@@ -1231,17 +1478,100 @@ class UpdateManager:
         operation = self.state.operation_id or "pending"
         return self.config.data_dir / "staging" / operation
 
+    def _validate_manifest_target(self, manifest: Mapping[str, Any]) -> None:
+        if manifest["platform"] != self.config.platform_name:
+            raise UpdateError("Signed update metadata targets a different platform")
+        if manifest["architecture"] != self.config.architecture:
+            raise UpdateError("Signed update metadata targets a different architecture")
+
+    @staticmethod
+    def _validate_manifest_artifact_size(manifest: Mapping[str, Any]) -> None:
+        size = manifest["size"]
+        if (
+            isinstance(size, bool)
+            or not isinstance(size, int)
+            or size <= 0
+            or size > MAX_ARTIFACT_BYTES
+        ):
+            raise UpdateError("Verified update metadata declares an unsupported artifact size")
+
+    def _revalidate_persisted_manifest(self) -> dict[str, Any]:
+        """Revalidate every persisted manifest field before consuming authority."""
+
+        operation = self.state.operation_id
+        if (
+            not isinstance(operation, str)
+            or len(operation) != 24
+            or any(character not in "0123456789abcdef" for character in operation)
+        ):
+            raise UpdateError("Verified update transaction identity is unavailable")
+        if self.state.manifest_identity is None:
+            raise UpdateError("Verified update metadata identity is unavailable")
+
+        manifest_path = self._operation_directory() / "manifest.json"
+        try:
+            bounded = _read_bounded_json(
+                manifest_path,
+                MAX_MANIFEST_BYTES,
+                label="Verified update metadata",
+            )
+        except _PersistedMetadataError as exc:
+            raise UpdateError(
+                "Verified update metadata could not be re-checked; check again"
+            ) from exc
+        if hashlib.sha256(bounded.raw).hexdigest() != self.state.manifest_identity:
+            raise UpdateError("Verified update metadata changed; check again")
+        manifest = bounded.value
+        try:
+            verify_manifest(
+                manifest,
+                load_keyring(self.config.keyring_path),
+                current_version=self.config.current_version,
+                expected_channel=self.preferences.channel,
+            )
+            self._validate_manifest_target(manifest)
+            self._validate_manifest_artifact_size(manifest)
+            if (
+                manifest["version"] != self.state.offered_version
+                or manifest["mandatory"] != self.state.mandatory
+                or manifest["release_notes_url"] != self.state.release_notes_url
+            ):
+                raise UpdateError("Verified update state no longer matches its metadata")
+        except UpdateError:
+            raise
+        except (ManifestError, OSError, TypeError, UnicodeError, ValueError, RecursionError) as exc:
+            raise UpdateError(
+                "Verified update metadata could not be re-checked; check again"
+            ) from exc
+        return manifest
+
     def _clean_operation(self) -> None:
         operation = self._operation_directory()
-        if operation.exists():
-            shutil.rmtree(operation, ignore_errors=True)
+        try:
+            if _helper_plain_directory_chain_if_present(operation, "metadata_untrusted"):
+                value = operation.lstat()
+                if (
+                    not _is_link_or_reparse(value)
+                    and stat.S_ISDIR(value.st_mode)
+                    and getattr(value, "st_nlink", 1) == 1
+                ):
+                    shutil.rmtree(operation)
+        except (HelperError, OSError):
+            # A hostile or racing staging tree is not safe to clean up here.
+            pass
         self.state.downloaded_path = None
 
     @staticmethod
     def _prune_directory(root: Path, *, keep: str | None) -> None:
         """Remove at most a bounded number of private orphan entries."""
 
-        if not root.is_dir():
+        try:
+            if not _helper_plain_directory_chain_if_present(root, "metadata_untrusted"):
+                return
+            root_stat = root.lstat()
+        except (HelperError, OSError):
+            return
+        if _is_link_or_reparse(root_stat) or not stat.S_ISDIR(root_stat.st_mode):
             return
         removed = 0
         try:
@@ -1252,9 +1582,16 @@ class UpdateManager:
                 if keep is not None and entry.name == keep:
                     continue
                 try:
-                    if entry.is_dir() and not entry.is_symlink():
+                    entry_stat = entry.lstat()
+                    if _is_link_or_reparse(entry_stat):
+                        entry.unlink()
+                    elif (
+                        stat.S_ISDIR(entry_stat.st_mode) and getattr(entry_stat, "st_nlink", 1) == 1
+                    ):
                         shutil.rmtree(entry)
-                    else:
+                    elif (
+                        stat.S_ISREG(entry_stat.st_mode) and getattr(entry_stat, "st_nlink", 1) == 1
+                    ):
                         entry.unlink(missing_ok=True)
                 except OSError:
                     continue
@@ -1299,9 +1636,11 @@ class UpdateManager:
             raise UpdateError("Update channel must be stable or beta")
         with self._exclusive():
             self._require_no_active_handoff()
+            self._require_metadata_writes_allowed(preferences=True)
             channel_changed = channel != self.preferences.channel
-            self.preferences = UpdatePreferences(enabled, channel, None)
-            self._atomic_json(self.preferences_path, asdict(self.preferences))
+            next_preferences = UpdatePreferences(enabled, channel, None)
+            self._atomic_json(self.preferences_path, asdict(next_preferences))
+            self.preferences = next_preferences
             if channel_changed:
                 self._clean_operation()
                 self._prune_directory(self.config.data_dir / "staging", keep=None)
@@ -1327,14 +1666,16 @@ class UpdateManager:
     def defer(self) -> dict[str, Any]:
         with self._exclusive():
             self._require_no_active_handoff()
+            self._require_metadata_writes_allowed(preferences=True)
             if self.state.offered_version is None:
                 raise UpdateError("There is no available update to defer")
             if self.state.mandatory:
                 raise UpdateError("This compatibility or security update cannot be deferred")
-            self.preferences = UpdatePreferences(
+            next_preferences = UpdatePreferences(
                 self.preferences.enabled, self.preferences.channel, self.state.offered_version
             )
-            self._atomic_json(self.preferences_path, asdict(self.preferences))
+            self._atomic_json(self.preferences_path, asdict(next_preferences))
+            self.preferences = next_preferences
             self.state.phase = UpdatePhase.DEFERRED
             self._save()
             return self.public_status()
@@ -1342,6 +1683,7 @@ class UpdateManager:
     def clear_error(self) -> dict[str, Any]:
         with self._exclusive():
             self._require_no_active_handoff()
+            self._require_metadata_writes_allowed()
             self.state.last_error = None
             if self.state.phase in {UpdatePhase.ERROR, UpdatePhase.CANCELLED}:
                 self.state.phase = UpdatePhase.IDLE
@@ -1365,6 +1707,7 @@ class UpdateManager:
     def check(self, *, respect_defer: bool = False) -> dict[str, Any]:
         with self._exclusive():
             self._require_no_active_handoff()
+            self._require_metadata_writes_allowed()
             if not self.preferences.enabled:
                 self.state.phase = UpdatePhase.DISABLED
                 self._save()
@@ -1383,10 +1726,12 @@ class UpdateManager:
             self._save()
             try:
                 raw = self.transport.get_bytes(url, maximum_bytes=MAX_MANIFEST_BYTES)
-                value = json.loads(raw.decode("utf-8"))
-                if not isinstance(value, dict):
-                    raise UpdateError("Update metadata must be a JSON object")
-                manifest = cast(dict[str, Any], value)
+                bounded = _decode_bounded_json(
+                    raw,
+                    MAX_MANIFEST_BYTES,
+                    label="Update metadata",
+                )
+                manifest = bounded.value
                 keyring = load_keyring(self.config.keyring_path)
                 verify_manifest(
                     manifest,
@@ -1394,14 +1739,13 @@ class UpdateManager:
                     current_version=self.config.current_version,
                     expected_channel=self.preferences.channel,
                 )
-                if manifest["platform"] != self.config.platform_name:
-                    raise UpdateError("Signed update metadata targets a different platform")
-                if manifest["architecture"] != self.config.architecture:
-                    raise UpdateError("Signed update metadata targets a different architecture")
+                self._validate_manifest_target(manifest)
+                self._validate_manifest_artifact_size(manifest)
                 offered = cast(str, manifest["version"])
                 operation_id = hashlib.sha256(raw).hexdigest()[:24]
                 persisted_manifest = self._render_json(manifest).encode("utf-8")
-                self._prune_directory(self.config.data_dir / "staging", keep=operation_id)
+                operation_dir = self.config.data_dir / "staging" / operation_id
+                self._atomic_json(operation_dir / "manifest.json", manifest)
                 self.state.last_checked_at = _utc_now()
                 self.state.offered_version = offered
                 self.state.mandatory = cast(bool, manifest["mandatory"])
@@ -1409,7 +1753,6 @@ class UpdateManager:
                 self.state.operation_id = operation_id
                 self.state.manifest_identity = hashlib.sha256(persisted_manifest).hexdigest()
                 self.state.downloaded_path = None
-                self._atomic_json(self._operation_directory() / "manifest.json", manifest)
                 if ReleaseVersion.parse(offered) == ReleaseVersion.parse(
                     self.config.current_version
                 ):
@@ -1423,6 +1766,7 @@ class UpdateManager:
                 else:
                     self.state.phase = UpdatePhase.AVAILABLE
                 self._save()
+                self._prune_directory(self.config.data_dir / "staging", keep=operation_id)
                 return self.public_status()
             except UpdateEndpointHttpError as exc:
                 if exc.status_code == 404 and self._uses_canonical_beta_channel():
@@ -1463,6 +1807,7 @@ class UpdateManager:
 
         with self._exclusive():
             self._require_no_active_handoff()
+            self._require_metadata_writes_allowed()
             if self.state.phase != UpdatePhase.CURRENT:
                 raise UpdateError("A verified same-version candidate is required before acceptance")
             offered = self.state.offered_version
@@ -1475,25 +1820,9 @@ class UpdateManager:
                     raise UpdateError("Only an exact same-version signed candidate can be accepted")
             except ManifestError as exc:
                 raise UpdateError("Verified candidate version metadata is invalid") from exc
-            manifest_path = self._operation_directory() / "manifest.json"
             try:
-                raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if not isinstance(raw_manifest, dict):
-                    raise UpdateError("Verified update metadata is invalid; check again")
-                manifest = cast(dict[str, Any], raw_manifest)
-                verify_manifest(
-                    manifest,
-                    load_keyring(self.config.keyring_path),
-                    current_version=self.config.current_version,
-                    expected_channel=self.preferences.channel,
-                )
-                if manifest["platform"] != self.config.platform_name:
-                    raise UpdateError("Signed update metadata targets a different platform")
-                if manifest["architecture"] != self.config.architecture:
-                    raise UpdateError("Signed update metadata targets a different architecture")
-                if cast(str, manifest["version"]) != offered:
-                    raise UpdateError("Verified update state no longer matches its metadata")
-            except (ManifestError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                self._revalidate_persisted_manifest()
+            except UpdateError as exc:
                 raise UpdateError(
                     "Verified same-version metadata could not be re-checked; check again"
                 ) from exc
@@ -1505,22 +1834,34 @@ class UpdateManager:
     def download(self) -> dict[str, Any]:
         with self._exclusive():
             self._require_no_active_handoff()
+            self._require_metadata_writes_allowed()
             if self.state.phase not in {UpdatePhase.AVAILABLE, UpdatePhase.CANCELLED}:
                 raise UpdateError("A verified available update is required before download")
-            manifest_path = self._operation_directory() / "manifest.json"
             try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, json.JSONDecodeError) as exc:
-                raise UpdateError(
-                    "Verified update metadata is no longer available; check again"
-                ) from exc
+                manifest = self._revalidate_persisted_manifest()
+            except UpdateError as exc:
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = str(exc)[:500]
+                self.state.downloaded_path = None
+                self._save()
+                return self.public_status()
+            target = self._operation_directory() / "artifact.zip"
+            try:
+                _prepare_plain_directory(
+                    target.parent,
+                    "The updater staging directory is not a trusted plain directory",
+                )
+                _unlink_plain_file(target, "The previous staged artifact is not a plain file")
+            except UpdateError as exc:
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = str(exc)[:500]
+                self.state.downloaded_path = None
+                self._save()
+                return self.public_status()
             self._cancel.clear()
             self.state.phase = UpdatePhase.DOWNLOADING
             self.state.last_error = None
             self._save()
-            target = self._operation_directory() / "artifact.zip"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.unlink(missing_ok=True)
             try:
                 digest, received = self.transport.stream(
                     cast(str, manifest["url"]),
@@ -1539,7 +1880,8 @@ class UpdateManager:
                 self._save()
                 return self.public_status()
             except (OSError, UpdateError) as exc:
-                target.unlink(missing_ok=True)
+                with suppress(OSError, UpdateError):
+                    _unlink_plain_file(target, "The partial release artifact is not a plain file")
                 self.state.downloaded_path = None
                 self.state.phase = (
                     UpdatePhase.CANCELLED if "cancel" in str(exc).casefold() else UpdatePhase.ERROR
@@ -1563,31 +1905,17 @@ class UpdateManager:
             ):
                 raise UpdateError("A completely verified update must be ready before saving")
             try:
-                raw_manifest = json.loads(
-                    (self._operation_directory() / "manifest.json").read_text(encoding="utf-8")
-                )
-                if not isinstance(raw_manifest, dict):
-                    raise UpdateError("Verified update metadata is invalid; check again")
-                manifest = cast(dict[str, Any], raw_manifest)
-                verify_manifest(
-                    manifest,
-                    load_keyring(self.config.keyring_path),
-                    current_version=self.config.current_version,
-                    expected_channel=self.preferences.channel,
-                )
-                if manifest["platform"] != self.config.platform_name:
-                    raise UpdateError("Signed update metadata targets a different platform")
-                if manifest["architecture"] != self.config.architecture:
-                    raise UpdateError("Signed update metadata targets a different architecture")
-                if manifest["version"] != self.state.offered_version:
-                    raise UpdateError("Verified update state no longer matches its metadata")
+                manifest = self._revalidate_persisted_manifest()
                 source = Path(self.state.downloaded_path)
                 expected = self._operation_directory() / "artifact.zip"
-                if source.resolve() != expected.resolve() or not source.is_file():
+                if not _same_path(source, expected):
                     raise UpdateError(
                         "Verified update artifact is no longer available; download again"
                     )
-                source_digest, source_size = sha256_file(source)
+                source_digest, source_size = _hash_stable_file(
+                    source,
+                    maximum_bytes=MAX_ARTIFACT_BYTES,
+                )
                 if source_size != manifest["size"] or source_digest != manifest["sha256"]:
                     raise UpdateError("Saved update artifact failed signed checksum verification")
             except (ManifestError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -1596,7 +1924,10 @@ class UpdateManager:
                 ) from exc
 
             export_root = self.config.data_dir / "exports"
-            export_root.mkdir(parents=True, exist_ok=True)
+            _prepare_plain_directory(
+                export_root,
+                "The updater export directory is not a trusted plain directory",
+            )
             descriptor, export_name = tempfile.mkstemp(suffix=".zip", dir=export_root)
             export_path = Path(export_name)
             try:
@@ -1630,38 +1961,14 @@ class UpdateManager:
     def install(self) -> dict[str, Any]:
         with self._exclusive():
             self._require_no_active_handoff()
+            self._require_metadata_writes_allowed()
             if self.state.phase != UpdatePhase.READY or self.state.downloaded_path is None:
                 raise UpdateError("A completely verified update must be ready before install")
             artifact = Path(self.state.downloaded_path)
             try:
-                manifest_path = self._operation_directory() / "manifest.json"
-                manifest_bytes = manifest_path.read_bytes()
-                manifest = json.loads(manifest_bytes.decode("utf-8"))
-                if not isinstance(manifest, dict):
-                    raise UpdateError("Verified update metadata is invalid; check again")
-                if (
-                    self.state.manifest_identity is None
-                    or hashlib.sha256(manifest_bytes).hexdigest() != self.state.manifest_identity
-                ):
-                    raise UpdateError("Verified update metadata changed; check again")
-                verify_manifest(
-                    manifest,
-                    load_keyring(self.config.keyring_path),
-                    current_version=self.config.current_version,
-                    expected_channel=self.preferences.channel,
-                )
-                if manifest["platform"] != self.config.platform_name:
-                    raise UpdateError("Signed update metadata targets a different platform")
-                if manifest["architecture"] != self.config.architecture:
-                    raise UpdateError("Signed update metadata targets a different architecture")
-                if (
-                    manifest["version"] != self.state.offered_version
-                    or manifest["mandatory"] != self.state.mandatory
-                    or manifest["release_notes_url"] != self.state.release_notes_url
-                ):
-                    raise UpdateError("Verified update state no longer matches its metadata")
+                manifest = self._revalidate_persisted_manifest()
                 expected_artifact = self._operation_directory() / "artifact.zip"
-                if artifact.resolve() != expected_artifact.resolve():
+                if not _same_path(artifact, expected_artifact):
                     raise UpdateError("Verified update artifact identity changed; check again")
                 artifact_digest, artifact_size = _hash_stable_file(
                     artifact,

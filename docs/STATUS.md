@@ -26,11 +26,11 @@ workflow hardening, updater/recovery trust hardening, the Windows timing test
 correction, exact candidate-evidence reconciliation, the private handoff guard
 correction, the update-child dialog containment change, the import-heartbeat
 test stabilization, Windows startup-recovery hardening from PR #107, and
-startup-recovery diagnostic containment from PR #108 at exact SHA
-`ebc845246b2c9fcc3216b5ba1b9f72c3842bbdb6`. The current parser-containment
-follow-up is source-level local work on this exact merge base; hosted CI,
-CodeQL, exact-artifact, and release evidence for a later candidate remain
-separate gates. Source and hosted evidence does not
+startup-recovery diagnostic containment from PR #108 at the exact
+`origin/main` merge base `466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` used for
+this local follow-up. The current updater metadata-authority containment is
+source-level branch work; hosted CI, exact-artifact, and release evidence for a
+later candidate remain separate gates. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -41,6 +41,34 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-09-02 — Primary updater metadata authority containment
+
+The primary `UpdateManager` now routes persisted preferences, state, and
+operation manifests through one bounded cross-platform JSON boundary: 16 KiB
+preferences, 64 KiB state, and the existing 128 KiB manifest limit. Each read
+requests at most limit plus one sentinel byte, checks descriptor/path identity
+before and after the read, rejects non-dict roots, and contains only expected
+UTF-8/JSON `ValueError` and `RecursionError` failures. Process-control and
+unexpected programming exceptions still propagate.
+
+Updater writes now use the recovery helper's reparse-safe atomic boundary and
+refuse unsafe targets, non-regular files, hardlinks, and hostile parent chains.
+Corrupt preferences fall back without rewriting the preference target; unsafe
+state keeps the last-good state and recovery evidence authoritative. Every
+persisted manifest consumer revalidates the bounded bytes, identity, signature,
+keyring, channel, platform, architecture, version, and state binding before
+using its URL or bounded artifact size, or entering export, preflight, backup, or handoff. Download
+and install failures remain bounded public errors without transport use after
+manifest substitution.
+
+On this Windows host, Python 3.14.3 passed the focused updater/recovery/desktop
+command with 265 tests and five expected capability skips, and the full suite
+passed 2,527 tests with 12 expected capability skips and two existing
+deprecation warnings. Ruff format/lint and mypy over 107 source files passed.
+This is source-level evidence only; no signing, SmartScreen, Defender,
+Microsoft submission, publishing, tagging, release, or downloaded-candidate
+execution was performed.
 
 ### 2026-09-02 — Windows updater/recovery JSON parser containment
 

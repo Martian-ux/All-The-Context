@@ -21,7 +21,9 @@ from allthecontext.release_manifest import (
 )
 from allthecontext.updater import (
     DEFAULT_BETA_MANIFEST_URL,
+    MAX_ARTIFACT_BYTES,
     MAX_MANIFEST_BYTES,
+    MAX_STATE_BYTES,
     HttpsTransport,
     InstallPlan,
     PlatformInstaller,
@@ -52,12 +54,19 @@ class FakeTransport:
         self.reported_bytes: int | None = None
         self.reported_digest: str | None = None
         self.cancel_during_download = False
+        self.metadata_bytes: bytes | None = None
+        self.metadata_calls = 0
+        self.stream_calls = 0
+        self.stream_urls: list[str] = []
 
     def get_bytes(self, url: str, *, maximum_bytes: int) -> bytes:
+        self.metadata_calls += 1
         assert url.startswith("https://")
         assert maximum_bytes == MAX_MANIFEST_BYTES
         if self.metadata_error:
             raise self.metadata_error
+        if self.metadata_bytes is not None:
+            return self.metadata_bytes
         return json.dumps(self.manifest).encode("utf-8")
 
     def stream(
@@ -68,6 +77,8 @@ class FakeTransport:
         expected_bytes: int,
         cancelled: Any,
     ) -> tuple[str, int]:
+        self.stream_calls += 1
+        self.stream_urls.append(url)
         assert url.startswith("https://")
         assert expected_bytes == self.manifest["size"]
         if self.download_error:
@@ -836,6 +847,320 @@ def test_corrupt_persisted_preferences_and_state_reset_safely(tmp_path: Path) ->
     assert status["enabled"] is True
     assert status["phase"] == "error"
     assert "corrupt" in status["last_error"].casefold()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (b'{"value":"' + b"a" * 32 + b'"}', {"value": "a" * 32}),
+        (b"\xff", "could not be decoded safely"),
+        (b"[]", "must be a JSON object"),
+        (b'{"value":' + b"9" * 5000 + b"}", "could not be decoded safely"),
+        (
+            b'{"value":' + b"[" * 30000 + b"0" + b"]" * 30000 + b"}",
+            "could not be decoded safely",
+        ),
+    ],
+    ids=["valid", "invalid-utf8", "non-object", "huge-integer", "deep-nesting"],
+)
+def test_update_metadata_boundary_contains_real_parser_and_root_failures(
+    tmp_path: Path, raw: bytes, expected: object
+) -> None:
+    path = tmp_path / "metadata.json"
+    path.write_bytes(raw)
+
+    if isinstance(expected, dict):
+        result = updater_module._read_bounded_json(path, MAX_STATE_BYTES, label="Test metadata")
+        assert result.value == expected
+    else:
+        with pytest.raises(UpdateError, match=expected):
+            updater_module._read_bounded_json(path, MAX_STATE_BYTES, label="Test metadata")
+
+
+def test_update_metadata_boundary_reads_exact_limit_plus_one_and_accepts_multibyte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    maximum = 128
+    prefix = b'{"value":"'
+    suffix = b'"}'
+    value_bytes = maximum - len(prefix) - len(suffix)
+    assert value_bytes % len("é".encode()) == 0
+    raw = prefix + "é".encode() * (value_bytes // 2) + suffix
+    path = tmp_path / "metadata.json"
+    path.write_bytes(raw)
+    read_sizes: list[int] = []
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+        def fileno(self) -> int:
+            return self._handle.fileno()  # type: ignore[attr-defined,no-any-return]
+
+    def tracking_open(target: Path, *args: object, **kwargs: object) -> object:
+        handle = original_open(target, *args, **kwargs)
+        return TrackingReader(handle) if target == path else handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+    result = updater_module._read_bounded_json(path, maximum, label="Test metadata")
+
+    assert len(raw) == maximum
+    assert result.value == {"value": "é" * (value_bytes // 2)}
+    assert read_sizes == [maximum + 1]
+
+
+def test_update_metadata_boundary_rejects_growth_after_initial_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    maximum = 128
+    path = tmp_path / "metadata.json"
+    path.write_text("{}", encoding="utf-8")
+    original_open = Path.open
+    grew = False
+
+    def grow_before_open(target: Path, *args: object, **kwargs: object) -> object:
+        nonlocal grew
+        if target == path and not grew:
+            grew = True
+            with original_open(path, "wb") as stream:
+                stream.write(b"{}" + b"x" * maximum)
+        return original_open(target, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", grow_before_open)
+    with pytest.raises(UpdateError, match=r"(changed while it was read|exceeds the size limit)"):
+        updater_module._read_bounded_json(path, maximum, label="Test metadata")
+
+
+@pytest.mark.parametrize("control_exception", [SystemExit, KeyboardInterrupt, GeneratorExit])
+def test_update_json_decoder_does_not_swallow_process_control_exceptions(
+    monkeypatch: pytest.MonkeyPatch, control_exception: type[BaseException]
+) -> None:
+    def fail(_value: str) -> object:
+        raise control_exception("sentinel")
+
+    monkeypatch.setattr(updater_module.json, "loads", fail)
+    with pytest.raises(control_exception):
+        updater_module._decode_bounded_json(b"{}", MAX_STATE_BYTES, label="Test metadata")
+
+
+def test_update_json_decoder_does_not_swallow_unexpected_programming_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_value: str) -> object:
+        raise RuntimeError("programming failure")
+
+    monkeypatch.setattr(updater_module.json, "loads", fail)
+    with pytest.raises(RuntimeError, match="programming failure"):
+        updater_module._decode_bounded_json(b"{}", MAX_STATE_BYTES, label="Test metadata")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"value":' + b"9" * 5000 + b"}",
+        b'{"value":' + b"[" * 30000 + b"0" + b"]" * 30000 + b"}",
+    ],
+    ids=["huge-integer", "deep-nesting"],
+)
+def test_network_manifest_parser_failures_are_bounded_public_errors(
+    tmp_path: Path, raw: bytes
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    transport.metadata_bytes = raw
+
+    status = manager.check()
+
+    assert status["phase"] == "error"
+    assert "could not be decoded safely" in (status["last_error"] or "")
+    assert "9" * 100 not in (status["last_error"] or "")
+
+
+@pytest.mark.parametrize("size", [0, MAX_ARTIFACT_BYTES + 1, True])
+def test_verified_manifest_artifact_size_is_bounded(size: object) -> None:
+    with pytest.raises(UpdateError, match="unsupported artifact size"):
+        UpdateManager._validate_manifest_artifact_size({"size": size})
+
+
+def test_download_rejects_nonregular_persisted_manifest_without_transport(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    manifest_path = manager._operation_directory() / "manifest.json"
+    manifest_path.unlink()
+    manifest_path.mkdir()
+
+    status = manager.download()
+
+    assert status["phase"] == "error"
+    assert transport.stream_calls == 0
+    assert manifest_path.is_dir()
+
+
+@pytest.mark.parametrize("kind", ["preferences", "state"])
+def test_oversized_persisted_update_metadata_fails_closed_without_raw_content(
+    tmp_path: Path, kind: str
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    marker = "secret-oversized-metadata"
+    if kind == "preferences":
+        (updates / "preferences.json").write_text(
+            json.dumps({"enabled": True, "channel": "stable", "padding": marker * 1000}),
+            encoding="utf-8",
+        )
+    else:
+        (updates / "state.json").write_text(
+            json.dumps({"phase": "idle", "current_version": "0.1.0", "padding": marker * 10000}),
+            encoding="utf-8",
+        )
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    status = manager.public_status()
+
+    assert status["channel"] == "stable"
+    assert marker not in json.dumps(status)
+    if kind == "state":
+        assert status["phase"] == "error"
+
+
+def test_corrupt_state_preserves_recovery_evidence_and_last_good_file(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    state_path = updates / "state.json"
+    original_state = b'{"phase":"restart_required","recovery_attempts":' + b"9" * 5000 + b"}"
+    state_path.write_bytes(original_state)
+    evidence = updates / "transactions" / ("a" * 24)
+    evidence.mkdir(parents=True)
+    evidence_marker = evidence / "journal.json"
+    evidence_marker.write_text('{"phase":"prepared"}', encoding="utf-8")
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager.public_status()["phase"] == "error"
+    assert state_path.read_bytes() == original_state
+    assert evidence_marker.is_file()
+
+
+def test_substituted_persisted_manifest_never_controls_download_transport(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    manifest_path = manager._operation_directory() / "manifest.json"
+    substituted = json.loads(manifest_path.read_text(encoding="utf-8"))
+    substituted["url"] = "https://attacker.example.test/releases/v9.9.9/forged.zip"
+    substituted["size"] = 2 * 1024 * 1024 * 1024
+    substituted["signature"] = "A" * len(substituted["signature"])
+    manifest_path.write_text(json.dumps(substituted), encoding="utf-8")
+
+    status = manager.download()
+
+    assert status["phase"] == "error"
+    assert transport.stream_calls == 0
+    assert transport.stream_urls == []
+
+
+def test_update_atomic_metadata_failure_preserves_last_good_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "state.json"
+    original = b'{"phase":"idle"}\n'
+    path.write_bytes(original)
+    original_replace = Path.replace
+
+    def fail_replace(self: Path, target: Path) -> Path:
+        if target == path:
+            raise OSError("replacement refused")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(UpdateError, match="could not be saved safely"):
+        UpdateManager._atomic_json(path, {"phase": "error"})
+
+    assert path.read_bytes() == original
+
+
+def test_update_atomic_metadata_rejects_nonregular_parent_without_touching_siblings(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "not-a-directory"
+    parent.write_text("unrelated", encoding="utf-8")
+    sibling = tmp_path / "sibling.txt"
+    sibling.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(UpdateError, match="could not be saved safely"):
+        UpdateManager._atomic_json(parent / "state.json", {"phase": "error"})
+
+    assert parent.read_text(encoding="utf-8") == "unrelated"
+    assert sibling.read_text(encoding="utf-8") == "keep"
+
+
+def test_hostile_persisted_preferences_symlink_is_not_followed_when_supported(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    target = tmp_path / "outside-preferences.json"
+    original = b'{"enabled":false,"channel":"beta"}'
+    target.write_bytes(original)
+    link = updates / "preferences.json"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this filesystem")
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager.preferences.enabled is True
+    assert target.read_bytes() == original
+    assert link.is_symlink()
+
+
+def test_hostile_persisted_state_symlink_stays_last_good_and_blocks_network(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    target = tmp_path / "outside-state.json"
+    original = b'{"phase":"idle"}'
+    target.write_bytes(original)
+    link = updates / "state.json"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this filesystem")
+
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager.public_status()["phase"] == "error"
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        manager.check()
+    assert transport.metadata_calls == 0
+    assert transport.stream_calls == 0
+    assert target.read_bytes() == original
+    assert link.is_symlink()
 
 
 def test_repeated_checks_remove_bounded_orphan_staging(tmp_path: Path) -> None:
