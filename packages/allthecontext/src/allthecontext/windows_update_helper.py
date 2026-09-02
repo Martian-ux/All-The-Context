@@ -39,6 +39,8 @@ MAX_STAGING_MANIFEST_BYTES = 128 * 1024
 MAX_STAGING_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1
 STARTUP_RECOVERY_DIAGNOSTIC_NAME = "startup-recovery.json"
+MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES = 16 * 1024
+STARTUP_RECOVERY_DIAGNOSTIC_STATUSES = frozenset({"blocked", "cleared"})
 STARTUP_RECOVERY_PHASES = frozenset(
     {
         "idle",
@@ -241,20 +243,40 @@ def _write_startup_recovery_diagnostic(
 ) -> None:
     """Persist only bounded startup-recovery facts, never state or local paths."""
 
-    safe_phase = phase if phase in STARTUP_RECOVERY_PHASES else None
-    safe_code = code if code in STARTUP_RECOVERY_DIAGNOSTIC_CODES else "startup_state_invalid"
+    safe_phase = phase if isinstance(phase, str) and phase in STARTUP_RECOVERY_PHASES else None
+    safe_code = (
+        code
+        if isinstance(code, str) and code in STARTUP_RECOVERY_DIAGNOSTIC_CODES
+        else "startup_state_invalid"
+    )
+    safe_status = (
+        status
+        if isinstance(status, str) and status in STARTUP_RECOVERY_DIAGNOSTIC_STATUSES
+        else "blocked"
+    )
     payload = {
         "schema_version": STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION,
-        "status": status,
+        "status": safe_status,
         "code": safe_code,
         "phase": safe_phase,
         "updated_at": _utc_now(),
     }
     try:
         _atomic_json(_startup_recovery_diagnostic_path(state_path), payload)
-    except (HelperError, OSError):
+    except Exception:
         # Startup containment remains fail-closed when diagnostics cannot be written.
         return
+
+
+def _startup_recovery_diagnostic_exists(path: Path) -> bool:
+    """Probe the optional marker without allowing it to affect startup control flow."""
+
+    try:
+        return _plain_file_stat_if_present(path, "startup_diagnostic_untrusted") is not None
+    except Exception:
+        # The marker is informational only. An unsafe or racing marker must never
+        # become an unhandled startup failure or startup authority.
+        return False
 
 
 def startup_recovery_diagnostic(path: Path) -> dict[str, str] | None:
@@ -263,8 +285,8 @@ def startup_recovery_diagnostic(path: Path) -> dict[str, str] | None:
     try:
         if _plain_file_stat_if_present(path, "startup_diagnostic_untrusted") is None:
             return None
-        value = _read_json(path, MAX_STATE_BYTES)
-    except HelperError:
+        value = _read_json(path, MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES)
+    except Exception:
         return {"status": "unreadable", "code": "diagnostic_unreadable"}
     status = value.get("status")
     code = value.get("code")
@@ -273,7 +295,7 @@ def startup_recovery_diagnostic(path: Path) -> dict[str, str] | None:
         isinstance(value.get("schema_version"), bool)
         or value.get("schema_version") != STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION
         or not isinstance(status, str)
-        or status not in {"blocked", "cleared"}
+        or status not in STARTUP_RECOVERY_DIAGNOSTIC_STATUSES
         or not isinstance(code, str)
         or code not in STARTUP_RECOVERY_DIAGNOSTIC_CODES
     ):
@@ -1968,7 +1990,7 @@ def ensure_recovery_before_core() -> bool:
             )
             return False
         diagnostic_path = _startup_recovery_diagnostic_path(state_path)
-        if _plain_file_stat_if_present(diagnostic_path, "startup_diagnostic_untrusted") is not None:
+        if _startup_recovery_diagnostic_exists(diagnostic_path):
             _write_startup_recovery_diagnostic(
                 state_path,
                 status="cleared",

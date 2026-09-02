@@ -66,6 +66,40 @@ checks deterministically block existing junction or reparse redirection, but a
 concurrent same-user mutation between a check and the following Windows
 filesystem syscall remains a residual race because this architecture does not
 claim handle-based no-follow atomicity.
+
+## ADR-185: Startup-recovery diagnostics are optional and non-authoritative
+
+**Status:** accepted locally on 2026-09-02 as a follow-up to ADR-184; hosted,
+exact-artifact, and vendor acceptance remain required.
+
+`updates/startup-recovery.json` is an operator hint emitted after the frozen
+Core startup guard has already made its recovery decision. It is never read as
+startup authority and it cannot make an otherwise safe startup fail with an
+unhandled exception. The writer projects status, code, and phase onto closed
+allowlists, keeps the fixed payload bounded, and uses the existing
+reparse-safe atomic JSON writer. Existing reparse, non-regular, hostile-parent,
+missing-parent, permission, write, and replace failures are contained; failure
+to persist a diagnostic never changes the guard's fail-closed result for unsafe
+update state.
+
+The packaged recovery doctor reads the marker through the same plain-file
+boundary and a dedicated 16-KiB limit. Missing markers remain absent; malformed,
+oversized, unreadable, non-regular/reparse, hostile-parent, and read-raced
+markers become only the fixed `{status: "unreadable", code:
+"diagnostic_unreadable"}` projection. Valid markers expose only the allowlisted
+status, code, and optional phase, dropping timestamps, paths, raw JSON fields,
+and content. The packaged `--core` path consequently returns through its
+existing controlled containment behavior when the guard blocks Core, including
+when diagnostic persistence itself is unavailable.
+
+This decision improves exception containment and operator observability without
+claiming handle-based no-follow atomicity across a concurrent same-user
+mutation between a filesystem check and the next read or replace. The focused
+writer, reader, startup, doctor, and packaged-startup regressions are the local
+evidence for this boundary. It does not claim signing, SmartScreen reputation,
+Defender acceptance, Microsoft submission, publishing, release readiness, or
+end-user dogfood.
+
 ## ADR-183: Packaged uninstall smoke observes the full cleanup contract
 
 **Status:** accepted locally on 2026-09-01 after exact protected-main Windows
