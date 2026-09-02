@@ -14,6 +14,8 @@ boundary in ADR-185. The primary updater metadata-authority row refers to
 ADR-187 and starts from the exact `origin/main` merge base
 `466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb`. Its recovery, keyring, cleanup,
 and privacy remediation is covered by ADR-188 and ADR-189.
+The invalid active-journal authority and operator private-key read follow-up
+is covered by ADR-191 and ADR-192.
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;
@@ -86,6 +88,13 @@ forced cleanup refusal, deterministic parent replacement, exact-limit
 multibyte script reads, oversized raw keyring comparison, deep trees, wide
 trees, budget boundaries, and RecursionError. Hosted follow-up checks must bind
 to the corrected commit.
+
+### 2026-09-02 Invalid active-journal authority and private-key read containment
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| UPDATER-08 — invalid active recovery journals must not revoke recovery authority | `UpdateManager::_active_recovery_evidence_complete`; `UpdateJournal.load(..., validate_storage=False)`; `UpdateJournal.validate`; `journal_handoff_identity`; `tests/unit/test_updater.py::test_invalid_active_recovery_journal_preserves_authority_across_lifecycle`; `test_valid_active_recovery_journal_remains_recoverable`; ADR-191 | Implemented and locally tested. Active `installing`/`restart_required` state requires operation-scoped, plain, non-empty artifact, backup, journal, and directory evidence; the narrow cross-platform storage mode still validates journal schema/phase, transaction identity, absolute paths, operation and backup containment, storage chain, version/state/database/backup/helper bindings, handoff identity, and permitted phase. Malformed, incomplete, oversized/deep, wrong-operation, wrong-phase, or inconsistent journals preserve state/journal bytes and surviving evidence, set the fixed `RECOVERY_EVIDENCE_INCOMPLETE_ERROR`, disable later updater mutation, and keep frozen Core startup blocked. The integrated focused suite passed 281 tests with four expected capability skips; the full suite passed 2,587 tests with 13 expected capability skips. Remaining evidence is source-level/disposable local evidence only; hosted checks, exact-artifact/vendor acceptance, and handle-based no-follow atomicity remain open |
+| RELEASE-KEY-01 — operator private-key loading must be bounded, single-pass, and content-free on failure | `release_manifest.py::read_private_key_bytes`; `release_manifest.py::load_private_key`; `scripts/release_manifest.py::load_encrypted_private_key_interactive`; `tests/unit/test_release_manifest.py::test_private_key_reader_accepts_exact_limit`; `test_private_key_loader_rejects_limit_plus_one`; `test_private_key_loader_reads_once_with_bounded_size`; ADR-192 | Implemented and locally tested. Path input is read once in binary mode with one `16 KiB + 1` overflow-sentinel request; empty/oversized input produces fixed `ManifestError` messages, bounded bytes are parsed, and the interactive release utility reuses the same snapshot after its encrypted PKCS8 marker check. No key path, raw key, or exception text is projected. The bound does not claim a separate cryptographic parser or CPU/depth budget, and no signing or release acceptance is implied |
 
 ### 2026-09-02 Primary updater metadata authority containment
 

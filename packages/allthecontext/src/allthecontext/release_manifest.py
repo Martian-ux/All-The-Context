@@ -195,9 +195,7 @@ def read_private_key_bytes(path: Path) -> bytes:
     return value
 
 
-def load_private_key(
-    source: Path | bytes, *, password: bytes | None = None
-) -> Ed25519PrivateKey:
+def load_private_key(source: Path | bytes, *, password: bytes | None = None) -> Ed25519PrivateKey:
     if isinstance(source, Path):
         value = read_private_key_bytes(source)
     else:

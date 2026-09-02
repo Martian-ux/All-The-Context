@@ -42,6 +42,57 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-02 — PR #110 invalid-journal authority and bounded private-key loading
+
+PR #110 now locally integrates the recovery-authority and private-key loading
+hardening commits on top of the exact PR head verified before mutation. At the
+active `installing`/`restart_required` boundary, the updater accepts recovery
+evidence only when the state references the expected operation-scoped staging,
+backup, and transaction locations and the physical artifact, backup, journal,
+operation directory, and transaction directory are present, plain, and
+non-empty. `UpdateJournal.load(..., validate_storage=False)` is only a narrow
+cross-platform layout mode for this check: it still enforces journal schema and
+phase values, transaction-directory/name/operation identity, absolute paths,
+operation-contained replacement and rollback paths, backup containment, and
+the derived storage-chain checks. The updater then reconciles the journal's
+operation, current/target/offered versions, state/database/backup/helper paths,
+handoff identity, and permitted phase with persisted state.
+
+Malformed, incomplete, oversized/deep, wrong-operation, wrong-phase, or
+inconsistent active journals therefore cannot revoke recovery authority or
+turn into a successful cleanup. They produce the fixed
+`RECOVERY_EVIDENCE_INCOMPLETE_ERROR`, preserve the original state and journal
+bytes plus surviving evidence, disable later updater state/metadata writes and
+network/recovery mutation, and leave the frozen Windows Core startup guard
+blocked. Diagnostics remain only bounded, content-free projections of the
+allowlisted error vocabulary.
+
+Operator private-key loading now reads a path once in binary mode with exactly
+one `16 KiB + 1` overflow-sentinel request, rejects empty or oversized input
+with fixed `ManifestError` messages, and parses the bounded bytes. The release
+manifest utility reuses that same bounded byte snapshot after checking for an
+encrypted PKCS8 PEM marker; byte inputs are bounded again by the loader. No
+private-key path, raw key material, or exception text is projected into public
+diagnostics.
+
+On the local Windows host (Python 3.14.3), the integrated focused updater,
+Windows-helper, release-manifest/private-key, and release-keyring suite passed
+281 tests with four expected symlink-capability skips. The full suite passed
+2,587 tests with 13 expected capability skips and two existing deprecation
+warnings. Ruff format/lint, mypy over 107 source files, documentation checks,
+Python package build/resource diagnosis, the source-built desktop build,
+artifact inspection, packaged recovery, and disposable first-run/restart/
+rollback/uninstall smoke all passed. The release keyring validated two public
+keys and audited 575 tracked files with no private-key material detected.
+
+The bounded reads do not add an independent cryptographic parser or CPU/depth
+budget. Journal/path identity checks and atomic writes still do not claim
+handle-based no-follow atomicity across concurrent same-user mutation and the
+final Windows filesystem syscall. These are source-level and disposable local
+results only; hosted checks must bind to the final integrated SHA, and no
+signing, publishing, tagging, Defender change, Microsoft submission, release,
+or downloaded-candidate execution was performed.
+
 ### 2026-09-02 — Updater recovery, keyring, cleanup, and privacy remediation
 
 The updater remediation now requires structurally complete active recovery

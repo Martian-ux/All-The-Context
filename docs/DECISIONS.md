@@ -1,5 +1,56 @@
 # Architecture decisions
 
+## ADR-192: Operator private-key loading is single-pass and bounded
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the integrated commit and PR #110 remains open.
+
+Operator-supplied release private keys are untrusted input at the file
+boundary. `read_private_key_bytes()` opens the path in binary mode and makes
+one bounded read of exactly `16 KiB + 1`; empty input and the overflow sentinel
+map to fixed `ManifestError` messages. `load_private_key()` accepts either a
+path or an already-read byte string and applies the same 16 KiB bound before
+cryptographic parsing. The release-manifest utility checks the encrypted PKCS8
+PEM marker in that bounded snapshot and passes the bytes to the loader, so the
+operator path is not read again through an unbounded API.
+
+This bounds retained key input and keeps failures content-free, but it does
+not claim a separate cryptographic parser, CPU, or depth budget. The private
+key remains an operator-controlled offline secret and is not imported by the
+repository keyring utility. This decision does not create signing,
+publication, release, or vendor acceptance.
+
+## ADR-191: Invalid active recovery journals retain recovery authority
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the integrated commit and PR #110 remains open.
+
+Active `installing` and `restart_required` state remains recovery authority
+even when its journal is malformed or inconsistent. The primary updater first
+checks the expected operation-scoped staging, backup, and transaction paths
+and their physical plain, non-empty evidence, then loads the journal through
+`UpdateJournal.load(..., validate_storage=False)`. That flag only selects the
+cross-platform layout mode needed by the primary updater; it does not bypass
+schema, phase, journal-name/transaction-directory/operation identity,
+absolute-path, operation-contained artifact, backup-containment, or
+storage-chain validation.
+
+The updater additionally reconciles the journal operation, current and target
+versions, offered version, state/database/backup/helper paths, handoff
+identity, and phase against persisted state. Any malformed, incomplete,
+oversized/deep, wrong-operation, wrong-phase, or inconsistent journal returns
+false from the active-evidence predicate. Internal state validation then sets
+the in-memory/public phase to the fixed `RECOVERY_EVIDENCE_INCOMPLETE_ERROR`,
+disables state/metadata writes and subsequent recovery/network mutation, and
+does not save over the original state. The journal and surviving staging or
+transaction evidence remain available for the frozen Windows Core recovery
+guard, which stays blocked. No content or path is placed in public diagnostics.
+
+This narrows journal authority confusion without claiming handle-based
+no-follow atomicity across concurrent same-user filesystem mutation and the
+final Windows syscall. It does not create exact-artifact, signing,
+SmartScreen, Defender, Microsoft, release, or downloaded-candidate acceptance.
+
 ## ADR-190: Globally bounded updater cleanup planning
 
 **Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
