@@ -12,7 +12,8 @@ merged packaged-uninstall observation decision. The follow-up JSON parser
 containment row refers to ADR-186 and preserves the distinct optional-marker
 boundary in ADR-185. The primary updater metadata-authority row refers to
 ADR-187 and starts from the exact `origin/main` merge base
-`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb`.
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb`. Its recovery, keyring, cleanup,
+and privacy remediation is covered by ADR-188.
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;
@@ -60,6 +61,19 @@ persisted identity, signature/keyring, channel, platform, architecture, version,
 and state binding before using URL/size or entering export, preflight, backup,
 or handoff. The signed artifact size is also bounded before use. Unsafe state blocks later writes/network operations and preserves
 recovery evidence; public parser failures remain bounded and content-free.
+
+ADR-188 covers the remediation boundary after that lifecycle hardening:
+incomplete active recovery objects are preserved byte-for-byte and cannot
+trigger cleanup or state saves; the bundled keyring is bounded and
+identity-checked; staging/transaction/export/temporary-file cleanup is bounded
+and race-refusing without recursive path deletion; and all public updater
+errors are fixed or classified without raw manifest values, keyring paths,
+credentials, URLs with credentials, or exception text. Focused updater,
+manifest, and helper tests include real oversized/deep/invalid-UTF8/non-object
+inputs, exact/multibyte reads, non-regular paths, partial active state, root
+replacement, and atomic parent replacement. A source-built disposable Windows
+packaged smoke passed through rollback and uninstall; hosted follow-up evidence
+remains open.
 
 ### 2026-09-02 Primary updater metadata authority containment
 

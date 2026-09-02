@@ -181,6 +181,7 @@ def _atomic_json(
     if not _plain_directory_chain_if_present(path.parent, boundary_code):
         path.parent.mkdir(parents=True, exist_ok=True)
     _plain_directory_chain(path.parent, boundary_code)
+    parent_before = _plain_directory_stat(path.parent, boundary_code)
     _plain_file_stat_if_present(path, boundary_code)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f"{path.name}.", suffix=".atc-new", dir=path.parent
@@ -191,9 +192,14 @@ def _atomic_json(
             stream.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
             stream.flush()
             os.fsync(stream.fileno())
-        _plain_directory_chain(path.parent, boundary_code)
+        parent_after = _plain_directory_stat(path.parent, boundary_code)
+        if not _same_directory(parent_before, parent_after):
+            raise HelperError(boundary_code)
         _plain_file_stat(temporary, boundary_code)
         _plain_file_stat_if_present(path, boundary_code)
+        parent_after = _plain_directory_stat(path.parent, boundary_code)
+        if not _same_directory(parent_before, parent_after):
+            raise HelperError(boundary_code)
         temporary.replace(path)
     except BaseException:
         with suppress(HelperError, OSError):
@@ -428,9 +434,20 @@ def _plain_file_stat_if_present(path: Path, code: str) -> os.stat_result | None:
 
 
 def _unlink_plain_file_if_present(path: Path, code: str) -> None:
-    if _plain_file_stat_if_present(path, code) is not None:
-        _plain_file_stat(path, code)
-        path.unlink()
+    parent_before = _plain_directory_stat(path.parent, code)
+    target_before = _plain_file_stat_if_present(path, code)
+    if target_before is None:
+        return
+    parent_after = _plain_directory_stat(path.parent, code)
+    target_after = _plain_file_stat(path, code)
+    if not _same_directory(parent_before, parent_after) or not _same_file(
+        target_before, target_after
+    ):
+        raise HelperError(code)
+    parent_after = _plain_directory_stat(path.parent, code)
+    if not _same_directory(parent_before, parent_after):
+        raise HelperError(code)
+    path.unlink()
 
 
 def _update_keyring_path() -> Path:
@@ -511,6 +528,16 @@ def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:
         and getattr(observed, "st_nlink", 1) == 1
         and expected.st_size == observed.st_size
         and getattr(expected, "st_mtime_ns", None) == getattr(observed, "st_mtime_ns", None)
+    )
+
+
+def _same_directory(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(same and stat.S_ISDIR(observed.st_mode)) and not bool(
+        getattr(observed, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
     )
 
 

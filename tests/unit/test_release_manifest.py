@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 from allthecontext.release_manifest import (
+    MAX_KEYRING_BYTES,
     ManifestError,
     canonical_payload,
     create_manifest,
+    load_keyring,
     public_key_fingerprint,
     public_key_value,
     verify_manifest,
@@ -67,6 +69,164 @@ def test_manifest_is_deterministic_and_verifies(tmp_path: Path) -> None:
     repeated, _ = _release(tmp_path)
     assert json.dumps(manifest, sort_keys=True) == json.dumps(repeated, sort_keys=True)
     verify_manifest(manifest, keyring, current_version="0.1.0", expected_channel="stable")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"\xff",
+        b"{",
+        b"[]",
+        b'{"value":' + b"9" * 5000 + b"}",
+        b'{"value":' + b"[" * 7000 + b"0" + b"]" * 7000 + b"}",
+    ],
+    ids=["invalid-utf8", "malformed", "non-object", "huge-integer", "deep-nesting"],
+)
+def test_keyring_loader_contains_bounded_parser_failures(tmp_path: Path, raw: bytes) -> None:
+    path = tmp_path / "keys.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(ManifestError, match=r"(decoded safely|JSON object|size limit|schema)"):
+        load_keyring(path)
+
+
+def test_keyring_loader_rejects_oversized_input_without_reading_unbounded(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "keys.json"
+    path.write_bytes(b"{" + b" " * MAX_KEYRING_BYTES)
+
+    with pytest.raises(ManifestError, match="size limit"):
+        load_keyring(path)
+
+
+def test_keyring_loader_reads_exact_limit_plus_one_and_accepts_multibyte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, keyring = _release(tmp_path)
+    encoded = json.dumps(keyring, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    raw = encoded + b" " * (MAX_KEYRING_BYTES - len(encoded))
+    path = tmp_path / "keys.json"
+    path.write_bytes(raw)
+    read_sizes: list[int] = []
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+        def fileno(self) -> int:
+            return self._handle.fileno()  # type: ignore[attr-defined,no-any-return]
+
+    def tracking_open(target: Path, *args: object, **kwargs: object) -> object:
+        handle = original_open(target, *args, **kwargs)
+        return TrackingReader(handle) if target == path else handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    assert load_keyring(path) == keyring
+    assert len(raw) == MAX_KEYRING_BYTES
+    assert read_sizes == [MAX_KEYRING_BYTES + 1]
+
+
+def test_keyring_loader_contains_multibyte_json_at_exact_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = '{"schema_version":1,"keys":[],"extra":"é"}'.encode()
+    raw += b" " * (MAX_KEYRING_BYTES - len(raw))
+    path = tmp_path / "keys.json"
+    path.write_bytes(raw)
+    read_sizes: list[int] = []
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+        def fileno(self) -> int:
+            return self._handle.fileno()  # type: ignore[attr-defined,no-any-return]
+
+    def tracking_open(target: Path, *args: object, **kwargs: object) -> object:
+        handle = original_open(target, *args, **kwargs)
+        return TrackingReader(handle) if target == path else handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+    with pytest.raises(ManifestError, match="schema"):
+        load_keyring(path)
+    assert read_sizes == [MAX_KEYRING_BYTES + 1]
+
+
+def test_keyring_loader_rejects_nonregular_and_symlink_paths(tmp_path: Path) -> None:
+    directory = tmp_path / "keys-directory"
+    directory.mkdir()
+    with pytest.raises(ManifestError, match="trusted plain file"):
+        load_keyring(directory)
+
+    target = tmp_path / "outside-keys.json"
+    target.write_text("{}", encoding="utf-8")
+    link = tmp_path / "keys-link.json"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this filesystem")
+    with pytest.raises(ManifestError, match="trusted plain file"):
+        load_keyring(link)
+    assert target.read_text(encoding="utf-8") == "{}"
+
+
+@pytest.mark.parametrize("control_exception", [SystemExit, KeyboardInterrupt, GeneratorExit])
+def test_keyring_loader_does_not_swallow_process_control_exceptions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    control_exception: type[BaseException],
+) -> None:
+    _, keyring = _release(tmp_path)
+    path = tmp_path / "keys.json"
+    path.write_text(json.dumps(keyring), encoding="utf-8")
+
+    def fail(_value: str) -> object:
+        raise control_exception("sentinel")
+
+    monkeypatch.setattr("allthecontext.release_manifest.json.loads", fail)
+    with pytest.raises(control_exception):
+        load_keyring(path)
+
+
+def test_keyring_loader_does_not_swallow_unexpected_programming_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, keyring = _release(tmp_path)
+    path = tmp_path / "keys.json"
+    path.write_text(json.dumps(keyring), encoding="utf-8")
+
+    def fail(_value: str) -> object:
+        raise RuntimeError("programming failure")
+
+    monkeypatch.setattr("allthecontext.release_manifest.json.loads", fail)
+    with pytest.raises(RuntimeError, match="programming failure"):
+        load_keyring(path)
 
 
 def test_packaged_update_keyring_matches_operator_keyring() -> None:

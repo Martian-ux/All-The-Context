@@ -10,7 +10,9 @@ import base64
 import binascii
 import hashlib
 import json
+import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -27,6 +29,8 @@ SCHEMA_VERSION = 1
 CHANNELS = frozenset({"stable", "beta"})
 PLATFORMS = frozenset({"windows", "macos", "linux"})
 ARCHITECTURES = frozenset({"x86_64", "arm64"})
+MAX_KEYRING_BYTES = 16 * 1024
+WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SHA256_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 KEY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{2,63}")
@@ -222,12 +226,82 @@ def create_manifest(
     return manifest
 
 
-def load_keyring(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+def _keyring_plain_file_stat(path: Path) -> os.stat_result:
+    for directory in reversed((path.parent, *path.parent.parents)):
+        try:
+            value = directory.lstat()
+        except OSError as exc:
+            raise ManifestError("keyring is not a trusted plain file") from exc
+        if bool(
+            getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+        ) or not stat.S_ISDIR(value.st_mode):
+            raise ManifestError("keyring is not a trusted plain file")
+    try:
+        value = path.lstat()
+    except OSError as exc:
+        raise ManifestError("keyring is not a trusted plain file") from exc
+    if (
+        bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
+        or stat.S_ISLNK(value.st_mode)
+        or not stat.S_ISREG(value.st_mode)
+        or getattr(value, "st_nlink", 1) != 1
+    ):
+        raise ManifestError("keyring is not a trusted plain file")
+    return value
+
+
+def _same_keyring_file(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(
+        same
+        and stat.S_ISREG(observed.st_mode)
+        and getattr(observed, "st_nlink", 1) == 1
+        and expected.st_size == observed.st_size
+        and getattr(expected, "st_mtime_ns", None) == getattr(observed, "st_mtime_ns", None)
+    )
+
+
+def _read_keyring_json(path: Path) -> dict[str, Any]:
+    before = _keyring_plain_file_stat(path)
+    if before.st_size > MAX_KEYRING_BYTES:
+        raise ManifestError("keyring exceeds the size limit")
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_KEYRING_BYTES + 1)
+            if len(raw) > MAX_KEYRING_BYTES:
+                raise ManifestError("keyring exceeds the size limit")
+            opened = os.fstat(stream.fileno())
+            if not _same_keyring_file(before, opened):
+                raise ManifestError("keyring changed while it was read")
+            observed = os.fstat(stream.fileno())
+            if not _same_keyring_file(before, observed):
+                raise ManifestError("keyring changed while it was read")
+    except ManifestError:
+        raise
+    except OSError as exc:
+        raise ManifestError("keyring could not be read safely") from exc
+    after = _keyring_plain_file_stat(path)
+    if not _same_keyring_file(before, after):
+        raise ManifestError("keyring changed while it was read")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise ManifestError("keyring could not be decoded safely") from exc
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        raise ManifestError("keyring could not be decoded safely") from exc
     if not isinstance(value, dict):
         raise ManifestError("keyring must be a JSON object")
     validate_keyring(value)
     return cast(dict[str, Any], value)
+
+
+def load_keyring(path: Path) -> dict[str, Any]:
+    return _read_keyring_json(path)
 
 
 def public_key_fingerprint(public_value: str) -> str:

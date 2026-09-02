@@ -1060,6 +1060,115 @@ def test_corrupt_state_preserves_recovery_evidence_and_last_good_file(
     assert evidence_marker.is_file()
 
 
+def test_partial_active_state_preserves_state_and_recovery_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    state_path = updates / "state.json"
+    original_state = b'{"phase":"restart_required"}\n'
+    state_path.write_bytes(original_state)
+    operation_id = "e" * 24
+    staging_marker = updates / "staging" / operation_id / "artifact.zip"
+    staging_marker.parent.mkdir(parents=True)
+    staging_marker.write_bytes(b"recovery staging evidence")
+    journal_marker = updates / "transactions" / operation_id / "journal.json"
+    journal_marker.parent.mkdir(parents=True)
+    journal_marker.write_text('{"phase":"prepared"}', encoding="utf-8")
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager.public_status()["phase"] == "error"
+    assert manager._state_write_allowed is False
+    assert state_path.read_bytes() == original_state
+    assert staging_marker.is_file()
+    assert journal_marker.is_file()
+    assert "restart_required" not in (manager.public_status()["last_error"] or "")
+
+
+def test_public_update_errors_do_not_expose_manifest_or_keyring_details(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    keyring_bytes = keyring.read_bytes()
+    keyring.unlink()
+
+    status = manager.check()
+
+    rendered = json.dumps(status)
+    assert status["phase"] == "error"
+    assert "SECRET_VALUE" not in rendered
+    assert str(keyring) not in rendered
+
+    keyring.write_bytes(keyring_bytes)
+    transport.metadata_bytes = json.dumps({**manifest, "version": "token=SECRET_VALUE"}).encode(
+        "utf-8"
+    )
+    status = manager.check()
+
+    rendered = json.dumps(status)
+    assert status["phase"] == "error"
+    assert "SECRET_VALUE" not in rendered
+    assert str(keyring) not in rendered
+
+
+def test_public_status_sanitizes_persisted_error_and_release_notes_url(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    (updates / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "idle",
+                "current_version": "0.1.0",
+                "last_error": "token=SECRET_VALUE",
+                "release_notes_url": "https://user:password@example.test/private",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    rendered = json.dumps(manager.public_status())
+    assert "SECRET_VALUE" not in rendered
+    assert "password" not in rendered
+    assert manager.public_status()["release_notes_url"] is None
+
+
+def test_prune_directory_refuses_after_deterministic_root_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    orphan = root / "orphan"
+    orphan.mkdir()
+    (orphan / "marker").write_text("keep", encoding="utf-8")
+    replacement = tmp_path / "replacement"
+    replacement_marker = replacement / "outside-marker"
+    original_iterdir = Path.iterdir
+    swapped = False
+
+    def swap_root(path: Path) -> object:
+        nonlocal swapped
+        if path == root and not swapped:
+            swapped = True
+            root.rename(tmp_path / "original-staging")
+            replacement.mkdir()
+            replacement_marker.write_text("outside", encoding="utf-8")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", swap_root)
+
+    assert updater_module.UpdateManager._prune_directory(root, keep=None) is False
+    assert replacement_marker.read_text(encoding="utf-8") == "outside"
+    assert (tmp_path / "original-staging" / "orphan" / "marker").is_file()
+
+
 def test_substituted_persisted_manifest_never_controls_download_transport(
     tmp_path: Path,
 ) -> None:

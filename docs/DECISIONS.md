@@ -1,5 +1,48 @@
 # Architecture decisions
 
+## ADR-188: Updater recovery authority, keyring, cleanup, and public-error containment
+
+**Status:** accepted locally on 2026-09-02 as remediation of the primary
+updater authority boundary; hosted CI and exact-artifact/vendor acceptance
+remain required.
+
+Active `installing` and `restart_required` state is recovery authority, not
+ordinary cache metadata. The primary updater therefore requires the complete
+operation, staged artifact, backup, transaction pointer, manifest identity, and
+signed release-note/version binding needed for the current recovery phase
+before pruning or saving. A parseable but incomplete active object is retained
+byte-for-byte, transitions only the in-memory/public view to a fixed blocked
+error, disables state/network mutation, and preserves all staging and
+transaction evidence for `ensure_recovery_before_core`.
+
+The bundled keyring is untrusted input at its load boundary. It is a bounded
+16 KiB binary read with one overflow sentinel, plain-file/parent-chain and
+single-link checks, descriptor/path identity rechecks, UTF-8 and stdlib JSON
+`ValueError`/`RecursionError` containment, non-object rejection, and the
+existing complete schema validator. Callers receive only the established
+`ManifestError`/`HelperError`/`UpdateError` classes and fixed messages.
+
+Updater cleanup uses bounded, identity-rechecked recursive removal of owned
+plain entries. It never follows symlinks, junctions, or Windows reparse
+points, never uses `shutil.rmtree` for staging/transaction cleanup, and
+refuses ambiguous hardlinks, non-regular entries, replaced roots, and unsafe
+parent chains. Atomic writes and temporary download/export/install cleanup
+revalidate their parent and object identity and retain a residual when safe
+ownership cannot be proven. This is deterministic redirection/race refusal,
+not a claim of handle-based no-follow atomicity across the final Windows
+filesystem syscall.
+
+All updater public error projections are fixed or narrowly classified. Raw
+manifest values, keyring paths, URLs with credentials, credential material,
+and exception text are not written to public `last_error`, installer detail,
+or rollback status. Loopback health contains expected parser-depth failures
+while preserving process-control and unexpected programming failures.
+
+The decision is supported by focused source tests and a disposable
+source-built Windows packaged smoke. It does not create signing, SmartScreen,
+Defender, Microsoft reassessment, publication, release, downloaded-candidate,
+or live-user acceptance.
+
 ## ADR-187: Primary updater metadata is bounded, contained, and revalidated
 
 **Status:** accepted locally on 2026-09-02 from the exact `origin/main` merge

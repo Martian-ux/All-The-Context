@@ -42,6 +42,42 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-02 — Updater recovery, keyring, cleanup, and privacy remediation
+
+The updater remediation now requires structurally complete active recovery
+metadata before any startup cleanup or state save. A parseable partial
+`installing`/`restart_required` state becomes a controlled in-memory error,
+leaves the original state bytes unchanged, disables later updater writes and
+network use, and preserves staging/transaction evidence for the frozen Core
+recovery guard.
+
+The release keyring now has a 16 KiB limit-plus-one binary read, plain-file and
+parent-chain checks, descriptor/path identity checks, UTF-8/JSON parser
+containment, and schema validation through stable `ManifestError` outcomes.
+Updater public state uses fixed or classified allowlisted errors; manifest
+values, keyring paths, credentials, raw exception text, and rollback details
+are not projected into `last_error` or installer detail. Loopback health parsing
+also contains parser-depth failures without swallowing control or programming
+exceptions.
+
+Staging, transaction, export, and temporary installed-file cleanup no longer
+uses recursive path deletion. It removes only verified plain entries, refuses
+reparse/non-regular/hardlinked ambiguity, rechecks directory identity across
+each bounded operation, and leaves residuals when a race cannot be proven safe.
+Atomic metadata writes similarly recheck the parent identity before replacing
+the target. Concurrent same-user mutation between the final check and the
+underlying Windows filesystem syscall remains an explicit residual because the
+cross-platform implementation does not claim handle-based no-follow
+atomicity.
+
+Local source evidence includes 349 focused updater/recovery/manifest/desktop
+tests with six expected capability skips, 2,544 full-suite tests with 13
+expected capability skips, repository Ruff and mypy checks, and a clean
+source-built disposable Windows packaged first-run/restart/rollback/uninstall
+smoke. Hosted CI for the earlier revision remains open pending the pushed
+remediation result. No signing, SmartScreen, Defender, Microsoft submission,
+publishing, release, or downloaded-candidate execution was performed.
+
 ### 2026-09-02 — Primary updater metadata authority containment
 
 The primary `UpdateManager` now routes persisted preferences, state, and

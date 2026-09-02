@@ -965,6 +965,38 @@ def test_failure_before_cutover_never_restores_the_older_database_backup(
     assert launched == ["0.1.0"]
 
 
+def test_atomic_json_refuses_after_deterministic_parent_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "metadata"
+    parent.mkdir()
+    original_parent = tmp_path / "original-metadata"
+    original_marker = original_parent / "original-marker"
+    replacement_marker = parent / "replacement-marker"
+    target = parent / "state.json"
+    original_mkstemp = helper_module.tempfile.mkstemp
+    swapped = False
+
+    def swap_parent(*args: object, **kwargs: object) -> tuple[int, str]:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            parent.rename(original_parent)
+            parent.mkdir()
+            original_marker.write_text("original", encoding="utf-8")
+            replacement_marker.write_text("replacement", encoding="utf-8")
+        return original_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(helper_module.tempfile, "mkstemp", swap_parent)
+
+    with pytest.raises(HelperError):
+        helper_module._atomic_json(target, {"phase": "error"})
+
+    assert original_marker.read_text(encoding="utf-8") == "original"
+    assert replacement_marker.read_text(encoding="utf-8") == "replacement"
+    assert not target.exists()
+
+
 def test_pre_cutover_abort_replay_cannot_resume_forward_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

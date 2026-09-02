@@ -122,6 +122,193 @@ class UpdateBusyError(UpdateError):
     """Another check, download, or install owns the transaction."""
 
 
+_PUBLIC_ERROR_MESSAGES = frozenset(
+    {
+        "Automatic update checks do not support this operating system",
+        "Automatic update checks require a 64-bit application runtime",
+        "Automatic update checks do not support this CPU architecture",
+        "Persisted update metadata could not be saved safely",
+        "The verified update artifact exceeds the safety limit",
+        "The verified update artifact changed while it was checked",
+        "The verified update artifact is unreadable",
+        "Update endpoint has an invalid network port",
+        "Update endpoint must be HTTPS without embedded credentials",
+        "Release download redirect was refused",
+        "Update endpoint redirect was refused",
+        "Update endpoint returned an invalid Content-Length",
+        "Update metadata exceeds the size limit",
+        "Update metadata could not be decoded safely",
+        "Update metadata must be a JSON object",
+        "Release artifact declares an unsupported size",
+        "Release download length differs from signed metadata",
+        "Update download was cancelled",
+        "Release download exceeded its signed size",
+        "Release download was truncated",
+        "Insufficient disk space to stage and recover this update",
+        "Insufficient disk space",
+        "Installed files are locked",
+        "Installer process crashed",
+        "Manual installation is required for this verified update",
+        "The Windows release artifact is not a valid ZIP archive",
+        "Release archive contains an unsafe path",
+        "Release archive expands beyond the safety limit",
+        "Release archive contains multiple Windows setup programs",
+        "Release archive does not contain AllTheContextSetup.exe",
+        "Release artifact exceeded the safety limit at handoff",
+        "The installed update source changed during copy",
+        "Verified release archive evidence is missing at handoff",
+        "The verified release archive changed during handoff",
+        "The verified release archive changed during extraction",
+        "The Windows recovery transaction could not be prepared",
+        "The independent Windows recovery journal is unavailable",
+        "The independent Windows rollback could not be requested",
+        "Core database is unavailable for the required pre-update backup",
+        "Pre-update database backup failed integrity verification",
+        "Persisted update state cannot be changed safely",
+        "Persisted update preferences cannot be changed safely",
+        "Interrupted updater staging could not be cleaned safely",
+        "The interrupted update operation was safely cancelled",
+        "The update did not become healthy; the previous app and vault were restored",
+        "The Windows update recovery journal was invalid",
+        "Persisted update recovery metadata was invalid and was reset safely",
+        "Persisted update recovery metadata was unsafe; recovery evidence was preserved",
+        "The new version failed its health check and was rolled back",
+        "The new version did not become healthy and automatic rollback failed",
+        "Signed update metadata targets a different platform",
+        "Signed update metadata targets a different architecture",
+        "Verified update metadata declares an unsupported artifact size",
+        "Verified update transaction identity is unavailable",
+        "Verified update metadata identity is unavailable",
+        "Verified update metadata could not be re-checked; check again",
+        "Verified update metadata changed; check again",
+        "Verified update state no longer matches its metadata",
+        "Update channel must be stable or beta",
+        "There is no available update to defer",
+        "This compatibility or security update cannot be deferred",
+        "A verified same-version candidate is required before acceptance",
+        "No verified candidate is available for acceptance",
+        "Only an exact same-version signed candidate can be accepted",
+        "Verified candidate version metadata is invalid",
+        "Verified same-version metadata could not be re-checked; check again",
+        "A verified available update is required before download",
+        "The updater staging directory is not a trusted plain directory",
+        "The previous staged artifact is not a plain file",
+        "Release artifact checksum does not match signed metadata",
+        "A completely verified update must be ready before saving",
+        "Verified update artifact is no longer available; download again",
+        "Saved update artifact exceeded its signed size",
+        "Saved update artifact failed signed checksum verification",
+        "A completely verified update must be ready before install",
+        "Verified update artifact identity changed; check again",
+        "Release artifact changed after preflight",
+        "The Core port is invalid for update recovery",
+        "Updater staging cleanup could not be completed safely",
+        "Persisted update state was corrupt and was reset safely",
+        "Persisted update state could not be read safely",
+        "Persisted update state was invalid; recovery evidence was preserved",
+        "Persisted update state could not be read safely; recovery evidence was preserved",
+        "Persisted update paths were invalid and were reset safely",
+        "No HTTPS metadata endpoint is configured for this update channel",
+        "Update endpoint returned HTTP 404",
+        "Persisted updater error was sanitized",
+        "Signed update metadata signature verification failed",
+        "The signing key for update metadata is revoked",
+        "Update metadata has no uniquely trusted signing key",
+        "Signed update metadata is a downgrade or not newer than the installed version",
+        "Signed update metadata violates the requested channel",
+        "Update signing key metadata is invalid",
+        "Update metadata contains an invalid release version",
+        "Update metadata contains an unsafe URL",
+        "Update metadata verification failed",
+        "Update check failed safely",
+        "Update download verification failed safely",
+        "Update download setup failed safely",
+        "Update download failed safely",
+        "Update installation verification failed safely",
+        "Update installation failed safely",
+    }
+)
+
+
+def _public_manifest_error(error: ManifestError) -> str:
+    """Project untrusted manifest/keyring failures into stable public text."""
+
+    detail = str(error).casefold()
+    if "signature" in detail:
+        return "Signed update metadata signature verification failed"
+    if "revoked" in detail:
+        return "The signing key for update metadata is revoked"
+    if "uniquely trusted" in detail:
+        return "Update metadata has no uniquely trusted signing key"
+    if "downgrade" in detail or "newer" in detail:
+        return "Signed update metadata is a downgrade or not newer than the installed version"
+    if "platform" in detail:
+        return "Signed update metadata targets a different platform"
+    if "architecture" in detail:
+        return "Signed update metadata targets a different architecture"
+    if "channel" in detail:
+        return "Signed update metadata violates the requested channel"
+    if "keyring" in detail or "key " in detail or "key metadata" in detail:
+        return "Update signing key metadata is invalid"
+    if "version" in detail:
+        return "Update metadata contains an invalid release version"
+    if "url" in detail or "https" in detail:
+        return "Update metadata contains an unsafe URL"
+    return "Update metadata verification failed"
+
+
+def _public_error_message(error: BaseException, *, fallback: str) -> str:
+    """Return only allowlisted or classified updater text to public state."""
+
+    if isinstance(error, ManifestError):
+        return _public_manifest_error(error)
+    if isinstance(error, UpdateEndpointHttpError):
+        status = error.status_code
+        if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 999:
+            return f"Update endpoint returned HTTP {status}"
+        return fallback
+    message = str(error)
+    if message in _PUBLIC_ERROR_MESSAGES:
+        return message
+    http_prefix = "Update endpoint returned HTTP "
+    status_text = message[len(http_prefix) :]
+    if len(status_text) == 3 and status_text.isdigit():
+        status = int(status_text)
+        if 100 <= status <= 999:
+            return f"Update endpoint returned HTTP {status}"
+    return fallback
+
+
+def _sanitize_persisted_error(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if value in _PUBLIC_ERROR_MESSAGES:
+        return value
+    prefix = "Update endpoint returned HTTP "
+    suffix = value[len(prefix) :] if value.startswith(prefix) else ""
+    if len(suffix) == 3 and suffix.isdigit() and 100 <= int(suffix) <= 999:
+        return value
+    return "Persisted updater error was sanitized"
+
+
+def _safe_public_url(value: str | None) -> str | None:
+    if value is None or len(value) > 2048:
+        return None
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        return None
+    return value
+
+
 class UpdatePhase(StrEnum):
     IDLE = "idle"
     DISABLED = "disabled"
@@ -437,6 +624,66 @@ def _unlink_plain_file(path: Path, message: str) -> None:
         raise UpdateError(message) from exc
 
 
+def _plain_directory_stat_if_present(path: Path) -> os.stat_result | None:
+    try:
+        if not _helper_plain_directory_chain_if_present(path, "metadata_untrusted"):
+            return None
+        value = path.lstat()
+    except FileNotFoundError:
+        return None
+    except (HelperError, OSError):
+        raise
+    if _is_link_or_reparse(value) or not stat.S_ISDIR(value.st_mode):
+        raise HelperError("metadata_untrusted")
+    return value
+
+
+def _same_directory(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(same and stat.S_ISDIR(observed.st_mode) and not _is_link_or_reparse(observed))
+
+
+def _remove_owned_tree(path: Path, *, expected: os.stat_result | None = None) -> bool:
+    """Remove a private tree without traversing reparse or replaced entries."""
+
+    try:
+        current = _plain_directory_stat_if_present(path)
+        if current is None:
+            return True
+        if expected is not None and not _same_directory(expected, current):
+            return False
+        if _is_link_or_reparse(current):
+            path.unlink()
+            return True
+        if not stat.S_ISDIR(current.st_mode):
+            return False
+        directory_stat = current
+        for child in path.iterdir():
+            current_directory = _plain_directory_stat_if_present(path)
+            if current_directory is None or not _same_directory(directory_stat, current_directory):
+                return False
+            child_stat = child.lstat()
+            if _is_link_or_reparse(child_stat) or (
+                stat.S_ISREG(child_stat.st_mode) and getattr(child_stat, "st_nlink", 1) == 1
+            ):
+                child.unlink()
+            elif stat.S_ISDIR(child_stat.st_mode):
+                if not _remove_owned_tree(child, expected=child_stat):
+                    return False
+            else:
+                return False
+        current_directory = _plain_directory_stat_if_present(path)
+        if current_directory is None or not _same_directory(directory_stat, current_directory):
+            return False
+        path.rmdir()
+        return True
+    except (HelperError, OSError):
+        return False
+
+
 def _hash_stable_file(path: Path, *, maximum_bytes: int) -> tuple[str, int]:
     before = _plain_file_stat(path, "The verified update artifact is not a plain file")
     if before.st_size > maximum_bytes:
@@ -692,7 +939,14 @@ class LoopbackHealthProbe:
                     return False
                 value = json.loads(response.read(4097).decode("utf-8"))
             return bool(value == {"status": "ok", "component": "core"})
-        except (OSError, ValueError, UnicodeError, urllib.error.URLError, json.JSONDecodeError):
+        except (
+            OSError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+            urllib.error.URLError,
+            json.JSONDecodeError,
+        ):
             return False
 
 
@@ -811,12 +1065,21 @@ class PlatformInstaller:
 
     @staticmethod
     def _copy_verified(source: Path, target: Path) -> tuple[str, int]:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _prepare_plain_directory(
+            target.parent,
+            "The installed update target directory is not a trusted plain directory",
+        )
+        target_parent = _plain_directory_stat_if_present(target.parent)
+        if target_parent is None:
+            raise UpdateError("The installed update target directory is unavailable")
         temporary = target.with_name(f"{target.name}.atc-new")
-        temporary.unlink(missing_ok=True)
+        _unlink_plain_file(temporary, "The temporary installed update is not a plain file")
         source_stat = _plain_file_stat(source, "The installed update source is not trusted")
         try:
             with source.open("rb") as input_stream, temporary.open("xb") as output_stream:
+                current_parent = _plain_directory_stat_if_present(target.parent)
+                if current_parent is None or not _same_directory(target_parent, current_parent):
+                    raise UpdateError("The installed update target directory changed during copy")
                 if not _same_file(source_stat, os.fstat(input_stream.fileno())):
                     raise UpdateError("The installed update source changed during copy")
                 shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
@@ -830,10 +1093,20 @@ class PlatformInstaller:
             ):
                 raise UpdateError("The installed update source changed during copy")
             digest, size = sha256_file(temporary)
+            current_parent = _plain_directory_stat_if_present(target.parent)
+            if current_parent is None or not _same_directory(target_parent, current_parent):
+                raise UpdateError("The installed update target directory changed during copy")
+            _helper_plain_file_stat_if_present(
+                target, "The installed update target is not a plain file"
+            )
             temporary.replace(target)
             return digest, size
         except BaseException:
-            temporary.unlink(missing_ok=True)
+            with suppress(UpdateError):
+                _unlink_plain_file(
+                    temporary,
+                    "The temporary installed update is not a plain file",
+                )
             raise
 
     def handoff(self, plan: InstallPlan) -> None:
@@ -1155,6 +1428,7 @@ class UpdateManager:
             )
             if any(item is not None and not isinstance(item, str) for item in optional_strings):
                 raise ValueError("invalid state string")
+            state.last_error = _sanitize_persisted_error(state.last_error)
             if not isinstance(state.current_version, str):
                 raise ValueError("invalid current version")
             ReleaseVersion.parse(state.current_version)
@@ -1230,15 +1504,30 @@ class UpdateManager:
                 last_error="Persisted update state was corrupt and was reset safely",
             )
 
+    def _active_recovery_metadata_complete(self) -> bool:
+        if self.state.phase not in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
+            return True
+        return all(
+            value is not None
+            for value in (
+                self.state.offered_version,
+                self.state.release_notes_url,
+                self.state.downloaded_path,
+                self.state.backup_path,
+                self.state.operation_id,
+                self.state.transaction_path,
+                self.state.manifest_identity,
+            )
+        )
+
     def _validate_internal_state(self) -> None:
         invalid = False
-        recovery_fields_present = (
+        recovery_authority_fields_present = (
             self.state.transaction_path is not None
             or self.state.handoff_identity is not None
             or self.state.pending_handoff_identity is not None
-            or self.state.completed_handoff_identity is not None
         )
-        active_recovery = recovery_fields_present or self.state.phase in {
+        active_recovery = recovery_authority_fields_present or self.state.phase in {
             UpdatePhase.INSTALLING,
             UpdatePhase.RESTART_REQUIRED,
         }
@@ -1249,6 +1538,26 @@ class UpdateManager:
             self.state.last_error = (
                 "Persisted update recovery metadata was unsafe; recovery evidence was preserved"
             )
+
+        if not self._active_recovery_metadata_complete():
+            preserve_recovery_authority()
+            return
+        if recovery_authority_fields_present and self.state.phase not in {
+            UpdatePhase.INSTALLING,
+            UpdatePhase.RESTART_REQUIRED,
+        }:
+            preserve_recovery_authority()
+            return
+
+        if (
+            self.state.release_notes_url is not None
+            and _safe_public_url(self.state.release_notes_url) is None
+        ):
+            if active_recovery:
+                preserve_recovery_authority()
+                return
+            self.state.release_notes_url = None
+            invalid = True
 
         operation = self.state.operation_id
         expected_artifact = (
@@ -1332,8 +1641,12 @@ class UpdateManager:
             and self.config.manifest_urls.get("beta") == DEFAULT_BETA_MANIFEST_URL
         )
 
-    def _set_unpublished_channel_state(self) -> None:
-        self._clean_operation()
+    def _set_unpublished_channel_state(self) -> bool:
+        if not self._clean_operation():
+            self._state_write_allowed = False
+            self.state.phase = UpdatePhase.ERROR
+            self.state.last_error = "Updater staging cleanup could not be completed safely"
+            return False
         self.state.phase = UpdatePhase.UNPUBLISHED
         self.state.offered_version = None
         self.state.mandatory = False
@@ -1345,6 +1658,7 @@ class UpdateManager:
         self.state.pending_handoff_identity = None
         self.state.completed_handoff_identity = None
         self.state.last_error = None
+        return True
 
     def _normalize_unpublished_channel_state(self) -> None:
         if (
@@ -1387,7 +1701,11 @@ class UpdateManager:
 
     def _recover_interrupted(self) -> None:
         if self.state.phase in {UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING}:
-            self._clean_operation()
+            if not self._clean_operation():
+                self._state_write_allowed = False
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = "Interrupted updater staging could not be cleaned safely"
+                return
             self.state.phase = UpdatePhase.CANCELLED
             self.state.last_error = "The interrupted update operation was safely cancelled"
             self._save()
@@ -1465,12 +1783,11 @@ class UpdateManager:
                 self.state.handoff_identity = None
                 self.state.pending_handoff_identity = None
                 self.state.completed_handoff_identity = None
-            except UpdateError as exc:
+            except UpdateError:
                 self.state.phase = UpdatePhase.ERROR
                 self.state.last_error = (
-                    "The new version did not become healthy and automatic rollback failed: "
-                    + str(exc)
-                )[:500]
+                    "The new version did not become healthy and automatic rollback failed"
+                )
             self._save()
             return self.public_status()
 
@@ -1545,64 +1862,62 @@ class UpdateManager:
             ) from exc
         return manifest
 
-    def _clean_operation(self) -> None:
+    def _clean_operation(self) -> bool:
         operation = self._operation_directory()
         try:
-            if _helper_plain_directory_chain_if_present(operation, "metadata_untrusted"):
-                value = operation.lstat()
-                if (
-                    not _is_link_or_reparse(value)
-                    and stat.S_ISDIR(value.st_mode)
-                    and getattr(value, "st_nlink", 1) == 1
-                ):
-                    shutil.rmtree(operation)
+            operation_stat = _plain_directory_stat_if_present(operation)
+            if operation_stat is not None and not _remove_owned_tree(
+                operation, expected=operation_stat
+            ):
+                return False
         except (HelperError, OSError):
-            # A hostile or racing staging tree is not safe to clean up here.
-            pass
+            return False
         self.state.downloaded_path = None
+        return True
 
     @staticmethod
-    def _prune_directory(root: Path, *, keep: str | None) -> None:
+    def _prune_directory(root: Path, *, keep: str | None) -> bool:
         """Remove at most a bounded number of private orphan entries."""
 
         try:
-            if not _helper_plain_directory_chain_if_present(root, "metadata_untrusted"):
-                return
-            root_stat = root.lstat()
+            root_stat = _plain_directory_stat_if_present(root)
         except (HelperError, OSError):
-            return
-        if _is_link_or_reparse(root_stat) or not stat.S_ISDIR(root_stat.st_mode):
-            return
+            return False
+        if root_stat is None:
+            return True
         removed = 0
         try:
-            entries = root.iterdir()
-            for entry in entries:
+            for entry in root.iterdir():
                 if removed >= MAX_CLEANUP_ENTRIES:
                     break
+                current_root = _plain_directory_stat_if_present(root)
+                if current_root is None or not _same_directory(root_stat, current_root):
+                    return False
                 if keep is not None and entry.name == keep:
                     continue
                 try:
                     entry_stat = entry.lstat()
-                    if _is_link_or_reparse(entry_stat):
-                        entry.unlink()
-                    elif (
-                        stat.S_ISDIR(entry_stat.st_mode) and getattr(entry_stat, "st_nlink", 1) == 1
-                    ):
-                        shutil.rmtree(entry)
-                    elif (
+                    if _is_link_or_reparse(entry_stat) or (
                         stat.S_ISREG(entry_stat.st_mode) and getattr(entry_stat, "st_nlink", 1) == 1
                     ):
-                        entry.unlink(missing_ok=True)
+                        entry.unlink()
+                    elif stat.S_ISDIR(entry_stat.st_mode):
+                        if not _remove_owned_tree(entry, expected=entry_stat):
+                            return False
+                    else:
+                        return False
                 except OSError:
-                    continue
+                    return False
                 removed += 1
         except OSError:
-            return
+            return False
+        return True
 
     def public_status(self) -> dict[str, Any]:
         with self._operation_lock:
             result = asdict(self.state)
             result["phase"] = self.state.phase.value
+            result["release_notes_url"] = _safe_public_url(self.state.release_notes_url)
             result.update(
                 {
                     "enabled": self.preferences.enabled,
@@ -1614,7 +1929,10 @@ class UpdateManager:
                     "installer_detail": (
                         "Packaged update can restart into the verified installer"
                         if self.installer.supported
-                        else self.installer.unsupported_reason
+                        else _public_error_message(
+                            UpdateError(self.installer.unsupported_reason),
+                            fallback="Manual installation is required for this verified update",
+                        )
                     ),
                     "configured": self.preferences.channel in self.config.manifest_urls,
                     "available_channels": sorted(self.config.manifest_urls),
@@ -1639,11 +1957,18 @@ class UpdateManager:
             self._require_metadata_writes_allowed(preferences=True)
             channel_changed = channel != self.preferences.channel
             next_preferences = UpdatePreferences(enabled, channel, None)
+            cleanup_failed = channel_changed and (
+                not self._clean_operation()
+                or not self._prune_directory(self.config.data_dir / "staging", keep=None)
+            )
+            if cleanup_failed:
+                self._state_write_allowed = False
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = "Updater staging cleanup could not be completed safely"
+                raise UpdateError("Updater staging cleanup could not be completed safely")
             self._atomic_json(self.preferences_path, asdict(next_preferences))
             self.preferences = next_preferences
             if channel_changed:
-                self._clean_operation()
-                self._prune_directory(self.config.data_dir / "staging", keep=None)
                 self.state.offered_version = None
                 self.state.mandatory = False
                 self.state.release_notes_url = None
@@ -1774,7 +2099,9 @@ class UpdateManager:
                     self.state.last_checked_at = _utc_now()
                 else:
                     self.state.phase = UpdatePhase.ERROR
-                    self.state.last_error = str(exc)[:500]
+                    self.state.last_error = _public_error_message(
+                        exc, fallback="Update check failed safely"
+                    )
                     self.state.last_checked_at = _utc_now()
                 self._save()
                 return self.public_status()
@@ -1788,7 +2115,9 @@ class UpdateManager:
                 UpdateError,
             ) as exc:
                 self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = str(exc)[:500]
+                self.state.last_error = _public_error_message(
+                    exc, fallback="Update check failed safely"
+                )
                 self.state.last_checked_at = _utc_now()
                 self._save()
                 return self.public_status()
@@ -1841,7 +2170,9 @@ class UpdateManager:
                 manifest = self._revalidate_persisted_manifest()
             except UpdateError as exc:
                 self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = str(exc)[:500]
+                self.state.last_error = _public_error_message(
+                    exc, fallback="Update download verification failed safely"
+                )
                 self.state.downloaded_path = None
                 self._save()
                 return self.public_status()
@@ -1854,7 +2185,9 @@ class UpdateManager:
                 _unlink_plain_file(target, "The previous staged artifact is not a plain file")
             except UpdateError as exc:
                 self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = str(exc)[:500]
+                self.state.last_error = _public_error_message(
+                    exc, fallback="Update download setup failed safely"
+                )
                 self.state.downloaded_path = None
                 self._save()
                 return self.public_status()
@@ -1876,7 +2209,10 @@ class UpdateManager:
                     UpdatePhase.READY if self.installer.supported else UpdatePhase.MANUAL_REQUIRED
                 )
                 if not self.installer.supported:
-                    self.state.last_error = self.installer.unsupported_reason
+                    self.state.last_error = _public_error_message(
+                        UpdateError(self.installer.unsupported_reason),
+                        fallback="Manual installation is required for this verified update",
+                    )
                 self._save()
                 return self.public_status()
             except (OSError, UpdateError) as exc:
@@ -1886,7 +2222,9 @@ class UpdateManager:
                 self.state.phase = (
                     UpdatePhase.CANCELLED if "cancel" in str(exc).casefold() else UpdatePhase.ERROR
                 )
-                self.state.last_error = str(exc)[:500]
+                self.state.last_error = _public_error_message(
+                    exc, fallback="Update download failed safely"
+                )
                 self._save()
                 return self.public_status()
 
@@ -1950,7 +2288,11 @@ class UpdateManager:
             except BaseException:
                 with suppress(OSError):
                     os.close(descriptor)
-                export_path.unlink(missing_ok=True)
+                with suppress(UpdateError):
+                    _unlink_plain_file(
+                        export_path,
+                        "The temporary exported artifact is not a plain file",
+                    )
                 raise
             filename = (
                 f"all-the-context-{manifest['version']}-{manifest['platform']}-"
@@ -1985,7 +2327,9 @@ class UpdateManager:
                 UpdateError,
             ) as exc:
                 self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = str(exc)[:500]
+                self.state.last_error = _public_error_message(
+                    exc, fallback="Update installation verification failed safely"
+                )
                 self.state.downloaded_path = None
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
@@ -2048,7 +2392,9 @@ class UpdateManager:
                 return self.public_status()
             except (OSError, ValueError, UpdateError) as exc:
                 self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = str(exc)[:500]
+                self.state.last_error = _public_error_message(
+                    exc, fallback="Update installation failed safely"
+                )
                 self.state.downloaded_path = None
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
