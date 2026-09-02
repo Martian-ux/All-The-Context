@@ -101,6 +101,41 @@ evidence for this boundary. It does not claim signing, SmartScreen reputation,
 Defender acceptance, Microsoft submission, publishing, release readiness, or
 end-user dogfood.
 
+## ADR-186: Bounded updater/recovery JSON parser failures are helper errors
+
+**Status:** accepted locally on 2026-09-02 as a follow-up to ADR-184/ADR-185;
+hosted, exact-artifact, and vendor acceptance remain required.
+
+Windows updater and recovery JSON is authority-bearing input, but its existing
+byte limits do not prevent every parser exception. CPython can raise `ValueError`
+when converting an integer beyond the configured digit limit, and deeply nested
+JSON can raise `RecursionError`; invalid UTF-8 and malformed JSON are separate
+decode/parser failures. `_decode_json()` handles only those parser/resource
+exceptions at the `json.loads()` boundary and maps them to the existing fixed
+`metadata_unreadable` `HelperError`. A non-dict root remains the existing
+`metadata_invalid` result. It does not catch `SystemExit`, `KeyboardInterrupt`,
+`GeneratorExit`, arbitrary `Exception`, or `BaseException`, so process-control
+and unexpected programming failures are not silently converted.
+
+`_read_json()` retains the PR #108 I/O contract: the pre-read stat rejects a
+file over its configured limit, the one binary read requests exactly limit plus
+one sentinel byte, and no unbounded follow-up read is added. Exact byte-limit,
+over-limit, multibyte-boundary, huge-integer, deep-nesting, malformed, invalid
+UTF-8, and non-dict inputs are covered by deterministic tests using the real
+stdlib parser. Every caller is intentionally kept on its existing control-flow
+boundary: frozen startup blocks and leaves state/vault untouched; staging
+evidence refuses the pre-cutover reset; journal/state entry points retain
+`metadata_unreadable`; child report failures trigger the existing rollback and
+exit code; and informational diagnostics return only fixed bounded projections.
+
+This is parser exception containment, not a new structural JSON depth or CPU
+budget and not a guarantee against concurrent same-user file mutation between
+the existing filesystem checks and reads. Authority-changing serialization and
+rollback failures remain fatal/controlled according to their existing paths.
+The evidence is local source/test coverage only; it claims no signing,
+SmartScreen reputation, Defender clearance, Microsoft submission, publication,
+release readiness, or downloaded-candidate execution.
+
 ## ADR-183: Packaged uninstall smoke observes the full cleanup contract
 
 **Status:** accepted locally on 2026-09-01 after exact protected-main Windows

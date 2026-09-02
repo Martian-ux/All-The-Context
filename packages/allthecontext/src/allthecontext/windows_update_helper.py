@@ -147,6 +147,27 @@ class HelperError(RuntimeError):
         self.code = code
 
 
+def _decode_json(raw: bytes) -> object:
+    """Decode one already-bounded JSON payload into an untrusted value.
+
+    Keep parser exception handling next to the parser invocation.  In
+    particular, CPython can raise ``ValueError`` for its integer digit limit
+    and ``RecursionError`` for deeply nested JSON; neither is an I/O error and
+    neither should escape a bounded metadata boundary.  Do not broaden this
+    to ``Exception`` or ``BaseException``: unexpected implementation failures
+    and process-control exceptions must retain their normal behavior.
+    """
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise HelperError("metadata_unreadable") from exc
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        raise HelperError("metadata_unreadable") from exc
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -193,11 +214,11 @@ def _read_json(
             raw = stream.read(maximum_bytes + 1)
         if len(raw) > maximum_bytes:
             raise HelperError("metadata_too_large")
-        value = json.loads(raw.decode("utf-8"))
     except HelperError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except OSError as exc:
         raise HelperError("metadata_unreadable") from exc
+    value = _decode_json(raw)
     if not isinstance(value, dict):
         raise HelperError("metadata_invalid")
     return cast(dict[str, Any], value)
