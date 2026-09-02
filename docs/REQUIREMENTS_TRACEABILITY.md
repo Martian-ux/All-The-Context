@@ -8,7 +8,9 @@ evidence for this checkout.
 
 The UPDATER-04 and UPDATER-05 rows below refer to ADR-184, the startup-
 recovery decision in this checkout. ADR-183 is retained for the separately
-merged packaged-uninstall observation decision.
+merged packaged-uninstall observation decision. The follow-up JSON parser
+containment row refers to ADR-186 and preserves the distinct optional-marker
+boundary in ADR-185.
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;
@@ -39,6 +41,19 @@ Prospective write targets may create only a contiguous missing tail below the
 deepest verified plain ancestor, one component at a time, followed by complete
 chain revalidation before the write or child launch; existing reparse paths are
 not treated as missing.
+
+ADR-186 covers parser failures after those bounded reads. The decoder maps
+invalid UTF-8, malformed JSON, integer digit-limit `ValueError`, and deep-parser
+`RecursionError` to `metadata_unreadable`, retains `metadata_invalid` for
+non-dict roots, catches no process-control or arbitrary programming exception,
+and leaves the limit-plus-one read contract unchanged. Caller outcomes remain
+fail-closed or controlled at their existing authority boundary.
+
+### 2026-09-02 Windows updater/recovery JSON parser containment
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| UPDATER-06 — bounded authority-bearing updater/recovery JSON must not escape parser failures | `windows_update_helper.py::_decode_json`; `windows_update_helper.py::_read_json`; `tests/unit/test_windows_update_helper.py::test_read_json_contains_real_parser_failures`; `test_read_json_classifies_utf8_json_and_root_failures`; `test_read_json_accepts_exact_byte_limit_with_multibyte_utf8`; `test_read_json_handles_multibyte_boundary_without_overread`; `test_json_decoder_does_not_swallow_process_control_exceptions`; `test_json_decoder_does_not_swallow_unexpected_programming_errors`; `test_frozen_core_guard_contains_real_pathological_state_json`; `test_pre_cutover_staging_parser_failure_refuses_state_reset`; `test_journal_entry_points_contain_pathological_json`; `test_application_state_callers_preserve_parser_error_classification`; `test_run_transaction_contains_pathological_child_reports`; `tests/unit/test_recovery_admin.py::test_recovery_doctor_contains_untrusted_startup_marker`; `test_packaged_core_startup_contains_real_pathological_state_json`; ADR-186 | Implemented and locally tested. Real stdlib `json.loads` huge-integer and deep-nesting failures, malformed/invalid UTF-8 inputs, non-dict roots, exact/over-limit and multibyte-boundary cases normalize or classify through the existing bounded `HelperError` vocabulary. Frozen packaged Core blocks before Core/vault startup; staging reset is refused; journal/state callers preserve `metadata_unreadable`; apply, diagnostics, and health report failures return the existing rollback code and restore logical vault/binary state; journal-failure and recovery-doctor projections remain fixed and sanitized. The reader still requests at most configured limit plus one sentinel byte. On Python 3.14.3/Windows, the focused updater/recovery/desktop command passed 263 tests with three expected platform-capability skips and the full suite passed 2,504 tests with 10 expected platform-capability skips; Ruff, mypy, and documentation checks passed. Local evidence is source/test coverage only; no parser depth/CPU guarantee, handle-based TOCTOU guarantee, hosted/exact-artifact/package, signing, SmartScreen, Defender, Microsoft, release, or candidate-execution acceptance is claimed |
 
 ### 2026-09-01 Windows startup/recovery containment and rollback preservation
 

@@ -46,6 +46,14 @@ def _seed_vault(data_dir: Path, *, content: str = "Prefer fiction recovery short
     return observation.record_id
 
 
+def _pathological_json(kind: str) -> bytes:
+    if kind == "huge_integer":
+        return b'{"value":' + b"9" * 5_000 + b"}"
+    if kind == "deep_nesting":
+        return b'{"value":' + b"[" * 30_000 + b"0" + b"]" * 30_000 + b"}"
+    raise AssertionError(kind)
+
+
 def _logical_vault_fingerprint(database: Path) -> str:
     """Content-derived fingerprint of vault identity + durable rows (no raw text)."""
 
@@ -648,7 +656,9 @@ def test_desktop_recovery_doctor_rejects_unallowlisted_startup_code(
     }
 
 
-@pytest.mark.parametrize("marker_kind", ["malformed", "oversized", "non_regular"])
+@pytest.mark.parametrize(
+    "marker_kind", ["malformed", "invalid_utf8", "huge_integer", "oversized", "non_regular"]
+)
 def test_recovery_doctor_contains_untrusted_startup_marker(
     tmp_path: Path, marker_kind: str
 ) -> None:
@@ -658,6 +668,10 @@ def test_recovery_doctor_contains_untrusted_startup_marker(
     marker = updates / "startup-recovery.json"
     if marker_kind == "malformed":
         marker.write_bytes(b"{ malformed")
+    elif marker_kind == "invalid_utf8":
+        marker.write_bytes(b"\xff")
+    elif marker_kind == "huge_integer":
+        marker.write_bytes(_pathological_json("huge_integer"))
     elif marker_kind == "oversized":
         marker.write_bytes(b"x" * (helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES + 1))
     else:
@@ -669,6 +683,43 @@ def test_recovery_doctor_contains_untrusted_startup_marker(
         "status": "unreadable",
         "code": "diagnostic_unreadable",
     }
+
+
+@pytest.mark.parametrize("kind", ["huge_integer", "deep_nesting"])
+def test_packaged_core_startup_contains_real_pathological_state_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+) -> None:
+    data_dir = tmp_path / "vault"
+    _seed_vault(data_dir)
+    updates = data_dir / "updates"
+    updates.mkdir()
+    state_path = updates / "state.json"
+    raw = _pathological_json(kind)
+    state_path.write_bytes(raw)
+    database = data_dir / "core.sqlite3"
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(helper_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert desktop_main(["--core"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    assert state_path.read_bytes() == raw
+    connection = sqlite3.connect(database)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM context_records").fetchone() == (1,)
+    finally:
+        connection.close()
+    diagnostic = json.loads(
+        (updates / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(encoding="utf-8")
+    )
+    assert diagnostic["status"] == "blocked"
+    assert diagnostic["code"] == "metadata_unreadable"
+    assert "value" not in json.dumps(diagnostic)
 
 
 def test_packaged_core_startup_contains_diagnostic_write_failure(

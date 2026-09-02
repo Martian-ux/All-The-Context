@@ -24,6 +24,7 @@ from allthecontext.windows_update_helper import (
     UpdateJournal,
     ensure_recovery_before_core,
     journal_failure_diagnostic,
+    main,
     run_transaction,
     startup_recovery_diagnostic,
 )
@@ -33,6 +34,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 def _digest(path: Path) -> tuple[str, int]:
     value = path.read_bytes()
     return hashlib.sha256(value).hexdigest(), len(value)
+
+
+def _pathological_json(kind: str) -> bytes:
+    if kind == "huge_integer":
+        return b'{"value":' + b"9" * 5_000 + b"}"
+    if kind == "deep_nesting":
+        return b'{"value":' + b"[" * 30_000 + b"0" + b"]" * 30_000 + b"}"
+    raise AssertionError(kind)
 
 
 def _signed_staging(
@@ -260,10 +269,111 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
     )
 
 
+@pytest.mark.parametrize(
+    ("kind", "parser_error"),
+    [
+        ("huge_integer", ValueError),
+        ("deep_nesting", RecursionError),
+    ],
+)
+def test_read_json_contains_real_parser_failures(
+    tmp_path: Path, kind: str, parser_error: type[Exception]
+) -> None:
+    path = tmp_path / "metadata.json"
+    raw = _pathological_json(kind)
+    assert len(raw) <= helper_module.MAX_STATE_BYTES
+    with pytest.raises(parser_error):
+        json.loads(raw.decode("utf-8"))
+    path.write_bytes(raw)
+
+    with pytest.raises(HelperError, match="metadata_unreadable"):
+        helper_module._read_json(path, helper_module.MAX_STATE_BYTES)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_code"),
+    [
+        (b"{ malformed", "metadata_unreadable"),
+        (b"\xff", "metadata_unreadable"),
+        (b"[]", "metadata_invalid"),
+    ],
+)
+def test_read_json_classifies_utf8_json_and_root_failures(
+    tmp_path: Path, raw: bytes, expected_code: str
+) -> None:
+    path = tmp_path / "metadata.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(HelperError) as raised:
+        helper_module._read_json(path, helper_module.MAX_STATE_BYTES)
+
+    assert raised.value.code == expected_code
+
+
+def test_read_json_accepts_exact_byte_limit_with_multibyte_utf8(tmp_path: Path) -> None:
+    maximum = 64
+    prefix = b'{"value":"'
+    suffix = b'"}'
+    value_bytes = maximum - len(prefix) - len(suffix)
+    assert value_bytes % len("é".encode()) == 0
+    raw = prefix + "é".encode() * (value_bytes // 2) + suffix
+    path = tmp_path / "metadata.json"
+    path.write_bytes(raw)
+
+    assert len(raw) == maximum
+    assert helper_module._read_json(path, maximum) == {"value": "é" * (value_bytes // 2)}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_code"),
+    [
+        (b'{"value":"' + b"a" * 53 + b"\xc3", "metadata_unreadable"),
+        (b'{"value":"' + b"a" * 54 + "é".encode() + b'"}', "metadata_too_large"),
+    ],
+)
+def test_read_json_handles_multibyte_boundary_without_overread(
+    tmp_path: Path, raw: bytes, expected_code: str
+) -> None:
+    maximum = 64
+    path = tmp_path / "metadata.json"
+    path.write_bytes(raw)
+
+    assert len(raw) in {maximum, maximum + 4}
+    with pytest.raises(HelperError, match=expected_code):
+        helper_module._read_json(path, maximum)
+
+
+@pytest.mark.parametrize("control_exception", [SystemExit, KeyboardInterrupt, GeneratorExit])
+def test_json_decoder_does_not_swallow_process_control_exceptions(
+    monkeypatch: pytest.MonkeyPatch, control_exception: type[BaseException]
+) -> None:
+    def fail(_value: str) -> object:
+        raise control_exception("sentinel")
+
+    monkeypatch.setattr(helper_module.json, "loads", fail)
+
+    with pytest.raises(control_exception):
+        helper_module._decode_json(b"{}")
+
+
+def test_json_decoder_does_not_swallow_unexpected_programming_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_value: str) -> object:
+        raise RuntimeError("programming failure")
+
+    monkeypatch.setattr(helper_module.json, "loads", fail)
+
+    with pytest.raises(RuntimeError, match="programming failure"):
+        helper_module._decode_json(b"{}")
+
+
 def _fake_commands(
     fixture: TransactionFixture,
     *,
     health_result: int = 0,
+    hostile_report_phase: str | None = None,
+    hostile_report: bytes | None = None,
 ) -> Callable[[tuple[str, ...], dict[str, str]], int]:
     def run(command: tuple[str, ...], _environment: dict[str, str]) -> int:
         if "--apply-update" in command:
@@ -276,42 +386,51 @@ def _fake_commands(
             recovery_digest, recovery_size = _digest(fixture.recovery)
             update_digest, update_size = _digest(fixture.update_helper)
             report = Path(command[-1])
-            report.write_text(
-                json.dumps(
-                    {
-                        "status": "installed",
-                        "version": "0.2.0",
-                        "application": str(fixture.application),
-                        "application_sha256": application_digest,
-                        "application_size": application_size,
-                        "mcp": str(fixture.mcp),
-                        "mcp_sha256": mcp_digest,
-                        "mcp_size": mcp_size,
-                        "recovery": str(fixture.recovery),
-                        "recovery_sha256": recovery_digest,
-                        "recovery_size": recovery_size,
-                        "update_helper": str(fixture.update_helper),
-                        "update_helper_sha256": update_digest,
-                        "update_helper_size": update_size,
-                    }
-                ),
-                encoding="utf-8",
-            )
+            if hostile_report_phase == "apply":
+                assert hostile_report is not None
+                report.write_bytes(hostile_report)
+            else:
+                report.write_text(
+                    json.dumps(
+                        {
+                            "status": "installed",
+                            "version": "0.2.0",
+                            "application": str(fixture.application),
+                            "application_sha256": application_digest,
+                            "application_size": application_size,
+                            "mcp": str(fixture.mcp),
+                            "mcp_sha256": mcp_digest,
+                            "mcp_size": mcp_size,
+                            "recovery": str(fixture.recovery),
+                            "recovery_sha256": recovery_digest,
+                            "recovery_size": recovery_size,
+                            "update_helper": str(fixture.update_helper),
+                            "update_helper_sha256": update_digest,
+                            "update_helper_size": update_size,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
             return 0
         if "--diagnostics" in command:
-            Path(command[-1]).write_text(
-                json.dumps(
-                    {
-                        "application": "All The Context",
-                        "version": "0.2.0",
-                        "frozen": True,
-                        "mcp_helper_bundled": True,
-                        "recovery_helper_bundled": True,
-                        "update_helper_bundled": True,
-                    }
-                ),
-                encoding="utf-8",
-            )
+            report = Path(command[-1])
+            if hostile_report_phase == "diagnostics":
+                assert hostile_report is not None
+                report.write_bytes(hostile_report)
+            else:
+                report.write_text(
+                    json.dumps(
+                        {
+                            "application": "All The Context",
+                            "version": "0.2.0",
+                            "frozen": True,
+                            "mcp_helper_bundled": True,
+                            "recovery_helper_bundled": True,
+                            "update_helper_bundled": True,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
             return 0
         if "--update-health-check" in command:
             connection = sqlite3.connect(fixture.database)
@@ -322,10 +441,15 @@ def _fake_commands(
             finally:
                 connection.close()
             if health_result == 0:
-                Path(command[-1]).write_text(
-                    json.dumps({"component": "core", "health": "ok", "version": "0.2.0"}),
-                    encoding="utf-8",
-                )
+                report = Path(command[-1])
+                if hostile_report_phase == "health":
+                    assert hostile_report is not None
+                    report.write_bytes(hostile_report)
+                else:
+                    report.write_text(
+                        json.dumps({"component": "core", "health": "ok", "version": "0.2.0"}),
+                        encoding="utf-8",
+                    )
             return health_result
         raise AssertionError(command)
 
@@ -375,6 +499,52 @@ def test_independent_helper_commits_after_real_state_and_database_transition(
     assert run_transaction(fixture.journal_path) == 0
     replayed_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
     assert replayed_state["transaction_path"] is None
+
+
+@pytest.mark.parametrize("hostile_report_phase", ["apply", "diagnostics", "health"])
+def test_run_transaction_contains_pathological_child_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hostile_report_phase: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(
+        helper_module,
+        "_run_bounded",
+        _fake_commands(
+            fixture,
+            hostile_report_phase=hostile_report_phase,
+            hostile_report=_pathological_json("huge_integer"),
+        ),
+    )
+
+    assert run_transaction(fixture.journal_path) == 2
+    journal = UpdateJournal.load(fixture.journal_path)
+    assert journal.phase is HelperPhase.ROLLED_BACK
+    assert journal.last_error_code == "metadata_unreadable"
+    assert fixture.application.read_bytes() == fixture.old_application
+    assert fixture.mcp.read_bytes() == fixture.old_mcp
+    assert fixture.recovery.read_bytes() == fixture.old_recovery
+    assert fixture.update_helper.read_bytes() == fixture.old_update_helper
+    assert fixture.database.is_file()
+    connection = sqlite3.connect(fixture.database)
+    try:
+        assert connection.execute("SELECT value FROM facts").fetchall() == [("before",)]
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'migrated'"
+            ).fetchone()
+            is None
+        )
+    finally:
+        connection.close()
+    assert launched == ["0.1.0"]
+    report_name = {
+        "apply": "apply-report.json",
+        "diagnostics": "diagnostics.json",
+        "health": "health.json",
+    }[hostile_report_phase]
+    assert not (fixture.journal_path.parent / report_name).exists()
 
 
 def test_windows_liveness_probe_observes_without_signalling_current_process() -> None:
@@ -1716,6 +1886,66 @@ def test_core_start_guard_blocks_unreadable_state_and_records_safe_diagnostic(
     assert "application_path" not in json.dumps(diagnostic)
 
 
+@pytest.mark.parametrize("kind", ["huge_integer", "deep_nesting"])
+def test_frozen_core_guard_contains_real_pathological_state_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    raw = _pathological_json(kind)
+    fixture.state_path.write_bytes(raw)
+    original_database = fixture.database.read_bytes()
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal: launched.append((helper, journal)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == []
+    assert fixture.state_path.read_bytes() == raw
+    assert fixture.database.read_bytes() == original_database
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic == {
+        "schema_version": 1,
+        "status": "blocked",
+        "code": "metadata_unreadable",
+        "phase": None,
+        "updated_at": diagnostic["updated_at"],
+    }
+    assert "value" not in json.dumps(diagnostic)
+
+
+@pytest.mark.parametrize("kind", ["huge_integer", "deep_nesting"])
+def test_pre_cutover_staging_parser_failure_refuses_state_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _, manifest_path, _ = _signed_staging(fixture, monkeypatch)
+    manifest_path.write_bytes(_pathological_json(kind))
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["manifest_identity"] = _digest(manifest_path)[0]
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    shutil.rmtree(fixture.journal_path.parent)
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "pre_cutover_evidence_missing"
+    assert "value" not in json.dumps(diagnostic)
+
+
 def test_core_start_guard_blocks_invalid_journal_and_keeps_core_down(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1887,3 +2117,56 @@ def test_journal_failure_diagnostic_is_bounded_and_non_sensitive(tmp_path: Path)
     assert journal_failure_diagnostic(journal) == (
         '{"last_error_code": "invalid", "phase": "invalid", "schema_version": "invalid"}'
     )
+
+
+@pytest.mark.parametrize("kind", ["huge_integer", "deep_nesting"])
+def test_journal_entry_points_contain_pathological_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    raw = _pathological_json(kind)
+    fixture.journal_path.write_bytes(raw)
+
+    with pytest.raises(HelperError) as raised:
+        UpdateJournal.load(fixture.journal_path)
+    assert raised.value.code == "metadata_unreadable"
+    assert helper_module.transaction_outcome(fixture.journal_path) == "failed"
+    assert journal_failure_diagnostic(fixture.journal_path) == (
+        '{"journal_status": "metadata_unreadable"}'
+    )
+    with pytest.raises(HelperError, match="metadata_unreadable"):
+        helper_module.request_rollback(fixture.journal_path)
+    assert main(["--journal", str(fixture.journal_path)]) == 3
+    assert fixture.journal_path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("state_entry_point", ["validate", "transition", "bind", "update"])
+def test_application_state_callers_preserve_parser_error_classification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state_entry_point: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    raw = _pathological_json("huge_integer")
+    fixture.state_path.write_bytes(raw)
+
+    with pytest.raises(HelperError) as raised:
+        if state_entry_point == "validate":
+            helper_module._validate_handoff_state(journal, fixture.journal_path)
+        elif state_entry_point == "transition":
+            helper_module._transition_handoff_state(
+                journal,
+                fixture.journal_path,
+                previous_identity=helper_module.journal_handoff_identity(journal),
+            )
+        elif state_entry_point == "bind":
+            helper_module.bind_handoff_state(journal, fixture.journal_path)
+        else:
+            helper_module._update_state(
+                journal,
+                phase="installed",
+                error=None,
+                clear_transaction=False,
+            )
+
+    assert raised.value.code == "metadata_unreadable"
+    assert fixture.state_path.read_bytes() == raw

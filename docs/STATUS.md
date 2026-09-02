@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-As of 2026-08-31 UTC, protected main integrates false-by-default Continuous
+As of 2026-09-02 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
 boundaries. After one setup opt-in, ordinary user prompts and rendered
 assistant responses are observed locally without per-turn commands. Core alone
@@ -24,16 +24,13 @@ subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
 client read/explicit-memory foundations, Continuous Capture, replacement
 workflow hardening, updater/recovery trust hardening, the Windows timing test
 correction, exact candidate-evidence reconciliation, the private handoff guard
-correction, the update-child dialog containment change, and the import-heartbeat
-test stabilization through PR #105 at exact SHA
-`4005039db9eb2c837648669df423120b281e5374`. PR-head CI run `33458046592`
-and CodeQL run `33458045131` passed, including Windows Python and desktop
-artifacts. Protected-main CodeQL run `33459729367` also passed, but CI run
-`33459729438` failed only the Windows desktop packaged uninstall smoke at a
-15-second observation boundary shorter than the product's unchanged 30-second
-cleanup budget. A test-only correction is locally validated; the exact SHA is
-not eligible for replacement-candidate dispatch. Source and
-hosted evidence does not
+correction, the update-child dialog containment change, the import-heartbeat
+test stabilization, Windows startup-recovery hardening from PR #107, and
+startup-recovery diagnostic containment from PR #108 at exact SHA
+`ebc845246b2c9fcc3216b5ba1b9f72c3842bbdb6`. The current parser-containment
+follow-up is source-level local work on this exact merge base; hosted CI,
+CodeQL, exact-artifact, and release evidence for a later candidate remain
+separate gates. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -44,6 +41,37 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-09-02 — Windows updater/recovery JSON parser containment
+
+Authority-bearing Windows updater/recovery JSON now decodes through a small
+internal boundary after the existing bounded byte read. UTF-8 failures,
+malformed JSON, CPython's integer digit-limit `ValueError`, and parser-depth
+`RecursionError` become the existing bounded `HelperError("metadata_unreadable")`;
+non-dict roots remain `metadata_invalid`. The reader still requests no more
+than the configured limit plus one overflow sentinel and performs no follow-up
+read, including for exact-limit and multibyte UTF-8 inputs. The boundary catches
+only the parser/resource exceptions identified here; process-control exceptions
+and unexpected programming errors retain their normal behavior.
+
+The shared classification now safely reaches every authority-bearing caller:
+frozen Core blocks without vault startup, staging evidence refuses a reset,
+journal and application-state readers preserve their existing controlled
+errors, child apply/diagnostic/health reports enter the existing rollback path,
+and journal-failure/recovery-doctor diagnostics remain bounded and content-free.
+No parser failure is used to forward installation, launch Core, disclose raw
+JSON or paths, or partially publish a new authority state. The byte bound does
+not claim a separate CPU/depth policy, handle-based no-follow atomicity across
+concurrent filesystem mutation, or release/package/vendor acceptance.
+
+On this Windows host, Python 3.14.3 passed repository Ruff format/lint,
+mypy over 107 source files, and the documentation checker. The focused
+updater/recovery/desktop command passed 263 tests with three expected
+platform-capability skips; the full suite passed 2,504 tests with 10 expected
+platform-capability skips and two existing deprecation warnings. This remains
+source-level evidence only. No signing, SmartScreen, Defender, Microsoft
+submission, publishing, tagging, release, or downloaded-candidate execution
+was performed.
 
 ### 2026-09-02 — Windows startup-recovery diagnostic containment
 
