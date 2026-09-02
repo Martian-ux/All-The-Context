@@ -14,6 +14,19 @@ The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;
 privileged native junction creation remains host-capability dependent.
 
+ADR-184 also covers complete persisted-state schema validation, including
+fail-closed handling for malformed inactive phases; missing state is blocked
+when the plain `updates/transactions` root contains evidence, while an absent
+or empty root permits an ordinary first start. Journal-bound storage is
+checked as a complete path family (transaction, backup, database, state,
+staging evidence, install/helper/target, and SQLite sidecars), with the
+boundary repeated immediately before replacement or deletion. Candidate
+journal publication prevents a pre-cutover transition failure from mutating
+the parent or backup identity used by abort recovery. These checks block
+existing reparse redirection; concurrent same-user mutation between a check
+and the following filesystem syscall remains an explicit residual race because
+the architecture does not claim handle-based no-follow atomicity.
+
 ### 2026-09-01 Windows startup/recovery containment and rollback preservation
 
 | Requirement | Implementation/evidence | Status |

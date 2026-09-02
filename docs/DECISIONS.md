@@ -12,25 +12,29 @@ the normal startup path cannot know whether application files or the vault are
 mid-cutover. Starting Core in that condition could compound a partial update;
 silently resetting the state could discard the only recovery pointer.
 
-`ensure_recovery_before_core()` therefore validates the state file as a plain,
-bounded file and checks its phase, transaction identity, handoff binding, and
-journal before allowing normal Core startup. Unsafe state returns a blocked
-startup result and leaves the state and vault untouched. The one deterministic
-exception is a valid pre-cutover `installing` state with a valid operation ID,
-matching operation-owned staged manifest/artifact evidence, and no
-transaction, handoff identity, or transaction directory; it is reset to an
-error state because the helper cannot have crossed cutover. The staged evidence
-is operation-path bound, uses a bounded manifest verified with the bundled
-updater keyring, matches the persisted state fields, and matches the signed
-artifact SHA-256/size through reparse-safe plain-file checks. Missing or
-malformed operation/identity/staging evidence and any active-handoff evidence
-block instead. The helper writes a separate atomic `startup-recovery.json`
-marker containing only a schema version, blocked/cleared status, fixed
-allowlisted failure code, safe phase, and timestamp. The `startup_recovery`
-field of the packaged recovery doctor reads and sanitizes that marker, while
-the general operator doctor retains its existing local path fields. The
-health-check environment flag is scheduler suppression only and is never
-startup authority for an ordinary `--core` process.
+`ensure_recovery_before_core()` therefore validates the complete persisted
+state schema, including inactive phases, as a plain bounded file and checks its
+phase, transaction identity, handoff binding, and journal before allowing
+normal Core startup. Unsafe state returns a blocked startup result and leaves
+the state and vault untouched. A missing state file is also blocked whenever
+the plain `updates/transactions` directory contains any entry; only a safely
+established absent or empty transaction root permits an ordinary first start.
+The one deterministic reset exception is a valid pre-cutover `installing`
+state with a valid operation ID, matching operation-owned staged
+manifest/artifact evidence, and no transaction, handoff identity, or
+transaction directory; it is reset to an error state because the helper cannot
+have crossed cutover. The staged evidence is operation-path bound, uses a
+bounded manifest verified with the bundled updater keyring, matches the
+persisted state fields, and matches the signed artifact SHA-256/size through
+reparse-safe plain-file checks. Missing or malformed operation/identity/staging
+evidence and any active-handoff evidence block instead. The helper writes a
+separate atomic `startup-recovery.json` marker containing only a schema
+version, blocked/cleared status, fixed allowlisted failure code, safe phase,
+and timestamp. The `startup_recovery` field of the packaged recovery doctor
+reads and sanitizes that marker, while the general operator doctor retains its
+existing local path fields. The health-check environment flag is scheduler
+suppression only and is never startup authority for an ordinary `--core`
+process.
 
 Rollback also owns the SQLite `-journal` sidecar in addition to WAL/SHM. A
 stale rollback journal could replay against a newly restored main file on a
@@ -45,13 +49,18 @@ or malware/vendor clearance.
 Pre-cutover aborts publish a durable `abort_requested` journal phase before
 publishing `rolled_back` state. Recovery recognizes that phase as an abort-only
 path and never re-enters parent wait, replacement, diagnostics, health, or
-commit. Startup checks use lstat-based plain directory chains and plain-file
-boundaries for state, staging, and transaction paths; missing paths are treated
-as absent only after every existing parent has been checked for reparse points.
-Before any forward child launch or rollback copy, the helper likewise validates
-the install root, its parents, target parent, and existing target as plain
-paths, then repeats the boundary check before replacement. This prevents a
-junction at the install root from redirecting a binary write.
+commit. Handoff publication uses a candidate journal, so a failure before the
+state authority is published cannot durably mutate `parent_pid` or the backup
+identity that abort recovery needs. Startup and helper checks use lstat-based
+plain directory chains and plain-file boundaries for state, staging,
+transaction, backup, database, helper, install, target, and SQLite sidecar
+paths; missing paths are treated as absent only after every existing parent has
+been checked for reparse points. Before any forward child launch or rollback
+copy, the helper repeats the boundary check at the last safe point before the
+filesystem operation. These checks deterministically block existing junction
+or reparse redirection, but a concurrent same-user mutation between a check and
+the following Windows filesystem syscall remains a residual race because this
+architecture does not claim handle-based no-follow atomicity.
 ## ADR-183: Packaged uninstall smoke observes the full cleanup contract
 
 **Status:** accepted locally on 2026-09-01 after exact protected-main Windows

@@ -198,6 +198,7 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
                 "operation_id": operation_id,
                 "transaction_path": str(journal_path),
                 "recovery_attempts": 1,
+                "manifest_identity": None,
             }
         ),
         encoding="utf-8",
@@ -576,6 +577,86 @@ def test_rollback_rejects_reparse_install_root_or_parent_before_copy(
     assert fixture.application.read_bytes() == fixture.old_application
 
 
+@pytest.mark.parametrize(
+    "reparse_target",
+    [
+        "transaction_root",
+        "backup_root",
+        "database_parent",
+        "state_parent",
+        "helper_parent",
+        "install_root",
+        "install_parent",
+        "target_parent",
+    ],
+)
+def test_journal_rejects_reparse_storage_path_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reparse_target: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    data_dir = fixture.state_path.parent.parent
+    install_root = fixture.application.parent
+    target_paths = {
+        "transaction_root": fixture.journal_path.parent.parent,
+        "backup_root": fixture.database.parent / "updates" / "backups",
+        "database_parent": fixture.database.parent,
+        "state_parent": fixture.state_path.parent,
+        "helper_parent": fixture.journal_path.parent,
+        "install_root": install_root,
+        "install_parent": install_root.parent,
+        "target_parent": fixture.mcp.parent,
+    }
+    assert target_paths["transaction_root"] == data_dir / "updates" / "transactions"
+    blocked_path = target_paths[reparse_target]
+    original_stat = helper_module._plain_directory_stat
+
+    def reject_reparse(path: Path, code: str) -> os.stat_result:
+        if path == blocked_path:
+            raise HelperError(code)
+        return original_stat(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_directory_stat", reject_reparse)
+    with pytest.raises(HelperError):
+        UpdateJournal.load(fixture.journal_path)
+
+
+def test_journal_rejects_reparse_helper_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    helper_path = fixture.journal_path.parent / "AllTheContextUpdater.exe"
+    original_stat = helper_module._plain_file_stat
+
+    def reject_reparse(path: Path, code: str) -> os.stat_result:
+        if path == helper_path:
+            raise HelperError(code)
+        return original_stat(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_file_stat", reject_reparse)
+    with pytest.raises(HelperError):
+        UpdateJournal.load(fixture.journal_path)
+
+
+def test_rollback_rejects_reparse_database_sidecar_before_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    sidecar = fixture.database.with_name(f"{fixture.database.name}-journal")
+    sidecar.write_bytes(b"stale rollback journal")
+    journal = UpdateJournal.load(fixture.journal_path)
+    original_stat = helper_module._plain_file_stat_if_present
+
+    def reject_reparse(path: Path, code: str) -> os.stat_result | None:
+        if path == sidecar and code == "database_target_invalid":
+            raise HelperError(code)
+        return original_stat(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_file_stat_if_present", reject_reparse)
+    with pytest.raises(HelperError, match="database_target_invalid"):
+        helper_module._restore_database(journal)
+    assert sidecar.exists()
+
+
 @pytest.mark.parametrize("blocked_target", ["install_root", "install_parent"])
 def test_forward_install_rejects_reparse_install_root_or_parent_before_child(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_target: str
@@ -692,6 +773,46 @@ def test_pre_cutover_abort_replay_cannot_resume_forward_install(
     assert launched == ["0.1.0"]
 
 
+def test_handoff_publication_failure_aborts_without_parent_identity_wedge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.parent_pid = 123
+    journal.save(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    helper_module.bind_handoff_state(journal, fixture.journal_path)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    original_atomic = helper_module._atomic_json
+    failed = False
+
+    def fail_state_publication(
+        path: Path,
+        value: dict[str, Any],
+        *,
+        boundary_code: str = "metadata_untrusted",
+    ) -> None:
+        nonlocal failed
+        if path == fixture.state_path and not failed:
+            failed = True
+            raise HelperError("handoff_state_publish_failed")
+        original_atomic(path, value, boundary_code=boundary_code)
+
+    monkeypatch.setattr(helper_module, "_atomic_json", fail_state_publication)
+
+    assert run_transaction(fixture.journal_path) == 2
+    persisted = UpdateJournal.load(fixture.journal_path)
+    assert persisted.phase is HelperPhase.ROLLED_BACK
+    assert persisted.parent_pid == 123
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "rolled_back"
+    assert state["transaction_path"] is None
+    assert launched == ["0.1.0"]
+
+
 def test_interrupted_rollback_stays_pending_and_retries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -798,15 +919,8 @@ def test_hardlinked_recovery_helper_is_not_trusted(
     except OSError:
         pytest.skip("hardlinks are unavailable on this filesystem")
 
-    journal = UpdateJournal.load(fixture.journal_path)
-    assert (
-        helper_module._verified(
-            linked,
-            journal.recovery_helper_sha256,
-            journal.recovery_helper_size,
-        )
-        is False
-    )
+    with pytest.raises(HelperError, match="journal_path_untrusted"):
+        UpdateJournal.load(fixture.journal_path)
 
 
 def test_helper_rejects_arbitrary_journal_location_before_creating_lock(
@@ -894,6 +1008,52 @@ def test_core_start_guard_resets_pre_cutover_install_without_transaction(
     )
     assert diagnostic["status"] == "cleared"
     assert diagnostic["code"] == "pre_cutover_install_reset"
+
+
+@pytest.mark.parametrize("has_transaction_evidence", [False, True])
+def test_core_start_guard_handles_missing_state_without_pruning_transaction_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    has_transaction_evidence: bool,
+) -> None:
+    data_dir = tmp_path / "data"
+    updates = data_dir / "updates"
+    transactions = updates / "transactions"
+    transactions.mkdir(parents=True)
+    evidence = transactions / ("a" * 24)
+    if has_transaction_evidence:
+        evidence.mkdir()
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(helper_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is (not has_transaction_evidence)
+    assert (not has_transaction_evidence) or evidence.exists()
+    if has_transaction_evidence:
+        diagnostic = json.loads(
+            (updates / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(encoding="utf-8")
+        )
+        assert diagnostic["code"] == "startup_state_missing_with_transaction"
+
+
+@pytest.mark.parametrize("phase", ["idle", "current", "error"])
+def test_core_start_guard_rejects_malformed_inactive_state_matrix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    fixture.state_path.write_text(json.dumps({"phase": phase}), encoding="utf-8")
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_invalid"
+    assert diagnostic["phase"] is None
 
 
 def test_core_start_guard_rejects_unsigned_pre_cutover_manifest(
@@ -1010,12 +1170,12 @@ def test_core_start_guard_rejects_reparse_staging_paths(
 
     assert ensure_recovery_before_core() is False
     assert fixture.state_path.read_bytes() == original_state
-    diagnostic = json.loads(
-        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
-            encoding="utf-8"
-        )
-    )
-    assert diagnostic["code"] == "pre_cutover_evidence_missing"
+    diagnostic_path = fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    if reparse_target == "data_root":
+        assert not diagnostic_path.exists()
+    else:
+        diagnostic = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+        assert diagnostic["code"] == "pre_cutover_evidence_missing"
 
 
 @pytest.mark.parametrize("operation_id", [None, "", "a" * 23, 17])
@@ -1053,7 +1213,11 @@ def test_core_start_guard_does_not_reset_pre_cutover_install_without_valid_opera
             encoding="utf-8"
         )
     )
-    assert diagnostic["code"] == "startup_state_active_without_transaction"
+    assert diagnostic["code"] == (
+        "startup_state_active_without_transaction"
+        if operation_id is None
+        else "startup_state_invalid"
+    )
 
 
 def test_core_start_guard_does_not_reset_valid_format_unknown_operation(
@@ -1204,10 +1368,7 @@ def test_core_start_guard_rejects_reparse_state_parent(
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
 
     assert ensure_recovery_before_core() is False
-    diagnostic = json.loads(
-        (state_parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(encoding="utf-8")
-    )
-    assert diagnostic["code"] == "startup_state_untrusted"
+    assert not (state_parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).exists()
 
 
 def test_core_start_guard_rejects_reparse_transaction_parent(

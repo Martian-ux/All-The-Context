@@ -73,12 +73,22 @@ after `diagnostics_passed` and `health_passed` process loss, and proves that
 rollback restores the pre-update database while retaining an unrelated user
 file and removing all database sidecars. Pre-cutover abort now publishes a
 durable abort-requested journal phase before marking state rolled back, so a
-crash between those writes cannot replay forward into installation. Startup
-state, staging, and transaction directory checks use lstat-based plain-file /
-directory boundaries; actual symlink/junction creation remains host-capability
-dependent. Helper forward-cutover and rollback writes also validate the install
-root and every parent as a plain directory before and after replacement; the
-same source-level checks cover simulated install-root and parent junctions.
+crash between those writes cannot replay forward into installation. Handoff
+transitions use a candidate journal, so failed state publication cannot leave a
+changed parent identity or backup identity behind for abort recovery. Startup
+recovery validates the complete persisted state schema, including inactive
+phases; a missing state file is blocked when the plain `updates/transactions`
+directory contains evidence, while an absent or empty transaction root permits
+an ordinary first start. Startup state, staging, transaction, backup, database,
+helper, install, target, and SQLite sidecar checks use lstat-based plain-file /
+directory boundaries and repeat immediately before replacement or deletion.
+Existing symlink/junction/reparse redirection is therefore blocked
+deterministically; concurrent same-user mutation between a check and the
+following Windows filesystem syscall remains a documented residual race because
+this architecture does not claim handle-based no-follow atomicity. Helper
+forward-cutover and rollback writes also validate the install root and every
+parent as a plain directory before and after replacement; the same source-level
+checks cover simulated install-root and parent junctions.
 The health-check environment remains
 a scheduler-suppression flag and is not startup authority. The focused Windows
 updater,
