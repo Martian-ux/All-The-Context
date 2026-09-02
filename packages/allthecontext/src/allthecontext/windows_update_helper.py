@@ -507,19 +507,53 @@ def _same_path(left: Path, right: Path) -> bool:
     )
 
 
+def _prepare_plain_directory_chain(path: Path, code: str) -> None:
+    """Create only a missing tail below a verified plain ancestor."""
+
+    absolute = _absolute_path(path)
+    missing: list[Path] = []
+    current = absolute
+    while True:
+        try:
+            value = current.lstat()
+        except FileNotFoundError:
+            missing.append(current)
+            parent = current.parent
+            if parent == current:
+                raise HelperError(code) from None
+            current = parent
+            continue
+        except OSError as exc:
+            raise HelperError(code) from exc
+        has_reparse = bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
+        if has_reparse or not stat.S_ISDIR(value.st_mode):
+            raise HelperError(code)
+        _plain_directory_chain(current, code)
+        break
+
+    for directory in reversed(missing):
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise HelperError(code) from exc
+        _plain_directory_stat(directory, code)
+    _plain_directory_chain(absolute, code)
+
+
 def _validate_write_target(target: Path, root: Path, code: str) -> None:
     target_absolute = _absolute_path(target)
     root_absolute = _absolute_path(root)
     if not _within(target_absolute, root_absolute):
         raise HelperError(code)
-    _plain_directory_chain(root, code)
-    _plain_directory_chain(target_absolute.parent, code)
+    _prepare_plain_directory_chain(root_absolute, code)
+    _prepare_plain_directory_chain(target_absolute.parent, code)
     _plain_file_stat_if_present(target_absolute, code)
 
 
 def _validate_install_targets(journal: UpdateJournal, code: str) -> Path:
     root = _install_directory()
-    _plain_directory_chain(root, code)
     for target in (
         journal.application_path,
         journal.mcp_path,

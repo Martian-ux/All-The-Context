@@ -87,8 +87,12 @@ deterministically; concurrent same-user mutation between a check and the
 following Windows filesystem syscall remains a documented residual race because
 this architecture does not claim handle-based no-follow atomicity. Helper
 forward-cutover and rollback writes also validate the install root and every
-parent as a plain directory before and after replacement; the same source-level
-checks cover simulated install-root and parent junctions.
+parent as a plain directory before and after replacement. A prospective install
+target may create only a contiguous missing tail below the deepest verified
+ancestor, one component at a time, and the full resulting chain is revalidated
+before writes, replacement, or child launch; existing junctions/reparse points
+are never treated as missing. The same source-level checks cover simulated
+install-root and parent junctions.
 The health-check environment remains
 a scheduler-suppression flag and is not startup authority. The focused Windows
 updater,

@@ -26,6 +26,10 @@ the parent or backup identity used by abort recovery. These checks block
 existing reparse redirection; concurrent same-user mutation between a check
 and the following filesystem syscall remains an explicit residual race because
 the architecture does not claim handle-based no-follow atomicity.
+Prospective write targets may create only a contiguous missing tail below the
+deepest verified plain ancestor, one component at a time, followed by complete
+chain revalidation before the write or child launch; existing reparse paths are
+not treated as missing.
 
 ### 2026-09-01 Windows startup/recovery containment and rollback preservation
 

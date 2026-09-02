@@ -57,10 +57,15 @@ transaction, backup, database, helper, install, target, and SQLite sidecar
 paths; missing paths are treated as absent only after every existing parent has
 been checked for reparse points. Before any forward child launch or rollback
 copy, the helper repeats the boundary check at the last safe point before the
-filesystem operation. These checks deterministically block existing junction
-or reparse redirection, but a concurrent same-user mutation between a check and
-the following Windows filesystem syscall remains a residual race because this
-architecture does not claim handle-based no-follow atomicity.
+filesystem operation. Prospective install/write targets may have only a
+contiguous missing tail below the deepest verified plain ancestor; the helper
+creates that tail one component at a time through the authorized path and
+revalidates the complete chain before any write, replacement, or child launch.
+Existing junction or reparse redirection is never treated as missing. These
+checks deterministically block existing junction or reparse redirection, but a
+concurrent same-user mutation between a check and the following Windows
+filesystem syscall remains a residual race because this architecture does not
+claim handle-based no-follow atomicity.
 ## ADR-183: Packaged uninstall smoke observes the full cleanup contract
 
 **Status:** accepted locally on 2026-09-01 after exact protected-main Windows

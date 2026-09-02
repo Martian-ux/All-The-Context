@@ -577,6 +577,87 @@ def test_rollback_rejects_reparse_install_root_or_parent_before_copy(
     assert fixture.application.read_bytes() == fixture.old_application
 
 
+def test_write_target_creates_missing_install_tail_and_revalidates(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "Programs" / "All The Context"
+    target = install_root / "AllTheContext.exe"
+
+    helper_module._validate_write_target(target, install_root, "install_target_untrusted")
+
+    assert install_root.is_dir()
+    helper_module._plain_directory_chain(install_root, "install_target_untrusted")
+
+
+def test_write_target_rejects_missing_tail_below_reparse_ancestor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_root = tmp_path / "Programs" / "All The Context"
+    target = install_root / "AllTheContext.exe"
+    original_stat = helper_module._plain_directory_stat
+
+    def reject_reparse(path: Path, code: str) -> os.stat_result:
+        if path == tmp_path:
+            raise HelperError(code)
+        return original_stat(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_directory_stat", reject_reparse)
+    with pytest.raises(HelperError, match="install_target_untrusted"):
+        helper_module._validate_write_target(target, install_root, "install_target_untrusted")
+    assert not install_root.exists()
+
+
+def test_write_target_rejects_reparse_introduced_during_tail_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_root = tmp_path / "install"
+    target = install_root / "AllTheContext.exe"
+    original_chain = helper_module._plain_directory_chain
+    created = False
+
+    def reject_after_creation(path: Path, code: str) -> None:
+        if path == install_root and created:
+            raise HelperError(code)
+        original_chain(path, code)
+
+    original_mkdir = Path.mkdir
+
+    def mark_created(path: Path, *args: Any, **kwargs: Any) -> None:
+        nonlocal created
+        original_mkdir(path, *args, **kwargs)
+        if path == install_root:
+            created = True
+
+    monkeypatch.setattr(helper_module, "_plain_directory_chain", reject_after_creation)
+    monkeypatch.setattr(Path, "mkdir", mark_created)
+    with pytest.raises(HelperError, match="install_target_untrusted"):
+        helper_module._validate_write_target(target, install_root, "install_target_untrusted")
+    assert install_root.is_dir()
+
+
+def test_bind_handoff_state_accepts_clean_install_target_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    install_root = tmp_path / "Programs" / "All The Context"
+    journal = UpdateJournal.load(fixture.journal_path)
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_root))
+    journal.application_path = str(install_root / "AllTheContext.exe")
+    journal.mcp_path = str(install_root / "AllTheContextMCP.exe")
+    journal.recovery_path = str(install_root / "AllTheContextRecovery.exe")
+    journal.stable_update_helper_path = str(install_root / "AllTheContextUpdater.exe")
+    journal.save(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    state["pending_handoff_identity"] = None
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    helper_module.bind_handoff_state(journal, fixture.journal_path)
+
+    assert install_root.is_dir()
+    assert not (install_root / "AllTheContext.exe").exists()
+
+
 @pytest.mark.parametrize(
     "reparse_target",
     [
