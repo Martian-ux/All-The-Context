@@ -438,6 +438,11 @@ def test_source_contract_never_retains_full_work_tree() -> None:
     assert 'print(f"{label} stderr' not in text
 
 
+def test_packaged_uninstall_observation_exceeds_product_cleanup_budget() -> None:
+    assert smoke.WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS == 30.0
+    assert smoke.WINDOWS_INSTALL_REMOVAL_OBSERVATION_SECONDS == 35.0
+
+
 def test_packaged_mcp_surface_is_exactly_read_only() -> None:
     expected = {
         "bootstrap_context",

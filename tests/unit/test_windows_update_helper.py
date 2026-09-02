@@ -555,6 +555,48 @@ def test_rollback_removes_all_sqlite_sidecars_and_preserves_unrelated_user_files
         )
 
 
+@pytest.mark.parametrize("blocked_target", ["install_root", "install_parent"])
+def test_rollback_rejects_reparse_install_root_or_parent_before_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_target: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    install_root = fixture.application.parent
+    blocked_path = install_root if blocked_target == "install_root" else install_root.parent
+    original_stat = helper_module._plain_directory_stat
+
+    def reject_reparse(path: Path, code: str) -> os.stat_result:
+        if path == blocked_path:
+            raise HelperError(code)
+        return original_stat(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_directory_stat", reject_reparse)
+
+    with pytest.raises(HelperError, match="rollback_target_invalid"):
+        helper_module._restore_binaries(journal)
+    assert fixture.application.read_bytes() == fixture.old_application
+
+
+@pytest.mark.parametrize("blocked_target", ["install_root", "install_parent"])
+def test_forward_install_rejects_reparse_install_root_or_parent_before_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_target: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    install_root = fixture.application.parent
+    blocked_path = install_root if blocked_target == "install_root" else install_root.parent
+    original_stat = helper_module._plain_directory_stat
+
+    def reject_reparse(path: Path, code: str) -> os.stat_result:
+        if path == blocked_path:
+            raise HelperError(code)
+        return original_stat(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_directory_stat", reject_reparse)
+    with pytest.raises(HelperError, match="install_target_untrusted"):
+        helper_module._validate_replacement(journal, fixture.journal_path)
+
+
 def test_failure_before_cutover_never_restores_the_older_database_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

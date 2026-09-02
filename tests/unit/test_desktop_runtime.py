@@ -9,6 +9,9 @@ import pytest
 from allthecontext.config import CoreConfig
 from allthecontext.credentials import DevelopmentFileCredentialStore
 from allthecontext.desktop import (
+    WINDOWS_INSTALL_REMOVAL_ATTEMPTS,
+    WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS,
+    WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS,
     _copy_atomically,
     _copy_macos_bundle_atomically,
     _install_mcp_helper,
@@ -394,11 +397,16 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert len(launched) == 1
     command, kwargs = launched[0]
     script = command[-1]
+    assert WINDOWS_INSTALL_REMOVAL_ATTEMPTS == 300
+    assert WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS == 100
+    assert WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS == 30.0
     assert "Wait-Process" in script
-    assert "for($atcAttempt=0;$atcAttempt -lt 300;$atcAttempt++)" in script
+    assert (
+        f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};$atcAttempt++){{"
+    ) in script
     assert "Remove-Item" in script
     assert "-ErrorAction Stop" in script
-    assert "Start-Sleep -Milliseconds 100" in script
+    assert f"Start-Sleep -Milliseconds {WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS}" in script
     assert kwargs["env"]["ATC_UNINSTALL_DIR"] == str(install_dir.resolve())  # type: ignore[index]
     assert kwargs["cwd"] == install_dir.resolve().parent
 

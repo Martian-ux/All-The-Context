@@ -438,12 +438,41 @@ def _data_directory() -> Path:
 def _install_directory() -> Path:
     configured = os.environ.get("ATC_INSTALL_DIR")
     if configured:
-        return Path(configured).expanduser().resolve()
+        return Path(os.path.abspath(os.fspath(Path(configured).expanduser())))
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
-        return Path(local_app_data).resolve() / "Programs" / "All The Context"
+        return (
+            Path(os.path.abspath(os.fspath(Path(local_app_data).expanduser())))
+            / "Programs"
+            / "All The Context"
+        )
     data_path = _data_directory()
     return data_path.parent / "Programs" / "All The Context"
+
+
+def _validate_install_write_target(target: Path, root: Path, code: str) -> None:
+    target_absolute = Path(os.path.abspath(os.fspath(target)))
+    root_absolute = Path(os.path.abspath(os.fspath(root)))
+    try:
+        target_absolute.relative_to(root_absolute)
+    except ValueError as exc:
+        raise HelperError(code) from exc
+    _plain_directory_chain(root, code)
+    _plain_directory_chain(target_absolute.parent, code)
+    _plain_file_stat_if_present(target_absolute, code)
+
+
+def _validate_install_targets(journal: UpdateJournal, code: str) -> Path:
+    root = _install_directory()
+    _plain_directory_chain(root, code)
+    for target in (
+        journal.application_path,
+        journal.mcp_path,
+        journal.recovery_path,
+        journal.stable_update_helper_path,
+    ):
+        _validate_install_write_target(Path(target), root, code)
+    return root
 
 
 def _within(path: Path, root: Path) -> bool:
@@ -620,6 +649,7 @@ class UpdateJournal:
         if any(not isinstance(item, str) or not item for item in path_values):
             raise HelperError("journal_path_invalid")
 
+        _validate_install_targets(self, "journal_install_target_invalid")
         data_dir = _data_directory()
         updates_dir = data_dir / "updates"
         transaction_dir = updates_dir / "transactions" / self.operation_id
@@ -973,6 +1003,7 @@ def _run_bounded(command: tuple[str, ...], environment: dict[str, str]) -> int:
 
 
 def _validate_replacement(journal: UpdateJournal, journal_path: Path) -> None:
+    _validate_install_targets(journal, "install_target_untrusted")
     expected = journal_path.parent / "replacement" / "AllTheContextSetup.exe"
     replacement = Path(journal.replacement_path)
     if replacement.resolve() != expected.resolve() or not _verified(
@@ -984,6 +1015,7 @@ def _validate_replacement(journal: UpdateJournal, journal_path: Path) -> None:
 
 
 def _validate_application(journal: UpdateJournal, digest: str, size: int) -> None:
+    _validate_install_targets(journal, "application_untrusted")
     application = Path(journal.application_path)
     expected = _install_directory() / "AllTheContext.exe"
     if application.resolve() != expected.resolve() or not _verified(application, digest, size):
@@ -1004,6 +1036,7 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
             (str(journal.replacement_path), "--apply-update", str(report)),
             environment,
         )
+        _validate_install_targets(journal, "install_target_untrusted")
         if code == 0 and _verified(
             application, journal.replacement_sha256, journal.replacement_size
         ):
@@ -1130,10 +1163,21 @@ def _verify_health(journal: UpdateJournal, journal_path: Path) -> None:
     journal.save(journal_path)
 
 
-def _copy_verified(source: Path, target: Path, digest: str, size: int) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
+def _copy_verified(
+    source: Path,
+    target: Path,
+    digest: str,
+    size: int,
+    *,
+    target_root: Path | None = None,
+) -> None:
+    if target_root is not None:
+        _validate_install_write_target(target, target_root, "rollback_target_invalid")
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f"{target.name}.atc-rollback-new")
-    temporary.unlink(missing_ok=True)
+    if _plain_file_stat_if_present(temporary, "rollback_target_invalid") is not None:
+        temporary.unlink()
     source_stat = _plain_file_stat(source, "rollback_source_invalid")
     try:
         with source.open("rb") as input_stream, temporary.open("xb") as output_stream:
@@ -1151,6 +1195,9 @@ def _copy_verified(source: Path, target: Path, digest: str, size: int) -> None:
             _plain_file_stat(source, "rollback_source_changed"),
         ):
             raise HelperError("rollback_source_changed")
+        if target_root is not None:
+            _validate_install_write_target(target, target_root, "rollback_target_invalid")
+            _validate_install_write_target(temporary, target_root, "rollback_target_invalid")
         temporary.replace(target)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -1231,11 +1278,13 @@ def _restore_database(journal: UpdateJournal) -> None:
 
 
 def _restore_binaries(journal: UpdateJournal) -> None:
+    install_root = _validate_install_targets(journal, "rollback_target_invalid")
     _copy_verified(
         Path(journal.rollback_application_path),
         Path(journal.application_path),
         journal.rollback_application_sha256,
         journal.rollback_application_size,
+        target_root=install_root,
     )
     if journal.rollback_mcp_path is not None:
         _copy_verified(
@@ -1243,8 +1292,12 @@ def _restore_binaries(journal: UpdateJournal) -> None:
             Path(journal.mcp_path),
             cast(str, journal.rollback_mcp_sha256),
             cast(int, journal.rollback_mcp_size),
+            target_root=install_root,
         )
     else:
+        _validate_install_write_target(
+            Path(journal.mcp_path), install_root, "rollback_target_invalid"
+        )
         Path(journal.mcp_path).unlink(missing_ok=True)
     if journal.rollback_recovery_path is not None:
         _copy_verified(
@@ -1252,14 +1305,19 @@ def _restore_binaries(journal: UpdateJournal) -> None:
             Path(journal.recovery_path),
             cast(str, journal.rollback_recovery_sha256),
             cast(int, journal.rollback_recovery_size),
+            target_root=install_root,
         )
     else:
+        _validate_install_write_target(
+            Path(journal.recovery_path), install_root, "rollback_target_invalid"
+        )
         Path(journal.recovery_path).unlink(missing_ok=True)
     _copy_verified(
         Path(journal.rollback_update_helper_path),
         Path(journal.stable_update_helper_path),
         journal.rollback_update_helper_sha256,
         journal.rollback_update_helper_size,
+        target_root=install_root,
     )
 
 
