@@ -58,9 +58,7 @@ STARTUP_RECOVERY_PHASES = frozenset(
         "cancelled",
     }
 )
-STARTUP_RECOVERY_TRANSACTION_PHASES = frozenset(
-    {"restart_required", "installed", "rolled_back"}
-)
+STARTUP_RECOVERY_TRANSACTION_PHASES = frozenset({"restart_required", "installed", "rolled_back"})
 STARTUP_RECOVERY_DIAGNOSTIC_CODES = frozenset(
     {
         "none",
@@ -306,9 +304,7 @@ def _plain_directory_chain_if_present(path: Path, code: str) -> bool:
             return False
         except OSError as exc:
             raise HelperError(code) from exc
-        has_reparse = bool(
-            getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
-        )
+        has_reparse = bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
         if has_reparse or not stat.S_ISDIR(value.st_mode):
             raise HelperError(code)
     return True
@@ -1635,10 +1631,7 @@ def ensure_recovery_before_core() -> bool:
             )
             operation_is_valid = _valid_operation_id(operation_id)
             expected_transaction_dir = (
-                _data_directory()
-                / "updates"
-                / "transactions"
-                / cast(str, operation_id)
+                _data_directory() / "updates" / "transactions" / cast(str, operation_id)
                 if operation_is_valid and operation_id is not None
                 else None
             )
@@ -1821,11 +1814,7 @@ def ensure_recovery_before_core() -> bool:
         )
         return True
     expected = (
-        _data_directory()
-        / "updates"
-        / "transactions"
-        / cast(str, operation_id)
-        / "journal.json"
+        _data_directory() / "updates" / "transactions" / cast(str, operation_id) / "journal.json"
     )
     try:
         transaction_matches = os.path.normcase(os.path.abspath(transaction)) == (

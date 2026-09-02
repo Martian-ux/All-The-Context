@@ -73,8 +73,7 @@ def _signed_staging(
         platform_name="windows",
         architecture="x86_64",
         artifact_url=(
-            "https://updates.example.test/releases/v0.2.0/"
-            "all-the-context-0.2.0-windows-x86_64.zip"
+            "https://updates.example.test/releases/v0.2.0/all-the-context-0.2.0-windows-x86_64.zip"
         ),
         minimum_supported_version="0.1.0-beta.7",
         mandatory=False,
@@ -1206,9 +1205,7 @@ def test_core_start_guard_rejects_reparse_state_parent(
 
     assert ensure_recovery_before_core() is False
     diagnostic = json.loads(
-        (state_parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
-            encoding="utf-8"
-        )
+        (state_parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(encoding="utf-8")
     )
     assert diagnostic["code"] == "startup_state_untrusted"
 
@@ -1242,7 +1239,7 @@ def test_core_start_guard_blocks_unreadable_state_and_records_safe_diagnostic(
 ) -> None:
     fixture = _transaction(tmp_path, monkeypatch)
     original_database = fixture.database.read_bytes()
-    fixture.state_path.write_bytes(b"{\"phase\":")
+    fixture.state_path.write_bytes(b'{"phase":')
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
     launched: list[tuple[Path, Path]] = []
     monkeypatch.setattr(
@@ -1253,7 +1250,7 @@ def test_core_start_guard_blocks_unreadable_state_and_records_safe_diagnostic(
 
     assert ensure_recovery_before_core() is False
     assert launched == []
-    assert fixture.state_path.read_bytes() == b"{\"phase\":"
+    assert fixture.state_path.read_bytes() == b'{"phase":'
     assert fixture.database.read_bytes() == original_database
     diagnostic = json.loads(
         (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
