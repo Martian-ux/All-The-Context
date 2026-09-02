@@ -4,11 +4,16 @@ import json
 from pathlib import Path
 
 import pytest
-from allthecontext.release_manifest import ManifestError, public_key_fingerprint
+from allthecontext.release_manifest import (
+    MAX_KEYRING_BYTES,
+    ManifestError,
+    public_key_fingerprint,
+)
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.release_keyring import (
+    _read_bounded_keyring_bytes,
     audit_private_key_material,
     contains_private_key_block,
     import_reviewed_public_key,
@@ -114,5 +119,65 @@ def test_keyring_pair_rejects_drift_and_fingerprint_tampering(tmp_path: Path) ->
 
     packaged.write_bytes(operator.read_bytes())
     packaged.write_text('{"schema_version": 1, "keys": [{"bad": true}]}', encoding="utf-8")
+    with pytest.raises(ManifestError):
+        validate_keyring_pair(operator, packaged)
+
+
+def test_script_keyring_byte_reader_accepts_exact_multibyte_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = b'{"schema_version":1,"keys":[],"label":"\xc3\xa9"}'
+    raw += b" " * (MAX_KEYRING_BYTES - len(raw))
+    path = tmp_path / "keys.json"
+    path.write_bytes(raw)
+    read_sizes: list[int] = []
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+    def tracking_open(target: Path, *args: object, **kwargs: object) -> object:
+        handle = original_open(target, *args, **kwargs)
+        return TrackingReader(handle) if target == path else handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    assert _read_bounded_keyring_bytes(path) == raw
+    assert read_sizes == [MAX_KEYRING_BYTES + 1]
+
+
+def test_keyring_pair_rejects_oversized_raw_comparison_input(tmp_path: Path) -> None:
+    operator = tmp_path / "keys.json"
+    packaged = tmp_path / "update_keys.json"
+    oversized = b"{" + b" " * MAX_KEYRING_BYTES
+    operator.write_bytes(oversized)
+    packaged.write_bytes(oversized)
+
+    with pytest.raises(ManifestError, match="size limit"):
+        validate_keyring_pair(operator, packaged)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"\xff", b'{"keys":' + b"[" * 7000 + b"0" + b"]" * 7000 + b"}"],
+    ids=["invalid-utf8", "deep-json"],
+)
+def test_keyring_pair_contains_parser_failures(tmp_path: Path, raw: bytes) -> None:
+    operator, packaged = _empty_keyrings(tmp_path)
+    operator.write_bytes(raw)
+    packaged.write_bytes(raw)
+
     with pytest.raises(ManifestError):
         validate_keyring_pair(operator, packaged)

@@ -1,5 +1,33 @@
 # Architecture decisions
 
+## ADR-189: Recovery cleanup retry authority and bounded operator keyring reads
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the corrected commit and the PR remains open.
+
+Recovery outcome is not terminal until its owned staging cleanup succeeds. If
+cleanup is refused or becomes ambiguous, the updater keeps the transaction
+pointer, active recovery phase, handoff identity, and evidence intact,
+persists a fixed retryable error, and re-enters recovery on the next attempt.
+It never converts that path to pointerless `installed` or `rolled_back` state.
+
+Every updater unlink now rechecks the plain parent and exact entry identity
+immediately before the unlink, including staging/transaction pruning,
+temporary download/export/install files, and SQLite backup cleanup. A parent
+or entry replacement returns a controlled failure and leaves the residual
+evidence. This narrows deterministic redirection windows without claiming
+handle-based no-follow atomicity across the final Windows filesystem syscall.
+
+The release-keyring operator utility uses the shared 16 KiB limit-plus-one
+binary read for raw equality, rollback, and post-write verification as well as
+the parsed loader. Exact-limit multibyte input, oversized input, malformed
+JSON, and parser-depth failures remain contained by stable `ManifestError`
+outcomes; no keyring path consumes an unbounded `read_bytes()` result.
+
+This follow-up updates ADR-188's local evidence and does not create signing,
+SmartScreen, Defender, Microsoft reassessment, publication, release,
+downloaded-candidate, or live-user acceptance.
+
 ## ADR-188: Updater recovery authority, keyring, cleanup, and public-error containment
 
 **Status:** accepted locally on 2026-09-02 as remediation of the primary

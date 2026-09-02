@@ -754,6 +754,54 @@ def test_successful_restart_health_check_completes_and_cleans_staging(tmp_path: 
     assert recovered.recover_after_restart()["phase"] == "installed"
 
 
+@pytest.mark.parametrize("outcome", ["installed", "rolled_back", None])
+def test_recovery_cleanup_failure_retains_active_authority_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str | None,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    operation_id = "f" * 24
+    staging = manager.config.data_dir / "staging" / operation_id
+    staging.mkdir(parents=True)
+    staged_artifact = staging / "artifact.zip"
+    staged_artifact.write_bytes(artifact)
+    backup = manager.config.data_dir / "backups" / "before.sqlite3"
+    backup.parent.mkdir(parents=True)
+    backup.write_bytes(b"verified backup")
+    journal = manager.config.data_dir / "transactions" / operation_id / "journal.json"
+    journal.parent.mkdir(parents=True)
+    journal.write_text('{"phase":"committed"}', encoding="utf-8")
+    manager.state.phase = UpdatePhase.RESTART_REQUIRED
+    manager.state.offered_version = "0.2.0"
+    manager.state.mandatory = False
+    manager.state.release_notes_url = manifest["release_notes_url"]
+    manager.state.downloaded_path = str(staged_artifact)
+    manager.state.backup_path = str(backup)
+    manager.state.operation_id = operation_id
+    manager.state.transaction_path = str(journal)
+    manager.state.manifest_identity = "a" * 64
+    manager._save()
+
+    installer = FakeInstaller()
+    manager.installer = installer
+    monkeypatch.setattr(installer, "recovery_outcome", lambda _state: outcome)
+    monkeypatch.setattr(manager, "_clean_operation", lambda: False)
+
+    status = manager.recover_after_restart()
+
+    assert status["phase"] == "restart_required"
+    assert status["last_error"] == (
+        "Update recovery completed but cleanup could not be completed safely; retry recovery"
+    )
+    assert manager.state.transaction_path == str(journal)
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    assert persisted["phase"] == "restart_required"
+    assert persisted["transaction_path"] == str(journal)
+    assert journal.is_file()
+
+
 def test_interrupted_download_recovers_as_cancelled(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
@@ -1167,6 +1215,66 @@ def test_prune_directory_refuses_after_deterministic_root_replacement(
     assert updater_module.UpdateManager._prune_directory(root, keep=None) is False
     assert replacement_marker.read_text(encoding="utf-8") == "outside"
     assert (tmp_path / "original-staging" / "orphan" / "marker").is_file()
+
+
+def test_unlink_refuses_after_deterministic_parent_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "owned"
+    parent.mkdir()
+    target = parent / "temporary.bin"
+    target.write_bytes(b"original")
+    original_parent = tmp_path / "original-owned"
+    replacement_target = target
+    original_lstat = Path.lstat
+    target_lstat_calls = 0
+
+    def swap_parent(path: Path) -> object:
+        nonlocal target_lstat_calls
+        if path == target:
+            target_lstat_calls += 1
+            if target_lstat_calls == 2:
+                parent.rename(original_parent)
+                parent.mkdir()
+                replacement_target.write_bytes(b"replacement")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", swap_parent)
+
+    with pytest.raises(updater_module.UpdateError, match="not a plain file"):
+        updater_module._unlink_plain_file(target, "temporary file is not a plain file")
+
+    assert (original_parent / "temporary.bin").read_bytes() == b"original"
+    assert replacement_target.read_bytes() == b"replacement"
+
+
+def test_prune_refuses_after_deterministic_entry_parent_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    entry = root / "orphan.bin"
+    entry.write_bytes(b"original")
+    original_root = tmp_path / "original-staging"
+    replacement_entry = entry
+    original_lstat = Path.lstat
+    entry_lstat_calls = 0
+
+    def swap_parent(path: Path) -> object:
+        nonlocal entry_lstat_calls
+        if path == entry:
+            entry_lstat_calls += 1
+            if entry_lstat_calls == 1:
+                root.rename(original_root)
+                root.mkdir()
+                replacement_entry.write_bytes(b"replacement")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", swap_parent)
+
+    assert updater_module.UpdateManager._prune_directory(root, keep=None) is False
+    assert (original_root / "orphan.bin").read_bytes() == b"original"
+    assert replacement_entry.read_bytes() == b"replacement"
 
 
 def test_substituted_persisted_manifest_never_controls_download_transport(

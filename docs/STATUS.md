@@ -70,12 +70,19 @@ underlying Windows filesystem syscall remains an explicit residual because the
 cross-platform implementation does not claim handle-based no-follow
 atomicity.
 
-Local source evidence includes 349 focused updater/recovery/manifest/desktop
-tests with six expected capability skips, 2,544 full-suite tests with 13
+Recovery does not persist `installed` or `rolled_back` after an ambiguous
+staging cleanup. It retains the transaction pointer and active
+`restart_required` phase with a fixed retryable error. Updater unlink paths
+perform final parent/entry identity checks, and the release-keyring operator
+utility uses the same bounded keyring read for raw equality, rollback, and
+post-write verification.
+
+Local source evidence includes 362 focused updater/recovery/manifest/desktop
+tests with six expected capability skips, 2,553 full-suite tests with 13
 expected capability skips, repository Ruff and mypy checks, and a clean
 source-built disposable Windows packaged first-run/restart/rollback/uninstall
-smoke. Hosted CI for the earlier revision remains open pending the pushed
-remediation result. No signing, SmartScreen, Defender, Microsoft submission,
+smoke. Hosted CI evidence must remain bound to this corrected follow-up
+commit; no signing, SmartScreen, Defender, Microsoft submission,
 publishing, release, or downloaded-candidate execution was performed.
 
 ### 2026-09-02 — Primary updater metadata authority containment
@@ -99,8 +106,8 @@ and install failures remain bounded public errors without transport use after
 manifest substitution.
 
 On this Windows host, Python 3.14.3 passed the focused updater/recovery/desktop
-command with 265 tests and five expected capability skips, and the full suite
-passed 2,527 tests with 12 expected capability skips and two existing
+command with 362 tests and six expected capability skips, and the full suite
+passed 2,553 tests with 13 expected capability skips and two existing
 deprecation warnings. Ruff format/lint and mypy over 107 source files passed.
 This is source-level evidence only; no signing, SmartScreen, Defender,
 Microsoft submission, publishing, tagging, release, or downloaded-candidate

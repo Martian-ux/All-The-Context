@@ -13,7 +13,7 @@ containment row refers to ADR-186 and preserves the distinct optional-marker
 boundary in ADR-185. The primary updater metadata-authority row refers to
 ADR-187 and starts from the exact `origin/main` merge base
 `466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb`. Its recovery, keyring, cleanup,
-and privacy remediation is covered by ADR-188.
+and privacy remediation is covered by ADR-188 and ADR-189.
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;
@@ -72,14 +72,23 @@ credentials, URLs with credentials, or exception text. Focused updater,
 manifest, and helper tests include real oversized/deep/invalid-UTF8/non-object
 inputs, exact/multibyte reads, non-regular paths, partial active state, root
 replacement, and atomic parent replacement. A source-built disposable Windows
-packaged smoke passed through rollback and uninstall; hosted follow-up evidence
-remains open.
+packaged smoke passed through rollback and uninstall.
+
+ADR-189 extends that boundary to terminal recovery cleanup: an ambiguous
+cleanup keeps the transaction pointer and active retryable state rather than
+persisting pointerless `installed`/`rolled_back`; all updater unlink paths
+perform final parent/entry identity checks; and scripts/release_keyring.py
+uses the same bounded keyring byte reader for raw comparison, rollback, and
+post-write verification. New regressions cover forced cleanup refusal,
+deterministic parent replacement, exact-limit multibyte script reads, and
+oversized raw keyring comparison. Hosted follow-up checks must bind to the
+corrected commit.
 
 ### 2026-09-02 Primary updater metadata authority containment
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| UPDATER-07 — primary updater metadata must remain bounded, path-contained, and revalidated before authority use | `updater.py::_decode_bounded_json`; `updater.py::_read_bounded_json`; `updater.py::_atomic_json`; `UpdateManager::_revalidate_persisted_manifest`; recovery helper plain-file/directory and atomic primitives; `tests/unit/test_updater.py::test_update_metadata_boundary_contains_real_parser_and_root_failures`; `test_update_metadata_boundary_reads_exact_limit_plus_one_and_accepts_multibyte`; `test_update_metadata_boundary_rejects_growth_after_initial_stat`; `test_update_json_decoder_does_not_swallow_process_control_exceptions`; `test_update_json_decoder_does_not_swallow_unexpected_programming_errors`; `test_network_manifest_parser_failures_are_bounded_public_errors`; `test_verified_manifest_artifact_size_is_bounded`; `test_download_rejects_nonregular_persisted_manifest_without_transport`; `test_oversized_persisted_update_metadata_fails_closed_without_raw_content`; `test_corrupt_state_preserves_recovery_evidence_and_last_good_file`; `test_substituted_persisted_manifest_never_controls_download_transport`; `test_update_atomic_metadata_failure_preserves_last_good_target`; `test_update_atomic_metadata_rejects_nonregular_parent_without_touching_siblings`; `test_hostile_persisted_state_symlink_stays_last_good_and_blocks_network`; ADR-187 | Implemented and locally tested. Preferences/state/manifest reads are bounded at 16 KiB/64 KiB/128 KiB and request no more than one limit-plus-one sentinel read; expected UTF-8/JSON parser failures become stable updater errors while process-control and unexpected programming failures propagate. Reparse/non-regular/hostile-parent metadata is rejected, unsafe state remains last-good and blocks later network/state mutation, and atomic replacement retains the prior target. Persisted manifests are re-read, identity-hashed, signature/keyring/channel/platform/architecture/version/bounded-size/state-bound, and rejected before download URL/size use, export, preflight, backup, or handoff. Focused updater/recovery/desktop tests passed 265 tests with five expected capability skips; full pytest passed 2,527 tests with 12 expected capability skips and two existing deprecation warnings. Ruff format/lint and mypy over 107 source files passed. Source-level evidence only; no handle-based no-follow guarantee, signing, SmartScreen, Defender, Microsoft, release, or downloaded-candidate execution acceptance is claimed |
+| UPDATER-07 — primary updater metadata must remain bounded, path-contained, and revalidated before authority use | `updater.py::_decode_bounded_json`; `updater.py::_read_bounded_json`; `updater.py::_atomic_json`; `UpdateManager::_revalidate_persisted_manifest`; recovery helper plain-file/directory, unlink, and atomic primitives; `scripts/release_keyring.py::_read_bounded_keyring_bytes`; focused updater, manifest, helper, and release-keyring regressions; ADR-187/ADR-189 | Implemented and locally tested. Preferences/state/manifest reads and every script-side keyring read use explicit limits with one sentinel read; expected UTF-8/JSON parser failures become stable errors while process-control and unexpected programming failures propagate. Reparse/non-regular/hostile-parent metadata and deterministic parent/entry replacement are rejected, active recovery authority is retained for cleanup retry, and atomic replacement retains the prior target. Persisted manifests remain revalidated before transport or installer use, export, preflight, backup, or handoff. The current local result is 362 focused tests with six expected capability skips and 2,553 full-suite tests with 13 expected capability skips; hosted exact-SHA verification is required for the corrected commit. Source-level evidence does not claim handle-based no-follow atomicity, signing, SmartScreen, Defender, Microsoft, release, or downloaded-candidate execution acceptance |
 
 ### 2026-09-02 Windows updater/recovery JSON parser containment
 

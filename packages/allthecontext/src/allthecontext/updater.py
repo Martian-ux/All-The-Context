@@ -172,6 +172,7 @@ _PUBLIC_ERROR_MESSAGES = frozenset(
         "The Windows update recovery journal was invalid",
         "Persisted update recovery metadata was invalid and was reset safely",
         "Persisted update recovery metadata was unsafe; recovery evidence was preserved",
+        "Update recovery completed but cleanup could not be completed safely; retry recovery",
         "The new version failed its health check and was rolled back",
         "The new version did not become healthy and automatic rollback failed",
         "Signed update metadata targets a different platform",
@@ -618,8 +619,21 @@ def _within_path(path: Path, root: Path) -> bool:
 
 def _unlink_plain_file(path: Path, message: str) -> None:
     try:
-        if _helper_plain_file_stat_if_present(path, "metadata_untrusted") is not None:
-            path.unlink()
+        parent_before = _plain_directory_stat_if_present(path.parent)
+        if parent_before is None:
+            return
+        target_before = _helper_plain_file_stat_if_present(path, "metadata_untrusted")
+        if target_before is None:
+            parent_after = _plain_directory_stat_if_present(path.parent)
+            if parent_after is None or not _same_directory(parent_before, parent_after):
+                raise HelperError("metadata_untrusted")
+            return
+        if not _unlink_owned_entry(
+            path,
+            parent_expected=parent_before,
+            target_expected=target_before,
+        ):
+            raise HelperError("metadata_untrusted")
     except (HelperError, OSError) as exc:
         raise UpdateError(message) from exc
 
@@ -646,6 +660,102 @@ def _same_directory(expected: os.stat_result, observed: os.stat_result) -> bool:
     return bool(same and stat.S_ISDIR(observed.st_mode) and not _is_link_or_reparse(observed))
 
 
+def _same_unlink_entry(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(
+        same
+        and stat.S_IFMT(expected.st_mode) == stat.S_IFMT(observed.st_mode)
+        and _is_link_or_reparse(expected) == _is_link_or_reparse(observed)
+        and getattr(expected, "st_nlink", 1) == getattr(observed, "st_nlink", 1)
+        and expected.st_size == observed.st_size
+        and getattr(expected, "st_mtime_ns", None) == getattr(observed, "st_mtime_ns", None)
+    )
+
+
+def _unlink_owned_entry(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    target_expected: os.stat_result,
+) -> bool:
+    """Unlink one entry only while its plain parent and identity remain stable."""
+
+    try:
+        parent_before = _plain_directory_stat_if_present(path.parent)
+        target_before = path.lstat()
+        if (
+            parent_before is None
+            or not _same_directory(parent_expected, parent_before)
+            or not _same_unlink_entry(target_expected, target_before)
+        ):
+            return False
+        parent_after = _plain_directory_stat_if_present(path.parent)
+        target_after = path.lstat()
+        if (
+            parent_after is None
+            or not _same_directory(parent_expected, parent_after)
+            or not _same_unlink_entry(target_expected, target_after)
+        ):
+            return False
+        parent_final = _plain_directory_stat_if_present(path.parent)
+        target_final = path.lstat()
+        if (
+            parent_final is None
+            or not _same_directory(parent_expected, parent_final)
+            or not _same_unlink_entry(target_expected, target_final)
+        ):
+            return False
+        path.unlink()
+        return True
+    except (HelperError, OSError):
+        return False
+
+
+def _rmdir_owned_directory(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    directory_expected: os.stat_result,
+) -> bool:
+    """Remove one empty directory only while its parent and identity are stable."""
+
+    try:
+        parent_before = _plain_directory_stat_if_present(path.parent)
+        directory_before = _plain_directory_stat_if_present(path)
+        if (
+            parent_before is None
+            or not _same_directory(parent_expected, parent_before)
+            or directory_before is None
+            or not _same_directory(directory_expected, directory_before)
+        ):
+            return False
+        parent_after = _plain_directory_stat_if_present(path.parent)
+        directory_after = _plain_directory_stat_if_present(path)
+        if (
+            parent_after is None
+            or not _same_directory(parent_expected, parent_after)
+            or directory_after is None
+            or not _same_directory(directory_expected, directory_after)
+        ):
+            return False
+        parent_final = _plain_directory_stat_if_present(path.parent)
+        directory_final = _plain_directory_stat_if_present(path)
+        if (
+            parent_final is None
+            or not _same_directory(parent_expected, parent_final)
+            or directory_final is None
+            or not _same_directory(directory_expected, directory_final)
+        ):
+            return False
+        path.rmdir()
+        return True
+    except (HelperError, OSError):
+        return False
+
+
 def _remove_owned_tree(path: Path, *, expected: os.stat_result | None = None) -> bool:
     """Remove a private tree without traversing reparse or replaced entries."""
 
@@ -656,11 +766,13 @@ def _remove_owned_tree(path: Path, *, expected: os.stat_result | None = None) ->
         if expected is not None and not _same_directory(expected, current):
             return False
         if _is_link_or_reparse(current):
-            path.unlink()
-            return True
+            return False
         if not stat.S_ISDIR(current.st_mode):
             return False
         directory_stat = current
+        parent_stat = _plain_directory_stat_if_present(path.parent)
+        if parent_stat is None:
+            return False
         for child in path.iterdir():
             current_directory = _plain_directory_stat_if_present(path)
             if current_directory is None or not _same_directory(directory_stat, current_directory):
@@ -669,7 +781,12 @@ def _remove_owned_tree(path: Path, *, expected: os.stat_result | None = None) ->
             if _is_link_or_reparse(child_stat) or (
                 stat.S_ISREG(child_stat.st_mode) and getattr(child_stat, "st_nlink", 1) == 1
             ):
-                child.unlink()
+                if not _unlink_owned_entry(
+                    child,
+                    parent_expected=directory_stat,
+                    target_expected=child_stat,
+                ):
+                    return False
             elif stat.S_ISDIR(child_stat.st_mode):
                 if not _remove_owned_tree(child, expected=child_stat):
                     return False
@@ -678,8 +795,11 @@ def _remove_owned_tree(path: Path, *, expected: os.stat_result | None = None) ->
         current_directory = _plain_directory_stat_if_present(path)
         if current_directory is None or not _same_directory(directory_stat, current_directory):
             return False
-        path.rmdir()
-        return True
+        return _rmdir_owned_directory(
+            path,
+            parent_expected=parent_stat,
+            directory_expected=directory_stat,
+        )
     except (HelperError, OSError):
         return False
 
@@ -1268,7 +1388,7 @@ class SQLiteBackup:
             raise UpdateError("Core database is unavailable for the required pre-update backup")
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_suffix(".atc-new")
-        temporary.unlink(missing_ok=True)
+        _unlink_plain_file(temporary, "The temporary database backup is not a plain file")
         try:
             source_connection = sqlite3.connect(source, timeout=10)
             destination = sqlite3.connect(temporary)
@@ -1283,7 +1403,11 @@ class SQLiteBackup:
                 source_connection.close()
             temporary.replace(target)
         except BaseException:
-            temporary.unlink(missing_ok=True)
+            with suppress(UpdateError):
+                _unlink_plain_file(
+                    temporary,
+                    "The temporary database backup is not a plain file",
+                )
             raise
 
 
@@ -1710,6 +1834,16 @@ class UpdateManager:
             self.state.last_error = "The interrupted update operation was safely cancelled"
             self._save()
 
+    def _recovery_cleanup_failed(self) -> dict[str, Any]:
+        """Keep the active handoff authoritative for a safe recovery retry."""
+
+        self.state.phase = UpdatePhase.RESTART_REQUIRED
+        self.state.last_error = (
+            "Update recovery completed but cleanup could not be completed safely; retry recovery"
+        )
+        self._save()
+        return self.public_status()
+
     def recover_after_restart(self) -> dict[str, Any]:
         """Resolve a persisted handoff exactly once after the replacement starts."""
 
@@ -1724,6 +1858,8 @@ class UpdateManager:
             if recovery_outcome == "pending":
                 return self.public_status()
             if recovery_outcome == "installed":
+                if not self._clean_operation():
+                    return self._recovery_cleanup_failed()
                 self.state.phase = UpdatePhase.INSTALLED
                 self.state.last_error = None
                 self.state.transaction_path = None
@@ -1734,6 +1870,8 @@ class UpdateManager:
                 self._save()
                 return self.public_status()
             if recovery_outcome == "rolled_back":
+                if not self._clean_operation():
+                    return self._recovery_cleanup_failed()
                 self.state.phase = UpdatePhase.ROLLED_BACK
                 self.state.last_error = (
                     "The update did not become healthy; the previous app and vault were restored"
@@ -1764,6 +1902,8 @@ class UpdateManager:
                 self._save()
                 return self.public_status()
             if version_advanced and self.health_probe.healthy():
+                if not self._clean_operation():
+                    return self._recovery_cleanup_failed()
                 self.state.phase = UpdatePhase.INSTALLED
                 self.state.last_error = None
                 self.state.transaction_path = None
@@ -1775,6 +1915,8 @@ class UpdateManager:
                 return self.public_status()
             try:
                 self.installer.rollback(self.state)
+                if not self._clean_operation():
+                    return self._recovery_cleanup_failed()
                 self.state.phase = UpdatePhase.ROLLED_BACK
                 self.state.last_error = (
                     "The new version failed its health check and was rolled back"
@@ -1900,7 +2042,12 @@ class UpdateManager:
                     if _is_link_or_reparse(entry_stat) or (
                         stat.S_ISREG(entry_stat.st_mode) and getattr(entry_stat, "st_nlink", 1) == 1
                     ):
-                        entry.unlink()
+                        if not _unlink_owned_entry(
+                            entry,
+                            parent_expected=current_root,
+                            target_expected=entry_stat,
+                        ):
+                            return False
                     elif stat.S_ISDIR(entry_stat.st_mode):
                         if not _remove_owned_tree(entry, expected=entry_stat):
                             return False

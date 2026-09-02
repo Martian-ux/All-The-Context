@@ -19,6 +19,7 @@ from typing import Any
 from allthecontext.release_manifest import (
     CHANNELS,
     KEY_ID,
+    MAX_KEYRING_BYTES,
     ManifestError,
     encoded_public_key,
     load_keyring,
@@ -43,6 +44,19 @@ PRIVATE_KEY_MARKERS = (
 )
 FORBIDDEN_PRIVATE_KEY_NAMES = frozenset({"id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"})
 FORBIDDEN_PRIVATE_KEY_SUFFIXES = frozenset({".key", ".p12", ".pfx"})
+
+
+def _read_bounded_keyring_bytes(path: Path) -> bytes:
+    """Read keyring bytes with the same limit-plus-one contract as the loader."""
+
+    try:
+        with path.open("rb") as stream:
+            value = stream.read(MAX_KEYRING_BYTES + 1)
+    except OSError as exc:
+        raise ManifestError("keyring could not be read safely") from exc
+    if len(value) > MAX_KEYRING_BYTES:
+        raise ManifestError("keyring exceeds the size limit")
+    return value
 
 
 def _canonical_json(value: dict[str, Any]) -> bytes:
@@ -110,8 +124,8 @@ def _write_pair_atomically(
 
     if not operator_path.is_file() or not packaged_path.is_file():
         raise ManifestError("both tracked keyring files must already exist")
-    previous_operator = operator_path.read_bytes()
-    previous_packaged = packaged_path.read_bytes()
+    previous_operator = _read_bounded_keyring_bytes(operator_path)
+    previous_packaged = _read_bounded_keyring_bytes(packaged_path)
     encoded = _canonical_json(value)
     suffix = uuid.uuid4().hex
     operator_temp = operator_path.with_name(f".{operator_path.name}.{suffix}.tmp")
@@ -131,7 +145,10 @@ def _write_pair_atomically(
         for temporary in (operator_temp, packaged_temp, rollback_temp):
             with contextlib.suppress(FileNotFoundError):
                 temporary.unlink()
-    if operator_path.read_bytes() != encoded or packaged_path.read_bytes() != encoded:
+    if (
+        _read_bounded_keyring_bytes(operator_path) != encoded
+        or _read_bounded_keyring_bytes(packaged_path) != encoded
+    ):
         # Restore both copies if an unusual filesystem filter changed the bytes.
         operator_path.write_bytes(previous_operator)
         packaged_path.write_bytes(previous_packaged)
@@ -171,10 +188,10 @@ def validate_keyring_pair(
     *,
     required_channel: str | None = None,
 ) -> dict[str, Any]:
-    if operator_path.read_bytes() != packaged_path.read_bytes():
-        raise ManifestError("operator and packaged keyrings are not byte-for-byte equivalent")
     operator = load_keyring(operator_path)
     packaged = load_keyring(packaged_path)
+    if _read_bounded_keyring_bytes(operator_path) != _read_bounded_keyring_bytes(packaged_path):
+        raise ManifestError("operator and packaged keyrings are not byte-for-byte equivalent")
     if operator != packaged:
         raise ManifestError("operator and packaged keyrings are not equivalent JSON")
     if required_channel is not None:
