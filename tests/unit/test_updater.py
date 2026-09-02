@@ -120,6 +120,10 @@ class FakeInstaller:
             raise UpdateError("Installed files are locked")
         if self.failure == "crash":
             raise UpdateError("Installer process crashed")
+        plan.transaction_dir.mkdir(parents=True, exist_ok=True)
+        (plan.transaction_dir / "journal.json").write_text(
+            '{"phase":"committed"}', encoding="utf-8"
+        )
         self.handed_off = True
 
     def recovery_outcome(self, state: UpdateState) -> str | None:
@@ -1135,6 +1139,65 @@ def test_partial_active_state_preserves_state_and_recovery_evidence(
     assert "restart_required" not in (manager.public_status()["last_error"] or "")
 
 
+@pytest.mark.parametrize("phase", ["installing", "restart_required"])
+@pytest.mark.parametrize("missing", ["artifact", "backup", "journal"])
+def test_active_recovery_missing_physical_evidence_fails_closed(
+    tmp_path: Path,
+    phase: str,
+    missing: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    operation_id = "d" * 24
+    operation_dir = updates / "staging" / operation_id
+    operation_dir.mkdir(parents=True)
+    artifact_path = operation_dir / "artifact.zip"
+    artifact_path.write_bytes(artifact)
+    backup_path = updates / "backups" / "before.sqlite3"
+    backup_path.parent.mkdir(parents=True)
+    backup_path.write_bytes(b"verified backup")
+    journal_path = updates / "transactions" / operation_id / "journal.json"
+    journal_path.parent.mkdir(parents=True)
+    journal_path.write_text('{"phase":"committed"}', encoding="utf-8")
+    state = {
+        "phase": phase,
+        "current_version": "0.1.0",
+        "offered_version": manifest["version"],
+        "mandatory": False,
+        "release_notes_url": manifest["release_notes_url"],
+        "downloaded_path": str(artifact_path),
+        "backup_path": str(backup_path),
+        "operation_id": operation_id,
+        "transaction_path": str(journal_path),
+        "manifest_identity": "a" * 64,
+    }
+    state_path = updates / "state.json"
+    original_state = (json.dumps(state, sort_keys=True) + "\n").encode("utf-8")
+    state_path.write_bytes(original_state)
+    missing_path = {
+        "artifact": artifact_path,
+        "backup": backup_path,
+        "journal": journal_path,
+    }[missing]
+    missing_path.unlink()
+    orphan = updates / "exports" / "surviving-orphan.zip"
+    orphan.parent.mkdir(parents=True)
+    orphan.write_bytes(b"survive")
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    status = manager.public_status()
+    assert status["phase"] == "error"
+    assert status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert manager._state_write_allowed is False
+    assert state_path.read_bytes() == original_state
+    assert orphan.is_file()
+    for candidate in (artifact_path, backup_path, journal_path):
+        if candidate != missing_path:
+            assert candidate.is_file()
+
+
 def test_public_update_errors_do_not_expose_manifest_or_keyring_details(
     tmp_path: Path,
 ) -> None:
@@ -1277,6 +1340,110 @@ def test_prune_refuses_after_deterministic_entry_parent_replacement(
     assert replacement_entry.read_bytes() == b"replacement"
 
 
+def test_cleanup_rejects_wide_tree_before_deleting_any_entry(tmp_path: Path) -> None:
+    root = tmp_path / "wide"
+    root.mkdir()
+    entries = [
+        root / f"entry-{index}.bin" for index in range(updater_module.MAX_CLEANUP_ENTRIES + 1)
+    ]
+    for entry in entries:
+        entry.write_bytes(b"entry")
+
+    assert updater_module._remove_owned_tree(root) is False
+    assert root.is_dir()
+    assert all(entry.is_file() for entry in entries)
+
+
+def test_cleanup_removes_tree_at_exact_entry_budget(tmp_path: Path) -> None:
+    root = tmp_path / "at-budget"
+    root.mkdir()
+    entries = [root / f"entry-{index}.bin" for index in range(updater_module.MAX_CLEANUP_ENTRIES)]
+    for entry in entries:
+        entry.write_bytes(b"entry")
+
+    assert updater_module._remove_owned_tree(root) is True
+    assert not root.exists()
+
+
+def test_prune_budget_is_global_across_nested_entries(tmp_path: Path) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    nested = root / "orphan"
+    nested.mkdir()
+    entries = [nested / f"entry-{index}.bin" for index in range(updater_module.MAX_CLEANUP_ENTRIES)]
+    for entry in entries:
+        entry.write_bytes(b"entry")
+
+    assert updater_module.UpdateManager._prune_directory(root, keep=None) is False
+    assert nested.is_dir()
+    assert all(entry.is_file() for entry in entries)
+
+
+def test_prune_removes_tree_at_exact_global_nested_budget(tmp_path: Path) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    nested = root / "orphan"
+    nested.mkdir()
+    entries = [
+        nested / f"entry-{index}.bin" for index in range(updater_module.MAX_CLEANUP_ENTRIES - 1)
+    ]
+    for entry in entries:
+        entry.write_bytes(b"entry")
+
+    assert updater_module.UpdateManager._prune_directory(root, keep=None) is True
+    assert not nested.exists()
+    assert root.is_dir()
+
+
+def test_cleanup_rejects_tree_deeper_than_global_depth_budget(tmp_path: Path) -> None:
+    root = tmp_path / "deep"
+    root.mkdir()
+    current = root
+    for index in range(updater_module.MAX_CLEANUP_DEPTH + 1):
+        current = current / f"level-{index}"
+        current.mkdir()
+    marker = current / "marker.bin"
+    marker.write_bytes(b"marker")
+
+    assert updater_module._remove_owned_tree(root) is False
+    assert root.is_dir()
+    assert marker.is_file()
+
+
+def test_cleanup_removes_tree_at_exact_depth_budget(tmp_path: Path) -> None:
+    root = tmp_path / "depth"
+    root.mkdir()
+    current = root
+    for index in range(updater_module.MAX_CLEANUP_DEPTH - 1):
+        current = current / f"level-{index}"
+        current.mkdir()
+    marker = current / "marker.bin"
+    marker.write_bytes(b"marker")
+
+    assert updater_module._remove_owned_tree(root) is True
+    assert not root.exists()
+
+
+def test_cleanup_recursion_error_fails_closed_without_deleting_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pathological"
+    root.mkdir()
+    marker = root / "marker.bin"
+    marker.write_bytes(b"marker")
+    original_iterdir = Path.iterdir
+
+    def fail_iterdir(path: Path) -> object:
+        if path == root:
+            raise RecursionError("pathological traversal")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    assert updater_module._remove_owned_tree(root) is False
+    assert marker.is_file()
+
+
 def test_substituted_persisted_manifest_never_controls_download_transport(
     tmp_path: Path,
 ) -> None:
@@ -1380,16 +1547,21 @@ def test_hostile_persisted_state_symlink_stays_last_good_and_blocks_network(
     assert link.is_symlink()
 
 
-def test_repeated_checks_remove_bounded_orphan_staging(tmp_path: Path) -> None:
+def test_repeated_checks_preserve_orphan_staging_when_global_budget_is_exceeded(
+    tmp_path: Path,
+) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
     staging = manager.config.data_dir / "staging"
     for index in range(40):
         (staging / f"orphan-{index:02d}").mkdir(parents=True)
     manager.check()
-    assert len(list(staging.iterdir())) <= 9
+    assert len(list(staging.iterdir())) == 41
+    assert all((staging / f"orphan-{index:02d}").is_dir() for index in range(40))
     manager.check()
-    assert [entry.name for entry in staging.iterdir()] == [manager.state.operation_id]
+    assert len(list(staging.iterdir())) == 41
+    assert (staging / (manager.state.operation_id or "missing")).is_dir()
+    assert all((staging / f"orphan-{index:02d}").is_dir() for index in range(40))
 
 
 def test_restart_retains_the_latest_terminal_recovery_journal(tmp_path: Path) -> None:

@@ -1,5 +1,24 @@
 # Architecture decisions
 
+## ADR-190: Globally bounded updater cleanup planning
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the corrected commit and the PR remains open.
+
+Updater cleanup traverses private staging, transaction, export, and temporary
+trees iteratively with a global budget of 32 removable entries and 32
+directory levels per cleanup tree. It builds a post-order plan and preflights
+the complete plan before mutation. A budget, parser/pathology, or identity
+failure therefore returns a controlled failure without budget-driven partial
+deletion; existing residual evidence is preserved. Final parent/object checks
+remain in each unlink/rmdir operation, with the documented residual that the
+cross-platform implementation does not claim handle-based no-follow
+atomicity across the final Windows filesystem syscall.
+
+This decision does not create signing, SmartScreen, Defender, Microsoft
+reassessment, publication, release, downloaded-candidate, or live-user
+acceptance.
+
 ## ADR-189: Recovery cleanup retry authority and bounded operator keyring reads
 
 **Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
@@ -13,16 +32,22 @@ It never converts that path to pointerless `installed` or `rolled_back` state.
 
 Every updater unlink now rechecks the plain parent and exact entry identity
 immediately before the unlink, including staging/transaction pruning,
-temporary download/export/install files, and SQLite backup cleanup. A parent
-or entry replacement returns a controlled failure and leaves the residual
-evidence. This narrows deterministic redirection windows without claiming
-handle-based no-follow atomicity across the final Windows filesystem syscall.
+temporary download/export/install files, and SQLite backup cleanup. Tree
+cleanup is iterative and plans at most 32 removable entries across 32 directory
+levels globally per tree; the complete plan is preflighted before mutation, so
+budget, parser/pathology, or deterministic identity failure leaves the tree
+untouched. A parent or entry replacement returns a controlled failure and
+leaves residual evidence. This narrows deterministic redirection windows
+without claiming handle-based no-follow atomicity across the final Windows
+filesystem syscall.
 
 The release-keyring operator utility uses the shared 16 KiB limit-plus-one
 binary read for raw equality, rollback, and post-write verification as well as
-the parsed loader. Exact-limit multibyte input, oversized input, malformed
-JSON, and parser-depth failures remain contained by stable `ManifestError`
-outcomes; no keyring path consumes an unbounded `read_bytes()` result.
+the parsed loader. Its reviewed public-key input is bounded at 64 KiB and each
+tracked audit file at 512 KiB using the same limit-plus-one pattern. Exact-limit
+multibyte input, oversized input, malformed JSON, and parser-depth failures
+remain contained by stable `ManifestError` outcomes; no keyring or operator
+audit path consumes an unbounded `read_bytes()` result or reports a path.
 
 This follow-up updates ADR-188's local evidence and does not create signing,
 SmartScreen, Defender, Microsoft reassessment, publication, release,
@@ -37,11 +62,12 @@ remain required.
 Active `installing` and `restart_required` state is recovery authority, not
 ordinary cache metadata. The primary updater therefore requires the complete
 operation, staged artifact, backup, transaction pointer, manifest identity, and
-signed release-note/version binding needed for the current recovery phase
-before pruning or saving. A parseable but incomplete active object is retained
-byte-for-byte, transitions only the in-memory/public view to a fixed blocked
-error, disables state/network mutation, and preserves all staging and
-transaction evidence for `ensure_recovery_before_core`.
+signed release-note/version binding needed for the current recovery phase,
+including physically present plain files at the exact operation paths, before
+pruning or saving. A parseable but incomplete or physically incomplete active
+object is retained byte-for-byte, transitions only the in-memory/public view to
+a fixed manual-recovery error, disables state/network mutation, and preserves
+all surviving staging and transaction evidence for `ensure_recovery_before_core`.
 
 The bundled keyring is untrusted input at its load boundary. It is a bounded
 16 KiB binary read with one overflow sentinel, plain-file/parent-chain and
@@ -50,15 +76,17 @@ single-link checks, descriptor/path identity rechecks, UTF-8 and stdlib JSON
 existing complete schema validator. Callers receive only the established
 `ManifestError`/`HelperError`/`UpdateError` classes and fixed messages.
 
-Updater cleanup uses bounded, identity-rechecked recursive removal of owned
+Updater cleanup uses bounded, iterative, identity-rechecked removal of owned
 plain entries. It never follows symlinks, junctions, or Windows reparse
 points, never uses `shutil.rmtree` for staging/transaction cleanup, and
-refuses ambiguous hardlinks, non-regular entries, replaced roots, and unsafe
-parent chains. Atomic writes and temporary download/export/install cleanup
-revalidate their parent and object identity and retain a residual when safe
-ownership cannot be proven. This is deterministic redirection/race refusal,
-not a claim of handle-based no-follow atomicity across the final Windows
-filesystem syscall.
+refuses ambiguous hardlinks, non-regular entries, replaced roots, unsafe
+parent chains, trees deeper than 32 levels, or trees exceeding 32 removable
+entries globally. Cleanup plans are preflighted before mutation, so budget or
+pathology failures do not partially delete a tree; atomic writes and temporary
+download/export/install cleanup revalidate their parent and object identity
+and retain a residual when safe ownership cannot be proven. This is
+deterministic redirection/race refusal, not a claim of handle-based no-follow
+atomicity across the final Windows filesystem syscall.
 
 All updater public error projections are fixed or narrowly classified. Raw
 manifest values, keyring paths, URLs with credentials, credential material,

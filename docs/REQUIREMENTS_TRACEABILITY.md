@@ -78,17 +78,20 @@ ADR-189 extends that boundary to terminal recovery cleanup: an ambiguous
 cleanup keeps the transaction pointer and active retryable state rather than
 persisting pointerless `installed`/`rolled_back`; all updater unlink paths
 perform final parent/entry identity checks; and scripts/release_keyring.py
-uses the same bounded keyring byte reader for raw comparison, rollback, and
-post-write verification. New regressions cover forced cleanup refusal,
-deterministic parent replacement, exact-limit multibyte script reads, and
-oversized raw keyring comparison. Hosted follow-up checks must bind to the
-corrected commit.
+uses bounded readers for keyrings, reviewed public keys, and tracked audit
+files, including raw comparison, rollback, and post-write verification. ADR-190 adds an iterative global cleanup budget of 32
+removable entries and 32 directory levels, preflighted before mutation so
+over-budget or pathological trees preserve all evidence. New regressions cover
+forced cleanup refusal, deterministic parent replacement, exact-limit
+multibyte script reads, oversized raw keyring comparison, deep trees, wide
+trees, budget boundaries, and RecursionError. Hosted follow-up checks must bind
+to the corrected commit.
 
 ### 2026-09-02 Primary updater metadata authority containment
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| UPDATER-07 — primary updater metadata must remain bounded, path-contained, and revalidated before authority use | `updater.py::_decode_bounded_json`; `updater.py::_read_bounded_json`; `updater.py::_atomic_json`; `UpdateManager::_revalidate_persisted_manifest`; recovery helper plain-file/directory, unlink, and atomic primitives; `scripts/release_keyring.py::_read_bounded_keyring_bytes`; focused updater, manifest, helper, and release-keyring regressions; ADR-187/ADR-189 | Implemented and locally tested. Preferences/state/manifest reads and every script-side keyring read use explicit limits with one sentinel read; expected UTF-8/JSON parser failures become stable errors while process-control and unexpected programming failures propagate. Reparse/non-regular/hostile-parent metadata and deterministic parent/entry replacement are rejected, active recovery authority is retained for cleanup retry, and atomic replacement retains the prior target. Persisted manifests remain revalidated before transport or installer use, export, preflight, backup, or handoff. The current local result is 362 focused tests with six expected capability skips and 2,553 full-suite tests with 13 expected capability skips; hosted exact-SHA verification is required for the corrected commit. Source-level evidence does not claim handle-based no-follow atomicity, signing, SmartScreen, Defender, Microsoft, release, or downloaded-candidate execution acceptance |
+| UPDATER-07 — primary updater metadata must remain bounded, path-contained, and revalidated before authority use | `updater.py::_decode_bounded_json`; `updater.py::_read_bounded_json`; `updater.py::_atomic_json`; `UpdateManager::_revalidate_persisted_manifest`; recovery helper plain-file/directory, unlink, and atomic primitives; `scripts/release_keyring.py::_read_bounded_keyring_bytes`; focused updater, manifest, helper, and release-keyring regressions; ADR-187/ADR-189/ADR-190 | Implemented and locally tested. Preferences/state/manifest reads and every script-side keyring read use explicit limits with one sentinel read; expected UTF-8/JSON parser failures become stable errors while process-control and unexpected programming failures propagate. Reparse/non-regular/hostile-parent metadata, missing active artifact/backup/journal evidence, and deterministic parent/entry replacement are rejected without state rewrite, active recovery authority is retained for cleanup retry, iterative cleanup is globally bounded to 32 removable entries and 32 directory levels with preflight before mutation, and atomic replacement retains the prior target. Persisted manifests remain revalidated before transport or installer use, export, preflight, backup, or handoff. The current local result is 378 focused tests with six expected capability skips and 2,569 full-suite tests with 13 expected capability skips. Source-level evidence does not claim handle-based no-follow atomicity, signing, SmartScreen, Defender, Microsoft, release, or downloaded-candidate execution acceptance |
 
 ### 2026-09-02 Windows updater/recovery JSON parser containment
 

@@ -45,15 +45,19 @@ only, not as evidence for this integrated checkout.
 ### 2026-09-02 — Updater recovery, keyring, cleanup, and privacy remediation
 
 The updater remediation now requires structurally complete active recovery
-metadata before any startup cleanup or state save. A parseable partial
-`installing`/`restart_required` state becomes a controlled in-memory error,
-leaves the original state bytes unchanged, disables later updater writes and
-network use, and preserves staging/transaction evidence for the frozen Core
-recovery guard.
+metadata and physically present, plain, path-consistent artifact, backup, and
+journal evidence before any startup cleanup or state save. A parseable partial
+or physically incomplete `installing`/`restart_required` state becomes a
+sanitized manual-recovery error, leaves the original state bytes unchanged,
+disables later updater writes and network use, and preserves all surviving
+staging/transaction evidence for the frozen Core recovery guard.
 
 The release keyring now has a 16 KiB limit-plus-one binary read, plain-file and
 parent-chain checks, descriptor/path identity checks, UTF-8/JSON parser
 containment, and schema validation through stable `ManifestError` outcomes.
+The operator utility also bounds reviewed public-key input at 64 KiB and each
+tracked audit file at 512 KiB, with one overflow sentinel and content-free
+oversize/read failures.
 Updater public state uses fixed or classified allowlisted errors; manifest
 values, keyring paths, credentials, raw exception text, and rollback details
 are not projected into `last_error` or installer detail. Loopback health parsing
@@ -61,9 +65,12 @@ also contains parser-depth failures without swallowing control or programming
 exceptions.
 
 Staging, transaction, export, and temporary installed-file cleanup no longer
-uses recursive path deletion. It removes only verified plain entries, refuses
-reparse/non-regular/hardlinked ambiguity, rechecks directory identity across
-each bounded operation, and leaves residuals when a race cannot be proven safe.
+uses recursive path deletion. An iterative post-order plan removes only
+verified plain entries, refuses reparse/non-regular/hardlinked ambiguity, and
+uses one global budget of 32 removable entries and 32 directory levels for
+each cleanup tree. The complete plan is preflighted before mutation, so an
+over-budget, pathological, or ambiguous tree returns failure without partial
+budget-driven deletion; residuals remain when a race cannot be proven safe.
 Atomic metadata writes similarly recheck the parent identity before replacing
 the target. Concurrent same-user mutation between the final check and the
 underlying Windows filesystem syscall remains an explicit residual because the
@@ -77,8 +84,8 @@ perform final parent/entry identity checks, and the release-keyring operator
 utility uses the same bounded keyring read for raw equality, rollback, and
 post-write verification.
 
-Local source evidence includes 362 focused updater/recovery/manifest/desktop
-tests with six expected capability skips, 2,553 full-suite tests with 13
+Local source evidence includes 378 focused updater/recovery/manifest/desktop
+tests with six expected capability skips, 2,569 full-suite tests with 13
 expected capability skips, repository Ruff and mypy checks, and a clean
 source-built disposable Windows packaged first-run/restart/rollback/uninstall
 smoke. Hosted CI evidence must remain bound to this corrected follow-up
@@ -106,8 +113,8 @@ and install failures remain bounded public errors without transport use after
 manifest substitution.
 
 On this Windows host, Python 3.14.3 passed the focused updater/recovery/desktop
-command with 362 tests and six expected capability skips, and the full suite
-passed 2,553 tests with 13 expected capability skips and two existing
+command with 378 tests and six expected capability skips, and the full suite
+passed 2,569 tests with 13 expected capability skips and two existing
 deprecation warnings. Ruff format/lint and mypy over 107 source files passed.
 This is source-level evidence only; no signing, SmartScreen, Defender,
 Microsoft submission, publishing, tagging, release, or downloaded-candidate

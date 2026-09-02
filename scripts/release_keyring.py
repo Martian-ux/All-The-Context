@@ -44,6 +44,8 @@ PRIVATE_KEY_MARKERS = (
 )
 FORBIDDEN_PRIVATE_KEY_NAMES = frozenset({"id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"})
 FORBIDDEN_PRIVATE_KEY_SUFFIXES = frozenset({".key", ".p12", ".pfx"})
+MAX_PUBLIC_KEY_BYTES = 64 * 1024
+MAX_AUDIT_FILE_BYTES = 512 * 1024
 
 
 def _read_bounded_keyring_bytes(path: Path) -> bytes:
@@ -59,6 +61,25 @@ def _read_bounded_keyring_bytes(path: Path) -> bytes:
     return value
 
 
+def _read_bounded_file(
+    path: Path,
+    *,
+    maximum_bytes: int,
+    oversize_message: str,
+    unreadable_message: str,
+) -> bytes:
+    """Read an operator-supplied file with one bounded overflow sentinel."""
+
+    try:
+        with path.open("rb") as stream:
+            value = stream.read(maximum_bytes + 1)
+    except OSError as exc:
+        raise ManifestError(unreadable_message) from exc
+    if len(value) > maximum_bytes:
+        raise ManifestError(oversize_message)
+    return value
+
+
 def _canonical_json(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
@@ -70,8 +91,13 @@ def load_reviewable_public_key(path: Path) -> Ed25519PublicKey:
     private seed has the same length and could otherwise be imported by mistake.
     """
 
-    value = path.read_bytes()
-    if not value or len(value) > 64 * 1024:
+    value = _read_bounded_file(
+        path,
+        maximum_bytes=MAX_PUBLIC_KEY_BYTES,
+        oversize_message="public key file is empty or unreasonably large",
+        unreadable_message="public key file could not be read safely",
+    )
+    if not value:
         raise ManifestError("public key file is empty or unreasonably large")
     if any(marker in value for marker in PRIVATE_KEY_MARKERS):
         raise ManifestError("private key material is forbidden; provide only the public key")
@@ -234,15 +260,16 @@ def audit_private_key_material(paths: Sequence[Path]) -> None:
         ):
             violations.append(path.as_posix())
             continue
-        try:
-            value = path.read_bytes()
-        except OSError as exc:
-            raise ManifestError(f"could not audit tracked path: {path.name}") from exc
+        value = _read_bounded_file(
+            path,
+            maximum_bytes=MAX_AUDIT_FILE_BYTES,
+            oversize_message="tracked file exceeds the audit size limit",
+            unreadable_message="tracked file could not be audited safely",
+        )
         if contains_private_key_block(value):
             violations.append(path.as_posix())
     if violations:
-        names = ", ".join(sorted(violations))
-        raise ManifestError(f"tracked private-key material is forbidden: {names}")
+        raise ManifestError("tracked private-key material is forbidden")
 
 
 def _parser() -> argparse.ArgumentParser:

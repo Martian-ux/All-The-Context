@@ -13,6 +13,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.release_keyring import (
+    MAX_AUDIT_FILE_BYTES,
+    MAX_PUBLIC_KEY_BYTES,
+    _read_bounded_file,
     _read_bounded_keyring_bytes,
     audit_private_key_material,
     contains_private_key_block,
@@ -95,6 +98,45 @@ def test_public_key_import_fails_closed_on_unreviewed_or_private_material(tmp_pa
         load_reviewable_public_key(private_path)
     with pytest.raises(ManifestError, match="tracked private-key material"):
         audit_private_key_material([private_path])
+
+
+def test_public_key_reader_bounds_exact_multibyte_and_binary_input(tmp_path: Path) -> None:
+    raw = b"\x00\xc3\xa9" + b" " * (MAX_PUBLIC_KEY_BYTES - 3)
+    path = tmp_path / "public-key.bin"
+    path.write_bytes(raw)
+
+    assert (
+        _read_bounded_file(
+            path,
+            maximum_bytes=MAX_PUBLIC_KEY_BYTES,
+            oversize_message="public key file is empty or unreasonably large",
+            unreadable_message="public key file could not be read safely",
+        )
+        == raw
+    )
+
+
+def test_public_key_reader_rejects_limit_plus_one_without_retaining_path(tmp_path: Path) -> None:
+    path = tmp_path / "oversized-public-key.bin"
+    path.write_bytes(b"\x00" * (MAX_PUBLIC_KEY_BYTES + 1))
+
+    with pytest.raises(
+        ManifestError, match="public key file is empty or unreasonably large"
+    ) as exc:
+        load_reviewable_public_key(path)
+    assert str(path) not in str(exc.value)
+
+
+def test_private_key_audit_bounds_exact_file_and_rejects_oversize(tmp_path: Path) -> None:
+    exact = tmp_path / "exact.bin"
+    exact.write_bytes(b"\x00\xc3\xa9" + b" " * (MAX_AUDIT_FILE_BYTES - 3))
+    audit_private_key_material([exact])
+
+    oversized = tmp_path / "oversized.bin"
+    oversized.write_bytes(b"x" * (MAX_AUDIT_FILE_BYTES + 1))
+    with pytest.raises(ManifestError, match="tracked file exceeds the audit size limit") as exc:
+        audit_private_key_material([oversized])
+    assert str(oversized) not in str(exc.value)
 
 
 def test_private_key_audit_allows_policy_text_but_detects_complete_blocks() -> None:

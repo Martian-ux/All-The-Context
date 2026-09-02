@@ -79,6 +79,10 @@ READ_TIMEOUT_SECONDS = 20.0
 MAX_REDIRECTS = 1
 CHECK_INTERVAL = timedelta(hours=24)
 MAX_CLEANUP_ENTRIES = 32
+MAX_CLEANUP_DEPTH = 32
+RECOVERY_EVIDENCE_INCOMPLETE_ERROR = (
+    "Persisted update recovery evidence was incomplete; manual recovery is required"
+)
 DEFAULT_BETA_MANIFEST_URL = (
     "https://martian-ux.github.io/All-The-Context/beta/windows/x86_64/manifest-v1.json"
 )
@@ -108,6 +112,25 @@ class _BoundedJsonError(UpdateError):
 class _BoundedJson:
     raw: bytes
     value: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _CleanupAction:
+    path: Path
+    parent_expected: os.stat_result
+    target_expected: os.stat_result
+    remove_directory: bool
+
+
+@dataclass(slots=True)
+class _CleanupBudget:
+    entries_used: int = 0
+
+    def reserve(self, depth: int) -> bool:
+        if depth > MAX_CLEANUP_DEPTH or self.entries_used >= MAX_CLEANUP_ENTRIES:
+            return False
+        self.entries_used += 1
+        return True
 
 
 class UpdateEndpointHttpError(UpdateError):
@@ -172,6 +195,7 @@ _PUBLIC_ERROR_MESSAGES = frozenset(
         "The Windows update recovery journal was invalid",
         "Persisted update recovery metadata was invalid and was reset safely",
         "Persisted update recovery metadata was unsafe; recovery evidence was preserved",
+        RECOVERY_EVIDENCE_INCOMPLETE_ERROR,
         "Update recovery completed but cleanup could not be completed safely; retry recovery",
         "The new version failed its health check and was rolled back",
         "The new version did not become healthy and automatic rollback failed",
@@ -756,8 +780,16 @@ def _rmdir_owned_directory(
         return False
 
 
-def _remove_owned_tree(path: Path, *, expected: os.stat_result | None = None) -> bool:
-    """Remove a private tree without traversing reparse or replaced entries."""
+def _plan_owned_tree(
+    path: Path,
+    *,
+    expected: os.stat_result | None,
+    budget: _CleanupBudget,
+    actions: list[_CleanupAction],
+    root_depth: int,
+    count_root: bool,
+) -> bool:
+    """Plan a bounded post-order cleanup without mutating the filesystem."""
 
     try:
         current = _plain_directory_stat_if_present(path)
@@ -765,43 +797,126 @@ def _remove_owned_tree(path: Path, *, expected: os.stat_result | None = None) ->
             return True
         if expected is not None and not _same_directory(expected, current):
             return False
-        if _is_link_or_reparse(current):
+        if _is_link_or_reparse(current) or not stat.S_ISDIR(current.st_mode):
             return False
-        if not stat.S_ISDIR(current.st_mode):
+        if count_root and not budget.reserve(root_depth):
             return False
-        directory_stat = current
         parent_stat = _plain_directory_stat_if_present(path.parent)
         if parent_stat is None:
             return False
-        for child in path.iterdir():
-            current_directory = _plain_directory_stat_if_present(path)
+        stack: list[tuple[Path, os.stat_result, os.stat_result, int, Iterator[Path]]] = [
+            (path, current, parent_stat, root_depth, iter(path.iterdir()))
+        ]
+        while stack:
+            directory, directory_stat, parent_stat, depth, children = stack[-1]
+            current_directory = _plain_directory_stat_if_present(directory)
             if current_directory is None or not _same_directory(directory_stat, current_directory):
                 return False
+            try:
+                child = next(children)
+            except StopIteration:
+                actions.append(
+                    _CleanupAction(
+                        directory,
+                        parent_stat,
+                        directory_stat,
+                        remove_directory=True,
+                    )
+                )
+                stack.pop()
+                continue
             child_stat = child.lstat()
+            child_depth = depth + 1
             if _is_link_or_reparse(child_stat) or (
                 stat.S_ISREG(child_stat.st_mode) and getattr(child_stat, "st_nlink", 1) == 1
             ):
-                if not _unlink_owned_entry(
-                    child,
-                    parent_expected=directory_stat,
-                    target_expected=child_stat,
-                ):
+                if not budget.reserve(child_depth):
                     return False
+                actions.append(
+                    _CleanupAction(
+                        child,
+                        directory_stat,
+                        child_stat,
+                        remove_directory=False,
+                    )
+                )
             elif stat.S_ISDIR(child_stat.st_mode):
-                if not _remove_owned_tree(child, expected=child_stat):
+                if not budget.reserve(child_depth):
                     return False
+                child_parent_stat = directory_stat
+                stack.append(
+                    (
+                        child,
+                        child_stat,
+                        child_parent_stat,
+                        child_depth,
+                        iter(child.iterdir()),
+                    )
+                )
             else:
                 return False
-        current_directory = _plain_directory_stat_if_present(path)
-        if current_directory is None or not _same_directory(directory_stat, current_directory):
-            return False
-        return _rmdir_owned_directory(
-            path,
-            parent_expected=parent_stat,
-            directory_expected=directory_stat,
-        )
-    except (HelperError, OSError):
+        return True
+    except (HelperError, OSError, RecursionError):
         return False
+
+
+def _cleanup_action_matches(action: _CleanupAction) -> bool:
+    try:
+        parent = _plain_directory_stat_if_present(action.path.parent)
+        if parent is None or not _same_directory(action.parent_expected, parent):
+            return False
+        if action.remove_directory:
+            target = _plain_directory_stat_if_present(action.path)
+            return target is not None and _same_directory(action.target_expected, target)
+        return _same_unlink_entry(action.target_expected, action.path.lstat())
+    except (HelperError, OSError, RecursionError):
+        return False
+
+
+def _apply_cleanup_actions(actions: list[_CleanupAction]) -> bool:
+    """Apply a preflighted post-order cleanup plan with final identity checks."""
+
+    try:
+        if not all(_cleanup_action_matches(action) for action in actions):
+            return False
+        for action in actions:
+            if action.remove_directory:
+                if not _rmdir_owned_directory(
+                    action.path,
+                    parent_expected=action.parent_expected,
+                    directory_expected=action.target_expected,
+                ):
+                    return False
+            elif not _unlink_owned_entry(
+                action.path,
+                parent_expected=action.parent_expected,
+                target_expected=action.target_expected,
+            ):
+                return False
+        return True
+    except (HelperError, OSError, RecursionError):
+        return False
+
+
+def _remove_owned_tree(
+    path: Path,
+    *,
+    expected: os.stat_result | None = None,
+) -> bool:
+    """Remove a private tree under global entry and depth budgets."""
+
+    budget = _CleanupBudget()
+    actions: list[_CleanupAction] = []
+    if not _plan_owned_tree(
+        path,
+        expected=expected,
+        budget=budget,
+        actions=actions,
+        root_depth=0,
+        count_root=False,
+    ):
+        return False
+    return _apply_cleanup_actions(actions)
 
 
 def _hash_stable_file(path: Path, *, maximum_bytes: int) -> tuple[str, int]:
@@ -1449,7 +1564,7 @@ class UpdateManager:
             self._normalize_unpublished_channel_state()
             self._recover_interrupted()
             if self._state_write_allowed:
-                self._prune_directory(
+                cleanup_ok = self._prune_directory(
                     self.config.data_dir / "staging", keep=self.state.operation_id
                 )
                 active_transaction = (
@@ -1457,11 +1572,18 @@ class UpdateManager:
                     if self.state.transaction_path is not None
                     else self.state.operation_id
                 )
-                self._prune_directory(
-                    self.config.data_dir / "transactions", keep=active_transaction
-                )
-                self._prune_directory(self.config.data_dir / "exports", keep=None)
-                self._save()
+                if cleanup_ok:
+                    cleanup_ok = self._prune_directory(
+                        self.config.data_dir / "transactions", keep=active_transaction
+                    )
+                if cleanup_ok:
+                    cleanup_ok = self._prune_directory(self.config.data_dir / "exports", keep=None)
+                if cleanup_ok:
+                    self._save()
+                else:
+                    self._state_write_allowed = False
+                    self.state.phase = UpdatePhase.ERROR
+                    self.state.last_error = "Updater staging cleanup could not be completed safely"
 
     @staticmethod
     def _render_json(value: Mapping[str, Any]) -> str:
@@ -1644,6 +1766,51 @@ class UpdateManager:
             )
         )
 
+    def _active_recovery_evidence_complete(self) -> bool:
+        """Require every active recovery reference to resolve to its owned evidence."""
+
+        if self.state.phase not in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
+            return True
+        operation = self.state.operation_id
+        if operation is None:
+            return False
+        try:
+            operation_dir = self.config.data_dir / "staging" / operation
+            expected_artifact = operation_dir / "artifact.zip"
+            backup_root = self.config.data_dir / "backups"
+            backup_path = Path(self.state.backup_path or "")
+            transaction_root = self.config.data_dir / "transactions"
+            expected_transaction = transaction_root / operation / "journal.json"
+            if not _same_path(Path(self.state.downloaded_path or ""), expected_artifact):
+                return False
+            if not _same_path(backup_path.parent, backup_root):
+                return False
+            if not _same_path(Path(self.state.transaction_path or ""), expected_transaction):
+                return False
+            operation_stat = _plain_directory_stat_if_present(operation_dir)
+            transaction_dir_stat = _plain_directory_stat_if_present(expected_transaction.parent)
+            artifact_stat = _helper_plain_file_stat_if_present(
+                expected_artifact,
+                "metadata_untrusted",
+            )
+            backup_stat = _helper_plain_file_stat_if_present(backup_path, "metadata_untrusted")
+            transaction_stat = _helper_plain_file_stat_if_present(
+                expected_transaction,
+                "metadata_untrusted",
+            )
+        except (HelperError, OSError, TypeError, ValueError):
+            return False
+        return bool(
+            operation_stat is not None
+            and transaction_dir_stat is not None
+            and artifact_stat is not None
+            and artifact_stat.st_size > 0
+            and backup_stat is not None
+            and backup_stat.st_size > 0
+            and transaction_stat is not None
+            and transaction_stat.st_size > 0
+        )
+
     def _validate_internal_state(self) -> None:
         invalid = False
         recovery_authority_fields_present = (
@@ -1656,21 +1823,24 @@ class UpdateManager:
             UpdatePhase.RESTART_REQUIRED,
         }
 
-        def preserve_recovery_authority() -> None:
+        def preserve_recovery_authority(message: str) -> None:
             self._state_write_allowed = False
             self.state.phase = UpdatePhase.ERROR
-            self.state.last_error = (
-                "Persisted update recovery metadata was unsafe; recovery evidence was preserved"
-            )
+            self.state.last_error = message
 
         if not self._active_recovery_metadata_complete():
-            preserve_recovery_authority()
+            preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
+            return
+        if not self._active_recovery_evidence_complete():
+            preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
             return
         if recovery_authority_fields_present and self.state.phase not in {
             UpdatePhase.INSTALLING,
             UpdatePhase.RESTART_REQUIRED,
         }:
-            preserve_recovery_authority()
+            preserve_recovery_authority(
+                "Persisted update recovery metadata was unsafe; recovery evidence was preserved"
+            )
             return
 
         if (
@@ -1678,7 +1848,7 @@ class UpdateManager:
             and _safe_public_url(self.state.release_notes_url) is None
         ):
             if active_recovery:
-                preserve_recovery_authority()
+                preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
                 return
             self.state.release_notes_url = None
             invalid = True
@@ -1700,7 +1870,7 @@ class UpdateManager:
                     downloaded_path_valid = False
             if not downloaded_path_valid:
                 if active_recovery:
-                    preserve_recovery_authority()
+                    preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
                     return
                 self.state.downloaded_path = None
                 invalid = True
@@ -1715,7 +1885,7 @@ class UpdateManager:
                     backup_valid = False
             if not backup_valid:
                 if active_recovery:
-                    preserve_recovery_authority()
+                    preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
                     return
                 self.state.backup_path = None
                 invalid = True
@@ -1734,7 +1904,7 @@ class UpdateManager:
                     transaction_valid = False
             if not transaction_valid:
                 if active_recovery:
-                    preserve_recovery_authority()
+                    preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
                     return
                 self.state.transaction_path = None
                 self.state.handoff_identity = None
@@ -1746,7 +1916,7 @@ class UpdateManager:
             or self.state.pending_handoff_identity is not None
         ):
             if active_recovery:
-                preserve_recovery_authority()
+                preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
                 return
             self.state.handoff_identity = None
             self.state.pending_handoff_identity = None
@@ -2012,53 +2182,62 @@ class UpdateManager:
                 operation, expected=operation_stat
             ):
                 return False
-        except (HelperError, OSError):
+        except (HelperError, OSError, RecursionError):
             return False
         self.state.downloaded_path = None
         return True
 
     @staticmethod
     def _prune_directory(root: Path, *, keep: str | None) -> bool:
-        """Remove at most a bounded number of private orphan entries."""
+        """Remove private orphan entries under one global tree budget."""
 
         try:
             root_stat = _plain_directory_stat_if_present(root)
-        except (HelperError, OSError):
+        except (HelperError, OSError, RecursionError):
             return False
         if root_stat is None:
             return True
-        removed = 0
+        budget = _CleanupBudget()
+        actions: list[_CleanupAction] = []
         try:
             for entry in root.iterdir():
-                if removed >= MAX_CLEANUP_ENTRIES:
-                    break
                 current_root = _plain_directory_stat_if_present(root)
                 if current_root is None or not _same_directory(root_stat, current_root):
                     return False
                 if keep is not None and entry.name == keep:
                     continue
-                try:
-                    entry_stat = entry.lstat()
-                    if _is_link_or_reparse(entry_stat) or (
-                        stat.S_ISREG(entry_stat.st_mode) and getattr(entry_stat, "st_nlink", 1) == 1
-                    ):
-                        if not _unlink_owned_entry(
-                            entry,
-                            parent_expected=current_root,
-                            target_expected=entry_stat,
-                        ):
-                            return False
-                    elif stat.S_ISDIR(entry_stat.st_mode):
-                        if not _remove_owned_tree(entry, expected=entry_stat):
-                            return False
-                    else:
+                entry_stat = entry.lstat()
+                if _is_link_or_reparse(entry_stat) or (
+                    stat.S_ISREG(entry_stat.st_mode) and getattr(entry_stat, "st_nlink", 1) == 1
+                ):
+                    if not budget.reserve(1):
                         return False
-                except OSError:
+                    actions.append(
+                        _CleanupAction(
+                            entry,
+                            current_root,
+                            entry_stat,
+                            remove_directory=False,
+                        )
+                    )
+                elif stat.S_ISDIR(entry_stat.st_mode):
+                    if not _plan_owned_tree(
+                        entry,
+                        expected=entry_stat,
+                        budget=budget,
+                        actions=actions,
+                        root_depth=1,
+                        count_root=True,
+                    ):
+                        return False
+                else:
                     return False
-                removed += 1
-        except OSError:
+            current_root = _plain_directory_stat_if_present(root)
+            if current_root is None or not _same_directory(root_stat, current_root):
+                return False
+        except (HelperError, OSError, RecursionError):
             return False
-        return True
+        return _apply_cleanup_actions(actions)
 
     def public_status(self) -> dict[str, Any]:
         with self._operation_lock:
