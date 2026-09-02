@@ -45,6 +45,36 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-02 — Windows startup-recovery diagnostic containment
+
+The startup-recovery marker is now explicitly informational at every boundary.
+The frozen Core guard treats marker probe, persistence, and replace/read races as
+non-authoritative: an unsafe marker cannot become an unhandled startup error,
+and an unsafe persisted update state still returns the existing controlled
+fail-closed result even when its diagnostic cannot be replaced. Marker writes
+sanitize status, code, and phase through the closed schema, use the existing
+reparse-safe atomic JSON path, and suppress filesystem or serialization
+failures. Marker reads request at most 16 KiB plus one sentinel byte from the
+file and accept at most 16 KiB: missing markers remain absent, while malformed,
+oversized, unreadable, non-regular/reparse, hostile-parent, and raced inputs
+become only a bounded `unreadable` result.
+Packaged `--recovery-doctor` therefore remains content-free for those cases, and
+packaged `--core` exits through its existing controlled containment path without
+a traceback dialog.
+
+Focused writer, reader, startup-guard, recovery-doctor, and packaged-startup
+regressions cover the review finding directly plus atomic-write failure,
+missing-parent creation, non-regular/reparse handling, malformed/oversized
+markers, and probe/read races. This is source-level local evidence only; no
+packaged submission, signing, SmartScreen, Defender, Microsoft, release, or
+end-user dogfood claim is made.
+
+Validation for this chunk on the local Windows host used Python 3.14.3:
+repository-wide Ruff format and lint passed; mypy passed for 107 source files;
+the focused updater/recovery/doctor suite passed 119 tests with one expected
+symlink-capability skip; and the full suite passed 2,475 tests with 10 expected
+platform-capability skips and two existing deprecation warnings.
+
 ### 2026-09-01 — Windows startup recovery containment and rollback preservation slice
 
 The first broad Windows GA hardening slice selected the remaining unattended

@@ -25,6 +25,7 @@ from allthecontext.windows_update_helper import (
     ensure_recovery_before_core,
     journal_failure_diagnostic,
     run_transaction,
+    startup_recovery_diagnostic,
 )
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -1450,6 +1451,216 @@ def test_core_start_guard_rejects_reparse_state_parent(
 
     assert ensure_recovery_before_core() is False
     assert not (state_parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).exists()
+
+
+def test_startup_diagnostic_writer_contains_atomic_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_path = tmp_path / "new" / "updates" / "state.json"
+
+    def fail_atomic(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("diagnostic write denied")
+
+    monkeypatch.setattr(helper_module, "_atomic_json", fail_atomic)
+
+    helper_module._write_startup_recovery_diagnostic(
+        state_path,
+        status="blocked",
+        code="startup_state_invalid",
+    )
+
+    assert not state_path.parent.exists()
+
+
+def test_startup_diagnostic_writer_creates_missing_parent_with_closed_schema(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "new" / "updates" / "state.json"
+
+    helper_module._write_startup_recovery_diagnostic(
+        state_path,
+        status="unexpected-status",
+        code="untrusted-code",
+        phase="not-a-safe-phase",
+    )
+
+    diagnostic_path = state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    assert startup_recovery_diagnostic(diagnostic_path) == {
+        "status": "blocked",
+        "code": "startup_state_invalid",
+    }
+    payload = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+    assert set(payload) == {"schema_version", "status", "code", "phase", "updated_at"}
+    assert len(diagnostic_path.read_bytes()) <= helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES
+
+
+@pytest.mark.parametrize(
+    "marker_kind",
+    ["missing", "malformed", "invalid_utf8", "oversized", "non_regular", "hostile_parent"],
+)
+def test_startup_recovery_diagnostic_is_bounded_for_untrusted_markers(
+    tmp_path: Path, marker_kind: str
+) -> None:
+    if marker_kind == "hostile_parent":
+        hostile_parent = tmp_path / "hostile"
+        hostile_parent.write_text("not a directory", encoding="utf-8")
+        marker_path = hostile_parent / "updates" / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    else:
+        updates = tmp_path / "updates"
+        updates.mkdir()
+        marker_path = updates / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+        if marker_kind == "malformed":
+            marker_path.write_bytes(b"{ malformed")
+        elif marker_kind == "invalid_utf8":
+            marker_path.write_bytes(b"\xff")
+        elif marker_kind == "oversized":
+            marker_path.write_bytes(
+                b"x" * (helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES + 1)
+            )
+        elif marker_kind == "non_regular":
+            marker_path.mkdir()
+
+    expected = (
+        None
+        if marker_kind == "missing"
+        else {
+            "status": "unreadable",
+            "code": "diagnostic_unreadable",
+        }
+    )
+    assert startup_recovery_diagnostic(marker_path) == expected
+
+
+def test_startup_recovery_diagnostic_bounds_read_after_marker_grows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker_path = tmp_path / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    marker_path.write_text("{}", encoding="utf-8")
+    read_sizes: list[int] = []
+    grew = False
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+    def grow_before_open(path: Path, *args: object, **kwargs: object) -> TrackingReader:
+        nonlocal grew
+        if path == marker_path and not grew:
+            grew = True
+            with original_open(marker_path, "wb") as stream:
+                stream.write(b"{}" + b"x" * helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES)
+        return TrackingReader(original_open(path, *args, **kwargs))
+
+    monkeypatch.setattr(Path, "open", grow_before_open)
+
+    assert startup_recovery_diagnostic(marker_path) == {
+        "status": "unreadable",
+        "code": "diagnostic_unreadable",
+    }
+    assert read_sizes == [helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES + 1]
+    assert marker_path.stat().st_size > helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES
+
+
+def test_startup_recovery_diagnostic_rejects_reparse_marker_when_supported(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target.json"
+    target.write_text("{}", encoding="utf-8")
+    marker_path = tmp_path / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    try:
+        marker_path.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this filesystem")
+
+    assert startup_recovery_diagnostic(marker_path) == {
+        "status": "unreadable",
+        "code": "diagnostic_unreadable",
+    }
+
+
+def test_core_start_guard_ignores_untrusted_existing_marker_without_escaping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "idle",
+            "transaction_path": None,
+            "operation_id": None,
+            "manifest_identity": None,
+            "downloaded_path": None,
+            "backup_path": None,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    diagnostic_path = fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    diagnostic_path.mkdir()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is True
+    assert diagnostic_path.is_dir()
+
+
+def test_core_start_guard_stays_blocked_when_diagnostic_marker_is_non_regular(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    fixture.state_path.write_bytes(b"{ malformed")
+    diagnostic_path = fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    diagnostic_path.mkdir()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert diagnostic_path.is_dir()
+
+
+def test_core_start_guard_contains_marker_probe_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "idle",
+            "transaction_path": None,
+            "operation_id": None,
+            "manifest_identity": None,
+            "downloaded_path": None,
+            "backup_path": None,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    diagnostic_path = fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
+    original_stat = helper_module._plain_file_stat_if_present
+
+    def raced_stat(path: Path, code: str) -> os.stat_result | None:
+        if path == diagnostic_path and code == "startup_diagnostic_untrusted":
+            raise FileNotFoundError("marker changed during probe")
+        return original_stat(path, code)
+
+    monkeypatch.setattr(helper_module, "_plain_file_stat_if_present", raced_stat)
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is True
 
 
 def test_core_start_guard_rejects_reparse_transaction_parent(

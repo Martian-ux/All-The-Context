@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import allthecontext.windows_update_helper as helper_module
 import pytest
 from allthecontext.desktop import main as desktop_main
 from allthecontext.models import CandidateInput
@@ -645,6 +646,47 @@ def test_desktop_recovery_doctor_rejects_unallowlisted_startup_code(
         "status": "unreadable",
         "code": "diagnostic_invalid",
     }
+
+
+@pytest.mark.parametrize("marker_kind", ["malformed", "oversized", "non_regular"])
+def test_recovery_doctor_contains_untrusted_startup_marker(
+    tmp_path: Path, marker_kind: str
+) -> None:
+    data_dir = tmp_path / "vault"
+    updates = data_dir / "updates"
+    updates.mkdir(parents=True)
+    marker = updates / "startup-recovery.json"
+    if marker_kind == "malformed":
+        marker.write_bytes(b"{ malformed")
+    elif marker_kind == "oversized":
+        marker.write_bytes(b"x" * (helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES + 1))
+    else:
+        marker.mkdir()
+
+    report = doctor(data_dir=data_dir)
+
+    assert report["startup_recovery"] == {
+        "status": "unreadable",
+        "code": "diagnostic_unreadable",
+    }
+
+
+def test_packaged_core_startup_contains_diagnostic_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_dir = tmp_path / "vault"
+    updates = data_dir / "updates"
+    updates.mkdir(parents=True)
+    (updates / "state.json").write_bytes(b"{ malformed")
+    (updates / "startup-recovery.json").mkdir()
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(helper_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert desktop_main(["--core"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def test_desktop_recovery_export_restore_purge_modes(
