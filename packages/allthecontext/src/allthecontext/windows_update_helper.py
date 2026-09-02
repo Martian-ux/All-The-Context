@@ -189,7 +189,11 @@ def _read_json(
     try:
         if _plain_file_stat(path, boundary_code).st_size > maximum_bytes:
             raise HelperError("metadata_too_large")
-        value = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as stream:
+            raw = stream.read(maximum_bytes + 1)
+        if len(raw) > maximum_bytes:
+            raise HelperError("metadata_too_large")
+        value = json.loads(raw.decode("utf-8"))
     except HelperError:
         raise
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:

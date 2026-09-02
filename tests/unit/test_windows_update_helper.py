@@ -1496,7 +1496,7 @@ def test_startup_diagnostic_writer_creates_missing_parent_with_closed_schema(
 
 @pytest.mark.parametrize(
     "marker_kind",
-    ["missing", "malformed", "oversized", "non_regular", "hostile_parent"],
+    ["missing", "malformed", "invalid_utf8", "oversized", "non_regular", "hostile_parent"],
 )
 def test_startup_recovery_diagnostic_is_bounded_for_untrusted_markers(
     tmp_path: Path, marker_kind: str
@@ -1511,6 +1511,8 @@ def test_startup_recovery_diagnostic_is_bounded_for_untrusted_markers(
         marker_path = updates / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
         if marker_kind == "malformed":
             marker_path.write_bytes(b"{ malformed")
+        elif marker_kind == "invalid_utf8":
+            marker_path.write_bytes(b"\xff")
         elif marker_kind == "oversized":
             marker_path.write_bytes(
                 b"x" * (helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES + 1)
@@ -1529,21 +1531,46 @@ def test_startup_recovery_diagnostic_is_bounded_for_untrusted_markers(
     assert startup_recovery_diagnostic(marker_path) == expected
 
 
-def test_startup_recovery_diagnostic_contains_read_race(
+def test_startup_recovery_diagnostic_bounds_read_after_marker_grows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     marker_path = tmp_path / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME
     marker_path.write_text("{}", encoding="utf-8")
+    read_sizes: list[int] = []
+    grew = False
+    original_open = Path.open
 
-    def raced_read(*_args: object, **_kwargs: object) -> dict[str, object]:
-        raise FileNotFoundError("marker replaced during read")
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
 
-    monkeypatch.setattr(helper_module, "_read_json", raced_read)
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+    def grow_before_open(path: Path, *args: object, **kwargs: object) -> TrackingReader:
+        nonlocal grew
+        if path == marker_path and not grew:
+            grew = True
+            with original_open(marker_path, "wb") as stream:
+                stream.write(b"{}" + b"x" * helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES)
+        return TrackingReader(original_open(path, *args, **kwargs))
+
+    monkeypatch.setattr(Path, "open", grow_before_open)
 
     assert startup_recovery_diagnostic(marker_path) == {
         "status": "unreadable",
         "code": "diagnostic_unreadable",
     }
+    assert read_sizes == [helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES + 1]
+    assert marker_path.stat().st_size > helper_module.MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES
 
 
 def test_startup_recovery_diagnostic_rejects_reparse_marker_when_supported(

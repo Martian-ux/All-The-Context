@@ -83,7 +83,8 @@ to persist a diagnostic never changes the guard's fail-closed result for unsafe
 update state.
 
 The packaged recovery doctor reads the marker through the same plain-file
-boundary and a dedicated 16-KiB limit. Missing markers remain absent; malformed,
+boundary, requests at most 16 KiB plus one sentinel byte from the file, and
+accepts at most 16 KiB of content. Missing markers remain absent; malformed,
 oversized, unreadable, non-regular/reparse, hostile-parent, and read-raced
 markers become only the fixed `{status: "unreadable", code:
 "diagnostic_unreadable"}` projection. Valid markers expose only the allowlisted
