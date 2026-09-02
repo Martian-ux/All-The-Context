@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import allthecontext.updater as updater_module
+import allthecontext.windows_update_helper as update_helper_module
 import pytest
 from allthecontext.release_manifest import (
     canonical_payload,
@@ -36,6 +37,7 @@ from allthecontext.updater import (
     UpdateState,
 )
 from allthecontext.windows_update_helper import (
+    MAX_JOURNAL_BYTES,
     HelperPhase,
     UpdateJournal,
     journal_handoff_identity,
@@ -121,9 +123,65 @@ class FakeInstaller:
         if self.failure == "crash":
             raise UpdateError("Installer process crashed")
         plan.transaction_dir.mkdir(parents=True, exist_ok=True)
-        (plan.transaction_dir / "journal.json").write_text(
-            '{"phase":"committed"}', encoding="utf-8"
+        install_dir = plan.transaction_dir / "installed"
+        rollback_dir = plan.transaction_dir / "rollback"
+        replacement = plan.transaction_dir / "replacement" / "AllTheContextSetup.exe"
+        transaction_files = (
+            replacement,
+            rollback_dir / "AllTheContext.exe",
+            rollback_dir / "AllTheContextMCP.exe",
+            rollback_dir / "AllTheContextRecovery.exe",
+            rollback_dir / "AllTheContextUpdater.exe",
+            plan.transaction_dir / "AllTheContextUpdater.exe",
         )
+        for path in transaction_files:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"test transaction evidence")
+        journal = UpdateJournal(
+            operation_id=plan.operation_id,
+            phase=HelperPhase.PREPARED,
+            current_version=plan.current_version,
+            target_version=plan.target_version,
+            parent_pid=0,
+            application_path=str(install_dir / "AllTheContext.exe"),
+            replacement_path=str(replacement),
+            replacement_sha256="a" * 64,
+            replacement_size=1,
+            rollback_application_path=str(rollback_dir / "AllTheContext.exe"),
+            rollback_application_sha256="b" * 64,
+            rollback_application_size=1,
+            mcp_path=str(install_dir / "AllTheContextMCP.exe"),
+            rollback_mcp_path=str(rollback_dir / "AllTheContextMCP.exe"),
+            rollback_mcp_sha256="c" * 64,
+            rollback_mcp_size=1,
+            recovery_path=str(install_dir / "AllTheContextRecovery.exe"),
+            rollback_recovery_path=str(rollback_dir / "AllTheContextRecovery.exe"),
+            rollback_recovery_sha256="d" * 64,
+            rollback_recovery_size=1,
+            stable_update_helper_path=str(install_dir / "AllTheContextUpdater.exe"),
+            rollback_update_helper_path=str(rollback_dir / "AllTheContextUpdater.exe"),
+            rollback_update_helper_sha256="e" * 64,
+            rollback_update_helper_size=1,
+            database_path=str(plan.database_path),
+            database_backup_path=str(plan.database_backup_path),
+            database_backup_sha256="f" * 64,
+            database_backup_size=1,
+            state_path=str(plan.state_path),
+            helper_path=str(plan.transaction_dir / "AllTheContextUpdater.exe"),
+            core_host=plan.core_host,
+            core_port=plan.core_port,
+            recovery_helper_sha256="0" * 64,
+            recovery_helper_size=1,
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+        journal_path = plan.transaction_dir / "journal.json"
+        journal.save(journal_path)
+        state = json.loads(plan.state_path.read_text(encoding="utf-8"))
+        state["handoff_identity"] = journal_handoff_identity(journal)
+        state["pending_handoff_identity"] = None
+        state["completed_handoff_identity"] = None
+        plan.state_path.write_text(json.dumps(state), encoding="utf-8")
         self.handed_off = True
 
     def recovery_outcome(self, state: UpdateState) -> str | None:
@@ -766,41 +824,22 @@ def test_recovery_cleanup_failure_retains_active_authority_for_retry(
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
-    operation_id = "f" * 24
-    staging = manager.config.data_dir / "staging" / operation_id
-    staging.mkdir(parents=True)
-    staged_artifact = staging / "artifact.zip"
-    staged_artifact.write_bytes(artifact)
-    backup = manager.config.data_dir / "backups" / "before.sqlite3"
-    backup.parent.mkdir(parents=True)
-    backup.write_bytes(b"verified backup")
-    journal = manager.config.data_dir / "transactions" / operation_id / "journal.json"
-    journal.parent.mkdir(parents=True)
-    journal.write_text('{"phase":"committed"}', encoding="utf-8")
-    manager.state.phase = UpdatePhase.RESTART_REQUIRED
-    manager.state.offered_version = "0.2.0"
-    manager.state.mandatory = False
-    manager.state.release_notes_url = manifest["release_notes_url"]
-    manager.state.downloaded_path = str(staged_artifact)
-    manager.state.backup_path = str(backup)
-    manager.state.operation_id = operation_id
-    manager.state.transaction_path = str(journal)
-    manager.state.manifest_identity = "a" * 64
-    manager._save()
-
-    installer = FakeInstaller()
-    manager.installer = installer
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    recovered, _, installer = _manager(tmp_path, manifest, artifact, keyring)
+    journal = Path(recovered.state.transaction_path or "")
     monkeypatch.setattr(installer, "recovery_outcome", lambda _state: outcome)
-    monkeypatch.setattr(manager, "_clean_operation", lambda: False)
+    monkeypatch.setattr(recovered, "_clean_operation", lambda: False)
 
-    status = manager.recover_after_restart()
+    status = recovered.recover_after_restart()
 
     assert status["phase"] == "restart_required"
     assert status["last_error"] == (
         "Update recovery completed but cleanup could not be completed safely; retry recovery"
     )
-    assert manager.state.transaction_path == str(journal)
-    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    assert recovered.state.transaction_path == str(journal)
+    persisted = json.loads(recovered.state_path.read_text(encoding="utf-8"))
     assert persisted["phase"] == "restart_required"
     assert persisted["transaction_path"] == str(journal)
     assert journal.is_file()
@@ -1196,6 +1235,127 @@ def test_active_recovery_missing_physical_evidence_fails_closed(
     for candidate in (artifact_path, backup_path, journal_path):
         if candidate != missing_path:
             assert candidate.is_file()
+
+
+def _invalid_journal_bytes(original: bytes, kind: str) -> bytes:
+    if kind == "malformed":
+        return b"{not-json"
+    if kind == "deep":
+        return b'{"padding":' + b"[" * 30_000 + b"0" + b"]" * 30_000 + b"}"
+    if kind == "oversized":
+        return b'{"padding":"' + b"x" * MAX_JOURNAL_BYTES + b'"}'
+    value = json.loads(original)
+    if kind == "incomplete":
+        return b"{}"
+    if kind == "schema":
+        value["schema_version"] = 1
+    elif kind == "phase":
+        value["phase"] = "not-a-real-phase"
+    elif kind == "operation":
+        value["operation_id"] = "b" * 24
+    elif kind == "inconsistent":
+        value["target_version"] = "0.3.0"
+    else:
+        raise AssertionError(kind)
+    return json.dumps(value, sort_keys=True).encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "malformed",
+        "incomplete",
+        "schema",
+        "phase",
+        "operation",
+        "oversized",
+        "deep",
+        "inconsistent",
+    ],
+)
+def test_invalid_active_recovery_journal_preserves_authority_across_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+
+    state_path = manager.state_path
+    journal_path = Path(manager.state.transaction_path or "")
+    original_state = state_path.read_bytes()
+    journal_path.write_bytes(_invalid_journal_bytes(journal_path.read_bytes(), kind))
+    invalid_journal = journal_path.read_bytes()
+
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+    status = recovered.public_status()
+    assert status["phase"] == "error"
+    assert status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert recovered._state_write_allowed is False
+    assert state_path.read_bytes() == original_state
+    assert journal_path.read_bytes() == invalid_journal
+    assert journal_path.parent.is_dir()
+
+    recovery_status = recovered.recover_after_restart()
+    assert recovery_status["phase"] == "error"
+    assert recovery_status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert state_path.read_bytes() == original_state
+    assert journal_path.read_bytes() == invalid_journal
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        recovered.clear_error()
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        recovered.configure(enabled=True, channel="beta")
+
+    restarted, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+    assert restarted._state_write_allowed is False
+    assert state_path.read_bytes() == original_state
+    assert journal_path.read_bytes() == invalid_journal
+    assert journal_path.parent.is_dir()
+
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(update_helper_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(update_helper_module.sys, "frozen", True, raising=False)
+    assert update_helper_module.ensure_recovery_before_core() is False
+    assert state_path.read_bytes() == original_state
+    assert journal_path.read_bytes() == invalid_journal
+
+
+def test_valid_active_recovery_journal_remains_recoverable(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    journal_path = Path(manager.state.transaction_path or "")
+
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    assert journal.operation_id == manager.state.operation_id
+
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+        health=FakeHealth(True),
+    )
+    assert recovered._state_write_allowed is True
+    assert recovered.recover_after_restart()["phase"] == "installed"
 
 
 def test_public_update_errors_do_not_expose_manifest_or_keyring_details(

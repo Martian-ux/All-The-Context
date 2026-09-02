@@ -47,6 +47,7 @@ from .windows_update_helper import (
     HelperPhase,
     UpdateJournal,
     bind_handoff_state,
+    journal_handoff_identity,
     launch_recovery_helper,
     register_recovery,
     request_rollback,
@@ -1798,7 +1799,33 @@ class UpdateManager:
                 expected_transaction,
                 "metadata_untrusted",
             )
-        except (HelperError, OSError, TypeError, ValueError):
+            if transaction_stat is None or transaction_stat.st_size <= 0:
+                return False
+            journal = UpdateJournal.load(expected_transaction, validate_storage=False)
+            journal_identity = journal_handoff_identity(journal)
+            if (
+                journal.operation_id != operation
+                or self.config.current_version
+                not in {journal.current_version, journal.target_version}
+                or self.state.offered_version != journal.target_version
+                or not _same_path(Path(journal.state_path), self.state_path)
+                or not _same_path(Path(journal.database_path), self.database_path)
+                or not _same_path(Path(journal.database_backup_path), backup_path)
+                or not _same_path(Path(journal.helper_path).parent, expected_transaction.parent)
+                or self.state.completed_handoff_identity is not None
+                or (
+                    self.state.handoff_identity is None
+                    and self.state.pending_handoff_identity is None
+                )
+                or self.state.handoff_identity not in {None, journal_identity}
+                or self.state.pending_handoff_identity not in {None, journal_identity}
+                or (
+                    self.state.phase is UpdatePhase.INSTALLING
+                    and journal.phase in {HelperPhase.COMMITTED, HelperPhase.ROLLED_BACK}
+                )
+            ):
+                return False
+        except (HelperError, OSError, RecursionError, TypeError, ValueError):
             return False
         return bool(
             operation_stat is not None
@@ -2024,6 +2051,11 @@ class UpdateManager:
             }:
                 return self.public_status()
             self._require_metadata_writes_allowed()
+            if not self._active_recovery_evidence_complete():
+                self._state_write_allowed = False
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+                return self.public_status()
             recovery_outcome = self.installer.recovery_outcome(self.state)
             if recovery_outcome == "pending":
                 return self.public_status()

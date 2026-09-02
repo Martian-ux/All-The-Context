@@ -666,10 +666,14 @@ def _validate_plain_file_path(path: Path, code: str, *, required: bool = False) 
 
 
 def _validate_journal_storage_paths(
-    journal: UpdateJournal, journal_path: Path, boundary_code: str
+    journal: UpdateJournal,
+    journal_path: Path,
+    boundary_code: str,
+    *,
+    data_dir: Path | None = None,
 ) -> None:
-    data_dir = _data_directory()
-    updates_dir = data_dir / "updates"
+    active_data_dir = data_dir or _data_directory()
+    updates_dir = active_data_dir / "updates"
     transaction_dir = updates_dir / "transactions" / journal.operation_id
     backup_root = updates_dir / "backups"
     _plain_directory_chain(transaction_dir, boundary_code)
@@ -811,7 +815,7 @@ class UpdateJournal:
     schema_version: int = JOURNAL_SCHEMA_VERSION
 
     @classmethod
-    def load(cls, path: Path) -> UpdateJournal:
+    def load(cls, path: Path, *, validate_storage: bool = True) -> UpdateJournal:
         _plain_directory_chain(path.parent, "journal_untrusted")
         _plain_file_stat(path, "journal_untrusted")
         value = _read_json(path, MAX_JOURNAL_BYTES, boundary_code="journal_untrusted")
@@ -824,7 +828,7 @@ class UpdateJournal:
         except (TypeError, ValueError) as exc:
             raise HelperError("journal_value_invalid") from exc
         try:
-            journal.validate(path)
+            journal.validate(path, validate_storage=validate_storage)
         except HelperError:
             raise
         except (OSError, TypeError, ValueError) as exc:
@@ -837,7 +841,15 @@ class UpdateJournal:
         value["phase"] = self.phase.value
         _atomic_json(path, value, boundary_code="journal_untrusted")
 
-    def validate(self, path: Path, *, boundary_code: str = "journal_path_untrusted") -> None:
+    def validate(
+        self,
+        path: Path,
+        *,
+        boundary_code: str = "journal_path_untrusted",
+        validate_storage: bool = True,
+    ) -> None:
+        if not isinstance(self.phase, HelperPhase):
+            raise HelperError("journal_value_invalid")
         if self.schema_version != JOURNAL_SCHEMA_VERSION or not _valid_operation_id(
             self.operation_id
         ):
@@ -934,6 +946,36 @@ class UpdateJournal:
         )
         if any(not isinstance(item, str) or not item for item in path_values):
             raise HelperError("journal_path_invalid")
+
+        transaction_dir = path.parent
+        if (
+            path.name != "journal.json"
+            or not _valid_operation_id(transaction_dir.name)
+            or self.operation_id != transaction_dir.name
+            or any(not Path(item).is_absolute() for item in path_values)
+        ):
+            raise HelperError("journal_identity_invalid")
+
+        if not validate_storage:
+            updates_dir = transaction_dir.parent.parent
+            for child in (
+                Path(self.replacement_path),
+                Path(self.rollback_application_path),
+                Path(self.rollback_update_helper_path),
+                *([Path(self.rollback_mcp_path)] if self.rollback_mcp_path else []),
+                *([Path(self.rollback_recovery_path)] if self.rollback_recovery_path else []),
+            ):
+                if not _within(child, transaction_dir):
+                    raise HelperError("journal_path_invalid")
+            if not _within(Path(self.database_backup_path), updates_dir / "backups"):
+                raise HelperError("journal_path_invalid")
+            _validate_journal_storage_paths(
+                self,
+                path,
+                "journal_untrusted",
+                data_dir=updates_dir.parent,
+            )
+            return
 
         _validate_install_targets(self, boundary_code)
         data_dir = _data_directory()
