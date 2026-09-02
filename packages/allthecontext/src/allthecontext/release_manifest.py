@@ -30,6 +30,7 @@ CHANNELS = frozenset({"stable", "beta"})
 PLATFORMS = frozenset({"windows", "macos", "linux"})
 ARCHITECTURES = frozenset({"x86_64", "arm64"})
 MAX_KEYRING_BYTES = 16 * 1024
+MAX_PRIVATE_KEY_BYTES = 16 * 1024
 WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SHA256_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
@@ -179,16 +180,41 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         raise ManifestError("signature must be a base64url-encoded Ed25519 signature")
 
 
-def load_private_key(path: Path, *, password: bytes | None = None) -> Ed25519PrivateKey:
+def read_private_key_bytes(path: Path) -> bytes:
+    """Read an operator-supplied private key with a bounded overflow sentinel."""
+
     try:
-        value = serialization.load_pem_private_key(path.read_bytes(), password=password)
+        with path.open("rb") as stream:
+            value = stream.read(MAX_PRIVATE_KEY_BYTES + 1)
+    except OSError as exc:
+        raise ManifestError("private key could not be read safely") from exc
+    if not value:
+        raise ManifestError("private key file is empty")
+    if len(value) > MAX_PRIVATE_KEY_BYTES:
+        raise ManifestError("private key file exceeds the size limit")
+    return value
+
+
+def load_private_key(
+    source: Path | bytes, *, password: bytes | None = None
+) -> Ed25519PrivateKey:
+    if isinstance(source, Path):
+        value = read_private_key_bytes(source)
+    else:
+        value = source
+        if not value:
+            raise ManifestError("private key file is empty")
+        if len(value) > MAX_PRIVATE_KEY_BYTES:
+            raise ManifestError("private key file exceeds the size limit")
+    try:
+        loaded = serialization.load_pem_private_key(value, password=password)
     except (TypeError, ValueError) as exc:
         raise ManifestError(
             "private key is not a valid PEM Ed25519 key for the supplied password"
         ) from exc
-    if not isinstance(value, Ed25519PrivateKey):
+    if not isinstance(loaded, Ed25519PrivateKey):
         raise ManifestError("private key is not Ed25519")
-    return value
+    return loaded
 
 
 def create_manifest(

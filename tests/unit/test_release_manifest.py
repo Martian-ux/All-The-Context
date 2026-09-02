@@ -7,12 +7,15 @@ from pathlib import Path
 import pytest
 from allthecontext.release_manifest import (
     MAX_KEYRING_BYTES,
+    MAX_PRIVATE_KEY_BYTES,
     ManifestError,
     canonical_payload,
     create_manifest,
     load_keyring,
+    load_private_key,
     public_key_fingerprint,
     public_key_value,
+    read_private_key_bytes,
     verify_manifest,
 )
 from cryptography.hazmat.primitives import serialization
@@ -229,6 +232,104 @@ def test_keyring_loader_does_not_swallow_unexpected_programming_errors(
         load_keyring(path)
 
 
+def test_private_key_reader_accepts_exact_limit(tmp_path: Path) -> None:
+    path = tmp_path / "private.pem"
+    raw = b"x" * MAX_PRIVATE_KEY_BYTES
+    path.write_bytes(raw)
+
+    assert read_private_key_bytes(path) == raw
+
+
+def test_private_key_loader_rejects_limit_plus_one(tmp_path: Path) -> None:
+    path = tmp_path / "private.pem"
+    path.write_bytes(b"x" * (MAX_PRIVATE_KEY_BYTES + 1))
+
+    with pytest.raises(ManifestError, match=r"^private key file exceeds the size limit$"):
+        load_private_key(path)
+
+
+def test_private_key_loader_rejects_empty_input(tmp_path: Path) -> None:
+    path = tmp_path / "private.pem"
+    path.write_bytes(b"")
+
+    with pytest.raises(ManifestError, match=r"^private key file is empty$"):
+        load_private_key(path)
+
+
+def test_private_key_loader_accepts_ed25519_pem(tmp_path: Path) -> None:
+    private = Ed25519PrivateKey.from_private_bytes(TEST_ONLY_SEED)
+    path = tmp_path / "private.pem"
+    path.write_bytes(
+        private.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+
+    assert public_key_value(load_private_key(path)) == public_key_value(private)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"not a PEM key", b"\x00\xffbinary", "multibyte-\N{SNOWMAN}".encode("utf-8")],
+    ids=["invalid", "binary", "multibyte"],
+)
+def test_private_key_loader_rejects_invalid_input(tmp_path: Path, raw: bytes) -> None:
+    path = tmp_path / "private.pem"
+    path.write_bytes(raw)
+
+    with pytest.raises(
+        ManifestError,
+        match=r"^private key is not a valid PEM Ed25519 key for the supplied password$",
+    ):
+        load_private_key(path)
+
+
+def test_private_key_loader_reads_once_with_bounded_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private = Ed25519PrivateKey.from_private_bytes(TEST_ONLY_SEED)
+    path = tmp_path / "private.pem"
+    path.write_bytes(
+        private.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    read_sizes: list[int] = []
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+        def fileno(self) -> int:
+            return self._handle.fileno()  # type: ignore[attr-defined,no-any-return]
+
+    def tracking_open(target: Path, *args: object, **kwargs: object) -> object:
+        handle = original_open(target, *args, **kwargs)
+        return TrackingReader(handle) if target == path else handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    load_private_key(path)
+
+    assert read_sizes == [MAX_PRIVATE_KEY_BYTES + 1]
+
+
 def test_packaged_update_keyring_matches_operator_keyring() -> None:
     operator = json.loads((ROOT / "release" / "keys.json").read_text(encoding="utf-8"))
     packaged = json.loads(
@@ -329,6 +430,54 @@ def test_offline_signing_loads_password_protected_key_with_no_echo_prompt(
     assert prompts == ["Offline release key password: "]
 
 
+def test_offline_signing_reads_key_once_with_bounded_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    password = "test-only-password"
+    private = Ed25519PrivateKey.from_private_bytes(TEST_ONLY_SEED)
+    encrypted = tmp_path / "encrypted-private.pem"
+    encrypted.write_bytes(
+        private.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.BestAvailableEncryption(password.encode()),
+        )
+    )
+    read_sizes: list[int] = []
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+        def fileno(self) -> int:
+            return self._handle.fileno()  # type: ignore[attr-defined,no-any-return]
+
+    def tracking_open(target: Path, *args: object, **kwargs: object) -> object:
+        handle = original_open(target, *args, **kwargs)
+        return TrackingReader(handle) if target == encrypted else handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+    monkeypatch.setattr(release_manifest_script.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(release_manifest_script.getpass, "getpass", lambda _prompt: password)
+
+    loaded = load_encrypted_private_key_interactive(encrypted)
+
+    assert public_key_value(loaded) == public_key_value(private)
+    assert read_sizes == [MAX_PRIVATE_KEY_BYTES + 1]
+
+
 def test_offline_signing_rejects_plaintext_key_and_noninteractive_password(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -342,8 +491,10 @@ def test_offline_signing_rejects_plaintext_key_and_noninteractive_password(
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
-    with pytest.raises(ManifestError, match="encrypted PKCS8"):
+    with pytest.raises(ManifestError) as error:
         load_encrypted_private_key_interactive(plaintext)
+    assert str(error.value) == "offline release signing requires an encrypted PKCS8 PEM private key"
+    assert str(plaintext) not in str(error.value)
 
     encrypted = tmp_path / "encrypted-private.pem"
     encrypted.write_bytes(

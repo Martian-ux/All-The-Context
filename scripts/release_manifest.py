@@ -14,6 +14,7 @@ from allthecontext.release_manifest import (
     create_manifest,
     load_keyring,
     load_private_key,
+    read_private_key_bytes,
     verify_manifest,
 )
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -29,7 +30,10 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 def require_private_key_outside_repository(path: Path, repository_root: Path) -> Path:
     """Reject a signing key located anywhere in the source checkout."""
 
-    resolved = path.resolve(strict=True)
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise ManifestError("private key path could not be resolved safely") from exc
     try:
         resolved.relative_to(repository_root.resolve(strict=True))
     except ValueError:
@@ -40,7 +44,7 @@ def require_private_key_outside_repository(path: Path, repository_root: Path) ->
 def load_encrypted_private_key_interactive(path: Path) -> Ed25519PrivateKey:
     """Load an encrypted PKCS8 key using a no-echo terminal prompt only."""
 
-    value = path.read_bytes()
+    value = read_private_key_bytes(path)
     if b"-----BEGIN ENCRYPTED PRIVATE KEY-----" not in value:
         raise ManifestError("offline release signing requires an encrypted PKCS8 PEM private key")
     if not sys.stdin.isatty():
@@ -51,7 +55,7 @@ def load_encrypted_private_key_interactive(path: Path) -> Ed25519PrivateKey:
     password = password_text.encode("utf-8")
     password_text = ""
     try:
-        return load_private_key(path, password=password)
+        return load_private_key(value, password=password)
     finally:
         password = b""
 
