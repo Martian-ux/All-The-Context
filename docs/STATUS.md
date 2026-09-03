@@ -19,9 +19,8 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
-At this boundary, protected main through PR #110 at exact `origin/main`
-`e155487cf5b663d435e1c4f208f457d5f5dd1db4` contains the merged Import Truth
-and the
+At this boundary, protected main contains the merged Import Truth through PR
+#110 at exact `origin/main` `e155487cf5b663d435e1c4f208f457d5f5dd1db4`, and the
 subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
 client read/explicit-memory foundations, Continuous Capture, replacement
 workflow hardening, updater/recovery trust hardening, the Windows timing test
