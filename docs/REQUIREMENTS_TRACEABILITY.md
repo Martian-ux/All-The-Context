@@ -23,6 +23,31 @@ covered by ADR-195.
 The completed-identity operation-binding containment follow-up is covered by
 ADR-196.
 The bounded efficiency hardening follow-up is covered by ADR-198.
+The Windows hardening wave integration and check-only updater boundary are
+covered by ADR-199. Its four cherry-picked worker commits are preserved in
+the integration ancestry; the final integration commit adds only bounded
+configuration/lifecycle safeguards and documentation.
+
+### 2026-09-03 Windows hardening wave integration
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| OTA-WIN-01 — Windows OTA must bind one canonical four-component package to signed release metadata and installed targets | `installed_component_manifest.py`; `updater.py`; `windows_update_helper.py`; `release/installed-component-manifest.schema.json`; updater/helper manifest regressions | Implemented at source level. The release-metadata-bound archive is bounded to setup plus canonical manifest/checksum; manifest version/package identity and fixed main/MCP/recovery/updater descriptors are independently validated before forward health. Rollback retains separate journaled prior-component digests. No migration is added, and artifact/clean-machine acceptance remains separate |
+| OTA-WIN-02 — native Windows build provenance must be deterministic, relative, and independently comparable | `scripts/native_build_provenance.py`; `scripts/verify_reproducible_build.py`; `release/native-build-provenance.schema.json`; `scripts/build_desktop.py`; CI/release/replacement workflows; provenance and workflow tests | Implemented as a source/workflow contract. Two clean builds use pinned Python 3.12.10, PyInstaller 6.21.0, uv 0.11.32, and reviewed lock digests; only matching byte/size identities are staged. The receipt is separate provenance evidence and does not establish signing, Defender, release, clean-machine, or downloaded-candidate execution evidence |
+| OTA-WIN-03 — unattended update checking must be conservative, single-flight, retry-bounded, and check-only | `UpdateAutomation`; `UpdateAutomationConfig`; `UpdateAutomationPolicy`; Core lifespan/configure wiring; updater regressions | Implemented at source level and locally tested. The worker runs only for an enabled configured channel, uses serialized manager checks and bounded cadence/backoff, and has no download/install/process-launch/task/service/shutdown/reboot authority. Automatic install and restart remain disabled; the integration also caps retry attempts and lifecycle join timeouts |
+| CI-WIN-01 — loaded Windows scheduled-capture acceptance needs only the bounded asynchronous poll widening | `tests/unit/test_scheduled_packet_f_local_source_acceptance.py`; focused acceptance regression | Implemented as a test-bound-only change. No production capture or acceptance semantics are changed |
+
+Focused integrated updater/helper/manifest/packaging/provenance/workflow
+validation after the integration safeguards passed 586 tests with 5 expected
+filesystem-capability skips; updater-only rerun passed 177 with 2 expected
+filesystem-capability skips. Ruff and mypy passed. Final repository-wide
+counts, collection parity, documentation/schema checks, package/build checks,
+and hosted checks must be recorded against the final exact pushed SHA.
+
+The distribution plan remains unsigned: SmartScreen warnings are accepted,
+but Defender quarantine/deletion is not. Source contracts, hosted results,
+artifact-level scanning, and clean-machine evidence are distinct evidence
+classes; none is credited here until it is independently produced and bound.
 
 ### 2026-09-03 bounded efficiency hardening
 

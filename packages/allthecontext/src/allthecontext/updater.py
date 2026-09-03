@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
@@ -105,7 +106,9 @@ CHECK_INTERVAL = timedelta(hours=24)
 UPDATE_RETRY_INITIAL_DELAY = timedelta(minutes=5)
 UPDATE_RETRY_MAX_DELAY = timedelta(hours=1)
 UPDATE_RETRY_ATTEMPTS = 3
+MAX_UPDATE_AUTOMATION_RETRY_ATTEMPTS = 32
 UPDATE_AUTOMATION_JOIN_TIMEOUT_SECONDS = 30.0
+MAX_UPDATE_AUTOMATION_JOIN_TIMEOUT_SECONDS = 120.0
 MAX_CLEANUP_ENTRIES = 32
 MAX_CLEANUP_DEPTH = 32
 MAX_COMPONENT_CHECKSUM_BYTES = 256
@@ -218,7 +221,15 @@ class UpdateAutomationConfig:
             or self.retry_attempts < 1
         ):
             raise ValueError("update retry attempts must be positive")
-        if self.join_timeout_seconds <= 0:
+        if self.retry_attempts > MAX_UPDATE_AUTOMATION_RETRY_ATTEMPTS:
+            raise ValueError("update retry attempts must not exceed the safety bound")
+        if (
+            isinstance(self.join_timeout_seconds, bool)
+            or not isinstance(self.join_timeout_seconds, (int, float))
+            or not math.isfinite(self.join_timeout_seconds)
+            or self.join_timeout_seconds <= 0
+            or self.join_timeout_seconds > MAX_UPDATE_AUTOMATION_JOIN_TIMEOUT_SECONDS
+        ):
             raise ValueError("update automation join timeout must be positive")
 
 
@@ -3717,7 +3728,13 @@ class UpdateAutomation:
                 daemon=False,
             )
             self._thread = thread
-        thread.start()
+            try:
+                # Start while lifecycle state is held so shutdown cannot
+                # observe an unstarted thread and attempt an invalid join.
+                thread.start()
+            except BaseException:
+                self._thread = None
+                raise
 
     def stop(self) -> None:
         """Signal the worker and join it for a bounded lifecycle handoff."""

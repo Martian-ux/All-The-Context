@@ -3129,6 +3129,12 @@ def test_update_automation_rejects_unbounded_cadence_and_retry_configuration() -
         )
     with pytest.raises(ValueError, match="attempts must be positive"):
         UpdateAutomationConfig(retry_attempts=0)
+    with pytest.raises(ValueError, match="attempts must not exceed"):
+        UpdateAutomationConfig(retry_attempts=33)
+    with pytest.raises(ValueError, match="join timeout must be positive"):
+        UpdateAutomationConfig(join_timeout_seconds=float("nan"))
+    with pytest.raises(ValueError, match="join timeout must be positive"):
+        UpdateAutomationConfig(join_timeout_seconds=121)
 
 
 def test_update_automation_runs_periodically_in_process_without_host_registration(
@@ -3167,6 +3173,37 @@ def test_update_automation_runs_periodically_in_process_without_host_registratio
     assert transport.metadata_calls >= 2
     assert automation.status()["automation_running"] is False
     assert not (tmp_path / "service").exists()
+
+
+def test_update_automation_does_not_expose_an_unstarted_thread_to_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    automation = UpdateAutomation(manager)
+    monkeypatch.setattr(automation, "_checks_allowed", lambda: True)
+    monkeypatch.setattr(
+        automation,
+        "run_once",
+        lambda: automation._stop.set() or manager.public_status(),
+    )
+    original_thread = threading.Thread
+    lifecycle_lock_was_available: list[bool] = []
+
+    class ObservingThread(original_thread):
+        def start(self) -> None:
+            acquired = automation._lifecycle_lock.acquire(blocking=False)
+            if acquired:
+                automation._lifecycle_lock.release()
+            lifecycle_lock_was_available.append(acquired)
+            super().start()
+
+    monkeypatch.setattr(updater_module.threading, "Thread", ObservingThread)
+    automation.start()
+    automation.shutdown()
+
+    assert lifecycle_lock_was_available == [False]
+    assert automation.status()["automation_running"] is False
 
 
 def test_update_automation_is_single_flight_against_a_concurrent_cycle(

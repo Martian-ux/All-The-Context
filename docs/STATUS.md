@@ -42,6 +42,53 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-03 — Windows hardening wave integration candidate
+
+Starting from the exact clean protected-main SHA
+`e3e81c4c3288c02067122661d2cf5a619355c622`, this branch cherry-picks each
+completed worker exactly once, in order: native reproducibility provenance
+`b185f6adef1c1f21a93228dc58f5759d954f7a4d`, Windows OTA component-manifest
+authority `0aa87e4b85d8b02c66e732dcda83e709ae9066f0`, in-process unattended
+availability checks `ef086bd18264336f8b65c84c46c6ec1344ef3ef1`, and the loaded
+Windows scheduled-capture poll bound `5c9d46cd82e38b448246505a684f88575ee09b1e`.
+All four cherry-picks applied without conflicts; the integration follow-up
+also bounds configurable retry attempts and lifecycle join timeouts and closes
+the start/shutdown race that could expose an unstarted worker thread.
+
+The Windows OTA path now requires a release archive whose identity is covered
+by signed release metadata and whose extracted contents are exactly the setup
+executable plus the canonical component manifest and checksum. The runtime
+verifier and independent recovery helper validate
+the manifest's four fixed roles, version, package identity, and every installed
+main/MCP/recovery/updater executable before forward health publication; rollback
+continues to use separately journaled, digest-bound prior components. No
+migration is introduced by this wave, and database backup/restore and existing
+locked-file, disk-space, path, and interruption barriers remain in force.
+
+The native Windows provenance gate builds the four components twice from clean
+roots with pinned Python 3.12.10, PyInstaller 6.21.0, uv 0.11.32, and reviewed
+lock digests, compares byte/size identities, stages only the second matching
+build, and emits relative component metadata. Provenance is retained as
+separate evidence; it does not become a release, signature, Defender, or
+clean-machine claim, and the local verification path does not execute produced
+or downloaded candidates.
+
+Unattended checking is a conservative in-process Core-lifetime worker: it
+requires the enabled configured channel, uses the existing serialized updater,
+single-flight execution, daily default cadence, and bounded retry/backoff.
+It never downloads, installs, launches, registers a host task/service, shuts
+down Core, or restarts Windows. Automatic install and automatic restart remain
+disabled; a verified offer and any restart-required state remain operator-
+driven. The scheduled-capture change only widens the asynchronous acceptance
+poll bound for loaded Windows xdist runners.
+
+The distribution plan remains unsigned. SmartScreen or unknown-publisher
+warnings are accepted; Defender quarantine or deletion is not accepted.
+Source-level contracts, local disposable tests, hosted checks, artifact-level
+scans, and clean-machine evidence remain distinct and must not be substituted
+for one another. Final exact-SHA gate counts and hosted results are recorded
+only after the integration commit is pushed.
+
 ### 2026-09-03 — bounded runtime and dashboard efficiency hardening
 
 The post-PR-#110 efficiency audit was rechecked against the exact merged code
