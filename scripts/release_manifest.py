@@ -1,5 +1,9 @@
 """Create or verify a signed All The Context OTA manifest."""
 
+# The operator utility must use this checkout's release-manifest policy even
+# when another editable allthecontext installation is present on the host.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
@@ -8,6 +12,9 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPOSITORY_ROOT / "packages" / "allthecontext" / "src"))
 
 from allthecontext.release_manifest import (
     ManifestError,
@@ -18,8 +25,6 @@ from allthecontext.release_manifest import (
     verify_manifest,
 )
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:

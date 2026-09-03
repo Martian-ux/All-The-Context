@@ -150,7 +150,7 @@ class FakeInstaller:
                 (plan.transaction_dir / "replacement").mkdir()
                 (plan.transaction_dir / "rollback").mkdir()
             elif self.failure == "partial-journal":
-                (plan.transaction_dir / "journal.json").write_bytes(b"{\"phase\":")
+                (plan.transaction_dir / "journal.json").write_bytes(b'{"phase":')
             raise UpdateError("Installer process crashed")
         install_dir = plan.transaction_dir / "installed"
         rollback_dir = plan.transaction_dir / "rollback"
@@ -1079,6 +1079,7 @@ def test_completed_cleanup_retires_authority_after_tree_removal(
     _publish_helper_terminal(manager, "installed")
     persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
     operation = persisted["operation_id"]
+    operation_dir = manager.state_path.parent / "staging" / operation
     transaction_dir = manager.state_path.parent / "transactions" / operation
     manager.state.phase = UpdatePhase.INSTALLED
     manager.state.transaction_path = None
@@ -1087,11 +1088,13 @@ def test_completed_cleanup_retires_authority_after_tree_removal(
     manager.state.completed_handoff_identity = persisted["completed_handoff_identity"]
 
     events: list[str] = []
+    removed_paths: list[Path] = []
     original_remove = updater_module._remove_owned_tree
     original_retire = updater_module.retire_recovery_authority
 
     def remove_tree(path: Path, *, expected: object) -> bool:
         events.append("tree")
+        removed_paths.append(path)
         return original_remove(path, expected=expected)
 
     def retire_authority(value: str) -> bool:
@@ -1103,7 +1106,8 @@ def test_completed_cleanup_retires_authority_after_tree_removal(
     monkeypatch.setattr(updater_module, "retire_recovery_authority", retire_authority)
 
     assert manager._clear_completed_recovery_evidence() is True
-    assert events == ["tree", "retire"]
+    assert events == ["tree", "tree", "retire"]
+    assert removed_paths == [operation_dir, transaction_dir]
     assert not transaction_dir.exists()
 
 

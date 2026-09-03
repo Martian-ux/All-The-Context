@@ -1689,9 +1689,7 @@ class UpdateManager:
         except (HelperError, OSError, RecursionError):
             return True
         evidence_entries = [
-            entry
-            for entry in entries
-            if _helper_transaction_entry_has_recovery_evidence(entry)
+            entry for entry in entries if _helper_transaction_entry_has_recovery_evidence(entry)
         ]
         if not evidence_entries:
             return False

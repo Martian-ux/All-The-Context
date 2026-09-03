@@ -11,6 +11,10 @@ Manager and macOS Keychain round-trips are exercised separately by
 ``scripts/smoke_platform_acceptance.py``.
 """
 
+# The smoke must prepend its checkout source before importing package modules;
+# suppress the corresponding intentional import-order diagnostic below.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import atexit
@@ -24,6 +28,7 @@ import shutil
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -31,6 +36,9 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, TextIO
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packages" / "allthecontext" / "src"))
 
 import anyio
 import httpx2 as httpx
@@ -50,7 +58,7 @@ from allthecontext.windows_update_helper import (
 )
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from smoke_desktop_artifact import ROOT, artifact_executable
+from smoke_desktop_artifact import artifact_executable
 
 # Explicit, isolated, non-secret smoke only. Production installs never set this.
 ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"

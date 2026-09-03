@@ -4,6 +4,10 @@ This utility intentionally has no key-generation or private-key import command.
 The signing key remains on an operator-controlled offline system.
 """
 
+# Import the release policy from this checkout, not an unrelated editable
+# installation that may be earlier on a developer host's ambient path.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
@@ -11,10 +15,14 @@ import contextlib
 import json
 import os
 import subprocess
+import sys
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPOSITORY_ROOT / "packages" / "allthecontext" / "src"))
 
 from allthecontext.release_manifest import (
     CHANNELS,
@@ -29,7 +37,6 @@ from allthecontext.release_manifest import (
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OPERATOR_KEYRING = REPOSITORY_ROOT / "release" / "keys.json"
 DEFAULT_PACKAGED_KEYRING = (
     REPOSITORY_ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "update_keys.json"

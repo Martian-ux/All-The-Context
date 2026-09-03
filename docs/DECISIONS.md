@@ -1,5 +1,44 @@
 # Architecture decisions
 
+## ADR-195: Final-review recovery authority is keyed and retires after evidence cleanup
+
+**Status:** accepted locally on 2026-09-03 as the PR #110 final-review
+remediation integration; hosted checks must bind to the pushed commit and PR
+#110 remains open.
+
+The updater must not treat a recomputed plain journal hash or handoff identity
+as recovery authority. Before handoff launch, the helper creates one durable
+32-byte secret per operation in the OS credential store and records an
+HMAC-SHA256 over the operation ID and immutable journal identity. The terminal
+`COMMITTED` or `ROLLED_BACK` publication receives a second HMAC that binds the
+terminal phase. State/journal transitions use the keyed authority plus a
+pending-to-current identity publication, so crash replay can distinguish a
+real helper transition from edited metadata. Journal storage and artifact
+SHA-256/size bindings remain required, but they are integrity checks rather
+than a substitute for the keyed authority.
+
+Terminal publication is state-first and journal-confirmed. After a terminal
+journal is durably published, RunOnce unregister or Core launch failure is a
+degraded terminal follow-up and never reopens rollback. `defer`, `configure`,
+and `check` must retire a completed publication's staging and transaction
+evidence before changing ordinary updater state; failure leaves the
+publication authoritative and blocks unsafe mutation. Retirement deletes the
+per-operation secret only after both staged and transaction trees have been
+removed safely.
+
+An empty pre-authority operation directory is not evidence by itself and may
+be reclaimed. A journal, regular file, link/reparse object, non-directory, or
+ambiguous/pathological tree remains credible recovery evidence and is retained
+fail-closed. Successful terminal recovery removes staged artifact/manifest and
+transaction evidence but keeps the canonical database, verified backup, and
+required rollback/source material.
+
+The local OS credential store/ACL is a trust assumption, not an adversary-
+resistant remote authority. The cross-platform implementation still does not
+claim handle-based no-follow atomicity for a concurrent same-user mutation and
+the final Windows filesystem syscall. No signing, release, Defender,
+Microsoft, or downloaded-candidate acceptance follows from this decision.
+
 ## ADR-194: Numeric release versions use explicit containment bounds
 
 **Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted

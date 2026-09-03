@@ -91,6 +91,35 @@ multibyte script reads, oversized raw keyring comparison, deep trees, wide
 trees, budget boundaries, and RecursionError. Hosted follow-up checks must bind
 to the corrected commit.
 
+The 2026-09-03 PR #110 final-review integration is covered by ADR-195; it
+adds keyed recovery authority, explicit terminal side-effect behavior, and
+evidence-aware cleanup while retaining the local trust and filesystem-race
+residuals below.
+
+### 2026-09-03 PR #110 final-review remediation integration
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| UPDATER-10 — terminal recovery authority must be authenticated independently of recomputable metadata and must survive post-publication failures | `windows_update_helper.py::bind_recovery_authority`; `windows_update_helper.py::seal_terminal_recovery_authority`; `windows_update_helper.py::validate_recovery_authority`; `windows_update_helper.py::_transition_handoff_state`; `windows_update_helper.py::_commit`; `windows_update_helper.py::_rollback`; `updater.py::_clear_completed_recovery_evidence`; `updater.py::configure`; `updater.py::defer`; `updater.py::check`; `tests/unit/test_updater.py::test_pointerless_recovery_rejects_recomputed_identity_forgery`; `test_completed_cleanup_retires_authority_after_tree_removal`; `tests/unit/test_windows_update_helper.py::test_same_operation_forged_mutable_authority_is_rejected`; `test_terminal_replay_requires_completed_journal_binding`; ADR-195 | Implemented locally. A per-operation OS-credential-store secret HMAC-authenticates the immutable journal identity and terminal phase; plain journal/identity hashes cannot forge authority. State-first publication and pending/current identity reconciliation preserve the terminal outcome across crashes. After keyed `COMMITTED` publication, unregister/launch failure is degraded terminal follow-up and cannot trigger rollback. Completed identity is retired only after safe staging and transaction cleanup; cleanup failure preserves authority and blocks ordinary mutation. |
+| UPDATER-11 — orphan transaction cleanup must distinguish empty pre-authority directories from credible recovery evidence | `windows_update_helper.py::_transaction_entry_has_recovery_evidence`; `updater.py::_transaction_evidence_requires_preservation`; `updater.py::_clear_completed_recovery_evidence`; `tests/unit/test_updater.py::test_pre_authority_transaction_directories_are_reclaimed_after_handoff_failure`; `test_partial_journal_creation_keeps_recovery_authority_after_restart`; `test_malicious_nonempty_transaction_directory_remains_fail_closed`; `test_successful_terminal_recovery_removes_staging_and_transaction_evidence`; ADR-195 | Implemented locally. Empty operation directories and empty nested directory structure may be reclaimed before authority exists. Journals, regular files, links/reparse objects, non-directories, and ambiguous/pathological trees remain credible evidence and are preserved fail-closed. Successful terminal recovery removes the staged artifact/manifest and transaction tree before retiring the authority, while retaining the canonical database, verified backup, and required rollback/source material. |
+
+The integrated evidence is limited to sanitized synthetic/disposable local
+state. The OS credential store and its local ACL are trusted; a host
+administrator or compromised credential store is outside this authority model.
+Final parent/entry checks still do not provide handle-based no-follow
+atomicity against concurrent same-user mutation and the final Windows
+filesystem syscall. Hosted checks, exact candidate-artifact acceptance,
+signing, publication, release, Defender, Microsoft, and downloaded-candidate
+execution remain separate gates.
+
+Local validation for this integration passed 269 focused updater/helper tests
+(3 expected Windows capability skips), 453 tests in the broader focused lane
+(6 expected capability skips), and 2,635 tests in the full suite (13 expected
+capability skips plus 2 existing Starlette deprecation warnings). Ruff,
+format, mypy over 107 source files, documentation, and diff checks passed;
+desktop/package/recovery/first-run lifecycle smokes and release-keyring
+validate/audit passed as well.
+
 ### 2026-09-02 Terminal recovery publication authority and numeric version containment
 
 | Requirement | Implementation/evidence | Status |

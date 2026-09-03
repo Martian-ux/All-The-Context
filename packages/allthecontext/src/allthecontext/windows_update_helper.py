@@ -1014,8 +1014,7 @@ def _transaction_evidence_without_state(state_path: Path) -> bool:
         if not _plain_directory_chain_if_present(transactions, "startup_state_untrusted"):
             return False
         return any(
-            _transaction_entry_has_recovery_evidence(entry)
-            for entry in transactions.iterdir()
+            _transaction_entry_has_recovery_evidence(entry) for entry in transactions.iterdir()
         )
     except (HelperError, OSError, RecursionError) as exc:
         raise HelperError("startup_state_untrusted") from exc
@@ -1152,9 +1151,7 @@ class UpdateJournal:
         if self.schema_version not in {
             JOURNAL_SCHEMA_VERSION,
             LEGACY_JOURNAL_SCHEMA_VERSION,
-        } or not _valid_operation_id(
-            self.operation_id
-        ):
+        } or not _valid_operation_id(self.operation_id):
             raise HelperError("journal_identity_invalid")
         if self.schema_version == LEGACY_JOURNAL_SCHEMA_VERSION and (
             self.recovery_authority_mac is not None or self.terminal_authority_mac is not None
@@ -2497,9 +2494,8 @@ def ensure_recovery_before_core() -> bool:
                 phase=phase,
             )
             return False
-        if (
-            transaction_evidence
-            and not completed_transaction_is_authoritative(state_path, state, phase)
+        if transaction_evidence and not completed_transaction_is_authoritative(
+            state_path, state, phase
         ):
             _write_startup_recovery_diagnostic(
                 state_path,

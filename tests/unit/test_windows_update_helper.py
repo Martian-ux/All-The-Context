@@ -767,10 +767,13 @@ def test_terminal_recovery_authority_accepts_legitimate_outcomes(
         fixture.journal_path,
         require_terminal=True,
     )
-    assert helper_module.transaction_outcome(
-        fixture.journal_path,
-        validate_storage=False,
-    ) == expected_outcome
+    assert (
+        helper_module.transaction_outcome(
+            fixture.journal_path,
+            validate_storage=False,
+        )
+        == expected_outcome
+    )
 
 
 def test_failed_health_restores_previous_binary_mcp_and_database(

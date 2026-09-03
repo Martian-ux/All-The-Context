@@ -42,6 +42,62 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-03 — PR #110 final-review remediation integration
+
+Before mutation, PR #110 was verified open with base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` and head
+`8c2c603ad5ec5179ae6ab8b15e52526f3349b1a1`. The terminal-lifecycle,
+keyed-recovery-authority, and orphan-evidence remediation commits were
+cherry-picked in the requested order with no conflicts. The final integration
+commit also keeps standalone build, package, smoke, and release-keyring
+utilities on this checkout's source tree when another editable installation is
+present on the host.
+
+Recovery authority is now separate from recomputable journal metadata. Before
+the helper can be launched, one 32-byte per-operation secret is created in the
+OS credential store (the development file store is an explicit smoke-only
+fallback). HMAC-SHA256 binds that secret to the operation ID and the complete
+immutable journal identity; a terminal HMAC additionally binds `COMMITTED` or
+`ROLLED_BACK`. Plain journal/identity hashes are therefore bindings, not
+authority, and recomputing them after editing a journal cannot authorize
+recovery. Journal storage paths and the staged/replacement/rollback/helper/
+backup artifacts are still checked as plain files and verified against their
+recorded SHA-256/size values at the relevant authority boundaries.
+
+The helper uses state-first progress followed by keyed terminal journal
+publication and only then terminal state cleanup. Once `COMMITTED` or
+`ROLLED_BACK` is published, later RunOnce-unregister or Core-launch failure is
+a degraded terminal result; it cannot reopen rollback. A completed terminal
+identity also cannot be erased by `defer`, `configure`, or `check` until
+staging and transaction evidence has been removed safely. If cleanup fails,
+the operation remains authoritative and later updater mutation is blocked.
+
+Pre-authority transaction directories that are empty, or contain only empty
+directory structure without a journal, regular file, reparse/link, or other
+credible evidence, may be reclaimed. Any credible recovery evidence remains
+fail-closed and preserved. Successful terminal recovery removes the staged
+artifact/manifest and transaction tree before retiring the per-operation
+authority, while retaining the canonical database, verified backup, and
+rollback/source material required by the product boundary.
+
+This authority still relies on the local OS credential store and its local
+trust/ACL boundary; it is not protection against a host administrator or a
+compromised credential store. The cross-platform path checks also do not claim
+handle-based no-follow atomicity across a concurrent same-user mutation and the
+final Windows filesystem syscall. Hosted checks must bind to the pushed SHA;
+no signing, publishing, tagging, Defender change, Microsoft submission,
+release, or downloaded-candidate execution is implied.
+
+Local validation for this integration completed with 269 focused updater/helper
+tests passed and 3 expected Windows capability skips; the broader focused lane
+passed 453 tests with 6 expected capability skips; and the full suite passed
+2,635 tests with 13 expected capability skips and 2 existing Starlette
+deprecation warnings. Ruff check, Ruff format check, mypy over 107 source
+files, documentation checks, and `git diff --check` passed. The desktop build,
+packaged-artifact smoke, packaged recovery smoke, first-run/restart/rollback/
+uninstall smoke, direct unsigned package build, and release-keyring validate/
+audit also passed.
+
 ### 2026-09-02 — PR #110 terminal publication cleanup and bounded version parsing
 
 The local PR #110 integration now includes the recovery-lifecycle and numeric
