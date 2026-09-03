@@ -10,7 +10,9 @@ import base64
 import binascii
 import hashlib
 import json
+import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -27,6 +29,12 @@ SCHEMA_VERSION = 1
 CHANNELS = frozenset({"stable", "beta"})
 PLATFORMS = frozenset({"windows", "macos", "linux"})
 ARCHITECTURES = frozenset({"x86_64", "arm64"})
+MAX_KEYRING_BYTES = 16 * 1024
+MAX_PRIVATE_KEY_BYTES = 16 * 1024
+MAX_VERSION_TEXT_LENGTH = 64
+MAX_VERSION_COMPONENTS = 4
+MAX_VERSION_COMPONENT_DIGITS = 18
+WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SHA256_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 KEY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{2,63}")
@@ -50,17 +58,35 @@ class ReleaseVersion:
 
     @classmethod
     def parse(cls, value: str) -> ReleaseVersion:
+        if not isinstance(value, str) or len(value) > MAX_VERSION_TEXT_LENGTH:
+            raise ManifestError("invalid release version")
+        if value.count(".") + 1 > MAX_VERSION_COMPONENTS:
+            raise ManifestError("invalid release version")
         match = VERSION.fullmatch(value)
         if match is None:
-            raise ManifestError(f"invalid release version: {value!r}")
+            raise ManifestError("invalid release version")
+        components = [
+            match.group("major"),
+            match.group("minor"),
+            match.group("patch"),
+            match.group("number"),
+        ]
+        numeric_components = [component for component in components if component is not None]
+        if len(numeric_components) > MAX_VERSION_COMPONENTS or any(
+            len(component) > MAX_VERSION_COMPONENT_DIGITS for component in numeric_components
+        ):
+            raise ManifestError("invalid release version")
         label = match.group("label")
-        return cls(
-            int(match.group("major")),
-            int(match.group("minor")),
-            int(match.group("patch")),
-            1 if label is None else 0,
-            0 if label is None else int(match.group("number")),
-        )
+        try:
+            return cls(
+                int(match.group("major")),
+                int(match.group("minor")),
+                int(match.group("patch")),
+                1 if label is None else 0,
+                0 if label is None else int(match.group("number")),
+            )
+        except ValueError as exc:
+            raise ManifestError("invalid release version") from exc
 
 
 def _base64url_encode(value: bytes) -> str:
@@ -175,16 +201,39 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         raise ManifestError("signature must be a base64url-encoded Ed25519 signature")
 
 
-def load_private_key(path: Path, *, password: bytes | None = None) -> Ed25519PrivateKey:
+def read_private_key_bytes(path: Path) -> bytes:
+    """Read an operator-supplied private key with a bounded overflow sentinel."""
+
     try:
-        value = serialization.load_pem_private_key(path.read_bytes(), password=password)
+        with path.open("rb") as stream:
+            value = stream.read(MAX_PRIVATE_KEY_BYTES + 1)
+    except OSError as exc:
+        raise ManifestError("private key could not be read safely") from exc
+    if not value:
+        raise ManifestError("private key file is empty")
+    if len(value) > MAX_PRIVATE_KEY_BYTES:
+        raise ManifestError("private key file exceeds the size limit")
+    return value
+
+
+def load_private_key(source: Path | bytes, *, password: bytes | None = None) -> Ed25519PrivateKey:
+    if isinstance(source, Path):
+        value = read_private_key_bytes(source)
+    else:
+        value = source
+        if not value:
+            raise ManifestError("private key file is empty")
+        if len(value) > MAX_PRIVATE_KEY_BYTES:
+            raise ManifestError("private key file exceeds the size limit")
+    try:
+        loaded = serialization.load_pem_private_key(value, password=password)
     except (TypeError, ValueError) as exc:
         raise ManifestError(
             "private key is not a valid PEM Ed25519 key for the supplied password"
         ) from exc
-    if not isinstance(value, Ed25519PrivateKey):
+    if not isinstance(loaded, Ed25519PrivateKey):
         raise ManifestError("private key is not Ed25519")
-    return value
+    return loaded
 
 
 def create_manifest(
@@ -222,12 +271,82 @@ def create_manifest(
     return manifest
 
 
-def load_keyring(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+def _keyring_plain_file_stat(path: Path) -> os.stat_result:
+    for directory in reversed((path.parent, *path.parent.parents)):
+        try:
+            value = directory.lstat()
+        except OSError as exc:
+            raise ManifestError("keyring is not a trusted plain file") from exc
+        if bool(
+            getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+        ) or not stat.S_ISDIR(value.st_mode):
+            raise ManifestError("keyring is not a trusted plain file")
+    try:
+        value = path.lstat()
+    except OSError as exc:
+        raise ManifestError("keyring is not a trusted plain file") from exc
+    if (
+        bool(getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
+        or stat.S_ISLNK(value.st_mode)
+        or not stat.S_ISREG(value.st_mode)
+        or getattr(value, "st_nlink", 1) != 1
+    ):
+        raise ManifestError("keyring is not a trusted plain file")
+    return value
+
+
+def _same_keyring_file(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(
+        same
+        and stat.S_ISREG(observed.st_mode)
+        and getattr(observed, "st_nlink", 1) == 1
+        and expected.st_size == observed.st_size
+        and getattr(expected, "st_mtime_ns", None) == getattr(observed, "st_mtime_ns", None)
+    )
+
+
+def _read_keyring_json(path: Path) -> dict[str, Any]:
+    before = _keyring_plain_file_stat(path)
+    if before.st_size > MAX_KEYRING_BYTES:
+        raise ManifestError("keyring exceeds the size limit")
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_KEYRING_BYTES + 1)
+            if len(raw) > MAX_KEYRING_BYTES:
+                raise ManifestError("keyring exceeds the size limit")
+            opened = os.fstat(stream.fileno())
+            if not _same_keyring_file(before, opened):
+                raise ManifestError("keyring changed while it was read")
+            observed = os.fstat(stream.fileno())
+            if not _same_keyring_file(before, observed):
+                raise ManifestError("keyring changed while it was read")
+    except ManifestError:
+        raise
+    except OSError as exc:
+        raise ManifestError("keyring could not be read safely") from exc
+    after = _keyring_plain_file_stat(path)
+    if not _same_keyring_file(before, after):
+        raise ManifestError("keyring changed while it was read")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise ManifestError("keyring could not be decoded safely") from exc
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        raise ManifestError("keyring could not be decoded safely") from exc
     if not isinstance(value, dict):
         raise ManifestError("keyring must be a JSON object")
     validate_keyring(value)
     return cast(dict[str, Any], value)
+
+
+def load_keyring(path: Path) -> dict[str, Any]:
+    return _read_keyring_json(path)
 
 
 def public_key_fingerprint(public_value: str) -> str:

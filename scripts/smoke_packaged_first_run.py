@@ -11,6 +11,10 @@ Manager and macOS Keychain round-trips are exercised separately by
 ``scripts/smoke_platform_acceptance.py``.
 """
 
+# The smoke must prepend its checkout source before importing package modules;
+# suppress the corresponding intentional import-order diagnostic below.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import atexit
@@ -24,6 +28,7 @@ import shutil
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -31,6 +36,9 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, TextIO
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packages" / "allthecontext" / "src"))
 
 import anyio
 import httpx2 as httpx
@@ -45,11 +53,12 @@ from allthecontext.windows_update_helper import (
     HelperPhase,
     UpdateJournal,
     bind_handoff_state,
+    bind_recovery_authority,
     journal_failure_diagnostic,
 )
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from smoke_desktop_artifact import ROOT, artifact_executable
+from smoke_desktop_artifact import artifact_executable
 
 # Explicit, isolated, non-secret smoke only. Production installs never set this.
 ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
@@ -320,6 +329,7 @@ def prepare_packaged_update_transaction(
         updated_at=now,
     )
     journal.save(journal_path)
+    bind_recovery_authority(journal, journal_path)
     bind_handoff_state(journal, journal_path)
     return transaction_helper, journal_path
 
@@ -1057,6 +1067,7 @@ def main() -> int:
         helper_authority = {
             "ATC_CORE_DATA_DIR": environment["ATC_CORE_DATA_DIR"],
             "ATC_INSTALL_DIR": environment["ATC_INSTALL_DIR"],
+            DEVELOPMENT_FALLBACK_ENV: "1",
         }
         with _temporary_environment(helper_authority):
             crash_helper, crash_journal = prepare_packaged_update_transaction(
@@ -1090,9 +1101,12 @@ def main() -> int:
             check=True,
             timeout=180,
         )
-        wait_for_core(base_url, admin_token)
+        # The helper publishes the committed journal before launching Core.
+        # Core may safely retire that terminal evidence during its startup,
+        # so validate the publication before waiting for the restarted process.
         if json.loads(crash_journal.read_text(encoding="utf-8")).get("phase") != "committed":
             raise SystemExit("packaged updater did not commit after crash recovery")
+        wait_for_core(base_url, admin_token)
         stop_core(base_url, admin_token)
 
         with _temporary_environment(helper_authority):
@@ -1116,10 +1130,12 @@ def main() -> int:
             journal=rollback_journal,
             environment=rollback_environment,
         )
-        wait_for_core(base_url, admin_token)
         rollback_status = json.loads(rollback_journal.read_text(encoding="utf-8"))
         if rollback_status.get("phase") != "rolled_back":
             raise SystemExit(f"packaged updater did not roll back: {rollback_status}")
+        # As with the committed path above, Core may retire the fully
+        # helper-confirmed terminal journal while it starts.
+        wait_for_core(base_url, admin_token)
         restored_files = (
             (
                 Path(str(rollback_status["application_path"])),

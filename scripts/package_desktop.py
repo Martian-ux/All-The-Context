@@ -1,5 +1,9 @@
 """Create direct, explicitly unsigned desktop packages for beta acceptance."""
 
+# The packager must import the package data from this checkout even when the
+# developer host has another editable allthecontext installation.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
@@ -7,10 +11,14 @@ import gzip
 import json
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from io import BytesIO
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packages" / "allthecontext" / "src"))
 
 from allthecontext import __version__
 from allthecontext.macos_bundle import validate_macos_bundle_links
@@ -21,7 +29,6 @@ try:
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
     from installed_component_manifest import create_manifest
 
-ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ROOT = ROOT / "dist" / "desktop"
 PACKAGE_ROOT = ROOT / "dist" / "platform"
 PLATFORMS = frozenset({"windows", "macos", "linux"})

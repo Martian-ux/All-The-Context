@@ -26,11 +26,11 @@ workflow hardening, updater/recovery trust hardening, the Windows timing test
 correction, exact candidate-evidence reconciliation, the private handoff guard
 correction, the update-child dialog containment change, the import-heartbeat
 test stabilization, Windows startup-recovery hardening from PR #107, and
-startup-recovery diagnostic containment from PR #108 at exact SHA
-`ebc845246b2c9fcc3216b5ba1b9f72c3842bbdb6`. The current parser-containment
-follow-up is source-level local work on this exact merge base; hosted CI,
-CodeQL, exact-artifact, and release evidence for a later candidate remain
-separate gates. Source and hosted evidence does not
+startup-recovery diagnostic containment from PR #108 at the exact
+`origin/main` merge base `466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` used for
+this local follow-up. The current updater metadata-authority containment is
+source-level branch work; hosted CI, exact-artifact, and release evidence for a
+later candidate remain separate gates. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -41,6 +41,360 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-09-03 — PR #110 completed-identity binding containment
+
+Before this follow-up mutation, PR #110 was verified open with base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` and exact head
+`c286202fb544a0a451ace6c721fa867469a2cf6e`. A non-null
+`completed_handoff_identity` is now considered safe only when its operation ID
+is a valid 24-character lowercase hexadecimal value and the state binds to the
+same authenticated terminal journal or canonical bounded retirement tombstone.
+Missing, corrupt, or forged operation references preserve the state, journal,
+tombstone, transaction evidence, and credential authority and disable updater
+writes and cleanup. `clear_error`, `configure`, `defer`, `check`, retirement,
+and pruning cannot bypass that state.
+
+Frozen Windows Core startup now stays blocked when a completed state has no
+transaction evidence and its authenticated tombstone still has live or
+unavailable credential authority. It can proceed only after the intact
+operation/tombstone binding confirms that the credential is already retired;
+the updater can still complete bounded tombstone retirement after transaction
+tree removal when the binding remains intact. Repeated restart and cleanup
+attempts are deterministic, and malformed or ambiguous evidence remains
+fail-closed.
+
+Local evidence for this follow-up is green: the updater/helper focused suite
+reports 307 passed and 3 expected filesystem skips; the full suite reports
+2,673 passed, 13 expected skips, and 2 existing Starlette deprecation
+warnings. Ruff lint and format checks, mypy, documentation validation, and
+diff validation pass. The rebuilt Windows frozen desktop artifact, console
+recovery helper, packaged first-run/restart/OTA-recovery/rollback/uninstall
+smoke, direct unsigned beta package, native credential/startup acceptance,
+beta source validation, and release-keyring validation/audit also pass. Hosted
+check results must bind to the pushed commit and remain separate from this
+local evidence. No release, signing, publishing, Defender, Microsoft
+submission, or downloaded-candidate execution is implied.
+
+### 2026-09-03 — PR #110 clear-error retirement guard
+
+Before this follow-up mutation, PR #110 was verified open with base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` and exact head
+`cb90c940571008b4a437b8962065a82e5a894176`. `UpdateManager.clear_error()` now
+uses the same bounded, authenticated completed-recovery-evidence retirement
+path as `check`, `defer`, and `configure` before clearing `last_error` or
+moving an error/cancelled state to idle. A failed retirement raises and leaves
+the terminal identity, retirement tombstone, recovery authority, and the
+cleanup error available for retry; missing or tampered tombstones remain
+fail-closed. Repeated successful clear-error calls remain idempotent, while
+ordinary non-recovery errors still clear normally. No adjacent admin entrypoint
+was found to bypass this retirement path.
+
+Focused updater/helper tests passed 291 tests with 3 expected capability skips;
+the full suite passed 2,657 tests with 13 expected capability skips and 2
+existing Starlette deprecation warnings. Ruff check, Ruff format check, mypy
+over 107 source files, documentation checks, and `git diff --check` passed.
+The Windows desktop build, frozen artifact/resource and OS-credential smoke,
+direct unsigned Windows package and trust-disclosure smoke, packaged recovery
+admin smoke, packaged first-run/restart/rollback/uninstall smoke, and platform
+credential/startup acceptance smoke passed. Release-keyring validation accepted
+2 public keys and the audit covered 575 tracked files with no private-key
+material detected. These are local source/disposable results only; hosted
+checks must bind to the final pushed SHA, and no signing, publishing, tagging,
+Defender change, Microsoft submission, release, or downloaded-candidate
+execution was performed.
+
+### 2026-09-03 — PR #110 P1 recovery-boundary remediation completion
+
+Before mutation, PR #110 was verified open with base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` and exact head
+`c687a90b9c5388bef43c14f161c11c20cf70e677`. The three requested commits were
+cherry-picked in order: `ec491f37cc92cc5cd4cdff6d450d44b76620d46c`,
+`e74e823211fe6beceb35c3fa8d222967f36c990d`, and
+`02ab40f46cba37076648618d1dbda2788e3d727e`. The first two applied cleanly;
+the third had one import-only conflict in `updater.py`, resolved by retaining
+both `prepare_handoff_state` and `recovery_authority_retirement_status`.
+
+The handoff ordering is now explicit: the prepared journal and transaction
+state are durably written, a pending handoff identity is recorded before any
+credential authority exists, the per-operation OS credential is HMAC-bound to
+the immutable journal identity, the state identity is promoted, and only then
+does registration and detached-helper launch occur. A crash with a valid
+journal but an unbound state can be re-bound and relaunched on repeated frozen
+startups. A pre-binding tree may be reclaimed only when it is exactly the
+bounded expected file/directory set; a journal, regular file, reparse/link,
+non-directory, extra entry, malformed record, or unstable/pathological tree is
+credible evidence and remains preserved fail-closed.
+
+Terminal publication is ordered state-first, terminal-journal-second, and
+cleanup-last. Once a keyed `COMMITTED` or `ROLLED_BACK` journal is durably
+published, state-cleanup persistence, RunOnce unregister, credential
+retirement, staging/transaction cleanup, and Core launch are only retryable
+follow-up work. None can reopen rollback or replace the terminal outcome.
+The bounded 16 KiB retirement tombstone authenticates the operation, outcome,
+terminal phase, handoff identity, terminal HMAC, and journal digest. It is
+written and verified before staging/transaction cleanup; the per-operation
+credential is deleted only after both trees are safely gone. A crash at any
+step leaves retryable state, credential, or tombstone evidence, and an orphan
+already-retired tombstone is reaped only after the same validation. Frozen
+startup and `UpdateManager` accept pointerless terminal state through the same
+validated tombstone/journal rules.
+
+All new-operation, defer, configure, clear-error, check/install, and pruning
+paths remain behind active recovery-authority checks. Invalid or ambiguous
+authority, tombstone, state, journal, or physical evidence blocks Core startup
+and updater mutation without replacing the evidence. The local OS credential
+store and its ACL are trusted and are not an independent defense against a
+host administrator or compromised store. Final cross-platform path/identity
+checks also do not claim handle-based no-follow atomicity across a concurrent
+same-user mutation and the final Windows filesystem syscall.
+
+Local validation for this completion passed 573 focused updater/helper/
+recovery/manifest/desktop tests with 6 expected capability skips and the full
+suite with 2,653 passed, 13 expected capability skips, and 2 existing
+Starlette deprecation warnings. Ruff check, Ruff format check, mypy over 107
+source files, documentation checks, and `git diff --check` passed. The source
+desktop build, direct unsigned package build/verification, desktop artifact
+inspection, packaged recovery/admin smoke, and disposable first-run/
+restart/rollback/uninstall smoke passed. Release-keyring validation accepted
+2 public keys and the audit covered 575 tracked files with no private-key
+material detected. These are local source/disposable results only; hosted
+checks must bind to the final pushed SHA, and no signing, publishing, tagging,
+Defender change, Microsoft submission, release, or downloaded-candidate
+execution was performed.
+
+### 2026-09-03 — PR #110 final-review remediation integration
+
+Before mutation, PR #110 was verified open with base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` and head
+`8c2c603ad5ec5179ae6ab8b15e52526f3349b1a1`. The terminal-lifecycle,
+keyed-recovery-authority, and orphan-evidence remediation commits were
+cherry-picked in the requested order with no conflicts. The final integration
+commit also keeps standalone build, package, smoke, and release-keyring
+utilities on this checkout's source tree when another editable installation is
+present on the host.
+
+Recovery authority is now separate from recomputable journal metadata. Before
+the helper can be launched, one 32-byte per-operation secret is created in the
+OS credential store (the development file store is an explicit smoke-only
+fallback). HMAC-SHA256 binds that secret to the operation ID and the complete
+immutable journal identity; a terminal HMAC additionally binds `COMMITTED` or
+`ROLLED_BACK`. Plain journal/identity hashes are therefore bindings, not
+authority, and recomputing them after editing a journal cannot authorize
+recovery. Journal storage paths and the staged/replacement/rollback/helper/
+backup artifacts are still checked as plain files and verified against their
+recorded SHA-256/size values at the relevant authority boundaries.
+
+The helper uses state-first progress followed by keyed terminal journal
+publication and only then terminal state cleanup. Once `COMMITTED` or
+`ROLLED_BACK` is published, later RunOnce-unregister or Core-launch failure is
+a degraded terminal result; it cannot reopen rollback. A completed terminal
+identity also cannot be erased by `defer`, `configure`, or `check` until
+staging and transaction evidence has been removed safely. If cleanup fails,
+the operation remains authoritative and later updater mutation is blocked.
+
+Pre-authority transaction directories that are empty, or contain only empty
+directory structure without a journal, regular file, reparse/link, or other
+credible evidence, may be reclaimed. Any credible recovery evidence remains
+fail-closed and preserved. Successful terminal recovery removes the staged
+artifact/manifest and transaction tree before retiring the per-operation
+authority, while retaining the canonical database, verified backup, and
+rollback/source material required by the product boundary.
+
+This authority still relies on the local OS credential store and its local
+trust/ACL boundary; it is not protection against a host administrator or a
+compromised credential store. The cross-platform path checks also do not claim
+handle-based no-follow atomicity across a concurrent same-user mutation and the
+final Windows filesystem syscall. Hosted checks must bind to the pushed SHA;
+no signing, publishing, tagging, Defender change, Microsoft submission,
+release, or downloaded-candidate execution is implied.
+
+Local validation for this integration completed with 269 focused updater/helper
+tests passed and 3 expected Windows capability skips; the broader focused lane
+passed 453 tests with 6 expected capability skips; and the full suite passed
+2,635 tests with 13 expected capability skips and 2 existing Starlette
+deprecation warnings. Ruff check, Ruff format check, mypy over 107 source
+files, documentation checks, and `git diff --check` passed. The desktop build,
+packaged-artifact smoke, packaged recovery smoke, first-run/restart/rollback/
+uninstall smoke, direct unsigned package build, and release-keyring validate/
+audit also passed.
+
+### 2026-09-02 — PR #110 terminal publication cleanup and bounded version parsing
+
+The local PR #110 integration now includes the recovery-lifecycle and numeric
+version-containment remediations on top of the exact PR head
+`b8814db1970fd76e06b1db12ff3d16e3710acfec`. Terminal recovery is accepted only
+after the helper has published the expected `COMMITTED` or `ROLLED_BACK`
+journal phase, matching handoff identity, and matching `transaction_outcome`.
+The primary updater retires a terminal transaction tree only when
+`completed_transaction_is_authoritative` proves the state/journal binding and
+the transaction root contains exactly that one operation directory. The
+packaged smoke observes that publication before restarted Core can safely
+retire it.
+
+Registration, launch, rollback, and cleanup failures after journal persistence
+preserve the transaction pointer, handoff identity, journal, and surviving
+evidence. Invalid or ambiguous recovery evidence remains authoritative,
+produces only the fixed recovery error, blocks clear/configure/check/defer/
+install/prune and other new updater operations, and keeps the frozen Windows
+Core startup guard down. Successful terminal cleanup clears only the proven
+terminal publication; failed or ambiguous cleanup cannot be used to erase
+recovery evidence.
+
+Release versions are bounded before comparison or persistence: at most 64
+characters, four dotted numeric components, and 18 digits per component.
+Numeric conversion failures are contained at the journal, helper startup, and
+primary parser boundaries and expose only fixed diagnostics; raw version text
+is not logged or projected into public errors.
+
+On the local Windows host (Python 3.14.3), the focused updater, Windows-helper,
+release-manifest, desktop-runtime, and recovery-admin suite passed 363 tests
+with six expected capability skips. The full suite passed 2,618 tests with 13
+expected capability skips and two existing Starlette deprecation warnings.
+Ruff lint/format, mypy over 107 source files, the source-built desktop package,
+desktop artifact inspection, packaged recovery, isolated first-run/restart/
+rollback/uninstall smoke, and release-key validation/audit all passed. The
+first-run smoke also verified the stable MCP command, browser handoff,
+per-user startup, automatic Windows update recovery, Core shutdown, and
+temporary-data removal. The keyring utility validated two public keys and
+audited 575 tracked files with no private-key material detected.
+
+These are source-level and disposable local results only; hosted checks still
+must bind to the final pushed SHA. No signing, publishing, tagging, Defender
+change, Microsoft submission, release, or downloaded-candidate execution was
+performed. The implementation still does not claim handle-based no-follow
+atomicity across concurrent same-user mutation and the final Windows
+filesystem syscall, nor an independent cryptographic parser or CPU/depth
+budget for numeric version parsing.
+
+### 2026-09-02 — PR #110 invalid-journal authority and bounded private-key loading
+
+PR #110 now locally integrates the recovery-authority and private-key loading
+hardening commits on top of the exact PR head verified before mutation. At the
+active `installing`/`restart_required` boundary, the updater accepts recovery
+evidence only when the state references the expected operation-scoped staging,
+backup, and transaction locations and the physical artifact, backup, journal,
+operation directory, and transaction directory are present, plain, and
+non-empty. `UpdateJournal.load(..., validate_storage=False)` is only a narrow
+cross-platform layout mode for this check: it still enforces journal schema and
+phase values, transaction-directory/name/operation identity, absolute paths,
+operation-contained replacement and rollback paths, backup containment, and
+the derived storage-chain checks. The updater then reconciles the journal's
+operation, current/target/offered versions, state/database/backup/helper paths,
+handoff identity, and permitted phase with persisted state.
+
+Malformed, incomplete, oversized/deep, wrong-operation, wrong-phase, or
+inconsistent active journals therefore cannot revoke recovery authority or
+turn into a successful cleanup. They produce the fixed
+`RECOVERY_EVIDENCE_INCOMPLETE_ERROR`, preserve the original state and journal
+bytes plus surviving evidence, disable later updater state/metadata writes and
+network/recovery mutation, and leave the frozen Windows Core startup guard
+blocked. Diagnostics remain only bounded, content-free projections of the
+allowlisted error vocabulary.
+
+Operator private-key loading now reads a path once in binary mode with exactly
+one `16 KiB + 1` overflow-sentinel request, rejects empty or oversized input
+with fixed `ManifestError` messages, and parses the bounded bytes. The release
+manifest utility reuses that same bounded byte snapshot after checking for an
+encrypted PKCS8 PEM marker; byte inputs are bounded again by the loader. No
+private-key path, raw key material, or exception text is projected into public
+diagnostics.
+
+On the local Windows host (Python 3.14.3), the integrated focused updater,
+Windows-helper, release-manifest/private-key, and release-keyring suite passed
+281 tests with four expected symlink-capability skips. The full suite passed
+2,587 tests with 13 expected capability skips and two existing deprecation
+warnings. Ruff format/lint, mypy over 107 source files, documentation checks,
+Python package build/resource diagnosis, the source-built desktop build,
+artifact inspection, packaged recovery, and disposable first-run/restart/
+rollback/uninstall smoke all passed. The release keyring validated two public
+keys and audited 575 tracked files with no private-key material detected.
+
+The bounded reads do not add an independent cryptographic parser or CPU/depth
+budget. Journal/path identity checks and atomic writes still do not claim
+handle-based no-follow atomicity across concurrent same-user mutation and the
+final Windows filesystem syscall. These are source-level and disposable local
+results only; hosted checks must bind to the final integrated SHA, and no
+signing, publishing, tagging, Defender change, Microsoft submission, release,
+or downloaded-candidate execution was performed.
+
+### 2026-09-02 — Updater recovery, keyring, cleanup, and privacy remediation
+
+The updater remediation now requires structurally complete active recovery
+metadata and physically present, plain, path-consistent artifact, backup, and
+journal evidence before any startup cleanup or state save. A parseable partial
+or physically incomplete `installing`/`restart_required` state becomes a
+sanitized manual-recovery error, leaves the original state bytes unchanged,
+disables later updater writes and network use, and preserves all surviving
+staging/transaction evidence for the frozen Core recovery guard.
+
+The release keyring now has a 16 KiB limit-plus-one binary read, plain-file and
+parent-chain checks, descriptor/path identity checks, UTF-8/JSON parser
+containment, and schema validation through stable `ManifestError` outcomes.
+The operator utility also bounds reviewed public-key input at 64 KiB and each
+tracked audit file at 512 KiB, with one overflow sentinel and content-free
+oversize/read failures.
+Updater public state uses fixed or classified allowlisted errors; manifest
+values, keyring paths, credentials, raw exception text, and rollback details
+are not projected into `last_error` or installer detail. Loopback health parsing
+also contains parser-depth failures without swallowing control or programming
+exceptions.
+
+Staging, transaction, export, and temporary installed-file cleanup no longer
+uses recursive path deletion. An iterative post-order plan removes only
+verified plain entries, refuses reparse/non-regular/hardlinked ambiguity, and
+uses one global budget of 32 removable entries and 32 directory levels for
+each cleanup tree. The complete plan is preflighted before mutation, so an
+over-budget, pathological, or ambiguous tree returns failure without partial
+budget-driven deletion; residuals remain when a race cannot be proven safe.
+Atomic metadata writes similarly recheck the parent identity before replacing
+the target. Concurrent same-user mutation between the final check and the
+underlying Windows filesystem syscall remains an explicit residual because the
+cross-platform implementation does not claim handle-based no-follow
+atomicity.
+
+Recovery does not persist `installed` or `rolled_back` after an ambiguous
+staging cleanup. It retains the transaction pointer and active
+`restart_required` phase with a fixed retryable error. Updater unlink paths
+perform final parent/entry identity checks, and the release-keyring operator
+utility uses the same bounded keyring read for raw equality, rollback, and
+post-write verification.
+
+Local source evidence includes 378 focused updater/recovery/manifest/desktop
+tests with six expected capability skips, 2,569 full-suite tests with 13
+expected capability skips, repository Ruff and mypy checks, and a clean
+source-built disposable Windows packaged first-run/restart/rollback/uninstall
+smoke. Hosted CI evidence must remain bound to this corrected follow-up
+commit; no signing, SmartScreen, Defender, Microsoft submission,
+publishing, release, or downloaded-candidate execution was performed.
+
+### 2026-09-02 — Primary updater metadata authority containment
+
+The primary `UpdateManager` now routes persisted preferences, state, and
+operation manifests through one bounded cross-platform JSON boundary: 16 KiB
+preferences, 64 KiB state, and the existing 128 KiB manifest limit. Each read
+requests at most limit plus one sentinel byte, checks descriptor/path identity
+before and after the read, rejects non-dict roots, and contains only expected
+UTF-8/JSON `ValueError` and `RecursionError` failures. Process-control and
+unexpected programming exceptions still propagate.
+
+Updater writes now use the recovery helper's reparse-safe atomic boundary and
+refuse unsafe targets, non-regular files, hardlinks, and hostile parent chains.
+Corrupt preferences fall back without rewriting the preference target; unsafe
+state keeps the last-good state and recovery evidence authoritative. Every
+persisted manifest consumer revalidates the bounded bytes, identity, signature,
+keyring, channel, platform, architecture, version, and state binding before
+using its URL or bounded artifact size, or entering export, preflight, backup, or handoff. Download
+and install failures remain bounded public errors without transport use after
+manifest substitution.
+
+On this Windows host, Python 3.14.3 passed the focused updater/recovery/desktop
+command with 378 tests and six expected capability skips, and the full suite
+passed 2,569 tests with 13 expected capability skips and two existing
+deprecation warnings. Ruff format/lint and mypy over 107 source files passed.
+This is source-level evidence only; no signing, SmartScreen, Defender,
+Microsoft submission, publishing, tagging, release, or downloaded-candidate
+execution was performed.
 
 ### 2026-09-02 — Windows updater/recovery JSON parser containment
 

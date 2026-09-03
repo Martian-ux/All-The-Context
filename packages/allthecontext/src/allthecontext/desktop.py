@@ -1366,9 +1366,18 @@ def main(argv: list[str] | None = None) -> int:
             core_command=args.hermes_core_command,
         )
     if args.core:
-        from .windows_update_helper import ensure_recovery_before_core
+        from .release_manifest import ManifestError
+        from .windows_update_helper import (
+            ensure_recovery_before_core,
+            record_startup_recovery_parser_failure,
+        )
 
-        if not ensure_recovery_before_core():
+        try:
+            recovery_allowed = ensure_recovery_before_core()
+        except ManifestError:
+            record_startup_recovery_parser_failure()
+            return 0
+        if not recovery_allowed:
             return 0
         from .core.app import main as core_main
 

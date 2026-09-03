@@ -27,6 +27,7 @@ from allthecontext.desktop_setup import CLAUDE_CLIENT_NAME, CODEX_CLIENT_NAME, C
 from allthecontext.edge_connection import decommission_edge_connection
 from allthecontext.instance_identity import ensure_instance_secret
 from allthecontext.models import ClientCreate
+from allthecontext.release_manifest import ManifestError
 from allthecontext.storage import CoreStore
 
 
@@ -492,6 +493,46 @@ def test_internal_update_child_preserves_deliberate_process_exit() -> None:
         _run_silent_internal_mode(lambda: (_ for _ in ()).throw(SystemExit(86)))
 
     assert exc_info.value.code == 86
+
+
+def test_frozen_core_startup_contains_manifest_parser_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[bool] = []
+
+    def fail_closed() -> bool:
+        raise ManifestError("invalid release version")
+
+    monkeypatch.setattr(
+        "allthecontext.windows_update_helper.ensure_recovery_before_core",
+        fail_closed,
+    )
+    monkeypatch.setattr(
+        "allthecontext.windows_update_helper.record_startup_recovery_parser_failure",
+        lambda: recorded.append(True),
+    )
+
+    assert main(["--core"]) == 0
+    assert recorded == [True]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [RuntimeError("programming failure"), SystemExit(86), KeyboardInterrupt("interrupted")],
+)
+def test_frozen_core_startup_does_not_swallow_unexpected_failures(
+    monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    def fail_closed() -> bool:
+        raise failure
+
+    monkeypatch.setattr(
+        "allthecontext.windows_update_helper.ensure_recovery_before_core",
+        fail_closed,
+    )
+
+    with pytest.raises(type(failure), match=str(failure)):
+        main(["--core"])
 
 
 def test_graphical_install_failure_is_reported_with_retry_and_diagnostics(

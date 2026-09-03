@@ -4,11 +4,19 @@ import json
 from pathlib import Path
 
 import pytest
-from allthecontext.release_manifest import ManifestError, public_key_fingerprint
+from allthecontext.release_manifest import (
+    MAX_KEYRING_BYTES,
+    ManifestError,
+    public_key_fingerprint,
+)
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.release_keyring import (
+    MAX_AUDIT_FILE_BYTES,
+    MAX_PUBLIC_KEY_BYTES,
+    _read_bounded_file,
+    _read_bounded_keyring_bytes,
     audit_private_key_material,
     contains_private_key_block,
     import_reviewed_public_key,
@@ -92,6 +100,45 @@ def test_public_key_import_fails_closed_on_unreviewed_or_private_material(tmp_pa
         audit_private_key_material([private_path])
 
 
+def test_public_key_reader_bounds_exact_multibyte_and_binary_input(tmp_path: Path) -> None:
+    raw = b"\x00\xc3\xa9" + b" " * (MAX_PUBLIC_KEY_BYTES - 3)
+    path = tmp_path / "public-key.bin"
+    path.write_bytes(raw)
+
+    assert (
+        _read_bounded_file(
+            path,
+            maximum_bytes=MAX_PUBLIC_KEY_BYTES,
+            oversize_message="public key file is empty or unreasonably large",
+            unreadable_message="public key file could not be read safely",
+        )
+        == raw
+    )
+
+
+def test_public_key_reader_rejects_limit_plus_one_without_retaining_path(tmp_path: Path) -> None:
+    path = tmp_path / "oversized-public-key.bin"
+    path.write_bytes(b"\x00" * (MAX_PUBLIC_KEY_BYTES + 1))
+
+    with pytest.raises(
+        ManifestError, match="public key file is empty or unreasonably large"
+    ) as exc:
+        load_reviewable_public_key(path)
+    assert str(path) not in str(exc.value)
+
+
+def test_private_key_audit_bounds_exact_file_and_rejects_oversize(tmp_path: Path) -> None:
+    exact = tmp_path / "exact.bin"
+    exact.write_bytes(b"\x00\xc3\xa9" + b" " * (MAX_AUDIT_FILE_BYTES - 3))
+    audit_private_key_material([exact])
+
+    oversized = tmp_path / "oversized.bin"
+    oversized.write_bytes(b"x" * (MAX_AUDIT_FILE_BYTES + 1))
+    with pytest.raises(ManifestError, match="tracked file exceeds the audit size limit") as exc:
+        audit_private_key_material([oversized])
+    assert str(oversized) not in str(exc.value)
+
+
 def test_private_key_audit_allows_policy_text_but_detects_complete_blocks() -> None:
     marker_reference = b'policy = b"-----BEGIN ENCRYPTED PRIVATE KEY-----"'
     complete_block = (
@@ -114,5 +161,65 @@ def test_keyring_pair_rejects_drift_and_fingerprint_tampering(tmp_path: Path) ->
 
     packaged.write_bytes(operator.read_bytes())
     packaged.write_text('{"schema_version": 1, "keys": [{"bad": true}]}', encoding="utf-8")
+    with pytest.raises(ManifestError):
+        validate_keyring_pair(operator, packaged)
+
+
+def test_script_keyring_byte_reader_accepts_exact_multibyte_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = b'{"schema_version":1,"keys":[],"label":"\xc3\xa9"}'
+    raw += b" " * (MAX_KEYRING_BYTES - len(raw))
+    path = tmp_path / "keys.json"
+    path.write_bytes(raw)
+    read_sizes: list[int] = []
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+    def tracking_open(target: Path, *args: object, **kwargs: object) -> object:
+        handle = original_open(target, *args, **kwargs)
+        return TrackingReader(handle) if target == path else handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    assert _read_bounded_keyring_bytes(path) == raw
+    assert read_sizes == [MAX_KEYRING_BYTES + 1]
+
+
+def test_keyring_pair_rejects_oversized_raw_comparison_input(tmp_path: Path) -> None:
+    operator = tmp_path / "keys.json"
+    packaged = tmp_path / "update_keys.json"
+    oversized = b"{" + b" " * MAX_KEYRING_BYTES
+    operator.write_bytes(oversized)
+    packaged.write_bytes(oversized)
+
+    with pytest.raises(ManifestError, match="size limit"):
+        validate_keyring_pair(operator, packaged)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"\xff", b'{"keys":' + b"[" * 7000 + b"0" + b"]" * 7000 + b"}"],
+    ids=["invalid-utf8", "deep-json"],
+)
+def test_keyring_pair_contains_parser_failures(tmp_path: Path, raw: bytes) -> None:
+    operator, packaged = _empty_keyrings(tmp_path)
+    operator.write_bytes(raw)
+    packaged.write_bytes(raw)
+
     with pytest.raises(ManifestError):
         validate_keyring_pair(operator, packaged)

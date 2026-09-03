@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import allthecontext.updater as updater_module
+import allthecontext.windows_update_helper as update_helper_module
 import pytest
 from allthecontext.release_manifest import (
     canonical_payload,
@@ -21,7 +22,9 @@ from allthecontext.release_manifest import (
 )
 from allthecontext.updater import (
     DEFAULT_BETA_MANIFEST_URL,
+    MAX_ARTIFACT_BYTES,
     MAX_MANIFEST_BYTES,
+    MAX_STATE_BYTES,
     HttpsTransport,
     InstallPlan,
     PlatformInstaller,
@@ -34,6 +37,7 @@ from allthecontext.updater import (
     UpdateState,
 )
 from allthecontext.windows_update_helper import (
+    MAX_JOURNAL_BYTES,
     HelperPhase,
     UpdateJournal,
     journal_handoff_identity,
@@ -41,6 +45,32 @@ from allthecontext.windows_update_helper import (
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SEED = bytes(range(32))
+_RECOVERY_AUTHORITY_VALUES: dict[str, str] = {}
+
+
+class _RecoveryAuthorityStore:
+    def __init__(self, *, fail_delete: bool = False) -> None:
+        self.fail_delete = fail_delete
+
+    def get(self, name: str) -> str | None:
+        return _RECOVERY_AUTHORITY_VALUES.get(name)
+
+    def set(self, name: str, value: str) -> None:
+        _RECOVERY_AUTHORITY_VALUES[name] = value
+
+    def delete(self, name: str) -> None:
+        if not self.fail_delete:
+            _RECOVERY_AUTHORITY_VALUES.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
+def _use_test_recovery_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    _RECOVERY_AUTHORITY_VALUES.clear()
+    monkeypatch.setattr(
+        update_helper_module,
+        "_recovery_authority_store",
+        lambda: _RecoveryAuthorityStore(),
+    )
 
 
 class FakeTransport:
@@ -52,12 +82,19 @@ class FakeTransport:
         self.reported_bytes: int | None = None
         self.reported_digest: str | None = None
         self.cancel_during_download = False
+        self.metadata_bytes: bytes | None = None
+        self.metadata_calls = 0
+        self.stream_calls = 0
+        self.stream_urls: list[str] = []
 
     def get_bytes(self, url: str, *, maximum_bytes: int) -> bytes:
+        self.metadata_calls += 1
         assert url.startswith("https://")
         assert maximum_bytes == MAX_MANIFEST_BYTES
         if self.metadata_error:
             raise self.metadata_error
+        if self.metadata_bytes is not None:
+            return self.metadata_bytes
         return json.dumps(self.manifest).encode("utf-8")
 
     def stream(
@@ -68,6 +105,8 @@ class FakeTransport:
         expected_bytes: int,
         cancelled: Any,
     ) -> tuple[str, int]:
+        self.stream_calls += 1
+        self.stream_urls.append(url)
         assert url.startswith("https://")
         assert expected_bytes == self.manifest["size"]
         if self.download_error:
@@ -109,7 +148,81 @@ class FakeInstaller:
             raise UpdateError("Installed files are locked")
         if self.failure == "crash":
             raise UpdateError("Installer process crashed")
+        plan.transaction_dir.mkdir(parents=True, exist_ok=True)
+        if self.failure in {"empty", "incomplete", "partial-journal"}:
+            if self.failure == "incomplete":
+                (plan.transaction_dir / "replacement").mkdir()
+                (plan.transaction_dir / "rollback").mkdir()
+            elif self.failure == "partial-journal":
+                (plan.transaction_dir / "journal.json").write_bytes(b'{"phase":')
+            raise UpdateError("Installer process crashed")
+        install_dir = plan.transaction_dir / "installed"
+        rollback_dir = plan.transaction_dir / "rollback"
+        replacement = plan.transaction_dir / "replacement" / "AllTheContextSetup.exe"
+        transaction_files = (
+            replacement,
+            rollback_dir / "AllTheContext.exe",
+            rollback_dir / "AllTheContextMCP.exe",
+            rollback_dir / "AllTheContextRecovery.exe",
+            rollback_dir / "AllTheContextUpdater.exe",
+            plan.transaction_dir / "AllTheContextUpdater.exe",
+        )
+        for path in transaction_files:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"test transaction evidence")
+        evidence_digest = hashlib.sha256(b"test transaction evidence").hexdigest()
+        evidence_size = len(b"test transaction evidence")
+        backup_digest = hashlib.sha256(plan.database_backup_path.read_bytes()).hexdigest()
+        backup_size = plan.database_backup_path.stat().st_size
+        journal = UpdateJournal(
+            operation_id=plan.operation_id,
+            phase=HelperPhase.PREPARED,
+            current_version=plan.current_version,
+            target_version=plan.target_version,
+            parent_pid=0,
+            application_path=str(install_dir / "AllTheContext.exe"),
+            replacement_path=str(replacement),
+            replacement_sha256=evidence_digest,
+            replacement_size=evidence_size,
+            rollback_application_path=str(rollback_dir / "AllTheContext.exe"),
+            rollback_application_sha256=evidence_digest,
+            rollback_application_size=evidence_size,
+            mcp_path=str(install_dir / "AllTheContextMCP.exe"),
+            rollback_mcp_path=str(rollback_dir / "AllTheContextMCP.exe"),
+            rollback_mcp_sha256=evidence_digest,
+            rollback_mcp_size=evidence_size,
+            recovery_path=str(install_dir / "AllTheContextRecovery.exe"),
+            rollback_recovery_path=str(rollback_dir / "AllTheContextRecovery.exe"),
+            rollback_recovery_sha256=evidence_digest,
+            rollback_recovery_size=evidence_size,
+            stable_update_helper_path=str(install_dir / "AllTheContextUpdater.exe"),
+            rollback_update_helper_path=str(rollback_dir / "AllTheContextUpdater.exe"),
+            rollback_update_helper_sha256=evidence_digest,
+            rollback_update_helper_size=evidence_size,
+            database_path=str(plan.database_path),
+            database_backup_path=str(plan.database_backup_path),
+            database_backup_sha256=backup_digest,
+            database_backup_size=backup_size,
+            state_path=str(plan.state_path),
+            helper_path=str(plan.transaction_dir / "AllTheContextUpdater.exe"),
+            core_host=plan.core_host,
+            core_port=plan.core_port,
+            recovery_helper_sha256=evidence_digest,
+            recovery_helper_size=evidence_size,
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+        journal_path = plan.transaction_dir / "journal.json"
+        journal.save(journal_path)
+        update_helper_module.bind_recovery_authority(journal, journal_path)
+        state = json.loads(plan.state_path.read_text(encoding="utf-8"))
+        state["handoff_identity"] = journal_handoff_identity(journal)
+        state["pending_handoff_identity"] = None
+        state["completed_handoff_identity"] = None
+        plan.state_path.write_text(json.dumps(state), encoding="utf-8")
         self.handed_off = True
+        if self.failure == "after-journal":
+            raise UpdateError("Installer process crashed")
 
     def recovery_outcome(self, state: UpdateState) -> str | None:
         del state
@@ -212,6 +325,69 @@ def _manager(
         health_probe=health or FakeHealth(True),
     )
     return manager, transport, active_installer
+
+
+def _publish_helper_terminal(
+    manager: UpdateManager,
+    outcome: str,
+    *,
+    clear_transaction: bool = True,
+) -> None:
+    """Model the helper's state-first terminal publication in an updater fixture."""
+
+    journal_path = Path(manager.state.transaction_path or "")
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    identity = journal_handoff_identity(journal)
+    terminal_phase = HelperPhase.COMMITTED if outcome == "installed" else HelperPhase.ROLLED_BACK
+    state = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "installed" if outcome == "installed" else "rolled_back",
+            "current_version": (
+                journal.target_version if outcome == "installed" else journal.current_version
+            ),
+            "downloaded_path": None,
+            "last_error": (
+                None
+                if outcome == "installed"
+                else "The update did not become healthy; the previous app and vault were restored"
+            ),
+            "handoff_identity": identity,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    manager.state_path.write_text(json.dumps(state), encoding="utf-8")
+    journal.phase = terminal_phase
+    update_helper_module.seal_terminal_recovery_authority(journal)
+    journal.save(journal_path)
+    if clear_transaction:
+        state.update(
+            {
+                "transaction_path": None,
+                "handoff_identity": None,
+                "completed_handoff_identity": identity,
+            }
+        )
+        manager.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+
+def _completed_manager(
+    tmp_path: Path,
+    manifest: dict[str, Any],
+    artifact: bytes,
+    keyring: Path,
+    *,
+    outcome: str = "installed",
+) -> tuple[UpdateManager, str]:
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    _publish_helper_terminal(manager, outcome)
+    manager.state = manager._load_state()
+    manager.state.current_version = manager.config.current_version
+    return manager, cast(str, manager.state.operation_id)
 
 
 def _beta_manager(tmp_path: Path, keyring: Path) -> UpdateManager:
@@ -474,10 +650,11 @@ def test_same_version_acceptance_failed_health_rolls_back_and_preserves_vault(
     manager.accept_exact_candidate()
     manager.download()
     manager.install()
+    _publish_helper_terminal(manager, "rolled_back")
     vault = tmp_path / "core.sqlite3"
     original_digest = hashlib.sha256(vault.read_bytes()).hexdigest()
 
-    recovered, _, recovered_installer = _manager(
+    recovered, _, _ = _manager(
         tmp_path,
         manifest,
         artifact,
@@ -488,8 +665,7 @@ def test_same_version_acceptance_failed_health_rolls_back_and_preserves_vault(
     )
     status = recovered.recover_after_restart()
     assert status["phase"] == "rolled_back"
-    assert recovered_installer.rolled_back
-    assert "rolled back" in (status["last_error"] or "").casefold()
+    assert "previous app and vault were restored" in (status["last_error"] or "").casefold()
     assert hashlib.sha256(vault.read_bytes()).hexdigest() == original_digest
     assert recovered.recover_after_restart()["phase"] == "rolled_back"
 
@@ -502,6 +678,7 @@ def test_same_version_acceptance_success_marks_installed(tmp_path: Path) -> None
     manager.accept_exact_candidate()
     manager.download()
     manager.install()
+    _publish_helper_terminal(manager, "installed")
     recovered, _, _ = _manager(
         tmp_path,
         manifest,
@@ -511,7 +688,83 @@ def test_same_version_acceptance_success_marks_installed(tmp_path: Path) -> None
         installer=installer,
         health=FakeHealth(True),
     )
+    assert recovered.public_status()["phase"] == "installed"
     assert recovered.recover_after_restart()["phase"] == "installed"
+    assert recovered.configure(enabled=True, channel="stable")["phase"] == "installed"
+
+
+@pytest.mark.parametrize("action", ["defer", "configure"])
+def test_terminal_evidence_is_retired_before_deferred_or_disabled_state(
+    tmp_path: Path, action: str
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manager.install()
+    _publish_helper_terminal(manager, "installed")
+    manager.state = manager._load_state()
+    manager.state.current_version = manager.config.current_version
+    operation_id = manager.state.operation_id or ""
+    staging_dir = manager.state_path.parent / "staging" / operation_id
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    assert staging_dir.is_dir()
+    assert transaction_dir.is_dir()
+
+    if action == "defer":
+        status = manager.defer()
+        assert status["phase"] == "deferred"
+        assert status["deferred_version"] == "0.2.0"
+    else:
+        status = manager.configure(enabled=False, channel="stable")
+        assert status["phase"] == "disabled"
+        assert status["enabled"] is False
+
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    assert persisted["phase"] == status["phase"]
+    assert persisted["completed_handoff_identity"] is None
+    assert not staging_dir.exists()
+    assert not transaction_dir.exists()
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert restarted._state_write_allowed is True
+    assert restarted.public_status()["phase"] == status["phase"]
+
+
+@pytest.mark.parametrize("action", ["defer", "configure"])
+def test_terminal_evidence_cleanup_failure_does_not_persist_nonterminal_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manager.install()
+    _publish_helper_terminal(manager, "installed")
+    manager.state = manager._load_state()
+    manager.state.current_version = manager.config.current_version
+    state_before = manager.state_path.read_bytes()
+    preferences_before = (
+        manager.preferences_path.read_bytes() if manager.preferences_path.exists() else None
+    )
+    monkeypatch.setattr(manager, "_clear_completed_recovery_evidence", lambda: False)
+
+    with pytest.raises(UpdateError, match="cleanup could not be completed safely"):
+        if action == "defer":
+            manager.defer()
+        else:
+            manager.configure(enabled=False, channel="stable")
+
+    assert manager.state_path.read_bytes() == state_before
+    assert (
+        manager.preferences_path.read_bytes() if manager.preferences_path.exists() else None
+    ) == preferences_before
+    persisted = json.loads(state_before)
+    assert persisted["phase"] == "installed"
+    assert persisted["transaction_path"] is None
+    assert persisted["completed_handoff_identity"] is not None
 
 
 def test_accept_exact_candidate_rejects_newer_available_offer(tmp_path: Path) -> None:
@@ -715,8 +968,9 @@ def test_failed_health_check_rolls_back_and_recovery_is_idempotent(tmp_path: Pat
     old.check()
     old.download()
     old.install()
+    _publish_helper_terminal(old, "rolled_back")
 
-    recovered, _, recovered_installer = _manager(
+    recovered, _, _ = _manager(
         tmp_path,
         manifest,
         artifact,
@@ -726,7 +980,6 @@ def test_failed_health_check_rolls_back_and_recovery_is_idempotent(tmp_path: Pat
         health=FakeHealth(False),
     )
     assert recovered.recover_after_restart()["phase"] == "rolled_back"
-    assert recovered_installer.rolled_back
     assert recovered.recover_after_restart()["phase"] == "rolled_back"
 
 
@@ -736,11 +989,560 @@ def test_successful_restart_health_check_completes_and_cleans_staging(tmp_path: 
     manager.check()
     manager.download()
     manager.install()
+    _publish_helper_terminal(manager, "installed")
     recovered, _, _ = _manager(
         tmp_path, manifest, artifact, keyring, current_version="0.2.0", health=FakeHealth(True)
     )
+    assert recovered.public_status()["phase"] == "installed"
     assert recovered.recover_after_restart()["phase"] == "installed"
+
+
+def test_valid_terminal_publication_is_cleaned_before_new_operation(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manager.install()
+    _publish_helper_terminal(manager, "installed")
+    operation_id = manager.state.operation_id or ""
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    staging_dir = manager.state_path.parent / "staging" / operation_id
+    assert transaction_dir.is_dir()
+    assert (staging_dir / "artifact.zip").is_file()
+    assert (staging_dir / "manifest.json").is_file()
+
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+
+    assert recovered.public_status()["phase"] == "installed"
+    assert recovered.state.completed_handoff_identity is None
+    assert not transaction_dir.exists()
+    assert not staging_dir.exists()
+    assert (tmp_path / "core.sqlite3").is_file()
+    assert Path(recovered.state.backup_path or "missing").is_file()
+
+
+def test_successful_terminal_recovery_removes_staging_and_transaction_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manager.install()
+    _publish_helper_terminal(manager, "installed", clear_transaction=False)
+    operation_id = manager.state.operation_id or ""
+    staging_dir = manager.state_path.parent / "staging" / operation_id
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    backup = Path(manager.state.backup_path or "missing")
+    assert (staging_dir / "artifact.zip").is_file()
+    assert (staging_dir / "manifest.json").is_file()
+    assert transaction_dir.is_dir()
+
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+
     assert recovered.recover_after_restart()["phase"] == "installed"
+    assert recovered.state.completed_handoff_identity is None
+    assert not staging_dir.exists()
+    assert not transaction_dir.exists()
+    assert (tmp_path / "core.sqlite3").is_file()
+    assert backup.is_file()
+    assert (tmp_path / "all-the-context-0.2.0-windows-x86_64.zip").is_file()
+
+
+def test_pointerless_recovery_rejects_recomputed_identity_forgery(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    _publish_helper_terminal(manager, "installed")
+
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    operation = persisted["operation_id"]
+    journal_path = manager.state_path.parent / "transactions" / operation / "journal.json"
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    journal.parent_pid += 1
+    forged_identity = journal_handoff_identity(journal)
+    journal.save(journal_path)
+    persisted["completed_handoff_identity"] = forged_identity
+    manager.state_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+    recovered, _, _ = _manager(tmp_path, manifest, artifact, keyring, current_version="0.2.0")
+
+    assert recovered.public_status()["phase"] == "error"
+    assert recovered.public_status()["last_error"] == (
+        updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    )
+    assert recovered._state_write_allowed is False
+    assert journal_path.is_file()
+    assert journal_path.parent.is_dir()
+
+
+@pytest.mark.parametrize("action", ["clear_error", "configure", "defer", "check"])
+@pytest.mark.parametrize(
+    "operation_id",
+    [None, "b" * 23],
+    ids=["missing-operation", "corrupt-operation"],
+)
+def test_completed_identity_without_operation_blocks_lifecycle_mutations(
+    tmp_path: Path, action: str, operation_id: str | None
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    persisted["operation_id"] = operation_id
+    state_bytes = json.dumps(persisted).encode("utf-8")
+    manager.state_path.write_bytes(state_bytes)
+
+    broken, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert broken._state_write_allowed is False
+    with pytest.raises(UpdateError):
+        if action == "clear_error":
+            broken.clear_error()
+        elif action == "configure":
+            broken.configure(enabled=True, channel="stable")
+        elif action == "defer":
+            broken.defer()
+        else:
+            broken.check()
+    assert transport.metadata_calls == 0
+    assert broken.state_path.read_bytes() == state_bytes
+    assert tombstone.is_file()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+@pytest.mark.parametrize(
+    "operation_id",
+    [None, "b" * 23],
+    ids=["missing-operation", "corrupt-operation"],
+)
+def test_completed_identity_without_operation_blocks_pruning_and_preserves_authority(
+    tmp_path: Path, operation_id: str | None
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    shutil.rmtree(manager.state_path.parent / "transactions" / operation)
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    persisted["operation_id"] = operation_id
+    manager.state_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+    broken, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert broken._state_write_allowed is False
+    assert broken._prune_retirement_tombstones() is False
+    assert tombstone.is_file()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_completed_identity_without_operation_is_deterministically_blocked_on_restart(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    shutil.rmtree(manager.state_path.parent / "transactions" / operation)
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    persisted["operation_id"] = None
+    manager.state_path.write_text(json.dumps(persisted), encoding="utf-8")
+    state_bytes = manager.state_path.read_bytes()
+
+    first, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    second, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert first._state_write_allowed is False
+    assert second._state_write_allowed is False
+    assert first.state_path.read_bytes() == state_bytes
+    assert second.state_path.read_bytes() == state_bytes
+    assert tombstone.is_file()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_completed_identity_with_forged_operation_preserves_bound_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    persisted["operation_id"] = "b" * 24
+    state_bytes = json.dumps(persisted).encode("utf-8")
+    manager.state_path.write_bytes(state_bytes)
+
+    broken, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert broken._state_write_allowed is False
+    assert broken.state_path.read_bytes() == state_bytes
+    assert tombstone.is_file()
+    assert (manager.state_path.parent / "transactions" / operation).is_dir()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_completed_cleanup_retires_authority_after_tree_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    _publish_helper_terminal(manager, "installed")
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    operation = persisted["operation_id"]
+    operation_dir = manager.state_path.parent / "staging" / operation
+    transaction_dir = manager.state_path.parent / "transactions" / operation
+    manager.state.phase = UpdatePhase.INSTALLED
+    manager.state.transaction_path = None
+    manager.state.handoff_identity = None
+    manager.state.pending_handoff_identity = None
+    manager.state.completed_handoff_identity = persisted["completed_handoff_identity"]
+
+    events: list[str] = []
+    removed_paths: list[Path] = []
+    original_remove = updater_module._remove_owned_tree
+    original_retire = updater_module.retire_recovery_authority
+
+    def remove_tree(path: Path, *, expected: object) -> bool:
+        events.append("tree")
+        removed_paths.append(path)
+        return original_remove(path, expected=expected)
+
+    def retire_authority(value: str) -> bool:
+        events.append("retire")
+        assert not transaction_dir.exists()
+        return original_retire(value)
+
+    monkeypatch.setattr(updater_module, "_remove_owned_tree", remove_tree)
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", retire_authority)
+
+    assert manager._clear_completed_recovery_evidence() is True
+    assert events == ["tree", "tree", "retire"]
+    assert removed_paths == [operation_dir, transaction_dir]
+    assert not transaction_dir.exists()
+
+
+def test_intact_completed_binding_retires_after_transaction_tree_removal(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    transaction_dir = manager.state_path.parent / "transactions" / operation
+    shutil.rmtree(transaction_dir)
+
+    assert manager._clear_completed_recovery_evidence() is True
+    assert manager.state.completed_handoff_identity is None
+    assert not tombstone.exists()
+    assert f"transaction:{operation}" not in _RECOVERY_AUTHORITY_VALUES
+
+
+@pytest.mark.parametrize("outcome", ["installed", "rolled_back"])
+def test_retirement_tombstone_retries_after_credential_deletion_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring, outcome=outcome)
+    staging_dir = manager.state_path.parent / "staging" / operation
+    transaction_dir = manager.state_path.parent / "transactions" / operation
+    original_retire = updater_module.retire_recovery_authority
+    attempts: list[str] = []
+
+    def fail_retirement(value: str) -> bool:
+        attempts.append(value)
+        return False
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", fail_retirement)
+    assert manager._clear_completed_recovery_evidence() is False
+    assert attempts == [operation]
+    assert manager._state_write_allowed is True
+    assert manager.state.completed_handoff_identity is not None
+    assert not staging_dir.exists()
+    assert not transaction_dir.exists()
+    tombstones = list((manager.state_path.parent / "retirements").iterdir())
+    assert len(tombstones) == 1
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert restarted._state_write_allowed is True
+    assert restarted.state.completed_handoff_identity is not None
+    assert restarted.state.phase.value == outcome
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", original_retire)
+    assert restarted._clear_completed_recovery_evidence() is True
+    assert restarted.state.completed_handoff_identity is None
+    assert not list((restarted.state_path.parent / "retirements").iterdir())
+
+
+def test_clear_error_preserves_failed_retirement_evidence_and_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(
+        tmp_path, manifest, artifact, keyring, outcome="rolled_back"
+    )
+    original_retire = updater_module.retire_recovery_authority
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", lambda _value: False)
+
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    retirement_records = list((manager.state_path.parent / "retirements").iterdir())
+    assert len(retirement_records) == 1
+    tombstone = retirement_records[0]
+    assert manager._load_retirement_tombstone(tombstone) is not None
+    assert manager.state.completed_handoff_identity is not None
+    assert manager.state.phase is UpdatePhase.ROLLED_BACK
+    assert manager.state.last_error == "Updater staging cleanup could not be completed safely"
+    failed_error = manager.state.last_error
+    failed_identity = manager.state.completed_handoff_identity
+    failed_tombstone = tombstone.read_bytes()
+    failed_authority = _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    assert manager.state.last_error == failed_error
+    assert manager.state.completed_handoff_identity == failed_identity
+    assert tombstone.read_bytes() == failed_tombstone
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"] == failed_authority
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", original_retire)
+    assert manager.clear_error()["phase"] == "rolled_back"
+    assert manager.state.last_error is None
+    assert manager.state.completed_handoff_identity is None
+    assert not tombstone.exists()
+    assert f"transaction:{operation}" not in _RECOVERY_AUTHORITY_VALUES
+
+    assert manager.clear_error()["phase"] == "rolled_back"
+
+
+def test_clear_error_rejects_missing_retirement_tombstone_after_failed_retirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", lambda _value: False)
+
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    tombstone = next((manager.state_path.parent / "retirements").iterdir())
+    tombstone.unlink()
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    assert manager._state_write_allowed is False
+    assert manager.state.phase is UpdatePhase.ERROR
+    assert manager.state.last_error == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert manager.state.completed_handoff_identity is not None
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_clear_error_rejects_tampered_retirement_tombstone(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, payload = manager._ensure_retirement_tombstone()
+    payload["terminal_authority_mac"] = "0" * 64
+    tombstone.write_text(manager._render_json(payload), encoding="utf-8")
+    tampered = tombstone.read_bytes()
+
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    assert manager._state_write_allowed is False
+    assert manager.state.phase is UpdatePhase.ERROR
+    assert manager.state.last_error == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert manager.state.completed_handoff_identity is not None
+    assert tombstone.read_bytes() == tampered
+    assert (manager.state_path.parent / "transactions" / operation).is_dir()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_clear_error_clears_ordinary_non_recovery_error(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    transport.metadata_error = UpdateError("Update endpoint returned HTTP 503")
+
+    assert manager.check()["phase"] == "error"
+    status = manager.clear_error()
+
+    assert status["phase"] == "idle"
+    assert status["last_error"] is None
+    assert manager.state.completed_handoff_identity is None
+
+
+def test_retirement_tombstone_handles_credential_deleted_before_cleanup_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    original_retire = updater_module.retire_recovery_authority
+
+    def delete_then_report_failure(value: str) -> bool:
+        assert original_retire(value) is True
+        return False
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", delete_then_report_failure)
+    assert manager._clear_completed_recovery_evidence() is False
+    assert manager.state.completed_handoff_identity is not None
+    assert not (manager.state_path.parent / "staging" / operation).exists()
+    assert not (manager.state_path.parent / "transactions" / operation).exists()
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert restarted._state_write_allowed is True
+    assert restarted.state.completed_handoff_identity is None
+    assert not list((restarted.state_path.parent / "retirements").iterdir())
+
+
+def test_retirement_tombstone_retries_a_real_store_delete_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _RecoveryAuthorityStore(fail_delete=True)
+    monkeypatch.setattr(update_helper_module, "_recovery_authority_store", lambda: store)
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager._clear_completed_recovery_evidence() is False
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+    assert manager.state.completed_handoff_identity is not None
+
+    store.fail_delete = False
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is True
+    assert restarted.state.completed_handoff_identity is None
+    assert f"transaction:{operation}" not in _RECOVERY_AUTHORITY_VALUES
+
+
+@pytest.mark.parametrize("tamper", ["tombstone", "journal"])
+def test_retirement_tampering_preserves_evidence_and_blocks_writes(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, payload = manager._ensure_retirement_tombstone()
+    if tamper == "tombstone":
+        payload["terminal_authority_mac"] = "0" * 64
+        tombstone.write_text(manager._render_json(payload), encoding="utf-8")
+    else:
+        journal_path = manager.state_path.parent / "transactions" / operation / "journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["parent_pid"] += 1
+        journal_path.write_text(manager._render_json(journal), encoding="utf-8")
+
+    assert manager._clear_completed_recovery_evidence() is False
+    assert manager._state_write_allowed is False
+    assert manager.state.last_error == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert (manager.state_path.parent / "staging" / operation).exists()
+    assert (manager.state_path.parent / "transactions" / operation).exists()
+
+
+def test_retirement_tombstone_orphan_is_reaped_by_startup_pruning(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _ = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    manager.state.completed_handoff_identity = None
+    manager._save()
+    assert tombstone.is_file()
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is True
+    assert not tombstone.exists()
+
+
+def test_frozen_windows_startup_accepts_retirement_tombstone_after_credential_retired(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    _RECOVERY_AUTHORITY_VALUES.clear()
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(update_helper_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(update_helper_module.sys, "frozen", True, raising=False)
+
+    assert tombstone.is_file()
+    assert (manager.state_path.parent / "transactions" / operation).is_dir()
+    assert update_helper_module.ensure_recovery_before_core() is True
+
+
+@pytest.mark.parametrize("outcome", ["installed", "rolled_back"])
+def test_unconfirmed_installer_outcome_cannot_complete_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str | None,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    recovered, _, installer = _manager(tmp_path, manifest, artifact, keyring)
+    journal = Path(recovered.state.transaction_path or "")
+    monkeypatch.setattr(installer, "recovery_outcome", lambda _state: outcome)
+    monkeypatch.setattr(recovered, "_clean_operation", lambda: False)
+
+    status = recovered.recover_after_restart()
+
+    assert status["phase"] == "error"
+    assert status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert recovered.state.transaction_path == str(journal)
+    persisted = json.loads(recovered.state_path.read_text(encoding="utf-8"))
+    assert persisted["phase"] == "restart_required"
+    assert persisted["transaction_path"] == str(journal)
+    assert journal.is_file()
+
+
+def test_recovery_cleanup_failure_does_not_overwrite_helper_terminal_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    _publish_helper_terminal(manager, "installed", clear_transaction=False)
+
+    recovered, _, _ = _manager(tmp_path, manifest, artifact, keyring, current_version="0.2.0")
+    journal = Path(recovered.state.transaction_path or "")
+    monkeypatch.setattr(recovered, "_clean_operation", lambda: False)
+
+    status = recovered.recover_after_restart()
+
+    assert status["phase"] == "restart_required"
+    assert status["last_error"] == (
+        "Update recovery completed but cleanup could not be completed safely; retry recovery"
+    )
+    persisted = json.loads(recovered.state_path.read_text(encoding="utf-8"))
+    assert persisted["phase"] == "installed"
+    assert persisted["transaction_path"] == str(journal)
+    assert journal.is_file()
 
 
 def test_interrupted_download_recovers_as_cancelled(tmp_path: Path) -> None:
@@ -838,19 +1640,971 @@ def test_corrupt_persisted_preferences_and_state_reset_safely(tmp_path: Path) ->
     assert "corrupt" in status["last_error"].casefold()
 
 
-def test_repeated_checks_remove_bounded_orphan_staging(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (b'{"value":"' + b"a" * 32 + b'"}', {"value": "a" * 32}),
+        (b"\xff", "could not be decoded safely"),
+        (b"[]", "must be a JSON object"),
+        (b'{"value":' + b"9" * 5000 + b"}", "could not be decoded safely"),
+        (
+            b'{"value":' + b"[" * 30000 + b"0" + b"]" * 30000 + b"}",
+            "could not be decoded safely",
+        ),
+    ],
+    ids=["valid", "invalid-utf8", "non-object", "huge-integer", "deep-nesting"],
+)
+def test_update_metadata_boundary_contains_real_parser_and_root_failures(
+    tmp_path: Path, raw: bytes, expected: object
+) -> None:
+    path = tmp_path / "metadata.json"
+    path.write_bytes(raw)
+
+    if isinstance(expected, dict):
+        result = updater_module._read_bounded_json(path, MAX_STATE_BYTES, label="Test metadata")
+        assert result.value == expected
+    else:
+        with pytest.raises(UpdateError, match=expected):
+            updater_module._read_bounded_json(path, MAX_STATE_BYTES, label="Test metadata")
+
+
+def test_update_metadata_boundary_reads_exact_limit_plus_one_and_accepts_multibyte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    maximum = 128
+    prefix = b'{"value":"'
+    suffix = b'"}'
+    value_bytes = maximum - len(prefix) - len(suffix)
+    assert value_bytes % len("é".encode()) == 0
+    raw = prefix + "é".encode() * (value_bytes // 2) + suffix
+    path = tmp_path / "metadata.json"
+    path.write_bytes(raw)
+    read_sizes: list[int] = []
+    original_open = Path.open
+
+    class TrackingReader:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> TrackingReader:
+            self._handle.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)  # type: ignore[attr-defined]
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return self._handle.read(size)  # type: ignore[attr-defined,no-any-return]
+
+        def fileno(self) -> int:
+            return self._handle.fileno()  # type: ignore[attr-defined,no-any-return]
+
+    def tracking_open(target: Path, *args: object, **kwargs: object) -> object:
+        handle = original_open(target, *args, **kwargs)
+        return TrackingReader(handle) if target == path else handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+    result = updater_module._read_bounded_json(path, maximum, label="Test metadata")
+
+    assert len(raw) == maximum
+    assert result.value == {"value": "é" * (value_bytes // 2)}
+    assert read_sizes == [maximum + 1]
+
+
+def test_update_metadata_boundary_rejects_growth_after_initial_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    maximum = 128
+    path = tmp_path / "metadata.json"
+    path.write_text("{}", encoding="utf-8")
+    original_open = Path.open
+    grew = False
+
+    def grow_before_open(target: Path, *args: object, **kwargs: object) -> object:
+        nonlocal grew
+        if target == path and not grew:
+            grew = True
+            with original_open(path, "wb") as stream:
+                stream.write(b"{}" + b"x" * maximum)
+        return original_open(target, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", grow_before_open)
+    with pytest.raises(UpdateError, match=r"(changed while it was read|exceeds the size limit)"):
+        updater_module._read_bounded_json(path, maximum, label="Test metadata")
+
+
+@pytest.mark.parametrize("control_exception", [SystemExit, KeyboardInterrupt, GeneratorExit])
+def test_update_json_decoder_does_not_swallow_process_control_exceptions(
+    monkeypatch: pytest.MonkeyPatch, control_exception: type[BaseException]
+) -> None:
+    def fail(_value: str) -> object:
+        raise control_exception("sentinel")
+
+    monkeypatch.setattr(updater_module.json, "loads", fail)
+    with pytest.raises(control_exception):
+        updater_module._decode_bounded_json(b"{}", MAX_STATE_BYTES, label="Test metadata")
+
+
+def test_update_json_decoder_does_not_swallow_unexpected_programming_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_value: str) -> object:
+        raise RuntimeError("programming failure")
+
+    monkeypatch.setattr(updater_module.json, "loads", fail)
+    with pytest.raises(RuntimeError, match="programming failure"):
+        updater_module._decode_bounded_json(b"{}", MAX_STATE_BYTES, label="Test metadata")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"value":' + b"9" * 5000 + b"}",
+        b'{"value":' + b"[" * 30000 + b"0" + b"]" * 30000 + b"}",
+    ],
+    ids=["huge-integer", "deep-nesting"],
+)
+def test_network_manifest_parser_failures_are_bounded_public_errors(
+    tmp_path: Path, raw: bytes
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    transport.metadata_bytes = raw
+
+    status = manager.check()
+
+    assert status["phase"] == "error"
+    assert "could not be decoded safely" in (status["last_error"] or "")
+    assert "9" * 100 not in (status["last_error"] or "")
+
+
+@pytest.mark.parametrize("size", [0, MAX_ARTIFACT_BYTES + 1, True])
+def test_verified_manifest_artifact_size_is_bounded(size: object) -> None:
+    with pytest.raises(UpdateError, match="unsupported artifact size"):
+        UpdateManager._validate_manifest_artifact_size({"size": size})
+
+
+def test_download_rejects_nonregular_persisted_manifest_without_transport(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    manifest_path = manager._operation_directory() / "manifest.json"
+    manifest_path.unlink()
+    manifest_path.mkdir()
+
+    status = manager.download()
+
+    assert status["phase"] == "error"
+    assert transport.stream_calls == 0
+    assert manifest_path.is_dir()
+
+
+@pytest.mark.parametrize("kind", ["preferences", "state"])
+def test_oversized_persisted_update_metadata_fails_closed_without_raw_content(
+    tmp_path: Path, kind: str
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    marker = "secret-oversized-metadata"
+    if kind == "preferences":
+        (updates / "preferences.json").write_text(
+            json.dumps({"enabled": True, "channel": "stable", "padding": marker * 1000}),
+            encoding="utf-8",
+        )
+    else:
+        (updates / "state.json").write_text(
+            json.dumps({"phase": "idle", "current_version": "0.1.0", "padding": marker * 10000}),
+            encoding="utf-8",
+        )
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    status = manager.public_status()
+
+    assert status["channel"] == "stable"
+    assert marker not in json.dumps(status)
+    if kind == "state":
+        assert status["phase"] == "error"
+
+
+def test_corrupt_state_preserves_recovery_evidence_and_last_good_file(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    state_path = updates / "state.json"
+    original_state = b'{"phase":"restart_required","recovery_attempts":' + b"9" * 5000 + b"}"
+    state_path.write_bytes(original_state)
+    evidence = updates / "transactions" / ("a" * 24)
+    evidence.mkdir(parents=True)
+    evidence_marker = evidence / "journal.json"
+    evidence_marker.write_text('{"phase":"prepared"}', encoding="utf-8")
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager.public_status()["phase"] == "error"
+    assert state_path.read_bytes() == original_state
+    assert evidence_marker.is_file()
+
+
+def test_partial_active_state_preserves_state_and_recovery_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    state_path = updates / "state.json"
+    original_state = b'{"phase":"restart_required"}\n'
+    state_path.write_bytes(original_state)
+    operation_id = "e" * 24
+    staging_marker = updates / "staging" / operation_id / "artifact.zip"
+    staging_marker.parent.mkdir(parents=True)
+    staging_marker.write_bytes(b"recovery staging evidence")
+    journal_marker = updates / "transactions" / operation_id / "journal.json"
+    journal_marker.parent.mkdir(parents=True)
+    journal_marker.write_text('{"phase":"prepared"}', encoding="utf-8")
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager.public_status()["phase"] == "error"
+    assert manager._state_write_allowed is False
+    assert state_path.read_bytes() == original_state
+    assert staging_marker.is_file()
+    assert journal_marker.is_file()
+    assert "restart_required" not in (manager.public_status()["last_error"] or "")
+
+
+@pytest.mark.parametrize("phase", ["installing", "restart_required"])
+@pytest.mark.parametrize("missing", ["artifact", "backup", "journal"])
+def test_active_recovery_missing_physical_evidence_fails_closed(
+    tmp_path: Path,
+    phase: str,
+    missing: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    operation_id = "d" * 24
+    operation_dir = updates / "staging" / operation_id
+    operation_dir.mkdir(parents=True)
+    artifact_path = operation_dir / "artifact.zip"
+    artifact_path.write_bytes(artifact)
+    backup_path = updates / "backups" / "before.sqlite3"
+    backup_path.parent.mkdir(parents=True)
+    backup_path.write_bytes(b"verified backup")
+    journal_path = updates / "transactions" / operation_id / "journal.json"
+    journal_path.parent.mkdir(parents=True)
+    journal_path.write_text('{"phase":"committed"}', encoding="utf-8")
+    state = {
+        "phase": phase,
+        "current_version": "0.1.0",
+        "offered_version": manifest["version"],
+        "mandatory": False,
+        "release_notes_url": manifest["release_notes_url"],
+        "downloaded_path": str(artifact_path),
+        "backup_path": str(backup_path),
+        "operation_id": operation_id,
+        "transaction_path": str(journal_path),
+        "manifest_identity": "a" * 64,
+    }
+    state_path = updates / "state.json"
+    original_state = (json.dumps(state, sort_keys=True) + "\n").encode("utf-8")
+    state_path.write_bytes(original_state)
+    missing_path = {
+        "artifact": artifact_path,
+        "backup": backup_path,
+        "journal": journal_path,
+    }[missing]
+    missing_path.unlink()
+    orphan = updates / "exports" / "surviving-orphan.zip"
+    orphan.parent.mkdir(parents=True)
+    orphan.write_bytes(b"survive")
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    status = manager.public_status()
+    assert status["phase"] == "error"
+    assert status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert manager._state_write_allowed is False
+    assert state_path.read_bytes() == original_state
+    assert orphan.is_file()
+    for candidate in (artifact_path, backup_path, journal_path):
+        if candidate != missing_path:
+            assert candidate.is_file()
+
+
+def _invalid_journal_bytes(original: bytes, kind: str) -> bytes:
+    if kind == "malformed":
+        return b"{not-json"
+    if kind == "deep":
+        return b'{"padding":' + b"[" * 30_000 + b"0" + b"]" * 30_000 + b"}"
+    if kind == "oversized":
+        return b'{"padding":"' + b"x" * MAX_JOURNAL_BYTES + b'"}'
+    value = json.loads(original)
+    if kind == "incomplete":
+        return b"{}"
+    if kind == "schema":
+        value["schema_version"] = 1
+    elif kind == "phase":
+        value["phase"] = "not-a-real-phase"
+    elif kind == "operation":
+        value["operation_id"] = "b" * 24
+    elif kind == "inconsistent":
+        value["target_version"] = "0.3.0"
+    else:
+        raise AssertionError(kind)
+    return json.dumps(value, sort_keys=True).encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "malformed",
+        "incomplete",
+        "schema",
+        "phase",
+        "operation",
+        "oversized",
+        "deep",
+        "inconsistent",
+    ],
+)
+def test_invalid_active_recovery_journal_preserves_authority_across_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+
+    state_path = manager.state_path
+    journal_path = Path(manager.state.transaction_path or "")
+    original_state = state_path.read_bytes()
+    journal_path.write_bytes(_invalid_journal_bytes(journal_path.read_bytes(), kind))
+    invalid_journal = journal_path.read_bytes()
+
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+    status = recovered.public_status()
+    assert status["phase"] == "error"
+    assert status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert recovered._state_write_allowed is False
+    assert state_path.read_bytes() == original_state
+    assert journal_path.read_bytes() == invalid_journal
+    assert journal_path.parent.is_dir()
+
+    recovery_status = recovered.recover_after_restart()
+    assert recovery_status["phase"] == "error"
+    assert recovery_status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert state_path.read_bytes() == original_state
+    assert journal_path.read_bytes() == invalid_journal
+    with pytest.raises(UpdateError, match=r"recovery helper owns|state cannot be changed safely"):
+        recovered.clear_error()
+    with pytest.raises(UpdateError, match=r"recovery helper owns|state cannot be changed safely"):
+        recovered.configure(enabled=True, channel="beta")
+
+    restarted, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+    assert restarted._state_write_allowed is False
+    assert state_path.read_bytes() == original_state
+    assert journal_path.read_bytes() == invalid_journal
+    assert journal_path.parent.is_dir()
+
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(update_helper_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(update_helper_module.sys, "frozen", True, raising=False)
+    assert update_helper_module.ensure_recovery_before_core() is False
+    assert state_path.read_bytes() == original_state
+    assert journal_path.read_bytes() == invalid_journal
+
+
+def test_valid_active_recovery_journal_remains_recoverable(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    journal_path = Path(manager.state.transaction_path or "")
+
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    assert journal.operation_id == manager.state.operation_id
+
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+        health=FakeHealth(True),
+    )
+    assert recovered._state_write_allowed is True
+    assert recovered.recover_after_restart()["phase"] == "restart_required"
+    assert recovered.state.transaction_path == str(journal_path)
+
+
+@pytest.mark.parametrize("terminal_phase", [HelperPhase.COMMITTED, HelperPhase.ROLLED_BACK])
+def test_forged_terminal_phase_during_restart_required_preserves_authority(
+    tmp_path: Path,
+    terminal_phase: HelperPhase,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    state_before = manager.state_path.read_bytes()
+    journal_path = Path(manager.state.transaction_path or "")
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    journal.phase = terminal_phase
+    journal.save(journal_path)
+
+    recovered, _, _ = _manager(tmp_path, manifest, artifact, keyring, current_version="0.2.0")
+
+    assert recovered.public_status()["phase"] == "error"
+    assert recovered.public_status()["last_error"] == (
+        updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    )
+    assert recovered._state_write_allowed is False
+    assert recovered.state_path.read_bytes() == state_before
+    assert journal_path.is_file()
+
+
+def test_handoff_failure_after_journal_persistence_keeps_recovery_authority(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    installer = FakeInstaller(failure="after-journal")
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.download()
+
+    status = manager.install()
+
+    journal_path = Path(manager.state.transaction_path or "")
+    assert status["phase"] == "error"
+    assert manager.state.transaction_path == str(journal_path)
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    assert persisted["handoff_identity"] is not None
+    assert journal_path.is_file()
+
+    restarted, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+        installer=installer,
+    )
+    assert restarted._state_write_allowed is False
+    assert restarted.state.transaction_path == str(journal_path)
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        restarted.clear_error()
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        restarted.configure(enabled=True, channel="beta")
+    assert journal_path.is_file()
+
+
+@pytest.mark.parametrize("failure", ["empty", "incomplete"])
+def test_pre_authority_transaction_directories_are_reclaimed_after_handoff_failure(
+    tmp_path: Path, failure: str
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    installer = FakeInstaller(failure=failure)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.download()
+
+    status = manager.install()
+
+    operation_id = manager.state.operation_id or ""
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    assert status["phase"] == "error"
+    assert manager.state.transaction_path is None
+    assert transaction_dir.is_dir()
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is True
+    assert not transaction_dir.exists()
+    assert restarted.clear_error()["phase"] == "idle"
+    assert restarted.configure(enabled=True, channel="stable")["phase"] == "idle"
+    assert restarted.check()["phase"] == "available"
+
+
+def test_partial_journal_creation_keeps_recovery_authority_after_restart(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    installer = FakeInstaller(failure="partial-journal")
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.download()
+
+    status = manager.install()
+
+    journal_path = Path(manager.state.transaction_path or "")
+    assert status["phase"] == "error"
+    assert journal_path.read_bytes() == b'{"phase":'
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is False
+    assert restarted.state.transaction_path == str(journal_path)
+    assert journal_path.is_file()
+    with pytest.raises(UpdateError, match=r"recovery helper owns|state cannot be changed safely"):
+        restarted.clear_error()
+    with pytest.raises(UpdateError, match=r"recovery helper owns|state cannot be changed safely"):
+        restarted.configure(enabled=True, channel="beta")
+
+
+def test_malicious_nonempty_transaction_directory_remains_fail_closed(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    operation_id = manager.state.operation_id or ""
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    transaction_dir.mkdir(parents=True)
+    marker = transaction_dir / "unexpected.bin"
+    marker.write_bytes(b"untrusted")
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is False
+    assert restarted.public_status()["phase"] == "error"
+    assert marker.is_file()
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        restarted.check()
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        restarted.clear_error()
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        restarted.configure(enabled=True, channel="stable")
+
+
+def test_rollback_failure_keeps_authority_across_error_clear_configure_and_restart(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    journal_path = Path(manager.state.transaction_path or "")
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    journal.phase = HelperPhase.ROLLING_BACK
+    journal.last_error_code = "rollback_retry_required"
+    journal.save(journal_path)
+    manager.state.phase = UpdatePhase.ERROR
+    manager.state.last_error = (
+        "The new version did not become healthy and automatic rollback failed"
+    )
+    manager._save()
+    state_before_restart = manager.state_path.read_bytes()
+
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        manager.clear_error()
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        manager.configure(enabled=True, channel="beta")
+
+    restarted, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+    assert restarted._state_write_allowed is False
+    assert restarted.state.phase is UpdatePhase.ERROR
+    assert restarted.state.transaction_path == str(journal_path)
+    assert manager.state_path.read_bytes() == state_before_restart
+    assert journal_path.is_file()
+
+
+def test_public_update_errors_do_not_expose_manifest_or_keyring_details(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    keyring_bytes = keyring.read_bytes()
+    keyring.unlink()
+
+    status = manager.check()
+
+    rendered = json.dumps(status)
+    assert status["phase"] == "error"
+    assert "SECRET_VALUE" not in rendered
+    assert str(keyring) not in rendered
+
+    keyring.write_bytes(keyring_bytes)
+    transport.metadata_bytes = json.dumps({**manifest, "version": "token=SECRET_VALUE"}).encode(
+        "utf-8"
+    )
+    status = manager.check()
+
+    rendered = json.dumps(status)
+    assert status["phase"] == "error"
+    assert "SECRET_VALUE" not in rendered
+    assert str(keyring) not in rendered
+
+
+def test_public_status_sanitizes_persisted_error_and_release_notes_url(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    (updates / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "idle",
+                "current_version": "0.1.0",
+                "last_error": "token=SECRET_VALUE",
+                "release_notes_url": "https://user:password@example.test/private",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    rendered = json.dumps(manager.public_status())
+    assert "SECRET_VALUE" not in rendered
+    assert "password" not in rendered
+    assert manager.public_status()["release_notes_url"] is None
+
+
+def test_prune_directory_refuses_after_deterministic_root_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    orphan = root / "orphan"
+    orphan.mkdir()
+    (orphan / "marker").write_text("keep", encoding="utf-8")
+    replacement = tmp_path / "replacement"
+    replacement_marker = replacement / "outside-marker"
+    original_iterdir = Path.iterdir
+    swapped = False
+
+    def swap_root(path: Path) -> object:
+        nonlocal swapped
+        if path == root and not swapped:
+            swapped = True
+            root.rename(tmp_path / "original-staging")
+            replacement.mkdir()
+            replacement_marker.write_text("outside", encoding="utf-8")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", swap_root)
+
+    assert updater_module.UpdateManager._prune_directory(root, keep=None) is False
+    assert replacement_marker.read_text(encoding="utf-8") == "outside"
+    assert (tmp_path / "original-staging" / "orphan" / "marker").is_file()
+
+
+def test_unlink_refuses_after_deterministic_parent_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "owned"
+    parent.mkdir()
+    target = parent / "temporary.bin"
+    target.write_bytes(b"original")
+    original_parent = tmp_path / "original-owned"
+    replacement_target = target
+    original_lstat = Path.lstat
+    target_lstat_calls = 0
+
+    def swap_parent(path: Path) -> object:
+        nonlocal target_lstat_calls
+        if path == target:
+            target_lstat_calls += 1
+            if target_lstat_calls == 2:
+                parent.rename(original_parent)
+                parent.mkdir()
+                replacement_target.write_bytes(b"replacement")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", swap_parent)
+
+    with pytest.raises(updater_module.UpdateError, match="not a plain file"):
+        updater_module._unlink_plain_file(target, "temporary file is not a plain file")
+
+    assert (original_parent / "temporary.bin").read_bytes() == b"original"
+    assert replacement_target.read_bytes() == b"replacement"
+
+
+def test_prune_refuses_after_deterministic_entry_parent_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    entry = root / "orphan.bin"
+    entry.write_bytes(b"original")
+    original_root = tmp_path / "original-staging"
+    replacement_entry = entry
+    original_lstat = Path.lstat
+    entry_lstat_calls = 0
+
+    def swap_parent(path: Path) -> object:
+        nonlocal entry_lstat_calls
+        if path == entry:
+            entry_lstat_calls += 1
+            if entry_lstat_calls == 1:
+                root.rename(original_root)
+                root.mkdir()
+                replacement_entry.write_bytes(b"replacement")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", swap_parent)
+
+    assert updater_module.UpdateManager._prune_directory(root, keep=None) is False
+    assert (original_root / "orphan.bin").read_bytes() == b"original"
+    assert replacement_entry.read_bytes() == b"replacement"
+
+
+def test_cleanup_rejects_wide_tree_before_deleting_any_entry(tmp_path: Path) -> None:
+    root = tmp_path / "wide"
+    root.mkdir()
+    entries = [
+        root / f"entry-{index}.bin" for index in range(updater_module.MAX_CLEANUP_ENTRIES + 1)
+    ]
+    for entry in entries:
+        entry.write_bytes(b"entry")
+
+    assert updater_module._remove_owned_tree(root) is False
+    assert root.is_dir()
+    assert all(entry.is_file() for entry in entries)
+
+
+def test_cleanup_removes_tree_at_exact_entry_budget(tmp_path: Path) -> None:
+    root = tmp_path / "at-budget"
+    root.mkdir()
+    entries = [root / f"entry-{index}.bin" for index in range(updater_module.MAX_CLEANUP_ENTRIES)]
+    for entry in entries:
+        entry.write_bytes(b"entry")
+
+    assert updater_module._remove_owned_tree(root) is True
+    assert not root.exists()
+
+
+def test_prune_budget_is_global_across_nested_entries(tmp_path: Path) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    nested = root / "orphan"
+    nested.mkdir()
+    entries = [nested / f"entry-{index}.bin" for index in range(updater_module.MAX_CLEANUP_ENTRIES)]
+    for entry in entries:
+        entry.write_bytes(b"entry")
+
+    assert updater_module.UpdateManager._prune_directory(root, keep=None) is False
+    assert nested.is_dir()
+    assert all(entry.is_file() for entry in entries)
+
+
+def test_prune_removes_tree_at_exact_global_nested_budget(tmp_path: Path) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    nested = root / "orphan"
+    nested.mkdir()
+    entries = [
+        nested / f"entry-{index}.bin" for index in range(updater_module.MAX_CLEANUP_ENTRIES - 1)
+    ]
+    for entry in entries:
+        entry.write_bytes(b"entry")
+
+    assert updater_module.UpdateManager._prune_directory(root, keep=None) is True
+    assert not nested.exists()
+    assert root.is_dir()
+
+
+def test_cleanup_rejects_tree_deeper_than_global_depth_budget(tmp_path: Path) -> None:
+    root = tmp_path / "deep"
+    root.mkdir()
+    current = root
+    for index in range(updater_module.MAX_CLEANUP_DEPTH + 1):
+        current = current / f"level-{index}"
+        current.mkdir()
+    marker = current / "marker.bin"
+    marker.write_bytes(b"marker")
+
+    assert updater_module._remove_owned_tree(root) is False
+    assert root.is_dir()
+    assert marker.is_file()
+
+
+def test_cleanup_removes_tree_at_exact_depth_budget(tmp_path: Path) -> None:
+    root = tmp_path / "depth"
+    root.mkdir()
+    current = root
+    for index in range(updater_module.MAX_CLEANUP_DEPTH - 1):
+        current = current / f"level-{index}"
+        current.mkdir()
+    marker = current / "marker.bin"
+    marker.write_bytes(b"marker")
+
+    assert updater_module._remove_owned_tree(root) is True
+    assert not root.exists()
+
+
+def test_cleanup_recursion_error_fails_closed_without_deleting_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pathological"
+    root.mkdir()
+    marker = root / "marker.bin"
+    marker.write_bytes(b"marker")
+    original_iterdir = Path.iterdir
+
+    def fail_iterdir(path: Path) -> object:
+        if path == root:
+            raise RecursionError("pathological traversal")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+
+    assert updater_module._remove_owned_tree(root) is False
+    assert marker.is_file()
+
+
+def test_substituted_persisted_manifest_never_controls_download_transport(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    manifest_path = manager._operation_directory() / "manifest.json"
+    substituted = json.loads(manifest_path.read_text(encoding="utf-8"))
+    substituted["url"] = "https://attacker.example.test/releases/v9.9.9/forged.zip"
+    substituted["size"] = 2 * 1024 * 1024 * 1024
+    substituted["signature"] = "A" * len(substituted["signature"])
+    manifest_path.write_text(json.dumps(substituted), encoding="utf-8")
+
+    status = manager.download()
+
+    assert status["phase"] == "error"
+    assert transport.stream_calls == 0
+    assert transport.stream_urls == []
+
+
+def test_update_atomic_metadata_failure_preserves_last_good_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "state.json"
+    original = b'{"phase":"idle"}\n'
+    path.write_bytes(original)
+    original_replace = Path.replace
+
+    def fail_replace(self: Path, target: Path) -> Path:
+        if target == path:
+            raise OSError("replacement refused")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(UpdateError, match="could not be saved safely"):
+        UpdateManager._atomic_json(path, {"phase": "error"})
+
+    assert path.read_bytes() == original
+
+
+def test_update_atomic_metadata_rejects_nonregular_parent_without_touching_siblings(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "not-a-directory"
+    parent.write_text("unrelated", encoding="utf-8")
+    sibling = tmp_path / "sibling.txt"
+    sibling.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(UpdateError, match="could not be saved safely"):
+        UpdateManager._atomic_json(parent / "state.json", {"phase": "error"})
+
+    assert parent.read_text(encoding="utf-8") == "unrelated"
+    assert sibling.read_text(encoding="utf-8") == "keep"
+
+
+def test_hostile_persisted_preferences_symlink_is_not_followed_when_supported(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    target = tmp_path / "outside-preferences.json"
+    original = b'{"enabled":false,"channel":"beta"}'
+    target.write_bytes(original)
+    link = updates / "preferences.json"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this filesystem")
+
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager.preferences.enabled is True
+    assert target.read_bytes() == original
+    assert link.is_symlink()
+
+
+def test_hostile_persisted_state_symlink_stays_last_good_and_blocks_network(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    target = tmp_path / "outside-state.json"
+    original = b'{"phase":"idle"}'
+    target.write_bytes(original)
+    link = updates / "state.json"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this filesystem")
+
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager.public_status()["phase"] == "error"
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        manager.check()
+    assert transport.metadata_calls == 0
+    assert transport.stream_calls == 0
+    assert target.read_bytes() == original
+    assert link.is_symlink()
+
+
+def test_repeated_checks_preserve_orphan_staging_when_global_budget_is_exceeded(
+    tmp_path: Path,
+) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
     staging = manager.config.data_dir / "staging"
     for index in range(40):
         (staging / f"orphan-{index:02d}").mkdir(parents=True)
     manager.check()
-    assert len(list(staging.iterdir())) <= 9
+    assert len(list(staging.iterdir())) == 41
+    assert all((staging / f"orphan-{index:02d}").is_dir() for index in range(40))
     manager.check()
-    assert [entry.name for entry in staging.iterdir()] == [manager.state.operation_id]
+    assert len(list(staging.iterdir())) == 41
+    assert (staging / (manager.state.operation_id or "missing")).is_dir()
+    assert all((staging / f"orphan-{index:02d}").is_dir() for index in range(40))
 
 
-def test_restart_retains_the_latest_terminal_recovery_journal(tmp_path: Path) -> None:
+def test_restart_preserves_unresolved_recovery_journals_from_pruning(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     operation_id = "c" * 24
     updates = tmp_path / "updates"
@@ -875,7 +2629,7 @@ def test_restart_retains_the_latest_terminal_recovery_journal(tmp_path: Path) ->
     _manager(tmp_path, manifest, artifact, keyring)
 
     assert retained.is_dir()
-    assert not orphan.exists()
+    assert orphan.is_dir()
 
 
 def test_current_platform_rejects_unknown_and_32_bit_architectures(
@@ -956,8 +2710,9 @@ def test_windows_adapter_enables_automatic_install_with_independent_helper(
     assert installer.supported is True
 
 
+@pytest.mark.parametrize("failure", [None, "state", "register", "launch"])
 def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path, monkeypatch: Any, failure: str | None
 ) -> None:
     data_dir = tmp_path / "data"
     updates = data_dir / "updates"
@@ -1010,16 +2765,25 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
     registrations: list[tuple[Path, Path, str]] = []
     launches: list[tuple[Path, Path]] = []
-    monkeypatch.setattr(
-        updater_module,
-        "register_recovery",
-        lambda helper, journal, operation: registrations.append((helper, journal, operation)),
-    )
-    monkeypatch.setattr(
-        updater_module,
-        "launch_recovery_helper",
-        lambda helper, journal: launches.append((helper, journal)),
-    )
+
+    def register(helper: Path, journal: Path, operation: str) -> None:
+        registrations.append((helper, journal, operation))
+        if failure == "register":
+            raise OSError("registration failed")
+
+    def launch(helper: Path, journal: Path) -> None:
+        launches.append((helper, journal))
+        if failure == "launch":
+            raise OSError("launch failed")
+
+    monkeypatch.setattr(updater_module, "register_recovery", register)
+    monkeypatch.setattr(updater_module, "launch_recovery_helper", launch)
+    if failure == "state":
+
+        def fail_state_binding(_journal: UpdateJournal, _journal_path: Path) -> str:
+            raise OSError("state binding interrupted")
+
+        monkeypatch.setattr(updater_module, "bind_handoff_state", fail_state_binding)
     installer = PlatformInstaller(
         system="Windows",
         frozen=True,
@@ -1044,19 +2808,32 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
         artifact_size=artifact.stat().st_size,
     )
 
-    installer.handoff(plan)
+    if failure is None:
+        installer.handoff(plan)
+    else:
+        with pytest.raises(UpdateError, match="transaction"):
+            installer.handoff(plan)
 
     journal = UpdateJournal.load(journal_path)
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert journal.phase is HelperPhase.PREPARED
-    assert state["handoff_identity"] == journal_handoff_identity(journal)
+    identity = journal_handoff_identity(journal)
+    assert state["handoff_identity"] == (None if failure == "state" else identity)
+    assert state["pending_handoff_identity"] == (identity if failure == "state" else None)
+    assert state["transaction_path"] == str(journal_path)
     assert Path(journal.rollback_application_path).read_bytes() == b"old application"
     assert Path(journal.rollback_mcp_path or "").read_bytes() == b"old mcp"
     assert Path(journal.rollback_recovery_path or "").read_bytes() == b"old recovery"
     assert Path(journal.rollback_update_helper_path).read_bytes() == b"old update helper"
     assert Path(journal.replacement_path).read_bytes() == b"new application"
-    assert registrations == [(Path(journal.helper_path), journal_path, operation_id)]
-    assert launches == [(Path(journal.helper_path), journal_path)]
+    expected_registrations = (
+        [] if failure == "state" else [(Path(journal.helper_path), journal_path, operation_id)]
+    )
+    assert registrations == expected_registrations
+    expected_launches = (
+        [] if failure in {"state", "register"} else [(Path(journal.helper_path), journal_path)]
+    )
+    assert launches == expected_launches
 
 
 @pytest.mark.parametrize(

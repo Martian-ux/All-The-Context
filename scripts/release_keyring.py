@@ -4,6 +4,10 @@ This utility intentionally has no key-generation or private-key import command.
 The signing key remains on an operator-controlled offline system.
 """
 
+# Import the release policy from this checkout, not an unrelated editable
+# installation that may be earlier on a developer host's ambient path.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
@@ -11,14 +15,19 @@ import contextlib
 import json
 import os
 import subprocess
+import sys
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPOSITORY_ROOT / "packages" / "allthecontext" / "src"))
+
 from allthecontext.release_manifest import (
     CHANNELS,
     KEY_ID,
+    MAX_KEYRING_BYTES,
     ManifestError,
     encoded_public_key,
     load_keyring,
@@ -28,7 +37,6 @@ from allthecontext.release_manifest import (
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OPERATOR_KEYRING = REPOSITORY_ROOT / "release" / "keys.json"
 DEFAULT_PACKAGED_KEYRING = (
     REPOSITORY_ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "update_keys.json"
@@ -43,6 +51,40 @@ PRIVATE_KEY_MARKERS = (
 )
 FORBIDDEN_PRIVATE_KEY_NAMES = frozenset({"id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"})
 FORBIDDEN_PRIVATE_KEY_SUFFIXES = frozenset({".key", ".p12", ".pfx"})
+MAX_PUBLIC_KEY_BYTES = 64 * 1024
+MAX_AUDIT_FILE_BYTES = 512 * 1024
+
+
+def _read_bounded_keyring_bytes(path: Path) -> bytes:
+    """Read keyring bytes with the same limit-plus-one contract as the loader."""
+
+    try:
+        with path.open("rb") as stream:
+            value = stream.read(MAX_KEYRING_BYTES + 1)
+    except OSError as exc:
+        raise ManifestError("keyring could not be read safely") from exc
+    if len(value) > MAX_KEYRING_BYTES:
+        raise ManifestError("keyring exceeds the size limit")
+    return value
+
+
+def _read_bounded_file(
+    path: Path,
+    *,
+    maximum_bytes: int,
+    oversize_message: str,
+    unreadable_message: str,
+) -> bytes:
+    """Read an operator-supplied file with one bounded overflow sentinel."""
+
+    try:
+        with path.open("rb") as stream:
+            value = stream.read(maximum_bytes + 1)
+    except OSError as exc:
+        raise ManifestError(unreadable_message) from exc
+    if len(value) > maximum_bytes:
+        raise ManifestError(oversize_message)
+    return value
 
 
 def _canonical_json(value: dict[str, Any]) -> bytes:
@@ -56,8 +98,13 @@ def load_reviewable_public_key(path: Path) -> Ed25519PublicKey:
     private seed has the same length and could otherwise be imported by mistake.
     """
 
-    value = path.read_bytes()
-    if not value or len(value) > 64 * 1024:
+    value = _read_bounded_file(
+        path,
+        maximum_bytes=MAX_PUBLIC_KEY_BYTES,
+        oversize_message="public key file is empty or unreasonably large",
+        unreadable_message="public key file could not be read safely",
+    )
+    if not value:
         raise ManifestError("public key file is empty or unreasonably large")
     if any(marker in value for marker in PRIVATE_KEY_MARKERS):
         raise ManifestError("private key material is forbidden; provide only the public key")
@@ -110,8 +157,8 @@ def _write_pair_atomically(
 
     if not operator_path.is_file() or not packaged_path.is_file():
         raise ManifestError("both tracked keyring files must already exist")
-    previous_operator = operator_path.read_bytes()
-    previous_packaged = packaged_path.read_bytes()
+    previous_operator = _read_bounded_keyring_bytes(operator_path)
+    previous_packaged = _read_bounded_keyring_bytes(packaged_path)
     encoded = _canonical_json(value)
     suffix = uuid.uuid4().hex
     operator_temp = operator_path.with_name(f".{operator_path.name}.{suffix}.tmp")
@@ -131,7 +178,10 @@ def _write_pair_atomically(
         for temporary in (operator_temp, packaged_temp, rollback_temp):
             with contextlib.suppress(FileNotFoundError):
                 temporary.unlink()
-    if operator_path.read_bytes() != encoded or packaged_path.read_bytes() != encoded:
+    if (
+        _read_bounded_keyring_bytes(operator_path) != encoded
+        or _read_bounded_keyring_bytes(packaged_path) != encoded
+    ):
         # Restore both copies if an unusual filesystem filter changed the bytes.
         operator_path.write_bytes(previous_operator)
         packaged_path.write_bytes(previous_packaged)
@@ -171,10 +221,10 @@ def validate_keyring_pair(
     *,
     required_channel: str | None = None,
 ) -> dict[str, Any]:
-    if operator_path.read_bytes() != packaged_path.read_bytes():
-        raise ManifestError("operator and packaged keyrings are not byte-for-byte equivalent")
     operator = load_keyring(operator_path)
     packaged = load_keyring(packaged_path)
+    if _read_bounded_keyring_bytes(operator_path) != _read_bounded_keyring_bytes(packaged_path):
+        raise ManifestError("operator and packaged keyrings are not byte-for-byte equivalent")
     if operator != packaged:
         raise ManifestError("operator and packaged keyrings are not equivalent JSON")
     if required_channel is not None:
@@ -217,15 +267,16 @@ def audit_private_key_material(paths: Sequence[Path]) -> None:
         ):
             violations.append(path.as_posix())
             continue
-        try:
-            value = path.read_bytes()
-        except OSError as exc:
-            raise ManifestError(f"could not audit tracked path: {path.name}") from exc
+        value = _read_bounded_file(
+            path,
+            maximum_bytes=MAX_AUDIT_FILE_BYTES,
+            oversize_message="tracked file exceeds the audit size limit",
+            unreadable_message="tracked file could not be audited safely",
+        )
         if contains_private_key_block(value):
             violations.append(path.as_posix())
     if violations:
-        names = ", ".join(sorted(violations))
-        raise ManifestError(f"tracked private-key material is forbidden: {names}")
+        raise ManifestError("tracked private-key material is forbidden")
 
 
 def _parser() -> argparse.ArgumentParser:

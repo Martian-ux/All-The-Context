@@ -8,9 +8,11 @@ data directory and never accepts arbitrary command lines or filesystem roots.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import platform
+import secrets
 import shutil
 import sqlite3
 import stat
@@ -29,10 +31,17 @@ from filelock import FileLock, Timeout
 from platformdirs import user_data_path
 
 from . import __version__
+from .credentials import (
+    CredentialStore,
+    DevelopmentFileCredentialStore,
+    KeyringCredentialStore,
+    development_file_credentials_enabled,
+)
 from .platform_compat import windows_dll, windows_registry
 from .release_manifest import ManifestError, ReleaseVersion, load_keyring, verify_manifest
 
-JOURNAL_SCHEMA_VERSION = 2
+JOURNAL_SCHEMA_VERSION = 3
+LEGACY_JOURNAL_SCHEMA_VERSION = 2
 MAX_JOURNAL_BYTES = 64 * 1024
 MAX_STATE_BYTES = 64 * 1024
 MAX_STAGING_MANIFEST_BYTES = 128 * 1024
@@ -41,6 +50,15 @@ STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1
 STARTUP_RECOVERY_DIAGNOSTIC_NAME = "startup-recovery.json"
 MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES = 16 * 1024
 STARTUP_RECOVERY_DIAGNOSTIC_STATUSES = frozenset({"blocked", "cleared"})
+RETIREMENT_TOMBSTONE_SCHEMA_VERSION = 1
+RETIREMENT_TOMBSTONE_DIRECTORY = "retirements"
+MAX_RETIREMENT_TOMBSTONE_BYTES = 16 * 1024
+RECOVERY_AUTHORITY_SCHEMA_VERSION = 1
+RECOVERY_AUTHORITY_NAME_PREFIX = "transaction:"
+RECOVERY_AUTHORITY_SERVICE = "All The Context updater recovery authority"
+RECOVERY_AUTHORITY_CONTEXT = (
+    f"all-the-context-recovery-authority-v{RECOVERY_AUTHORITY_SCHEMA_VERSION}\0"
+).encode("ascii")
 STARTUP_RECOVERY_PHASES = frozenset(
     {
         "idle",
@@ -61,7 +79,9 @@ STARTUP_RECOVERY_PHASES = frozenset(
         "cancelled",
     }
 )
-STARTUP_RECOVERY_TRANSACTION_PHASES = frozenset({"restart_required", "installed", "rolled_back"})
+STARTUP_RECOVERY_TRANSACTION_PHASES = frozenset(
+    {"restart_required", "installed", "rolled_back", "error"}
+)
 STARTUP_RECOVERY_DIAGNOSTIC_CODES = frozenset(
     {
         "none",
@@ -83,6 +103,9 @@ STARTUP_RECOVERY_DIAGNOSTIC_CODES = frozenset(
         "diagnostic_unreadable",
         "diagnostic_invalid",
     }
+)
+POST_COMMIT_DEGRADED_ERROR = (
+    "The update was committed, but recovery cleanup or Core restart could not complete safely"
 )
 STARTUP_STATE_FIELDS = frozenset(
     {
@@ -181,6 +204,7 @@ def _atomic_json(
     if not _plain_directory_chain_if_present(path.parent, boundary_code):
         path.parent.mkdir(parents=True, exist_ok=True)
     _plain_directory_chain(path.parent, boundary_code)
+    parent_before = _plain_directory_stat(path.parent, boundary_code)
     _plain_file_stat_if_present(path, boundary_code)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f"{path.name}.", suffix=".atc-new", dir=path.parent
@@ -191,9 +215,14 @@ def _atomic_json(
             stream.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
             stream.flush()
             os.fsync(stream.fileno())
-        _plain_directory_chain(path.parent, boundary_code)
+        parent_after = _plain_directory_stat(path.parent, boundary_code)
+        if not _same_directory(parent_before, parent_after):
+            raise HelperError(boundary_code)
         _plain_file_stat(temporary, boundary_code)
         _plain_file_stat_if_present(path, boundary_code)
+        parent_after = _plain_directory_stat(path.parent, boundary_code)
+        if not _same_directory(parent_before, parent_after):
+            raise HelperError(boundary_code)
         temporary.replace(path)
     except BaseException:
         with suppress(HelperError, OSError):
@@ -208,12 +237,22 @@ def _read_json(
     boundary_code: str = "metadata_unreadable",
 ) -> dict[str, Any]:
     try:
-        if _plain_file_stat(path, boundary_code).st_size > maximum_bytes:
+        before = _plain_file_stat(path, boundary_code)
+        if before.st_size > maximum_bytes:
             raise HelperError("metadata_too_large")
         with path.open("rb") as stream:
             raw = stream.read(maximum_bytes + 1)
-        if len(raw) > maximum_bytes:
-            raise HelperError("metadata_too_large")
+            if len(raw) > maximum_bytes:
+                raise HelperError("metadata_too_large")
+            opened = os.fstat(stream.fileno())
+            if not _same_file(before, opened):
+                raise HelperError(boundary_code)
+            observed = os.fstat(stream.fileno())
+            if not _same_file(before, observed):
+                raise HelperError(boundary_code)
+        after = _plain_file_stat(path, boundary_code)
+        if not _same_file(before, after):
+            raise HelperError(boundary_code)
     except HelperError:
         raise
     except OSError as exc:
@@ -418,9 +457,20 @@ def _plain_file_stat_if_present(path: Path, code: str) -> os.stat_result | None:
 
 
 def _unlink_plain_file_if_present(path: Path, code: str) -> None:
-    if _plain_file_stat_if_present(path, code) is not None:
-        _plain_file_stat(path, code)
-        path.unlink()
+    parent_before = _plain_directory_stat(path.parent, code)
+    target_before = _plain_file_stat_if_present(path, code)
+    if target_before is None:
+        return
+    parent_after = _plain_directory_stat(path.parent, code)
+    target_after = _plain_file_stat(path, code)
+    if not _same_directory(parent_before, parent_after) or not _same_file(
+        target_before, target_after
+    ):
+        raise HelperError(code)
+    parent_after = _plain_directory_stat(path.parent, code)
+    if not _same_directory(parent_before, parent_after):
+        raise HelperError(code)
+    path.unlink()
 
 
 def _update_keyring_path() -> Path:
@@ -504,6 +554,16 @@ def _same_file(expected: os.stat_result, observed: os.stat_result) -> bool:
     )
 
 
+def _same_directory(expected: os.stat_result, observed: os.stat_result) -> bool:
+    try:
+        same = os.path.samestat(expected, observed)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return bool(same and stat.S_ISDIR(observed.st_mode)) and not bool(
+        getattr(observed, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+    )
+
+
 def _valid_digest(value: object) -> bool:
     return (
         isinstance(value, str)
@@ -518,6 +578,217 @@ def _valid_operation_id(value: object) -> bool:
         and len(value) == 24
         and all(character in "0123456789abcdef" for character in value)
     )
+
+
+def _recovery_authority_store() -> CredentialStore:
+    """Return the OS-backed store, with an explicit smoke-only fallback."""
+
+    if development_file_credentials_enabled():
+        return DevelopmentFileCredentialStore(
+            _data_directory() / "recovery-authority.development.json"
+        )
+    return KeyringCredentialStore(RECOVERY_AUTHORITY_SERVICE)
+
+
+def _recovery_authority_name(operation_id: str) -> str:
+    return f"{RECOVERY_AUTHORITY_NAME_PREFIX}{operation_id}"
+
+
+def _recovery_authority_secret(operation_id: str, *, create: bool) -> bytes:
+    if not _valid_operation_id(operation_id):
+        raise HelperError("recovery_authority_invalid")
+    store = _recovery_authority_store()
+    try:
+        value = store.get(_recovery_authority_name(operation_id))
+    except Exception as exc:
+        raise HelperError("recovery_authority_unavailable") from exc
+    if value is None:
+        if not create:
+            raise HelperError("recovery_authority_missing")
+        value = secrets.token_hex(32)
+        try:
+            store.set(_recovery_authority_name(operation_id), value)
+            stored = store.get(_recovery_authority_name(operation_id))
+        except Exception as exc:
+            raise HelperError("recovery_authority_unavailable") from exc
+        if stored != value:
+            raise HelperError("recovery_authority_unavailable")
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise HelperError("recovery_authority_invalid")
+    return bytes.fromhex(value)
+
+
+def _recovery_authority_message(
+    operation_id: str,
+    journal_identity: str,
+    terminal_phase: str | None = None,
+) -> bytes:
+    phase = terminal_phase or ""
+    return (
+        RECOVERY_AUTHORITY_CONTEXT
+        + operation_id.encode("ascii")
+        + b"\0"
+        + journal_identity.encode("ascii")
+        + b"\0"
+        + phase.encode("ascii")
+    )
+
+
+def _recovery_authority_mac(
+    secret: bytes,
+    operation_id: str,
+    journal_identity: str,
+    terminal_phase: str | None = None,
+) -> str:
+    return hmac.new(
+        secret,
+        _recovery_authority_message(operation_id, journal_identity, terminal_phase),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def validate_recovery_authority(
+    journal: UpdateJournal,
+    journal_path: Path,
+    *,
+    require_terminal: bool = False,
+) -> None:
+    """Verify keyed journal authority and, when needed, its terminal proof."""
+
+    del journal_path
+    identity = journal_handoff_identity(journal)
+    handoff_mac = journal.recovery_authority_mac
+    terminal_mac = journal.terminal_authority_mac
+    if not _valid_digest(handoff_mac):
+        raise HelperError("recovery_authority_invalid")
+    if journal.phase in TERMINAL_PHASES:
+        if not _valid_digest(terminal_mac):
+            raise HelperError("recovery_authority_invalid")
+        expected_terminal_mac = terminal_mac
+    elif terminal_mac is not None:
+        raise HelperError("recovery_authority_invalid")
+    else:
+        expected_terminal_mac = None
+    secret = _recovery_authority_secret(journal.operation_id, create=False)
+    if not hmac.compare_digest(
+        cast(str, handoff_mac),
+        _recovery_authority_mac(secret, journal.operation_id, identity),
+    ):
+        raise HelperError("recovery_authority_invalid")
+    if require_terminal and journal.phase not in TERMINAL_PHASES:
+        raise HelperError("recovery_authority_invalid")
+    if expected_terminal_mac is not None and not hmac.compare_digest(
+        expected_terminal_mac,
+        _recovery_authority_mac(
+            secret,
+            journal.operation_id,
+            identity,
+            journal.phase.value,
+        ),
+    ):
+        raise HelperError("recovery_authority_invalid")
+
+
+def recovery_authority_retirement_status(
+    operation_id: str,
+    journal_identity: str,
+    terminal_phase: str,
+    terminal_authority_mac: str,
+) -> str:
+    """Classify terminal proof while allowing an already-retired credential.
+
+    The updater writes a retirement tombstone before it removes the credential.
+    A missing credential is therefore a successful, idempotent terminal state;
+    an unavailable or malformed store remains distinguishable from that case.
+    """
+
+    if (
+        not _valid_operation_id(operation_id)
+        or not _valid_digest(journal_identity)
+        or terminal_phase not in {phase.value for phase in TERMINAL_PHASES}
+        or not _valid_digest(terminal_authority_mac)
+    ):
+        return "invalid"
+    try:
+        secret = _recovery_authority_secret(operation_id, create=False)
+    except HelperError as exc:
+        if exc.code == "recovery_authority_missing":
+            return "missing"
+        if exc.code == "recovery_authority_unavailable":
+            return "unavailable"
+        return "invalid"
+    expected = _recovery_authority_mac(
+        secret,
+        operation_id,
+        journal_identity,
+        terminal_phase,
+    )
+    return "valid" if hmac.compare_digest(terminal_authority_mac, expected) else "invalid"
+
+
+def bind_recovery_authority(journal: UpdateJournal, journal_path: Path) -> str:
+    """Create the durable local authority before a handoff can be launched."""
+
+    journal.validate(
+        journal_path,
+        boundary_code="application_state_untrusted",
+        validate_storage=False,
+    )
+    identity = journal_handoff_identity(journal)
+    secret = _recovery_authority_secret(journal.operation_id, create=True)
+    journal.recovery_authority_mac = _recovery_authority_mac(
+        secret,
+        journal.operation_id,
+        identity,
+    )
+    journal.terminal_authority_mac = None
+    journal.save(journal_path)
+    validate_recovery_authority(journal, journal_path)
+    return identity
+
+
+def seal_terminal_recovery_authority(journal: UpdateJournal) -> None:
+    """Add the helper-only terminal proof before the terminal journal save."""
+
+    if journal.phase not in TERMINAL_PHASES:
+        raise HelperError("recovery_authority_invalid")
+    identity = journal_handoff_identity(journal)
+    secret = _recovery_authority_secret(journal.operation_id, create=False)
+    authority_mac = journal.recovery_authority_mac
+    if not _valid_digest(authority_mac):
+        raise HelperError("recovery_authority_invalid")
+    if not hmac.compare_digest(
+        cast(str, authority_mac),
+        _recovery_authority_mac(secret, journal.operation_id, identity),
+    ):
+        raise HelperError("recovery_authority_invalid")
+    journal.terminal_authority_mac = _recovery_authority_mac(
+        secret,
+        journal.operation_id,
+        identity,
+        journal.phase.value,
+    )
+    if not _valid_digest(journal.terminal_authority_mac):
+        raise HelperError("recovery_authority_invalid")
+
+
+def retire_recovery_authority(operation_id: str) -> bool:
+    """Delete authority material only after its transaction tree is gone."""
+
+    if not _valid_operation_id(operation_id):
+        return False
+    store = _recovery_authority_store()
+    try:
+        if store.get(_recovery_authority_name(operation_id)) is None:
+            return True
+        store.delete(_recovery_authority_name(operation_id))
+        return store.get(_recovery_authority_name(operation_id)) is None
+    except Exception:
+        return False
 
 
 def _data_directory() -> Path:
@@ -629,10 +900,14 @@ def _validate_plain_file_path(path: Path, code: str, *, required: bool = False) 
 
 
 def _validate_journal_storage_paths(
-    journal: UpdateJournal, journal_path: Path, boundary_code: str
+    journal: UpdateJournal,
+    journal_path: Path,
+    boundary_code: str,
+    *,
+    data_dir: Path | None = None,
 ) -> None:
-    data_dir = _data_directory()
-    updates_dir = data_dir / "updates"
+    active_data_dir = data_dir or _data_directory()
+    updates_dir = active_data_dir / "updates"
     transaction_dir = updates_dir / "transactions" / journal.operation_id
     backup_root = updates_dir / "backups"
     _plain_directory_chain(transaction_dir, boundary_code)
@@ -655,6 +930,57 @@ def _validate_journal_storage_paths(
     database = Path(journal.database_path)
     for suffix in ("-wal", "-shm", "-journal"):
         _validate_plain_file_path(database.with_name(f"{database.name}{suffix}"), boundary_code)
+    for path, digest, size in (
+        (
+            Path(journal.replacement_path),
+            journal.replacement_sha256,
+            journal.replacement_size,
+        ),
+        (
+            Path(journal.rollback_application_path),
+            journal.rollback_application_sha256,
+            journal.rollback_application_size,
+        ),
+        (
+            Path(journal.rollback_update_helper_path),
+            journal.rollback_update_helper_sha256,
+            journal.rollback_update_helper_size,
+        ),
+        (
+            Path(journal.database_backup_path),
+            journal.database_backup_sha256,
+            journal.database_backup_size,
+        ),
+        (
+            Path(journal.helper_path),
+            journal.recovery_helper_sha256,
+            journal.recovery_helper_size,
+        ),
+        *(
+            [
+                (
+                    Path(journal.rollback_mcp_path),
+                    journal.rollback_mcp_sha256,
+                    journal.rollback_mcp_size,
+                )
+            ]
+            if journal.rollback_mcp_path is not None
+            else []
+        ),
+        *(
+            [
+                (
+                    Path(journal.rollback_recovery_path),
+                    journal.rollback_recovery_sha256,
+                    journal.rollback_recovery_size,
+                )
+            ]
+            if journal.rollback_recovery_path is not None
+            else []
+        ),
+    ):
+        if digest is None or size is None or not _verified(path, digest, size):
+            raise HelperError("journal_digest_invalid")
 
 
 def _validate_startup_state(value: dict[str, Any]) -> str:
@@ -668,7 +994,7 @@ def _validate_startup_state(value: dict[str, Any]) -> str:
         raise HelperError("startup_state_invalid")
     try:
         ReleaseVersion.parse(current_version)
-    except ManifestError as exc:
+    except ValueError as exc:
         raise HelperError("startup_state_invalid") from exc
     offered_version = value.get("offered_version")
     if offered_version is not None:
@@ -676,7 +1002,7 @@ def _validate_startup_state(value: dict[str, Any]) -> str:
             raise HelperError("startup_state_invalid")
         try:
             ReleaseVersion.parse(offered_version)
-        except ManifestError as exc:
+        except ValueError as exc:
             raise HelperError("startup_state_invalid") from exc
     if not isinstance(value.get("mandatory"), bool):
         raise HelperError("startup_state_invalid")
@@ -727,9 +1053,57 @@ def _transaction_evidence_without_state(state_path: Path) -> bool:
     try:
         if not _plain_directory_chain_if_present(transactions, "startup_state_untrusted"):
             return False
-        return any(transactions.iterdir())
-    except OSError as exc:
+        return any(
+            _transaction_entry_has_recovery_evidence(entry) for entry in transactions.iterdir()
+        )
+    except (HelperError, OSError, RecursionError) as exc:
         raise HelperError("startup_state_untrusted") from exc
+
+
+MAX_TRANSACTION_EVIDENCE_ENTRIES = 32
+MAX_TRANSACTION_EVIDENCE_DEPTH = 32
+
+
+def _transaction_entry_has_recovery_evidence(path: Path) -> bool:
+    """Classify a transaction entry without treating directory creation as authority."""
+
+    def is_link_or_reparse(value: os.stat_result) -> bool:
+        return stat.S_ISLNK(value.st_mode) or bool(
+            getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+        )
+
+    try:
+        value = path.lstat()
+    except (FileNotFoundError, OSError):
+        return True
+    if is_link_or_reparse(value) or not stat.S_ISDIR(value.st_mode):
+        return True
+
+    entries_seen = 0
+    stack: list[tuple[Path, int]] = [(path, 0)]
+    try:
+        while stack:
+            directory, depth = stack.pop()
+            if depth > MAX_TRANSACTION_EVIDENCE_DEPTH:
+                return True
+            _plain_directory_stat(directory, "startup_state_untrusted")
+            for child in directory.iterdir():
+                entries_seen += 1
+                if entries_seen > MAX_TRANSACTION_EVIDENCE_ENTRIES:
+                    return True
+                child_stat = child.lstat()
+                if is_link_or_reparse(child_stat):
+                    return True
+                if child.name == "journal.json":
+                    return True
+                if stat.S_ISREG(child_stat.st_mode):
+                    return True
+                if not stat.S_ISDIR(child_stat.st_mode):
+                    return True
+                stack.append((child, depth + 1))
+    except (FileNotFoundError, HelperError, OSError, RecursionError):
+        return True
+    return False
 
 
 @dataclass(slots=True)
@@ -771,15 +1145,20 @@ class UpdateJournal:
     created_at: str
     updated_at: str
     last_error_code: str | None = None
+    recovery_authority_mac: str | None = None
+    terminal_authority_mac: str | None = None
     schema_version: int = JOURNAL_SCHEMA_VERSION
 
     @classmethod
-    def load(cls, path: Path) -> UpdateJournal:
+    def load(cls, path: Path, *, validate_storage: bool = True) -> UpdateJournal:
         _plain_directory_chain(path.parent, "journal_untrusted")
         _plain_file_stat(path, "journal_untrusted")
         value = _read_json(path, MAX_JOURNAL_BYTES, boundary_code="journal_untrusted")
         expected = set(cls.__dataclass_fields__)
-        if set(value) != expected:
+        legacy_fields = {"recovery_authority_mac", "terminal_authority_mac"}
+        if set(value) == expected - legacy_fields:
+            value.update({field: None for field in legacy_fields})
+        elif set(value) != expected:
             raise HelperError("journal_shape_invalid")
         try:
             value["phase"] = HelperPhase(value["phase"])
@@ -787,7 +1166,7 @@ class UpdateJournal:
         except (TypeError, ValueError) as exc:
             raise HelperError("journal_value_invalid") from exc
         try:
-            journal.validate(path)
+            journal.validate(path, validate_storage=validate_storage)
         except HelperError:
             raise
         except (OSError, TypeError, ValueError) as exc:
@@ -800,11 +1179,32 @@ class UpdateJournal:
         value["phase"] = self.phase.value
         _atomic_json(path, value, boundary_code="journal_untrusted")
 
-    def validate(self, path: Path, *, boundary_code: str = "journal_path_untrusted") -> None:
-        if self.schema_version != JOURNAL_SCHEMA_VERSION or not _valid_operation_id(
-            self.operation_id
+    def validate(
+        self,
+        path: Path,
+        *,
+        boundary_code: str = "journal_path_untrusted",
+        validate_storage: bool = True,
+    ) -> None:
+        if not isinstance(self.phase, HelperPhase):
+            raise HelperError("journal_value_invalid")
+        if self.schema_version not in {
+            JOURNAL_SCHEMA_VERSION,
+            LEGACY_JOURNAL_SCHEMA_VERSION,
+        } or not _valid_operation_id(self.operation_id):
+            raise HelperError("journal_identity_invalid")
+        if self.schema_version == LEGACY_JOURNAL_SCHEMA_VERSION and (
+            self.recovery_authority_mac is not None or self.terminal_authority_mac is not None
         ):
             raise HelperError("journal_identity_invalid")
+        if (
+            self.recovery_authority_mac is not None
+            and not _valid_digest(self.recovery_authority_mac)
+        ) or (
+            self.terminal_authority_mac is not None
+            and not _valid_digest(self.terminal_authority_mac)
+        ):
+            raise HelperError("journal_digest_invalid")
         if (
             isinstance(self.parent_pid, bool)
             or not isinstance(self.parent_pid, int)
@@ -814,7 +1214,7 @@ class UpdateJournal:
         try:
             ReleaseVersion.parse(self.current_version)
             ReleaseVersion.parse(self.target_version)
-        except ManifestError as exc:
+        except ValueError as exc:
             raise HelperError("journal_version_invalid") from exc
         if (
             self.core_host != "127.0.0.1"
@@ -898,6 +1298,36 @@ class UpdateJournal:
         if any(not isinstance(item, str) or not item for item in path_values):
             raise HelperError("journal_path_invalid")
 
+        transaction_dir = path.parent
+        if (
+            path.name != "journal.json"
+            or not _valid_operation_id(transaction_dir.name)
+            or self.operation_id != transaction_dir.name
+            or any(not Path(item).is_absolute() for item in path_values)
+        ):
+            raise HelperError("journal_identity_invalid")
+
+        if not validate_storage:
+            updates_dir = transaction_dir.parent.parent
+            for child in (
+                Path(self.replacement_path),
+                Path(self.rollback_application_path),
+                Path(self.rollback_update_helper_path),
+                *([Path(self.rollback_mcp_path)] if self.rollback_mcp_path else []),
+                *([Path(self.rollback_recovery_path)] if self.rollback_recovery_path else []),
+            ):
+                if not _within(child, transaction_dir):
+                    raise HelperError("journal_path_invalid")
+            if not _within(Path(self.database_backup_path), updates_dir / "backups"):
+                raise HelperError("journal_path_invalid")
+            _validate_journal_storage_paths(
+                self,
+                path,
+                "journal_untrusted",
+                data_dir=updates_dir.parent,
+            )
+            return
+
         _validate_install_targets(self, boundary_code)
         data_dir = _data_directory()
         updates_dir = data_dir / "updates"
@@ -946,7 +1376,13 @@ def journal_handoff_identity(journal: UpdateJournal) -> str:
     """Bind transaction authority independently of mutable progress fields."""
 
     value = asdict(journal)
-    for mutable in ("phase", "updated_at", "last_error_code"):
+    for mutable in (
+        "phase",
+        "updated_at",
+        "last_error_code",
+        "recovery_authority_mac",
+        "terminal_authority_mac",
+    ):
         value.pop(mutable)
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
         "ascii"
@@ -954,8 +1390,185 @@ def journal_handoff_identity(journal: UpdateJournal) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _prebinding_transaction_files(journal: UpdateJournal, journal_path: Path) -> tuple[Path, ...]:
+    return (
+        journal_path,
+        Path(journal.replacement_path),
+        Path(journal.rollback_application_path),
+        Path(journal.rollback_update_helper_path),
+        Path(journal.helper_path),
+        *([Path(journal.rollback_mcp_path)] if journal.rollback_mcp_path else []),
+        *([Path(journal.rollback_recovery_path)] if journal.rollback_recovery_path else []),
+    )
+
+
+def _path_key(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _remove_prebinding_file(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    file_expected: os.stat_result,
+) -> bool:
+    try:
+        parent_before = _plain_directory_stat(path.parent, "startup_state_untrusted")
+        file_before = path.lstat()
+        if not _same_directory(parent_expected, parent_before) or not _same_file(
+            file_expected, file_before
+        ):
+            return False
+        parent_after = _plain_directory_stat(path.parent, "startup_state_untrusted")
+        file_after = path.lstat()
+        if not _same_directory(parent_expected, parent_after) or not _same_file(
+            file_expected, file_after
+        ):
+            return False
+        path.unlink()
+        return True
+    except (HelperError, OSError, RecursionError):
+        return False
+
+
+def _remove_prebinding_directory(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    directory_expected: os.stat_result,
+) -> bool:
+    try:
+        parent_before = _plain_directory_stat(path.parent, "startup_state_untrusted")
+        directory_before = _plain_directory_stat(path, "startup_state_untrusted")
+        if not _same_directory(parent_expected, parent_before) or not _same_directory(
+            directory_expected, directory_before
+        ):
+            return False
+        parent_after = _plain_directory_stat(path.parent, "startup_state_untrusted")
+        directory_after = _plain_directory_stat(path, "startup_state_untrusted")
+        if not _same_directory(parent_expected, parent_after) or not _same_directory(
+            directory_expected, directory_after
+        ):
+            return False
+        path.rmdir()
+        return True
+    except (HelperError, OSError, RecursionError):
+        return False
+
+
+def _reclaim_prebinding_transaction(
+    transaction_dir: Path,
+    *,
+    journal: UpdateJournal | None = None,
+    journal_path: Path | None = None,
+) -> bool:
+    """Reclaim only a bounded, stable transaction tree before authority binding."""
+
+    try:
+        _plain_directory_chain(transaction_dir.parent, "startup_state_untrusted")
+        try:
+            transaction_stat = transaction_dir.lstat()
+        except FileNotFoundError:
+            return True
+        if (
+            stat.S_ISLNK(transaction_stat.st_mode)
+            or bool(getattr(transaction_stat, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
+            or not stat.S_ISDIR(transaction_stat.st_mode)
+        ):
+            return False
+        parent_stat = _plain_directory_stat(transaction_dir.parent, "startup_state_untrusted")
+
+        expected_files: dict[str, Path] | None = None
+        expected_directories: dict[str, Path] | None = None
+        if journal is not None and journal_path is not None:
+            expected_files = {}
+            for expected in _prebinding_transaction_files(journal, journal_path):
+                if not _within(expected, transaction_dir):
+                    return False
+                key = _path_key(expected)
+                if key in expected_files:
+                    return False
+                expected_files[key] = expected
+            expected_directories = {_path_key(transaction_dir): transaction_dir}
+            for expected in expected_files.values():
+                directory = expected.parent
+                while _within(directory, transaction_dir):
+                    expected_directories[_path_key(directory)] = directory
+                    if _path_key(directory) == _path_key(transaction_dir):
+                        break
+                    directory = directory.parent
+
+        files: list[tuple[Path, os.stat_result, os.stat_result]] = []
+        directories: list[tuple[Path, os.stat_result, os.stat_result, int]] = [
+            (transaction_dir, parent_stat, transaction_stat, 0)
+        ]
+        seen_files: set[str] = set()
+        stack: list[tuple[Path, os.stat_result, os.stat_result, int]] = [
+            (transaction_dir, transaction_stat, parent_stat, 0)
+        ]
+        entries_seen = 0
+        while stack:
+            directory, directory_expected, _directory_parent, depth = stack.pop()
+            if depth > MAX_TRANSACTION_EVIDENCE_DEPTH:
+                return False
+            current_directory = _plain_directory_stat(directory, "startup_state_untrusted")
+            if not _same_directory(directory_expected, current_directory):
+                return False
+            for child in directory.iterdir():
+                entries_seen += 1
+                if entries_seen > MAX_TRANSACTION_EVIDENCE_ENTRIES:
+                    return False
+                child_stat = child.lstat()
+                if stat.S_ISLNK(child_stat.st_mode) or bool(
+                    getattr(child_stat, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+                ):
+                    return False
+                child_key = _path_key(child)
+                if stat.S_ISDIR(child_stat.st_mode):
+                    if expected_directories is not None and child_key not in expected_directories:
+                        return False
+                    directories.append((child, directory_expected, child_stat, depth + 1))
+                    stack.append((child, child_stat, directory_expected, depth + 1))
+                    continue
+                if not stat.S_ISREG(child_stat.st_mode) or getattr(child_stat, "st_nlink", 1) != 1:
+                    return False
+                if expected_files is None or child_key not in expected_files:
+                    return False
+                if child_key in seen_files:
+                    return False
+                seen_files.add(child_key)
+                files.append((child, directory_expected, child_stat))
+        if expected_files is not None and seen_files != set(expected_files):
+            return False
+
+        for path, parent_expected, file_expected in files:
+            if not _remove_prebinding_file(
+                path,
+                parent_expected=parent_expected,
+                file_expected=file_expected,
+            ):
+                return False
+        for path, parent_expected, directory_expected, _depth in sorted(
+            directories[1:], key=lambda item: item[3], reverse=True
+        ):
+            if not _remove_prebinding_directory(
+                path,
+                parent_expected=parent_expected,
+                directory_expected=directory_expected,
+            ):
+                return False
+        return _remove_prebinding_directory(
+            transaction_dir,
+            parent_expected=parent_stat,
+            directory_expected=transaction_stat,
+        )
+    except (HelperError, OSError, RecursionError, ValueError):
+        return False
+
+
 def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
     journal.validate(journal_path, boundary_code="application_state_untrusted")
+    validate_recovery_authority(journal, journal_path)
     state_path = Path(journal.state_path)
     state = _read_json(
         state_path,
@@ -988,6 +1601,47 @@ def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[
     raise HelperError("application_state_mismatch")
 
 
+def _validate_terminal_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
+    """Require the helper's terminal journal and state publication to agree."""
+
+    if journal.phase not in TERMINAL_PHASES:
+        raise HelperError("application_state_mismatch")
+    state_path = Path(journal.state_path)
+    state = _read_json(
+        state_path,
+        MAX_STATE_BYTES,
+        boundary_code="application_state_untrusted",
+    )
+    expected_phase = "installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back"
+    expected_version = (
+        journal.target_version if expected_phase == "installed" else journal.current_version
+    )
+    identity = journal_handoff_identity(journal)
+    transaction_path = state.get("transaction_path")
+    if (
+        state.get("operation_id") != journal.operation_id
+        or state.get("phase") != expected_phase
+        or state.get("current_version") != expected_version
+    ):
+        raise HelperError("application_state_mismatch")
+    if transaction_path is None:
+        if (
+            state.get("handoff_identity") is not None
+            or state.get("pending_handoff_identity") is not None
+            or state.get("completed_handoff_identity") != identity
+        ):
+            raise HelperError("application_state_mismatch")
+    elif (
+        not isinstance(transaction_path, str)
+        or not _same_path(Path(transaction_path), _absolute_path(journal_path))
+        or state.get("handoff_identity") != identity
+        or state.get("pending_handoff_identity") is not None
+        or state.get("completed_handoff_identity") is not None
+    ):
+        raise HelperError("application_state_mismatch")
+    return state
+
+
 def _transition_handoff_state(
     journal: UpdateJournal,
     journal_path: Path,
@@ -1005,13 +1659,23 @@ def _transition_handoff_state(
     )
     transaction_path = state.get("transaction_path")
     identity = journal_handoff_identity(journal)
+    if not _valid_digest(previous_identity):
+        raise HelperError("application_state_mismatch")
+    secret = _recovery_authority_secret(journal.operation_id, create=False)
+    authority_mac = journal.recovery_authority_mac
+    if not _valid_digest(authority_mac):
+        raise HelperError("recovery_authority_invalid")
+    if not hmac.compare_digest(
+        cast(str, authority_mac),
+        _recovery_authority_mac(secret, journal.operation_id, previous_identity),
+    ):
+        raise HelperError("recovery_authority_invalid")
     if (
         state.get("operation_id") != journal.operation_id
         or not isinstance(transaction_path, str)
         or not _same_path(Path(transaction_path), journal_path)
         or state.get("handoff_identity") != previous_identity
         or state.get("pending_handoff_identity") is not None
-        or not _valid_digest(previous_identity)
     ):
         raise HelperError("application_state_mismatch")
     if identity == previous_identity:
@@ -1019,6 +1683,12 @@ def _transition_handoff_state(
         return identity
     state["pending_handoff_identity"] = identity
     _atomic_json(state_path, state, boundary_code="application_state_untrusted")
+    journal.recovery_authority_mac = _recovery_authority_mac(
+        secret,
+        journal.operation_id,
+        identity,
+    )
+    journal.terminal_authority_mac = None
     journal.save(journal_path)
     promoted = _read_json(state_path, MAX_STATE_BYTES)
     if (
@@ -1032,6 +1702,41 @@ def _transition_handoff_state(
     promoted["pending_handoff_identity"] = None
     _atomic_json(state_path, promoted, boundary_code="application_state_untrusted")
     _validate_handoff_state(journal, journal_path)
+    return identity
+
+
+def prepare_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
+    """Record the bounded pre-binding marker before journal authority exists."""
+
+    journal.validate(journal_path, boundary_code="application_state_untrusted")
+    state_path = Path(journal.state_path)
+    state = _read_json(
+        state_path,
+        MAX_STATE_BYTES,
+        boundary_code="application_state_untrusted",
+    )
+    transaction_path = state.get("transaction_path")
+    identity = journal_handoff_identity(journal)
+    if (
+        state.get("operation_id") != journal.operation_id
+        or state.get("phase") not in {"restart_required", "error"}
+        or not isinstance(transaction_path, str)
+        or not _same_path(Path(transaction_path), journal_path)
+        or state.get("handoff_identity") not in {None, identity}
+        or state.get("pending_handoff_identity") not in {None, identity}
+        or (
+            state.get("handoff_identity") is not None
+            and state.get("pending_handoff_identity") is not None
+        )
+        or state.get("completed_handoff_identity") is not None
+    ):
+        raise HelperError("application_state_mismatch")
+    if state.get("handoff_identity") == identity and state.get("pending_handoff_identity") is None:
+        return identity
+    state["handoff_identity"] = state.get("handoff_identity")
+    state["pending_handoff_identity"] = identity
+    state["completed_handoff_identity"] = state.get("completed_handoff_identity")
+    _atomic_json(state_path, state, boundary_code="application_state_untrusted")
     return identity
 
 
@@ -1049,11 +1754,15 @@ def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
     identity = journal_handoff_identity(journal)
     if (
         state.get("operation_id") != journal.operation_id
-        or state.get("phase") != "restart_required"
+        or state.get("phase") not in {"restart_required", "error"}
         or not isinstance(transaction_path, str)
         or not _same_path(Path(transaction_path), journal_path)
         or state.get("handoff_identity") not in {None, identity}
-        or state.get("pending_handoff_identity") is not None
+        or state.get("pending_handoff_identity") not in {None, identity}
+        or (
+            state.get("handoff_identity") is not None
+            and state.get("pending_handoff_identity") is not None
+        )
     ):
         raise HelperError("application_state_mismatch")
     state["handoff_identity"] = identity
@@ -1064,9 +1773,13 @@ def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
     return identity
 
 
-def transaction_outcome(path: Path) -> str:
+def transaction_outcome(path: Path, *, validate_storage: bool = True) -> str:
     try:
-        phase = UpdateJournal.load(path).phase
+        journal = UpdateJournal.load(path, validate_storage=validate_storage)
+        phase = journal.phase
+        if phase in TERMINAL_PHASES:
+            validate_recovery_authority(journal, path, require_terminal=True)
+            _validate_terminal_handoff_state(journal, path)
     except HelperError:
         return "failed"
     if phase is HelperPhase.COMMITTED:
@@ -1517,6 +2230,8 @@ def _refresh_database_backup(journal: UpdateJournal, journal_path: Path) -> None
         journal.database_backup_sha256 = candidate.database_backup_sha256
         journal.database_backup_size = candidate.database_backup_size
         journal.last_error_code = candidate.last_error_code
+        journal.recovery_authority_mac = candidate.recovery_authority_mac
+        journal.terminal_authority_mac = candidate.terminal_authority_mac
         journal.updated_at = candidate.updated_at
     finally:
         _unlink_plain_file_if_present(temporary, "database_backup_invalid")
@@ -1615,6 +2330,11 @@ def _update_state(
     path = Path(journal.state_path)
     journal_path = Path(journal.helper_path).parent / "journal.json"
     journal.validate(journal_path, boundary_code="application_state_untrusted")
+    validate_recovery_authority(
+        journal,
+        journal_path,
+        require_terminal=journal.phase in TERMINAL_PHASES,
+    )
     value = _read_json(path, MAX_STATE_BYTES, boundary_code="application_state_untrusted")
     if value.get("operation_id") != journal.operation_id:
         raise HelperError("application_state_mismatch")
@@ -1671,6 +2391,58 @@ def _update_state(
     _atomic_json(path, value, boundary_code="application_state_untrusted")
 
 
+def _record_post_commit_degraded_state(journal: UpdateJournal) -> None:
+    """Record a non-authority-changing terminal follow-up failure.
+
+    The terminal journal and pointerless state are already authoritative when
+    this runs.  A failed RunOnce removal or Core launch must therefore remain a
+    degraded terminal result, never an input to the rollback path.  State is a
+    best-effort diagnostic here: if its write fails, the already-published
+    terminal state and journal remain untouched.
+    """
+
+    try:
+        _update_state(
+            journal,
+            phase="installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back",
+            error=POST_COMMIT_DEGRADED_ERROR,
+            clear_transaction=True,
+        )
+    except Exception:
+        return
+
+
+def _finish_terminal_handoff(
+    journal: UpdateJournal,
+    *,
+    launch_core: bool,
+    state_error: str | None,
+) -> None:
+    """Finish terminal follow-up work without reopening the transaction."""
+
+    degraded = False
+    try:
+        _update_state(
+            journal,
+            phase="installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back",
+            error=state_error,
+            clear_transaction=True,
+        )
+    except Exception:
+        degraded = True
+    try:
+        unregister_recovery(journal.operation_id)
+    except Exception:
+        degraded = True
+    if launch_core:
+        try:
+            _launch_core(journal)
+        except Exception:
+            degraded = True
+    if degraded:
+        _record_post_commit_degraded_state(journal)
+
+
 def _launch_core(journal: UpdateJournal) -> None:
     if journal.phase is HelperPhase.COMMITTED:
         digest, size = journal.replacement_sha256, journal.replacement_size
@@ -1696,10 +2468,9 @@ def _commit(journal: UpdateJournal, journal_path: Path) -> None:
     _update_state(journal, phase="installed", error=None, clear_transaction=False)
     journal.phase = HelperPhase.COMMITTED
     journal.last_error_code = None
+    seal_terminal_recovery_authority(journal)
     journal.save(journal_path)
-    _update_state(journal, phase="installed", error=None, clear_transaction=True)
-    unregister_recovery(journal.operation_id)
-    _launch_core(journal)
+    _finish_terminal_handoff(journal, launch_core=True, state_error=None)
 
 
 def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code: str) -> None:
@@ -1721,16 +2492,13 @@ def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code
     _fault_after_abort_state()
     journal.phase = HelperPhase.ROLLED_BACK
     journal.last_error_code = error_code
+    seal_terminal_recovery_authority(journal)
     journal.save(journal_path)
-    _update_state(
+    _finish_terminal_handoff(
         journal,
-        phase="rolled_back",
-        error=message,
-        clear_transaction=True,
+        launch_core=not _process_exists(journal.parent_pid),
+        state_error=message,
     )
-    unregister_recovery(journal.operation_id)
-    if not _process_exists(journal.parent_pid):
-        _launch_core(journal)
 
 
 def _rollback(journal: UpdateJournal, journal_path: Path, error_code: str) -> None:
@@ -1748,15 +2516,9 @@ def _rollback(journal: UpdateJournal, journal_path: Path, error_code: str) -> No
             clear_transaction=False,
         )
         journal.phase = HelperPhase.ROLLED_BACK
+        seal_terminal_recovery_authority(journal)
         journal.save(journal_path)
-        _update_state(
-            journal,
-            phase="rolled_back",
-            error=message,
-            clear_transaction=True,
-        )
-        unregister_recovery(journal.operation_id)
-        _launch_core(journal)
+        _finish_terminal_handoff(journal, launch_core=True, state_error=message)
     except (OSError, HelperError, sqlite3.Error) as exc:
         journal.phase = HelperPhase.ROLLING_BACK
         journal.last_error_code = "rollback_retry_required"
@@ -1796,10 +2558,11 @@ def run_transaction(journal_path: Path) -> int:
     try:
         journal = UpdateJournal.load(resolved)
         if journal.phase in TERMINAL_PHASES:
-            _update_state(
+            validate_recovery_authority(journal, resolved, require_terminal=True)
+            _finish_terminal_handoff(
                 journal,
-                phase="installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back",
-                error=(
+                launch_core=True,
+                state_error=(
                     None
                     if journal.phase is HelperPhase.COMMITTED
                     else (
@@ -1807,11 +2570,9 @@ def run_transaction(journal_path: Path) -> int:
                         "restored"
                     )
                 ),
-                clear_transaction=True,
             )
-            unregister_recovery(journal.operation_id)
-            _launch_core(journal)
             return 0
+        validate_recovery_authority(journal, resolved)
         register_recovery(Path(journal.helper_path), resolved, journal.operation_id)
         if journal.phase is HelperPhase.ABORT_REQUESTED:
             _abort_before_cutover(journal, resolved, journal.last_error_code or "cutover_failed")
@@ -1832,6 +2593,8 @@ def run_transaction(journal_path: Path) -> int:
                     previous_identity=previous_identity,
                 )
                 journal.parent_pid = transitioned.parent_pid
+                journal.recovery_authority_mac = transitioned.recovery_authority_mac
+                journal.terminal_authority_mac = transitioned.terminal_authority_mac
                 journal.updated_at = transitioned.updated_at
                 _refresh_database_backup(journal, resolved)
             if journal.phase in {
@@ -1870,6 +2633,186 @@ def request_rollback(journal_path: Path) -> None:
     journal.last_error_code = "rollback_requested"
     journal.save(journal_path)
     launch_recovery_helper(Path(journal.helper_path), journal_path)
+
+
+def completed_transaction_is_authoritative(
+    state_path: Path,
+    state: dict[str, Any],
+    phase: str,
+    *,
+    validate_storage: bool = True,
+) -> bool:
+    """Accept pointerless evidence only after a complete terminal publication."""
+
+    if phase not in {"installed", "rolled_back"}:
+        return False
+    operation_id = state.get("operation_id")
+    completed_identity = state.get("completed_handoff_identity")
+    if not _valid_operation_id(operation_id) or not _valid_digest(completed_identity):
+        return False
+    expected = state_path.parent / "transactions" / cast(str, operation_id) / "journal.json"
+    try:
+        transactions = state_path.parent / "transactions"
+        if not _plain_directory_chain_if_present(transactions, "startup_state_untrusted"):
+            return False
+        entries = list(transactions.iterdir())
+        if len(entries) != 1 or not _same_path(entries[0], expected.parent):
+            return False
+        journal = UpdateJournal.load(expected, validate_storage=validate_storage)
+        expected_journal_phase = (
+            HelperPhase.COMMITTED if phase == "installed" else HelperPhase.ROLLED_BACK
+        )
+        validate_recovery_authority(journal, expected, require_terminal=True)
+        return (
+            journal.phase is expected_journal_phase
+            and journal_handoff_identity(journal) == completed_identity
+            and transaction_outcome(expected, validate_storage=validate_storage)
+            == ("installed" if phase == "installed" else "rolled_back")
+        )
+    except (HelperError, OSError, RecursionError, TypeError, ValueError):
+        return False
+
+
+def _retirement_tombstone_is_authoritative(
+    state_path: Path,
+    state: dict[str, Any],
+    phase: str,
+    *,
+    require_credential_retired: bool = False,
+) -> bool:
+    """Recognize terminal cleanup evidence after its credential was retired."""
+
+    operation_id = state.get("operation_id")
+    completed_identity = state.get("completed_handoff_identity")
+    if (
+        phase not in {"installed", "rolled_back"}
+        or not _valid_operation_id(operation_id)
+        or not _valid_digest(completed_identity)
+    ):
+        return False
+    root = state_path.parent / RETIREMENT_TOMBSTONE_DIRECTORY
+    try:
+        if not _plain_directory_chain_if_present(root, "startup_state_untrusted"):
+            return False
+        prefix = f"{cast(str, operation_id)}-"
+        candidates = [
+            entry
+            for entry in root.iterdir()
+            if entry.name.startswith(prefix) and entry.name.endswith(".json")
+        ]
+        if len(candidates) != 1:
+            return False
+        path = candidates[0]
+        value = _read_json(
+            path,
+            MAX_RETIREMENT_TOMBSTONE_BYTES,
+            boundary_code="startup_state_untrusted",
+        )
+        raw = (
+            json.dumps(
+                value,
+                sort_keys=True,
+                indent=2,
+            ).encode("utf-8")
+            + b"\n"
+        )
+        fields = {
+            "schema_version",
+            "operation_id",
+            "outcome",
+            "terminal_phase",
+            "handoff_identity",
+            "terminal_authority_mac",
+            "journal_sha256",
+        }
+        if set(value) != fields:
+            return False
+        expected_outcome = phase
+        expected_terminal_phase = "committed" if phase == "installed" else "rolled_back"
+        if (
+            value.get("schema_version") != RETIREMENT_TOMBSTONE_SCHEMA_VERSION
+            or value.get("operation_id") != operation_id
+            or value.get("outcome") != expected_outcome
+            or value.get("terminal_phase") != expected_terminal_phase
+            or value.get("handoff_identity") != completed_identity
+            or not _valid_digest(value.get("terminal_authority_mac"))
+            or not _valid_digest(value.get("journal_sha256"))
+            or hashlib.sha256(raw).hexdigest() != path.name[len(prefix) : -5]
+        ):
+            return False
+        status = recovery_authority_retirement_status(
+            cast(str, operation_id),
+            cast(str, completed_identity),
+            cast(str, value["terminal_phase"]),
+            cast(str, value["terminal_authority_mac"]),
+        )
+        if status not in {"valid", "missing"} or (
+            require_credential_retired and status != "missing"
+        ):
+            return False
+        journal_path = state_path.parent / "transactions" / cast(str, operation_id) / "journal.json"
+        if _plain_file_stat_if_present(journal_path, "startup_state_untrusted") is None:
+            return not _plain_directory_chain_if_present(
+                journal_path.parent, "startup_state_untrusted"
+            )
+        journal = UpdateJournal.load(journal_path, validate_storage=False)
+        journal_value = asdict(journal)
+        journal_value["phase"] = journal.phase.value
+        journal_raw = json.dumps(journal_value, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+        return bool(
+            journal.operation_id == operation_id
+            and journal.phase.value == expected_terminal_phase
+            and journal_handoff_identity(journal) == completed_identity
+            and journal.terminal_authority_mac == value["terminal_authority_mac"]
+            and hashlib.sha256(journal_raw).hexdigest() == value["journal_sha256"]
+        )
+    except (HelperError, OSError, RecursionError, TypeError, ValueError):
+        return False
+
+
+def record_startup_recovery_parser_failure() -> None:
+    """Persist a fixed diagnostic when the outer frozen startup guard is hit."""
+
+    state_path = _data_directory() / "updates" / "state.json"
+    _write_startup_recovery_diagnostic(
+        state_path,
+        status="blocked",
+        code="startup_state_invalid",
+    )
+
+
+def _reset_unbound_startup_state(state_path: Path, state: dict[str, Any], phase: str) -> bool:
+    state.update(
+        {
+            "phase": "error",
+            "last_error": "The update stopped before installation and was reset safely",
+            "downloaded_path": None,
+            "backup_path": None,
+            "operation_id": None,
+            "manifest_identity": None,
+            "transaction_path": None,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    try:
+        _atomic_json(state_path, state, boundary_code="startup_state_untrusted")
+    except (HelperError, OSError):
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_reset_failed",
+            phase=phase,
+        )
+        return False
+    _write_startup_recovery_diagnostic(
+        state_path,
+        status="cleared",
+        code="unbound_preparation_reset",
+        phase="error",
+    )
+    return True
 
 
 def ensure_recovery_before_core() -> bool:
@@ -1922,7 +2865,61 @@ def ensure_recovery_before_core() -> bool:
             phase=phase,
         )
         return False
+    if completed_identity is not None and (
+        phase not in {"installed", "rolled_back"} or not _valid_operation_id(operation_id)
+    ):
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_invalid",
+            phase=phase,
+        )
+        return False
     if transaction is None:
+        try:
+            transaction_evidence = _transaction_evidence_without_state(state_path)
+        except HelperError as error:
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code=error.code,
+                phase=phase,
+            )
+            return False
+        if transaction_evidence and not (
+            completed_transaction_is_authoritative(state_path, state, phase)
+            or _retirement_tombstone_is_authoritative(state_path, state, phase)
+        ):
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code=(
+                    "startup_state_active_without_transaction"
+                    if phase == "installing"
+                    else "startup_state_missing_with_transaction"
+                ),
+                phase=phase,
+            )
+            return False
+        if (
+            completed_identity is not None
+            and not transaction_evidence
+            and not (
+                _retirement_tombstone_is_authoritative(
+                    state_path,
+                    state,
+                    phase,
+                    require_credential_retired=True,
+                )
+            )
+        ):
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_active_without_transaction",
+                phase=phase,
+            )
+            return False
         if phase == "installing":
             identities = (
                 state.get("handoff_identity"),
@@ -1936,11 +2933,13 @@ def ensure_recovery_before_core() -> bool:
                 else None
             )
             try:
-                transaction_evidence = expected_transaction_dir is not None and (
-                    _plain_directory_chain_if_present(
-                        expected_transaction_dir, "startup_state_untrusted"
+                transaction_evidence = False
+                if expected_transaction_dir is not None and _plain_directory_chain_if_present(
+                    expected_transaction_dir, "startup_state_untrusted"
+                ):
+                    transaction_evidence = _transaction_entry_has_recovery_evidence(
+                        expected_transaction_dir
                     )
-                )
             except HelperError:
                 _write_startup_recovery_diagnostic(
                     state_path,
@@ -2048,14 +3047,6 @@ def ensure_recovery_before_core() -> bool:
         )
         return False
     if handoff_identity is None:
-        if pending_identity is not None:
-            _write_startup_recovery_diagnostic(
-                state_path,
-                status="blocked",
-                code="startup_state_invalid",
-                phase=phase,
-            )
-            return False
         expected = (
             _data_directory()
             / "updates"
@@ -2063,14 +3054,7 @@ def ensure_recovery_before_core() -> bool:
             / cast(str, operation_id)
             / "journal.json"
         )
-        try:
-            transaction_matches = _same_path(Path(transaction), expected)
-            if transaction_matches:
-                _plain_directory_chain(expected.parent, "startup_state_untrusted")
-                _plain_file_stat(expected, "startup_state_untrusted")
-        except (HelperError, OSError, ValueError):
-            transaction_matches = False
-        if state.get("phase") != "restart_required" or not transaction_matches:
+        if phase not in {"restart_required", "error"}:
             _write_startup_recovery_diagnostic(
                 state_path,
                 status="blocked",
@@ -2078,39 +3062,72 @@ def ensure_recovery_before_core() -> bool:
                 phase=phase,
             )
             return False
-        # No helper from this schema can cross cutover without the parent-published
-        # binding, so an interrupted preparation can safely return to the old app.
-        state.update(
-            {
-                "phase": "error",
-                "last_error": "The update stopped before installation and was reset safely",
-                "downloaded_path": None,
-                "backup_path": None,
-                "operation_id": None,
-                "manifest_identity": None,
-                "transaction_path": None,
-                "handoff_identity": None,
-                "pending_handoff_identity": None,
-                "completed_handoff_identity": None,
-            }
-        )
         try:
-            _atomic_json(state_path, state, boundary_code="startup_state_untrusted")
-        except (HelperError, OSError):
+            if not isinstance(transaction, str) or not _same_path(Path(transaction), expected):
+                raise HelperError("startup_state_mismatch")
+            transaction_dir = expected.parent
+            journal_file = _plain_file_stat_if_present(expected, "startup_state_untrusted")
+            if journal_file is None:
+                if not _reclaim_prebinding_transaction(transaction_dir):
+                    raise HelperError("startup_state_untrusted")
+                if not retire_recovery_authority(cast(str, operation_id)):
+                    raise HelperError("startup_state_reset_failed")
+                return _reset_unbound_startup_state(state_path, state, phase)
+
+            journal = UpdateJournal.load(expected)
+            if journal.operation_id != operation_id:
+                raise HelperError("startup_state_mismatch")
+            journal_identity = journal_handoff_identity(journal)
+            if pending_identity not in {None, journal_identity}:
+                raise HelperError("startup_state_mismatch")
+            if journal.recovery_authority_mac is not None:
+                validate_recovery_authority(journal, expected)
+                if journal.phase in TERMINAL_PHASES:
+                    raise HelperError("journal_invalid")
+                bind_handoff_state(journal, expected)
+                try:
+                    launch_recovery_helper(Path(journal.helper_path), expected)
+                except (HelperError, OSError):
+                    _write_startup_recovery_diagnostic(
+                        state_path,
+                        status="blocked",
+                        code="helper_launch_failed",
+                        phase=phase,
+                    )
+                    return False
+                return False
+            if journal.terminal_authority_mac is not None or (
+                journal.phase is not HelperPhase.PREPARED
+            ):
+                raise HelperError("journal_invalid")
+            if not _reclaim_prebinding_transaction(
+                transaction_dir,
+                journal=journal,
+                journal_path=expected,
+            ):
+                raise HelperError("startup_state_untrusted")
+            if not retire_recovery_authority(cast(str, operation_id)):
+                raise HelperError("startup_state_reset_failed")
+            return _reset_unbound_startup_state(state_path, state, phase)
+        except (HelperError, OSError, RecursionError, TypeError, ValueError) as error:
+            diagnostic_code = (
+                error.code
+                if isinstance(error, HelperError)
+                and error.code
+                in {
+                    "startup_state_mismatch",
+                    "startup_state_untrusted",
+                    "startup_state_reset_failed",
+                }
+                else "journal_invalid"
+            )
             _write_startup_recovery_diagnostic(
                 state_path,
                 status="blocked",
-                code="startup_state_reset_failed",
+                code=diagnostic_code,
                 phase=phase,
             )
             return False
-        _write_startup_recovery_diagnostic(
-            state_path,
-            status="cleared",
-            code="unbound_preparation_reset",
-            phase="error",
-        )
-        return True
     expected = (
         _data_directory() / "updates" / "transactions" / cast(str, operation_id) / "journal.json"
     )
@@ -2159,6 +3176,14 @@ def ensure_recovery_before_core() -> bool:
         # A power loss can land after the terminal journal save but before the
         # state pointer and RunOnce entry are cleared. Let the idempotent helper
         # finish that cleanup before an ordinary Core creates a new updater.
+        if transaction_outcome(journal_path) == "failed":
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="journal_invalid",
+                phase=phase,
+            )
+            return False
         try:
             launch_recovery_helper(Path(journal.helper_path), journal_path)
         except (HelperError, OSError):

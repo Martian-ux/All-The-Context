@@ -9,14 +9,20 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
-
-from allthecontext import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "packages" / "allthecontext" / "src"
 BUILD_ROOT = ROOT / "build" / "desktop"
 DIST_ROOT = ROOT / "dist" / "desktop"
+
+# A developer host may have another checkout installed editable. Make both the
+# version metadata and PyInstaller's package-data discovery come from this
+# checkout, not whichever allthecontext happens to win the ambient import path.
+sys.path.insert(0, str(SOURCE_ROOT))
+
+from allthecontext import __version__  # noqa: E402
 
 
 def executable_name(name: str, system: str) -> str:

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from allthecontext.credentials import FALLBACK_CREDENTIAL_STORAGE
+from allthecontext.credentials import DEVELOPMENT_FALLBACK_ENV, FALLBACK_CREDENTIAL_STORAGE
 from allthecontext.windows_update_helper import HelperError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -100,6 +100,7 @@ def test_packaged_transaction_scopes_disposable_helper_authority(
     helper_authority = {
         "ATC_CORE_DATA_DIR": str(data_dir),
         "ATC_INSTALL_DIR": str(install_dir),
+        DEVELOPMENT_FALLBACK_ENV: "1",
     }
 
     assert "ATC_INSTALL_DIR" not in os.environ

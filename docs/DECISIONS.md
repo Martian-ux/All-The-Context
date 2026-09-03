@@ -1,5 +1,360 @@
 # Architecture decisions
 
+## ADR-196: Completed terminal identity requires an authenticated operation binding
+
+**Status:** accepted locally on 2026-09-03 as the final-review follow-up for PR
+#110; hosted checks must bind to the pushed commit and PR #110 remains open.
+
+The terminal state invariant is exact: when `completed_handoff_identity` is
+non-null, `operation_id` must be a valid 24-character lowercase hexadecimal
+operation, the phase must be `installed` or `rolled_back`,
+`transaction_path` must be cleared, and the operation must bind to either the
+same authenticated terminal journal or one canonical bounded retirement
+tombstone. The journal path, terminal phase/outcome, handoff identity, terminal
+HMAC, and journal digest must agree; the tombstone's operation and identity must
+also agree with state. A missing, malformed, stale, or forged operation
+reference is unsafe even if a completed identity is otherwise parseable.
+
+An unsafe completed binding is preserved in place: the updater disables state
+writes, does not clear the completed identity, does not retire the credential,
+does not prune tombstones or transaction evidence, and blocks `clear_error`,
+`configure`, `defer`, `check`, and other new-operation paths. This applies
+before constructor cleanup and again at direct retirement/pruning boundaries,
+so a missing operation cannot turn authenticated evidence into an orphan.
+
+The bounded retry path remains valid when the binding is intact. It writes and
+verifies the tombstone, removes staging and the transaction tree, retires the
+operation credential, clears the completed identity, and only then unlinks the
+tombstone. If the tree is already gone, the same authenticated tombstone and
+operation binding permit the updater to finish retirement; repeated restarts
+remain idempotent. Frozen Windows Core startup is stricter for a pointerless
+completed state: if no transaction evidence remains, it stays blocked while the
+tombstone's credential is live, unavailable, or invalid, and proceeds only when
+the validated credential status is already `missing`. Missing, corrupt, or
+forged tombstones and operation references fail closed without evidence
+deletion.
+
+This closes the completed-identity/operation-retirement boundary only. The
+local OS credential store and ACL remain a trust assumption, and the existing
+filesystem race residual remains because the implementation does not claim
+handle-based no-follow atomicity against concurrent same-user mutation. No
+signing, release, Defender, Microsoft, or downloaded-candidate acceptance
+follows from this decision.
+
+## ADR-195: Final-review recovery authority is keyed and retires after evidence cleanup
+
+**Status:** accepted locally on 2026-09-03 as the PR #110 final-review
+remediation integration; hosted checks must bind to the pushed commit and PR
+#110 remains open.
+
+The updater must not treat a recomputed plain journal hash or handoff identity
+as recovery authority. Before handoff launch, the helper creates one durable
+32-byte secret per operation in the OS credential store and records an
+HMAC-SHA256 over the operation ID and immutable journal identity. The terminal
+`COMMITTED` or `ROLLED_BACK` publication receives a second HMAC that binds the
+terminal phase. State/journal transitions use the keyed authority plus a
+pending-to-current identity publication, so crash replay can distinguish a
+real helper transition from edited metadata. Journal storage and artifact
+SHA-256/size bindings remain required, but they are integrity checks rather
+than a substitute for the keyed authority.
+
+Terminal publication is state-first and journal-confirmed. After a terminal
+journal is durably published, RunOnce unregister or Core launch failure is a
+degraded terminal follow-up and never reopens rollback. `defer`, `configure`,
+and `check` must retire a completed publication's staging and transaction
+evidence before changing ordinary updater state; failure leaves the
+publication authoritative and blocks unsafe mutation. Retirement deletes the
+per-operation secret only after both staged and transaction trees have been
+removed safely.
+
+The handoff has a separate pre-binding crash boundary. The installer persists
+the prepared journal and records its immutable handoff identity as a pending
+state marker before creating the credential authority. It then creates the
+per-operation secret, binds the journal HMAC, promotes the state identity, and
+only after those writes registers and launches the helper. Frozen startup
+reconciles a valid authority-bound journal with an unbound or pending state and
+retries the bind/launch. Before authority exists, only a bounded, exact
+expected transaction tree can be reclaimed; any journal, regular file,
+reparse/link, extra entry, malformed record, or unstable tree remains
+fail-closed evidence. The transition is idempotent across repeated startups.
+
+Retirement uses one canonical, bounded 16 KiB tombstone containing the schema,
+operation, terminal outcome/phase, handoff identity, terminal HMAC, and exact
+journal digest. The tombstone is written and re-read before staging and
+transaction trees are removed. Authority deletion follows successful removal
+of both trees, then terminal state clears its completed identity, and only
+then is the tombstone unlinked. A crash before any of those steps leaves the
+completed state, tombstone, tree, or credential for retry; a crash after
+credential deletion is recognized as already retired; a tombstone left after
+state clearing is pruned only after the same authenticated evidence checks.
+The frozen startup guard and `UpdateManager` use these same tombstone/journal
+checks, so neither can treat a partial retirement as an ordinary new start.
+
+No updater operation can bypass this authority: new check/download/install
+work, `defer`, `configure`, `clear_error`, recovery cleanup, and pruning all
+remain blocked or retry-only while active evidence is present or unsafe.
+
+The administrative `clear_error` entrypoint follows the same bounded
+completed-evidence retirement path as `check`, `defer`, and `configure`. It
+must retire the authenticated tombstone-backed terminal evidence before
+clearing the public error or changing an error/cancelled phase; a retirement
+failure raises without masking the cleanup error or discarding the completed
+identity, tombstone, or recovery authority. A later retry may finish
+retirement, and a repeated call after successful retirement is idempotent.
+Missing or tampered retirement evidence remains fail-closed. Ordinary errors
+without completed recovery evidence retain the normal clear-error behavior.
+
+An empty pre-authority operation directory is not evidence by itself and may
+be reclaimed. A journal, regular file, link/reparse object, non-directory, or
+ambiguous/pathological tree remains credible recovery evidence and is retained
+fail-closed. Successful terminal recovery removes staged artifact/manifest and
+transaction evidence but keeps the canonical database, verified backup, and
+required rollback/source material.
+
+The local OS credential store/ACL is a trust assumption, not an adversary-
+resistant remote authority. The cross-platform implementation still does not
+claim handle-based no-follow atomicity for a concurrent same-user mutation and
+the final Windows filesystem syscall. No signing, release, Defender,
+Microsoft, or downloaded-candidate acceptance follows from this decision.
+
+## ADR-194: Numeric release versions use explicit containment bounds
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the integrated commit and PR #110 remains open.
+
+Release-version text is untrusted metadata. `ReleaseVersion.parse()` rejects
+more than 64 characters, more than four dotted numeric components, and more
+than 18 digits in any component before numeric conversion. The explicit
+full-match grammar and bounded conversion map malformed or oversized numeric
+input to the fixed `ManifestError` vocabulary. Journal loading, helper startup
+validation, and primary updater persistence catch numeric `ValueError` at their
+authority boundaries and retain fixed, content-free diagnostics.
+
+This contains the demonstrated numeric parser failure classes and avoids raw
+version text in diagnostics. It does not claim an independent cryptographic
+parser or CPU/depth budget, and it does not create signing, publication,
+release, or downloaded-candidate acceptance.
+
+## ADR-193: Helper-confirmed terminal recovery remains authoritative until safe retirement
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the integrated commit and PR #110 remains open.
+
+The recovery helper is the authority for terminal update publication. It
+publishes state-first progress, then the matching `COMMITTED` or
+`ROLLED_BACK` journal phase and handoff identity, and finally the terminal
+state cleanup. The primary updater accepts pointerless terminal state only
+when `completed_transaction_is_authoritative` validates the expected operation,
+exactly one transaction directory, journal phase, handoff identity, and
+`transaction_outcome`. It may retire that proven terminal tree before the next
+ordinary operation; a startup or cleanup failure preserves the publication and
+disables unsafe state mutation.
+
+Registration, launch, rollback, and post-journal cleanup errors therefore keep
+the transaction pointer, active handoff identity, journal, and surviving
+evidence. Clear, configure, check, defer, install, prune, and other new
+operations remain blocked while that authority is present. Invalid or
+ambiguous transaction roots cannot be treated as a clean terminal state, and
+the frozen Windows Core startup guard remains blocked. The packaged smoke
+asserts terminal journal publication before restarted Core can retire it.
+
+This decision narrows terminal authority confusion without claiming
+handle-based no-follow atomicity across concurrent same-user mutation and the
+final Windows filesystem syscall. It does not create signing, SmartScreen,
+Defender, Microsoft, release, or live-user acceptance.
+
+## ADR-192: Operator private-key loading is single-pass and bounded
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the integrated commit and PR #110 remains open.
+
+Operator-supplied release private keys are untrusted input at the file
+boundary. `read_private_key_bytes()` opens the path in binary mode and makes
+one bounded read of exactly `16 KiB + 1`; empty input and the overflow sentinel
+map to fixed `ManifestError` messages. `load_private_key()` accepts either a
+path or an already-read byte string and applies the same 16 KiB bound before
+cryptographic parsing. The release-manifest utility checks the encrypted PKCS8
+PEM marker in that bounded snapshot and passes the bytes to the loader, so the
+operator path is not read again through an unbounded API.
+
+This bounds retained key input and keeps failures content-free, but it does
+not claim a separate cryptographic parser, CPU, or depth budget. The private
+key remains an operator-controlled offline secret and is not imported by the
+repository keyring utility. This decision does not create signing,
+publication, release, or vendor acceptance.
+
+## ADR-191: Invalid active recovery journals retain recovery authority
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the integrated commit and PR #110 remains open.
+
+Active `installing` and `restart_required` state remains recovery authority
+even when its journal is malformed or inconsistent. The primary updater first
+checks the expected operation-scoped staging, backup, and transaction paths
+and their physical plain, non-empty evidence, then loads the journal through
+`UpdateJournal.load(..., validate_storage=False)`. That flag only selects the
+cross-platform layout mode needed by the primary updater; it does not bypass
+schema, phase, journal-name/transaction-directory/operation identity,
+absolute-path, operation-contained artifact, backup-containment, or
+storage-chain validation.
+
+The updater additionally reconciles the journal operation, current and target
+versions, offered version, state/database/backup/helper paths, handoff
+identity, and phase against persisted state. Any malformed, incomplete,
+oversized/deep, wrong-operation, wrong-phase, or inconsistent journal returns
+false from the active-evidence predicate. Internal state validation then sets
+the in-memory/public phase to the fixed `RECOVERY_EVIDENCE_INCOMPLETE_ERROR`,
+disables state/metadata writes and subsequent recovery/network mutation, and
+does not save over the original state. The journal and surviving staging or
+transaction evidence remain available for the frozen Windows Core recovery
+guard, which stays blocked. No content or path is placed in public diagnostics.
+
+This narrows journal authority confusion without claiming handle-based
+no-follow atomicity across concurrent same-user filesystem mutation and the
+final Windows syscall. It does not create exact-artifact, signing,
+SmartScreen, Defender, Microsoft, release, or downloaded-candidate acceptance.
+
+## ADR-190: Globally bounded updater cleanup planning
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the corrected commit and the PR remains open.
+
+Updater cleanup traverses private staging, transaction, export, and temporary
+trees iteratively with a global budget of 32 removable entries and 32
+directory levels per cleanup tree. It builds a post-order plan and preflights
+the complete plan before mutation. A budget, parser/pathology, or identity
+failure therefore returns a controlled failure without budget-driven partial
+deletion; existing residual evidence is preserved. Final parent/object checks
+remain in each unlink/rmdir operation, with the documented residual that the
+cross-platform implementation does not claim handle-based no-follow
+atomicity across the final Windows filesystem syscall.
+
+This decision does not create signing, SmartScreen, Defender, Microsoft
+reassessment, publication, release, downloaded-candidate, or live-user
+acceptance.
+
+## ADR-189: Recovery cleanup retry authority and bounded operator keyring reads
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the corrected commit and the PR remains open.
+
+Recovery outcome is not terminal until its owned staging cleanup succeeds. If
+cleanup is refused or becomes ambiguous, the updater keeps the transaction
+pointer, active recovery phase, handoff identity, and evidence intact,
+persists a fixed retryable error, and re-enters recovery on the next attempt.
+It never converts that path to pointerless `installed` or `rolled_back` state.
+
+Every updater unlink now rechecks the plain parent and exact entry identity
+immediately before the unlink, including staging/transaction pruning,
+temporary download/export/install files, and SQLite backup cleanup. Tree
+cleanup is iterative and plans at most 32 removable entries across 32 directory
+levels globally per tree; the complete plan is preflighted before mutation, so
+budget, parser/pathology, or deterministic identity failure leaves the tree
+untouched. A parent or entry replacement returns a controlled failure and
+leaves residual evidence. This narrows deterministic redirection windows
+without claiming handle-based no-follow atomicity across the final Windows
+filesystem syscall.
+
+The release-keyring operator utility uses the shared 16 KiB limit-plus-one
+binary read for raw equality, rollback, and post-write verification as well as
+the parsed loader. Its reviewed public-key input is bounded at 64 KiB and each
+tracked audit file at 512 KiB using the same limit-plus-one pattern. Exact-limit
+multibyte input, oversized input, malformed JSON, and parser-depth failures
+remain contained by stable `ManifestError` outcomes; no keyring or operator
+audit path consumes an unbounded `read_bytes()` result or reports a path.
+
+This follow-up updates ADR-188's local evidence and does not create signing,
+SmartScreen, Defender, Microsoft reassessment, publication, release,
+downloaded-candidate, or live-user acceptance.
+
+## ADR-188: Updater recovery authority, keyring, cleanup, and public-error containment
+
+**Status:** accepted locally on 2026-09-02 as remediation of the primary
+updater authority boundary; hosted CI and exact-artifact/vendor acceptance
+remain required.
+
+Active `installing` and `restart_required` state is recovery authority, not
+ordinary cache metadata. The primary updater therefore requires the complete
+operation, staged artifact, backup, transaction pointer, manifest identity, and
+signed release-note/version binding needed for the current recovery phase,
+including physically present plain files at the exact operation paths, before
+pruning or saving. A parseable but incomplete or physically incomplete active
+object is retained byte-for-byte, transitions only the in-memory/public view to
+a fixed manual-recovery error, disables state/network mutation, and preserves
+all surviving staging and transaction evidence for `ensure_recovery_before_core`.
+
+The bundled keyring is untrusted input at its load boundary. It is a bounded
+16 KiB binary read with one overflow sentinel, plain-file/parent-chain and
+single-link checks, descriptor/path identity rechecks, UTF-8 and stdlib JSON
+`ValueError`/`RecursionError` containment, non-object rejection, and the
+existing complete schema validator. Callers receive only the established
+`ManifestError`/`HelperError`/`UpdateError` classes and fixed messages.
+
+Updater cleanup uses bounded, iterative, identity-rechecked removal of owned
+plain entries. It never follows symlinks, junctions, or Windows reparse
+points, never uses `shutil.rmtree` for staging/transaction cleanup, and
+refuses ambiguous hardlinks, non-regular entries, replaced roots, unsafe
+parent chains, trees deeper than 32 levels, or trees exceeding 32 removable
+entries globally. Cleanup plans are preflighted before mutation, so budget or
+pathology failures do not partially delete a tree; atomic writes and temporary
+download/export/install cleanup revalidate their parent and object identity
+and retain a residual when safe ownership cannot be proven. This is
+deterministic redirection/race refusal, not a claim of handle-based no-follow
+atomicity across the final Windows filesystem syscall.
+
+All updater public error projections are fixed or narrowly classified. Raw
+manifest values, keyring paths, URLs with credentials, credential material,
+and exception text are not written to public `last_error`, installer detail,
+or rollback status. Loopback health contains expected parser-depth failures
+while preserving process-control and unexpected programming failures.
+
+The decision is supported by focused source tests and a disposable
+source-built Windows packaged smoke. It does not create signing, SmartScreen,
+Defender, Microsoft reassessment, publication, release, downloaded-candidate,
+or live-user acceptance.
+
+## ADR-187: Primary updater metadata is bounded, contained, and revalidated
+
+**Status:** accepted locally on 2026-09-02 from the exact `origin/main` merge
+base `466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb`; hosted, exact-artifact, and
+vendor acceptance remain required.
+
+The primary `UpdateManager` treats preferences, persisted state, and staged
+release manifests as untrusted authority-bearing metadata. They share one
+cross-platform boundary with explicit 16 KiB preference, 64 KiB state, and
+128 KiB manifest limits. A read performs one binary limit-plus-one sentinel
+read, checks the plain-file descriptor and path identity before and after the
+read, and never follows with an unbounded read. UTF-8 failures, malformed JSON,
+integer digit-limit `ValueError`, and parser-depth `RecursionError` become
+stable updater errors; non-dict roots are rejected. Process-control exceptions,
+memory exhaustion, and unexpected programming errors are not swallowed.
+
+The persisted target and every existing parent must be a single-link regular
+file or plain directory with no symlink, junction, or reparse redirection.
+Atomic metadata replacement validates the target and parent again immediately
+before replacement and retains the previous target on failure. Corrupt
+preferences fall back without an unrelated rewrite. Unsafe state returns a
+controlled error, blocks later state-changing/network operations, and preserves
+the last-good state plus any recovery-tree evidence needed by the frozen
+`ensure_recovery_before_core` guard.
+
+`_revalidate_persisted_manifest()` is the only primary consumer of staged
+manifest authority. Before download URL/size use, artifact export, installer
+preflight, database backup, or handoff, it re-reads and hashes the bounded
+manifest, verifies the bundled keyring signature, requested channel, platform,
+architecture, release version, bounded artifact size, and the persisted
+offered/mandatory/release-note state binding. A changed, substituted,
+non-regular, oversized, or invalid manifest fails closed before transport or
+installer use. Check responses map
+bounded network-parser failures to content-free public errors.
+
+This closes the primary updater lifecycle boundary but does not claim
+handle-based no-follow atomicity across a concurrent same-user filesystem race,
+a separate JSON depth/CPU budget, signing, SmartScreen, Defender, Microsoft
+submission, publication, release readiness, or downloaded-candidate execution.
+The focused updater/recovery/desktop tests and full local suite are source-level
+evidence only.
+
 ## ADR-184: Frozen Windows startup must contain unsafe update state
 
 **Status:** accepted locally on 2026-09-01 as the first broad Windows GA
