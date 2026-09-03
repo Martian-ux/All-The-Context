@@ -178,7 +178,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.11.32"
@@ -193,7 +193,16 @@ jobs:
           python scripts/release_candidate.py validate-runner
           --platform "${{ matrix.platform }}"
           --architecture "${{ matrix.architecture }}"
-      - run: python scripts/build_desktop.py
+      - name: Build and verify reproducible Windows native components
+        if: matrix.platform == 'windows'
+        run: >-
+          python scripts/verify_reproducible_build.py
+          --version "${{ inputs.version }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --output-dir dist/native-build-provenance
+      - name: Build native Linux desktop artifact
+        if: matrix.platform == 'linux'
+        run: python scripts/build_desktop.py
       - run: python scripts/smoke_desktop_artifact.py
       - run: python scripts/smoke_packaged_recovery.py
       - run: python scripts/smoke_packaged_first_run.py
@@ -291,6 +300,14 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
           retention-days: 7
+      - name: Preserve Windows reproducibility evidence separately from release assets
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: native-build-provenance-${{ matrix.platform }}-${{ matrix.architecture }}
+          path: dist/native-build-provenance/**
+          if-no-files-found: error
+          retention-days: 14
   draft:
     needs: [validate, native]
     runs-on: ubuntu-latest

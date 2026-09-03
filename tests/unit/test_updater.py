@@ -8,12 +8,18 @@ import threading
 import urllib.error
 import zipfile
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
 import allthecontext.updater as updater_module
 import allthecontext.windows_update_helper as update_helper_module
 import pytest
+from allthecontext.installed_component_manifest import (
+    CHECKSUM_FILE_NAME,
+    MANIFEST_FILE_NAME,
+    canonical_json,
+)
 from allthecontext.release_manifest import (
     canonical_payload,
     create_manifest,
@@ -28,6 +34,9 @@ from allthecontext.updater import (
     HttpsTransport,
     InstallPlan,
     PlatformInstaller,
+    UpdateAutomation,
+    UpdateAutomationConfig,
+    UpdateAutomationPolicy,
     UpdateBusyError,
     UpdateConfig,
     UpdateEndpointHttpError,
@@ -46,6 +55,62 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SEED = bytes(range(32))
 _RECOVERY_AUTHORITY_VALUES: dict[str, str] = {}
+
+
+def _windows_component_manifest(setup: bytes, *, version: str = "0.2.0") -> tuple[bytes, bytes]:
+    digest = hashlib.sha256(setup).hexdigest()
+    payload = {
+        "architecture": "x86_64",
+        "component_count": 4,
+        "components": [
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContext.exe",
+                "role": "main",
+                "sha256": digest,
+                "size": len(setup),
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextMCP.exe",
+                "role": "mcp",
+                "sha256": digest,
+                "size": len(setup),
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextRecovery.exe",
+                "role": "recovery",
+                "sha256": digest,
+                "size": len(setup),
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextUpdater.exe",
+                "role": "updater",
+                "sha256": digest,
+                "size": len(setup),
+            },
+        ],
+        "manifest_type": "installed-component",
+        "package": {
+            "direct_package": {
+                "filename": "all-the-context-windows-x86_64-unsigned.exe",
+                "sha256": digest,
+                "size": len(setup),
+            },
+            "filename": "AllTheContextSetup.exe",
+            "sha256": digest,
+            "size": len(setup),
+        },
+        "platform": "windows",
+        "schema_version": 1,
+        "source_commit": "0" * 40,
+        "version": version,
+    }
+    raw = canonical_json(payload)
+    checksum = f"{hashlib.sha256(raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    return raw, checksum
 
 
 class _RecoveryAuthorityStore:
@@ -2676,6 +2741,30 @@ def test_windows_archive_rejects_unsafe_member_paths(tmp_path: Path, member_name
         PlatformInstaller._extract_windows_setup(archive, tmp_path / "extracted")
 
 
+@pytest.mark.parametrize(
+    "member_names",
+    [
+        ("AllTheContextSetup.exe", MANIFEST_FILE_NAME),
+        (
+            "AllTheContextSetup.exe",
+            MANIFEST_FILE_NAME,
+            CHECKSUM_FILE_NAME,
+            "unexpected.exe",
+        ),
+    ],
+)
+def test_windows_archive_requires_exact_component_package(
+    tmp_path: Path, member_names: tuple[str, ...]
+) -> None:
+    archive = tmp_path / "artifact.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name in member_names:
+            bundle.writestr(name, b"untrusted package member")
+
+    with pytest.raises(UpdateError, match="four-component manifest"):
+        PlatformInstaller._extract_windows_package(archive, tmp_path / "extracted")
+
+
 def test_windows_adapter_requires_the_packaged_recovery_helper(tmp_path: Path) -> None:
     application = tmp_path / "AllTheContext.exe"
     helper = tmp_path / "AllTheContextUpdater.exe"
@@ -2695,9 +2784,11 @@ def test_windows_adapter_enables_automatic_install_with_independent_helper(
     tmp_path: Path,
 ) -> None:
     application = tmp_path / "AllTheContext.exe"
+    mcp = tmp_path / "AllTheContextMCP.exe"
     helper = tmp_path / "AllTheContextUpdater.exe"
     recovery = tmp_path / "AllTheContextRecovery.exe"
     application.write_bytes(b"application")
+    mcp.write_bytes(b"mcp")
     helper.write_bytes(b"helper")
     recovery.write_bytes(b"recovery")
     installer = PlatformInstaller(
@@ -2705,6 +2796,7 @@ def test_windows_adapter_enables_automatic_install_with_independent_helper(
         frozen=True,
         application_path=application,
         helper_path=helper,
+        mcp_path=mcp,
         recovery_path=recovery,
     )
     assert installer.supported is True
@@ -2744,8 +2836,12 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     operation_dir = updates / "staging" / operation_id
     operation_dir.mkdir(parents=True)
     artifact = operation_dir / "artifact.zip"
+    setup = b"new application"
+    component_manifest, component_checksum = _windows_component_manifest(setup)
     with zipfile.ZipFile(artifact, "w") as bundle:
-        bundle.writestr("AllTheContextSetup.exe", b"new application")
+        bundle.writestr("AllTheContextSetup.exe", setup)
+        bundle.writestr(MANIFEST_FILE_NAME, component_manifest)
+        bundle.writestr(CHECKSUM_FILE_NAME, component_checksum)
     transaction_dir = updates / "transactions" / operation_id
     state_path = updates / "state.json"
     journal_path = transaction_dir / "journal.json"
@@ -2994,3 +3090,213 @@ def test_defer_is_persisted_and_mandatory_update_cannot_be_deferred(tmp_path: Pa
     manager.check()
     with pytest.raises(UpdateError, match="cannot be deferred"):
         manager.defer()
+
+
+def test_update_automation_policy_defaults_to_check_only_without_restart_authority() -> None:
+    policy = UpdateAutomationPolicy()
+
+    assert policy.checks_enabled is True
+    assert policy.automatic_install_enabled is False
+    assert policy.automatic_restart_enabled is False
+
+
+def test_disabled_update_automation_does_not_start_a_worker_or_check(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    automation = UpdateAutomation(
+        manager,
+        policy=UpdateAutomationPolicy(checks_enabled=False),
+    )
+
+    automation.start()
+    status = automation.run_once()
+
+    assert status["phase"] == "idle"
+    assert transport.metadata_calls == 0
+    assert automation.status()["automation_running"] is False
+
+
+def test_update_automation_rejects_unbounded_cadence_and_retry_configuration() -> None:
+    with pytest.raises(ValueError, match="interval must be positive"):
+        UpdateAutomationConfig(check_interval=timedelta(0))
+    with pytest.raises(ValueError, match="maximum must not exceed"):
+        UpdateAutomationConfig(
+            check_interval=timedelta(seconds=1),
+            retry_initial_delay=timedelta(seconds=1),
+            retry_max_delay=timedelta(seconds=2),
+        )
+    with pytest.raises(ValueError, match="attempts must be positive"):
+        UpdateAutomationConfig(retry_attempts=0)
+    with pytest.raises(ValueError, match="attempts must not exceed"):
+        UpdateAutomationConfig(retry_attempts=33)
+    with pytest.raises(ValueError, match="join timeout must be positive"):
+        UpdateAutomationConfig(join_timeout_seconds=float("nan"))
+    with pytest.raises(ValueError, match="join timeout must be positive"):
+        UpdateAutomationConfig(join_timeout_seconds=121)
+
+
+def test_update_automation_runs_periodically_in_process_without_host_registration(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    automation = UpdateAutomation(
+        manager,
+        config=UpdateAutomationConfig(
+            check_interval=timedelta(milliseconds=20),
+            retry_initial_delay=timedelta(milliseconds=1),
+            retry_max_delay=timedelta(milliseconds=5),
+            join_timeout_seconds=1,
+        ),
+    )
+    reached_second_check = threading.Event()
+    original_check = manager.scheduled_check
+    calls = 0
+
+    def scheduled_check(*, interval: timedelta) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        result = original_check(interval=interval)
+        if calls >= 2:
+            reached_second_check.set()
+            automation.stop()
+        return result
+
+    manager.scheduled_check = scheduled_check  # type: ignore[method-assign]
+    automation.start()
+    assert reached_second_check.wait(timeout=2)
+    automation.shutdown()
+
+    assert calls >= 2
+    assert transport.metadata_calls >= 2
+    assert automation.status()["automation_running"] is False
+    assert not (tmp_path / "service").exists()
+
+
+def test_update_automation_does_not_expose_an_unstarted_thread_to_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    automation = UpdateAutomation(manager)
+    monkeypatch.setattr(automation, "_checks_allowed", lambda: True)
+    monkeypatch.setattr(
+        automation,
+        "run_once",
+        lambda: automation._stop.set() or manager.public_status(),
+    )
+    original_thread = threading.Thread
+    lifecycle_lock_was_available: list[bool] = []
+
+    class ObservingThread(original_thread):
+        def start(self) -> None:
+            acquired = automation._lifecycle_lock.acquire(blocking=False)
+            if acquired:
+                automation._lifecycle_lock.release()
+            lifecycle_lock_was_available.append(acquired)
+            super().start()
+
+    monkeypatch.setattr(updater_module.threading, "Thread", ObservingThread)
+    automation.start()
+    automation.shutdown()
+
+    assert lifecycle_lock_was_available == [False]
+    assert automation.status()["automation_running"] is False
+
+
+def test_update_automation_is_single_flight_against_a_concurrent_cycle(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    automation = UpdateAutomation(manager)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def scheduled_check(*, interval: timedelta) -> dict[str, Any]:
+        nonlocal calls
+        assert interval == automation.config.check_interval
+        calls += 1
+        entered.set()
+        assert release.wait(timeout=2)
+        return manager.public_status()
+
+    manager.scheduled_check = scheduled_check  # type: ignore[method-assign]
+    worker = threading.Thread(target=automation.run_once)
+    worker.start()
+    assert entered.wait(timeout=2)
+
+    concurrent = automation.run_once()
+    release.set()
+    worker.join(timeout=2)
+
+    assert concurrent["phase"] == "idle"
+    assert calls == 1
+    assert not worker.is_alive()
+
+
+def test_update_automation_offline_retry_is_bounded_and_non_destructive(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    transport.metadata_error = UpdateError(
+        "Update endpoint could not be reached within the time limit"
+    )
+    automation = UpdateAutomation(
+        manager,
+        config=UpdateAutomationConfig(
+            check_interval=timedelta(seconds=10),
+            retry_initial_delay=timedelta(seconds=1),
+            retry_max_delay=timedelta(seconds=3),
+            retry_attempts=2,
+        ),
+    )
+
+    first = automation.run_once()
+    assert first["phase"] == "error"
+    assert transport.metadata_calls == 1
+    assert transport.stream_calls == 0
+    assert installer.handed_off is False
+    assert not list((tmp_path / "updates" / "staging").rglob("artifact.zip"))
+    assert automation.next_delay_seconds == 1
+
+    automation.run_once()
+    assert automation.next_delay_seconds == 2
+    automation.run_once()
+    assert automation.next_delay_seconds == 10
+    assert transport.metadata_calls == 3
+
+
+def test_update_automation_preserves_staged_install_and_surfaces_restart_deferral(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    assert manager.download()["phase"] == "ready"
+    staged = Path(manager.state.downloaded_path or "")
+    metadata_calls = transport.metadata_calls
+    stream_calls = transport.stream_calls
+    transport.metadata_error = UpdateError("proxy unavailable")
+    automation = UpdateAutomation(manager)
+
+    status = automation.run_once()
+
+    assert status["phase"] == "ready"
+    assert transport.metadata_calls == metadata_calls
+    assert transport.stream_calls == stream_calls
+    assert staged.is_file()
+    assert installer.handed_off is False
+
+    manager.state.phase = UpdatePhase.RESTART_REQUIRED
+    deferred = automation.status()
+    assert deferred["restart_required"] is True
+    assert deferred["restart_deferred"] is True
+    assert deferred["automatic_install_enabled"] is False
+    assert deferred["automatic_restart_enabled"] is False
+    assert automation.run_once()["phase"] == "restart_required"
+    assert transport.metadata_calls == metadata_calls

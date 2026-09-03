@@ -151,7 +151,14 @@ from ..storage import (
     StorageError,
     durable_sqlite_footprint,
 )
-from ..updater import Channel, UpdateConfig, UpdateError, UpdateManager, UpdatePhase
+from ..updater import (
+    Channel,
+    UpdateAutomation,
+    UpdateConfig,
+    UpdateError,
+    UpdateManager,
+    UpdatePhase,
+)
 from .service import CoreService
 
 DashboardPage = Literal[
@@ -385,6 +392,7 @@ def create_app(
         ),
         database_path=active_config.database_path,
     )
+    update_automation = UpdateAutomation(updates)
     operation_observer_executor: ThreadPoolExecutor | None = None
     operation_observer_executor_lock = threading.Lock()
 
@@ -410,7 +418,7 @@ def create_app(
                     updates.preferences.enabled
                     and updates.preferences.channel in updates.config.manifest_urls
                 ):
-                    threading.Thread(target=updates.scheduled_check, daemon=True).start()
+                    update_automation.start()
                 if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
                     recovery = threading.Timer(1.0, updates.recover_after_restart)
                     recovery.daemon = True
@@ -421,20 +429,23 @@ def create_app(
             yield
         finally:
             try:
-                await run_in_threadpool(core.capture_scheduler.shutdown)
+                await run_in_threadpool(update_automation.shutdown)
             finally:
                 try:
-                    await asyncio.get_running_loop().run_in_executor(
-                        observer_executor,
-                        core.store.close_import_operation_observer,
-                    )
+                    await run_in_threadpool(core.capture_scheduler.shutdown)
                 finally:
                     try:
-                        observer_executor.shutdown(wait=True, cancel_futures=True)
+                        await asyncio.get_running_loop().run_in_executor(
+                            observer_executor,
+                            core.store.close_import_operation_observer,
+                        )
                     finally:
-                        with operation_observer_executor_lock:
-                            if operation_observer_executor is observer_executor:
-                                operation_observer_executor = None
+                        try:
+                            observer_executor.shutdown(wait=True, cancel_futures=True)
+                        finally:
+                            with operation_observer_executor_lock:
+                                if operation_observer_executor is observer_executor:
+                                    operation_observer_executor = None
 
     app = FastAPI(
         title="All The Context Core",
@@ -452,6 +463,7 @@ def create_app(
     app.state.legacy_edge_connections = legacy_edge_connections
     app.state.legacy_edge_sync = legacy_edge_sync
     app.state.updates = updates
+    app.state.update_automation = update_automation
     instance_secret = ensure_instance_secret(active_config)
     browser_tickets = BrowserSessionTickets()
     browser_sessions = BrowserSessions()
@@ -2236,7 +2248,12 @@ def create_app(
         request: UpdatePreferencesRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
-        return updates.configure(enabled=request.enabled, channel=request.channel)
+        status = updates.configure(enabled=request.enabled, channel=request.channel)
+        if request.enabled and status["configured"]:
+            update_automation.start()
+        else:
+            update_automation.stop()
+        return status
 
     def update_action(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         try:

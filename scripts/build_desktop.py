@@ -29,12 +29,12 @@ def executable_name(name: str, system: str) -> str:
     return f"{name}.exe" if system == "Windows" else name
 
 
-def common_arguments() -> list[str]:
+def common_arguments(*, source_root: Path = SOURCE_ROOT) -> list[str]:
     return [
         "--noconfirm",
         "--clean",
         "--paths",
-        str(SOURCE_ROOT),
+        str(source_root),
         "--collect-data",
         "allthecontext",
         "--collect-submodules",
@@ -48,62 +48,77 @@ def common_arguments() -> list[str]:
     ]
 
 
-def helper_arguments(system: str) -> list[str]:
+def helper_arguments(
+    system: str,
+    *,
+    source_root: Path = SOURCE_ROOT,
+    build_root: Path = BUILD_ROOT,
+) -> list[str]:
     name = "AllTheContextMCP" if system == "Windows" else "all-the-context-mcp"
     return [
-        *common_arguments(),
+        *common_arguments(source_root=source_root),
         "--onefile",
         "--console",
         "--name",
         name,
         "--distpath",
-        str(BUILD_ROOT / "helper-dist"),
+        str(build_root / "helper-dist"),
         "--workpath",
-        str(BUILD_ROOT / "helper-work"),
+        str(build_root / "helper-work"),
         "--specpath",
-        str(BUILD_ROOT / "spec"),
+        str(build_root / "spec"),
         str(ROOT / "scripts" / "mcp_entry.py"),
     ]
 
 
-def recovery_helper_arguments(system: str) -> list[str]:
+def recovery_helper_arguments(
+    system: str,
+    *,
+    source_root: Path = SOURCE_ROOT,
+    build_root: Path = BUILD_ROOT,
+) -> list[str]:
     """Console recovery/admin helper for windowed Windows/macOS desktop builds."""
 
     name = "AllTheContextRecovery" if system == "Windows" else "all-the-context-recovery"
     return [
-        *common_arguments(),
+        *common_arguments(source_root=source_root),
         "--onefile",
         "--console",
         "--name",
         name,
         "--distpath",
-        str(BUILD_ROOT / "recovery-helper-dist"),
+        str(build_root / "recovery-helper-dist"),
         "--workpath",
-        str(BUILD_ROOT / "recovery-helper-work"),
+        str(build_root / "recovery-helper-work"),
         "--specpath",
-        str(BUILD_ROOT / "spec"),
+        str(build_root / "spec"),
         str(ROOT / "scripts" / "recovery_entry.py"),
     ]
 
 
-def update_helper_arguments(system: str) -> list[str]:
+def update_helper_arguments(
+    system: str,
+    *,
+    source_root: Path = SOURCE_ROOT,
+    build_root: Path = BUILD_ROOT,
+) -> list[str]:
     name = "AllTheContextUpdater" if system == "Windows" else "all-the-context-updater"
     subsystem = ["--windowed"] if system == "Windows" else ["--console"]
     return [
         "--noconfirm",
         "--clean",
         "--paths",
-        str(SOURCE_ROOT),
+        str(source_root),
         "--onefile",
         *subsystem,
         "--name",
         name,
         "--distpath",
-        str(BUILD_ROOT / "update-helper-dist"),
+        str(build_root / "update-helper-dist"),
         "--workpath",
-        str(BUILD_ROOT / "update-helper-work"),
+        str(build_root / "update-helper-work"),
         "--specpath",
-        str(BUILD_ROOT / "spec"),
+        str(build_root / "spec"),
         str(ROOT / "scripts" / "update_helper_entry.py"),
     ]
 
@@ -113,6 +128,10 @@ def desktop_arguments(
     helper: Path | None,
     update_helper: Path | None = None,
     recovery_helper: Path | None = None,
+    *,
+    source_root: Path = SOURCE_ROOT,
+    build_root: Path = BUILD_ROOT,
+    dist_root: Path = DIST_ROOT,
 ) -> list[str]:
     name = {
         "Windows": "AllTheContextSetup",
@@ -129,7 +148,7 @@ def desktop_arguments(
         ["--add-binary", f"{recovery_helper}{os.pathsep}."] if recovery_helper else []
     )
     return [
-        *common_arguments(),
+        *common_arguments(source_root=source_root),
         bundle_mode,
         *subsystem,
         *bundle_identity,
@@ -139,11 +158,11 @@ def desktop_arguments(
         *update_arguments,
         *recovery_arguments,
         "--distpath",
-        str(DIST_ROOT),
+        str(dist_root),
         "--workpath",
-        str(BUILD_ROOT / "app-work"),
+        str(build_root / "app-work"),
         "--specpath",
-        str(BUILD_ROOT / "spec"),
+        str(build_root / "spec"),
         str(ROOT / "scripts" / "desktop_entry.py"),
     ]
 
@@ -215,7 +234,28 @@ def reseal_macos_bundle(bundle: Path) -> None:
         raise RuntimeError(f"macOS bundle structural seal is invalid. {detail}".strip())
 
 
-def build(*, system: str | None = None) -> Path:
+def component_paths(
+    *,
+    build_root: Path = BUILD_ROOT,
+    dist_root: Path = DIST_ROOT,
+) -> dict[str, Path]:
+    """Return the four native Windows component outputs in canonical roles."""
+
+    return {
+        "main": dist_root / "AllTheContextSetup.exe",
+        "mcp": build_root / "helper-dist" / "AllTheContextMCP.exe",
+        "recovery": dist_root / "AllTheContextRecovery.exe",
+        "updater": build_root / "update-helper-dist" / "AllTheContextUpdater.exe",
+    }
+
+
+def build(
+    *,
+    system: str | None = None,
+    source_root: Path = SOURCE_ROOT,
+    build_root: Path = BUILD_ROOT,
+    dist_root: Path = DIST_ROOT,
+) -> Path:
     try:
         import PyInstaller.__main__
     except ImportError as exc:
@@ -224,40 +264,57 @@ def build(*, system: str | None = None) -> Path:
         ) from exc
 
     active_system = system or platform.system()
-    (BUILD_ROOT / "spec").mkdir(parents=True, exist_ok=True)
-    DIST_ROOT.mkdir(parents=True, exist_ok=True)
+    source_root = source_root.resolve(strict=True)
+    build_root = build_root.expanduser().resolve()
+    dist_root = dist_root.expanduser().resolve()
+    (build_root / "spec").mkdir(parents=True, exist_ok=True)
+    dist_root.mkdir(parents=True, exist_ok=True)
     helper: Path | None = None
     update_helper: Path | None = None
     recovery_helper: Path | None = None
     if active_system in {"Windows", "Darwin"}:
         helper_stem = "AllTheContextMCP" if active_system == "Windows" else "all-the-context-mcp"
-        helper = BUILD_ROOT / "helper-dist" / executable_name(helper_stem, active_system)
-        PyInstaller.__main__.run(helper_arguments(active_system))
+        helper = build_root / "helper-dist" / executable_name(helper_stem, active_system)
+        PyInstaller.__main__.run(
+            helper_arguments(active_system, source_root=source_root, build_root=build_root)
+        )
         if not helper.is_file():
             raise RuntimeError(f"MCP helper was not produced at {helper}")
         recovery_stem = (
             "AllTheContextRecovery" if active_system == "Windows" else "all-the-context-recovery"
         )
         recovery_helper = (
-            BUILD_ROOT / "recovery-helper-dist" / executable_name(recovery_stem, active_system)
+            build_root / "recovery-helper-dist" / executable_name(recovery_stem, active_system)
         )
-        PyInstaller.__main__.run(recovery_helper_arguments(active_system))
+        PyInstaller.__main__.run(
+            recovery_helper_arguments(active_system, source_root=source_root, build_root=build_root)
+        )
         if not recovery_helper.is_file():
             raise RuntimeError(f"Recovery helper was not produced at {recovery_helper}")
     if active_system == "Windows":
-        update_helper = BUILD_ROOT / "update-helper-dist" / "AllTheContextUpdater.exe"
-        PyInstaller.__main__.run(update_helper_arguments(active_system))
+        update_helper = build_root / "update-helper-dist" / "AllTheContextUpdater.exe"
+        PyInstaller.__main__.run(
+            update_helper_arguments(active_system, source_root=source_root, build_root=build_root)
+        )
         if not update_helper.is_file():
             raise RuntimeError(f"Update helper was not produced at {update_helper}")
     PyInstaller.__main__.run(
-        desktop_arguments(active_system, helper, update_helper, recovery_helper)
+        desktop_arguments(
+            active_system,
+            helper,
+            update_helper,
+            recovery_helper,
+            source_root=source_root,
+            build_root=build_root,
+            dist_root=dist_root,
+        )
     )
 
     app_stem = {
         "Windows": "AllTheContextSetup",
         "Darwin": "AllTheContext.app",
     }.get(active_system, "all-the-context")
-    artifact = DIST_ROOT / executable_name(app_stem, active_system)
+    artifact = dist_root / executable_name(app_stem, active_system)
     if not artifact.exists():
         raise RuntimeError(f"Desktop artifact was not produced at {artifact}")
     if active_system == "Darwin":
@@ -271,15 +328,24 @@ def build(*, system: str | None = None) -> Path:
         # Stage the console helper next to the setup binary so package smokes and
         # operator layout checks can invoke built bytes without MEIPASS extraction.
         # Install still extracts the embedded helper from the setup onefile.
-        staged = DIST_ROOT / recovery_helper.name
+        staged = dist_root / recovery_helper.name
         shutil.copy2(recovery_helper, staged)
     return artifact
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
-    artifact = build()
+    parser.add_argument("--system", choices=("Windows", "Darwin", "Linux"))
+    parser.add_argument("--source-root", type=Path, default=SOURCE_ROOT)
+    parser.add_argument("--build-root", type=Path, default=BUILD_ROOT)
+    parser.add_argument("--dist-root", type=Path, default=DIST_ROOT)
+    arguments = parser.parse_args()
+    artifact = build(
+        system=arguments.system,
+        source_root=arguments.source_root,
+        build_root=arguments.build_root,
+        dist_root=arguments.dist_root,
+    )
     print(artifact)
     return 0
 

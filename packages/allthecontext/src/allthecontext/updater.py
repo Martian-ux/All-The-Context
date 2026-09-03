@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
@@ -35,6 +36,15 @@ from platformdirs import user_data_path
 
 from . import __version__
 from .desktop_runtime import RuntimeCommand
+from .installed_component_manifest import (
+    CHECKSUM_FILE_NAME,
+    MANIFEST_FILE_NAME,
+    InstalledComponentManifestError,
+    validate_manifest_bytes,
+)
+from .installed_component_manifest import (
+    MAX_MANIFEST_BYTES as MAX_INSTALLED_COMPONENT_MANIFEST_BYTES,
+)
 from .release_manifest import (
     ManifestError,
     ReleaseVersion,
@@ -93,8 +103,15 @@ CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 20.0
 MAX_REDIRECTS = 1
 CHECK_INTERVAL = timedelta(hours=24)
+UPDATE_RETRY_INITIAL_DELAY = timedelta(minutes=5)
+UPDATE_RETRY_MAX_DELAY = timedelta(hours=1)
+UPDATE_RETRY_ATTEMPTS = 3
+MAX_UPDATE_AUTOMATION_RETRY_ATTEMPTS = 32
+UPDATE_AUTOMATION_JOIN_TIMEOUT_SECONDS = 30.0
+MAX_UPDATE_AUTOMATION_JOIN_TIMEOUT_SECONDS = 120.0
 MAX_CLEANUP_ENTRIES = 32
 MAX_CLEANUP_DEPTH = 32
+MAX_COMPONENT_CHECKSUM_BYTES = 256
 RECOVERY_EVIDENCE_INCOMPLETE_ERROR = (
     "Persisted update recovery evidence was incomplete; manual recovery is required"
 )
@@ -164,6 +181,58 @@ class UpdateBusyError(UpdateError):
     """Another check, download, or install owns the transaction."""
 
 
+@dataclass(frozen=True, slots=True)
+class UpdateAutomationPolicy:
+    """Product policy for the in-process unattended update foundation.
+
+    Availability checks are deliberately separate from installation and
+    restart policy.  The latter two remain disabled until a later product
+    decision explicitly enables them; this class does not create an OS task,
+    service, or reboot action.
+    """
+
+    checks_enabled: bool = True
+    automatic_install_enabled: bool = False
+    automatic_restart_enabled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateAutomationConfig:
+    """Bounded cadence and retry policy for per-user update checks."""
+
+    check_interval: timedelta = CHECK_INTERVAL
+    retry_initial_delay: timedelta = UPDATE_RETRY_INITIAL_DELAY
+    retry_max_delay: timedelta = UPDATE_RETRY_MAX_DELAY
+    retry_attempts: int = UPDATE_RETRY_ATTEMPTS
+    join_timeout_seconds: float = UPDATE_AUTOMATION_JOIN_TIMEOUT_SECONDS
+
+    def __post_init__(self) -> None:
+        if self.check_interval <= timedelta(0):
+            raise ValueError("update check interval must be positive")
+        if self.retry_initial_delay <= timedelta(0):
+            raise ValueError("update retry delay must be positive")
+        if self.retry_max_delay < self.retry_initial_delay:
+            raise ValueError("update retry maximum must not be below its initial delay")
+        if self.retry_max_delay > self.check_interval:
+            raise ValueError("update retry maximum must not exceed the check interval")
+        if (
+            isinstance(self.retry_attempts, bool)
+            or not isinstance(self.retry_attempts, int)
+            or self.retry_attempts < 1
+        ):
+            raise ValueError("update retry attempts must be positive")
+        if self.retry_attempts > MAX_UPDATE_AUTOMATION_RETRY_ATTEMPTS:
+            raise ValueError("update retry attempts must not exceed the safety bound")
+        if (
+            isinstance(self.join_timeout_seconds, bool)
+            or not isinstance(self.join_timeout_seconds, (int, float))
+            or not math.isfinite(self.join_timeout_seconds)
+            or self.join_timeout_seconds <= 0
+            or self.join_timeout_seconds > MAX_UPDATE_AUTOMATION_JOIN_TIMEOUT_SECONDS
+        ):
+            raise ValueError("update automation join timeout must be positive")
+
+
 _PUBLIC_ERROR_MESSAGES = frozenset(
     {
         "Automatic update checks do not support this operating system",
@@ -192,6 +261,8 @@ _PUBLIC_ERROR_MESSAGES = frozenset(
         "Installer process crashed",
         "Manual installation is required for this verified update",
         "The Windows release artifact is not a valid ZIP archive",
+        "The Windows release does not contain a valid four-component manifest",
+        "The Windows four-component manifest changed during handoff",
         "Release archive contains an unsafe path",
         "Release archive expands beyond the safety limit",
         "Release archive contains multiple Windows setup programs",
@@ -413,6 +484,13 @@ class PreparedArtifact:
     path: Path
     filename: str
     size: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ExtractedWindowsPackage:
+    setup: Path
+    component_manifest: Path
+    component_checksum: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -1243,6 +1321,7 @@ class PlatformInstaller:
             self.system == "Windows"
             and self.frozen
             and self.application_path.is_file()
+            and self.mcp_path.is_file()
             and self.helper_path is not None
             and self.helper_path.is_file()
             and self.stable_update_helper_path.is_file()
@@ -1258,6 +1337,11 @@ class PlatformInstaller:
                 return (
                     "The installed Windows recovery/admin helper is unavailable; reinstall the "
                     "current desktop package before applying updates"
+                )
+            if not self.mcp_path.is_file():
+                return (
+                    "The installed Windows MCP helper is unavailable; reinstall the current "
+                    "desktop package before applying updates"
                 )
             return (
                 "The installed Windows update helper is unavailable; reinstall the current "
@@ -1283,9 +1367,12 @@ class PlatformInstaller:
             raise UpdateError("The Windows release artifact is not a valid ZIP archive")
 
     @staticmethod
-    def _extract_windows_setup(archive: Path | BinaryIO, target: Path) -> Path:
+    def _extract_windows_package(
+        archive: Path | BinaryIO, target: Path
+    ) -> _ExtractedWindowsPackage:
         target.mkdir(parents=True, exist_ok=False)
         setup: Path | None = None
+        extracted_files: list[Path] = []
         with zipfile.ZipFile(archive) as bundle:
             entries = bundle.infolist()
             expanded = 0
@@ -1293,10 +1380,12 @@ class PlatformInstaller:
                 if "\\" in entry.filename or ":" in entry.filename:
                     raise UpdateError("Release archive contains an unsafe path")
                 name = PurePosixPath(entry.filename)
-                if name.is_absolute() or ".." in name.parts or entry.is_dir():
-                    if entry.is_dir():
-                        continue
+                if name.is_absolute() or ".." in name.parts:
                     raise UpdateError("Release archive contains an unsafe path")
+                if entry.is_dir():
+                    raise UpdateError(
+                        "The Windows release does not contain a valid four-component manifest"
+                    )
                 expanded += entry.file_size
                 if expanded > MAX_ARTIFACT_BYTES * 2:
                     raise UpdateError("Release archive expands beyond the safety limit")
@@ -1304,6 +1393,7 @@ class PlatformInstaller:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 with bundle.open(entry) as source, destination.open("xb") as output:
                     shutil.copyfileobj(source, output, length=1024 * 1024)
+                extracted_files.append(destination)
                 if destination.name.casefold() == "allthecontextsetup.exe":
                     if setup is not None:
                         raise UpdateError(
@@ -1312,7 +1402,30 @@ class PlatformInstaller:
                     setup = destination
         if setup is None:
             raise UpdateError("Release archive does not contain AllTheContextSetup.exe")
-        return setup
+        manifest = setup.with_name(MANIFEST_FILE_NAME)
+        checksum = setup.with_name(CHECKSUM_FILE_NAME)
+        expected_names = {
+            setup.name.casefold(),
+            MANIFEST_FILE_NAME.casefold(),
+            CHECKSUM_FILE_NAME.casefold(),
+        }
+        if (
+            len(extracted_files) != 3
+            or any(path.parent != setup.parent for path in extracted_files)
+            or {path.name.casefold() for path in extracted_files} != expected_names
+            or not manifest.is_file()
+            or not checksum.is_file()
+        ):
+            raise UpdateError(
+                "The Windows release does not contain a valid four-component manifest"
+            )
+        return _ExtractedWindowsPackage(setup, manifest, checksum)
+
+    @staticmethod
+    def _extract_windows_setup(archive: Path | BinaryIO, target: Path) -> Path:
+        """Compatibility wrapper returning only the setup executable."""
+
+        return PlatformInstaller._extract_windows_package(archive, target).setup
 
     @staticmethod
     def _hash_archive_stream(stream: BinaryIO) -> tuple[str, int]:
@@ -1325,6 +1438,21 @@ class PlatformInstaller:
                 raise UpdateError("Release artifact exceeded the safety limit at handoff")
             digest.update(chunk)
         return digest.hexdigest(), size
+
+    @staticmethod
+    def _read_bounded(path: Path, maximum_bytes: int) -> bytes:
+        try:
+            with path.open("rb") as stream:
+                raw = stream.read(maximum_bytes + 1)
+        except OSError as exc:
+            raise UpdateError(
+                "The Windows release does not contain a valid four-component manifest"
+            ) from exc
+        if len(raw) > maximum_bytes:
+            raise UpdateError(
+                "The Windows release does not contain a valid four-component manifest"
+            )
+        return raw
 
     @staticmethod
     def _copy_verified(source: Path, target: Path) -> tuple[str, int]:
@@ -1404,8 +1532,7 @@ class PlatformInstaller:
                     raise UpdateError(
                         "Release artifact checksum does not match signed metadata at handoff"
                     )
-                plan.transaction_dir.mkdir(parents=True, exist_ok=False)
-                setup = self._extract_windows_setup(
+                extracted = self._extract_windows_package(
                     archive_stream,
                     plan.operation_dir / "extracted",
                 )
@@ -1420,8 +1547,42 @@ class PlatformInstaller:
                     raise UpdateError("The verified release archive changed during extraction")
                 if final_digest != plan.artifact_sha256 or final_size != plan.artifact_size:
                     raise UpdateError("The verified release archive changed during extraction")
+            replacement_digest, replacement_size = sha256_file(extracted.setup)
+            try:
+                component_manifest_raw = self._read_bounded(
+                    extracted.component_manifest,
+                    MAX_INSTALLED_COMPONENT_MANIFEST_BYTES,
+                )
+                component_checksum_raw = self._read_bounded(
+                    extracted.component_checksum,
+                    MAX_COMPONENT_CHECKSUM_BYTES,
+                )
+                validate_manifest_bytes(
+                    component_manifest_raw,
+                    component_checksum_raw,
+                    expected_version=plan.target_version,
+                    expected_package_sha256=replacement_digest,
+                    expected_package_size=replacement_size,
+                )
+            except (InstalledComponentManifestError, OSError, RecursionError, TypeError) as exc:
+                raise UpdateError(
+                    "The Windows release does not contain a valid four-component manifest"
+                ) from exc
+            plan.transaction_dir.mkdir(parents=True, exist_ok=False)
+            setup = extracted.setup
+            manifest_digest = hashlib.sha256(component_manifest_raw).hexdigest()
+            manifest_size = len(component_manifest_raw)
             replacement = plan.transaction_dir / "replacement" / "AllTheContextSetup.exe"
             replacement_digest, replacement_size = self._copy_verified(setup, replacement)
+            component_manifest = plan.transaction_dir / MANIFEST_FILE_NAME
+            copied_manifest_digest, copied_manifest_size = self._copy_verified(
+                extracted.component_manifest,
+                component_manifest,
+            )
+            component_checksum = plan.transaction_dir / CHECKSUM_FILE_NAME
+            self._copy_verified(extracted.component_checksum, component_checksum)
+            if (copied_manifest_digest, copied_manifest_size) != (manifest_digest, manifest_size):
+                raise UpdateError("The Windows four-component manifest changed during handoff")
             rollback_application = plan.transaction_dir / "rollback" / "AllTheContext.exe"
             rollback_digest, rollback_size = self._copy_verified(
                 self.application_path, rollback_application
@@ -1429,19 +1590,17 @@ class PlatformInstaller:
             rollback_mcp: Path | None = None
             rollback_mcp_digest: str | None = None
             rollback_mcp_size: int | None = None
-            if self.mcp_path.is_file():
-                rollback_mcp = plan.transaction_dir / "rollback" / "AllTheContextMCP.exe"
-                rollback_mcp_digest, rollback_mcp_size = self._copy_verified(
-                    self.mcp_path, rollback_mcp
-                )
+            rollback_mcp = plan.transaction_dir / "rollback" / "AllTheContextMCP.exe"
+            rollback_mcp_digest, rollback_mcp_size = self._copy_verified(
+                self.mcp_path, rollback_mcp
+            )
             rollback_recovery: Path | None = None
             rollback_recovery_digest: str | None = None
             rollback_recovery_size: int | None = None
-            if self.recovery_path.is_file():
-                rollback_recovery = plan.transaction_dir / "rollback" / "AllTheContextRecovery.exe"
-                rollback_recovery_digest, rollback_recovery_size = self._copy_verified(
-                    self.recovery_path, rollback_recovery
-                )
+            rollback_recovery = plan.transaction_dir / "rollback" / "AllTheContextRecovery.exe"
+            rollback_recovery_digest, rollback_recovery_size = self._copy_verified(
+                self.recovery_path, rollback_recovery
+            )
             rollback_update_helper = plan.transaction_dir / "rollback" / "AllTheContextUpdater.exe"
             rollback_update_digest, rollback_update_size = self._copy_verified(
                 self.stable_update_helper_path, rollback_update_helper
@@ -1489,6 +1648,9 @@ class PlatformInstaller:
                 core_port=plan.core_port,
                 recovery_helper_sha256=recovery_helper_digest,
                 recovery_helper_size=recovery_helper_size,
+                component_manifest_path=str(component_manifest),
+                component_manifest_sha256=manifest_digest,
+                component_manifest_size=manifest_size,
                 created_at=now,
                 updated_at=now,
             )
@@ -1563,6 +1725,7 @@ class UpdateManager:
         installer: Installer | None = None,
         backup: DatabaseBackup | None = None,
         health_probe: HealthProbe | None = None,
+        automation_policy: UpdateAutomationPolicy | None = None,
     ) -> None:
         self.config = config
         self.database_path = database_path
@@ -1570,6 +1733,7 @@ class UpdateManager:
         self.installer = installer or PlatformInstaller()
         self.backup = backup or SQLiteBackup()
         self.health_probe = health_probe or LoopbackHealthProbe()
+        self.automation_policy = automation_policy or UpdateAutomationPolicy()
         self._operation_gate = threading.Lock()
         self._operation_lock = threading.RLock()
         self._cancel = threading.Event()
@@ -2913,6 +3077,16 @@ class UpdateManager:
                     ),
                     "configured": self.preferences.channel in self.config.manifest_urls,
                     "available_channels": sorted(self.config.manifest_urls),
+                    "automatic_install_enabled": self.automation_policy.automatic_install_enabled,
+                    "automatic_restart_enabled": self.automation_policy.automatic_restart_enabled,
+                    "restart_required": self.state.phase is UpdatePhase.RESTART_REQUIRED,
+                    "restart_deferred": (
+                        self.state.phase is UpdatePhase.RESTART_REQUIRED
+                        and not (
+                            self.automation_policy.automatic_install_enabled
+                            and self.automation_policy.automatic_restart_enabled
+                        )
+                    ),
                 }
             )
             # Private staging and backup paths are intentionally not exposed.
@@ -3012,11 +3186,25 @@ class UpdateManager:
         with self._operation_gate, self._operation_lock:
             return self.public_status()
 
-    def scheduled_check(self) -> dict[str, Any]:
+    def scheduled_check(self, *, interval: timedelta = CHECK_INTERVAL) -> dict[str, Any]:
+        if interval <= timedelta(0):
+            raise ValueError("scheduled update check interval must be positive")
         with self._operation_lock:
             last = _parse_time(self.state.last_checked_at)
-            if not self.preferences.enabled or (
-                last is not None and datetime.now(UTC) - last < CHECK_INTERVAL
+            if (
+                not self.preferences.enabled
+                or self.state.phase
+                in {
+                    UpdatePhase.READY,
+                    UpdatePhase.MANUAL_REQUIRED,
+                    UpdatePhase.INSTALLING,
+                    UpdatePhase.RESTART_REQUIRED,
+                }
+                or (
+                    self.state.last_error is None
+                    and last is not None
+                    and datetime.now(UTC) - last < interval
+                )
             ):
                 return self.public_status()
         return self.check(respect_defer=True)
@@ -3414,3 +3602,179 @@ class UpdateManager:
                 self.state.last_error = failure_message
                 self._save()
                 return self.public_status()
+
+
+class UpdateAutomation:
+    """Run bounded per-user availability checks for the Core lifetime.
+
+    This worker intentionally has no download, install, process-launch, OS
+    task, service, shutdown, or reboot capability.  A verified offer remains
+    an availability result until an operator explicitly uses the existing
+    download/install controls.  The worker is an in-process lifecycle object,
+    so development and tests never register host automation.
+    """
+
+    def __init__(
+        self,
+        manager: UpdateManager,
+        *,
+        config: UpdateAutomationConfig | None = None,
+        policy: UpdateAutomationPolicy | None = None,
+    ) -> None:
+        self.manager = manager
+        self.config = config or UpdateAutomationConfig()
+        self.policy: UpdateAutomationPolicy = cast(
+            UpdateAutomationPolicy,
+            policy
+            if policy is not None
+            else getattr(manager, "automation_policy", UpdateAutomationPolicy()),
+        )
+        self._lifecycle_lock = threading.Lock()
+        self._cycle_lock = threading.Lock()
+        self._retry_lock = threading.Lock()
+        self._stop = threading.Event()
+        self._wakeup = threading.Event()
+        self._closing = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._failed_attempts = 0
+
+    def _checks_allowed(self) -> bool:
+        with self.manager._operation_lock:
+            return bool(
+                self.policy.checks_enabled
+                and getattr(self.manager.preferences, "enabled", False)
+                and getattr(self.manager.preferences, "channel", None)
+                in getattr(self.manager.config, "manifest_urls", {})
+            )
+
+    def status(self) -> dict[str, Any]:
+        """Return manager status plus content-free worker state."""
+
+        with self._lifecycle_lock:
+            thread = self._thread
+            running = thread is not None and thread.is_alive()
+        with self._retry_lock:
+            failed_attempts = self._failed_attempts
+        status = self.manager.public_status()
+        status.update(
+            {
+                "automation_running": running,
+                "automation_checks_enabled": self.policy.checks_enabled,
+                "automation_retry_attempts": failed_attempts,
+                "automation_next_delay_seconds": self.next_delay_seconds,
+            }
+        )
+        return status
+
+    @property
+    def next_delay_seconds(self) -> float:
+        """Return the bounded delay before the next worker cycle."""
+
+        with self._retry_lock:
+            failed_attempts = self._failed_attempts
+        if failed_attempts == 0 or failed_attempts > self.config.retry_attempts:
+            return self.config.check_interval.total_seconds()
+        delay = self.config.retry_initial_delay * (2 ** (failed_attempts - 1))
+        bounded = delay if delay <= self.config.retry_max_delay else self.config.retry_max_delay
+        return float(bounded.total_seconds())
+
+    def _record_result(self, status: Mapping[str, Any]) -> None:
+        with self._retry_lock:
+            if status.get("phase") == UpdatePhase.ERROR.value:
+                self._failed_attempts += 1
+            else:
+                self._failed_attempts = 0
+
+    def run_once(self) -> dict[str, Any]:
+        """Run one non-overlapping check without staging or installing."""
+
+        if not self.policy.checks_enabled or not self._checks_allowed():
+            return self.manager.public_status()
+        if not self._cycle_lock.acquire(blocking=False):
+            return self.manager.public_status()
+        try:
+            try:
+                status = self.manager.scheduled_check(interval=self.config.check_interval)
+            except (OSError, UpdateError):
+                # Transport and persistence failures are already contained by
+                # UpdateManager when possible.  A concurrent manual operation
+                # or a last-resort persistence failure must not kill the
+                # unattended worker; the next bounded retry will try again.
+                with self._retry_lock:
+                    self._failed_attempts += 1
+                return self.manager.public_status()
+            self._record_result(status)
+            return status
+        finally:
+            self._cycle_lock.release()
+
+    def start(self) -> None:
+        """Start one in-process worker; repeated starts are idempotent."""
+
+        with self._lifecycle_lock:
+            if self._closing.is_set() or not self.policy.checks_enabled:
+                return
+            thread = self._thread
+            if thread is not None and thread.is_alive():
+                self._wakeup.set()
+                return
+            if not self._checks_allowed():
+                return
+            self._stop.clear()
+            self._wakeup.clear()
+            thread = threading.Thread(
+                target=self._loop,
+                name="all-the-context-update-automation",
+                daemon=False,
+            )
+            self._thread = thread
+            try:
+                # Start while lifecycle state is held so shutdown cannot
+                # observe an unstarted thread and attempt an invalid join.
+                thread.start()
+            except BaseException:
+                self._thread = None
+                raise
+
+    def stop(self) -> None:
+        """Signal the worker and join it for a bounded lifecycle handoff."""
+
+        with self._lifecycle_lock:
+            self._stop.set()
+            self._wakeup.set()
+            thread = self._thread
+        if thread is not None and thread is not threading.current_thread() and thread.is_alive():
+            thread.join(timeout=self.config.join_timeout_seconds)
+        self._clear_dead_thread()
+
+    def shutdown(self) -> None:
+        """Permanently stop the worker and wait for any bounded request."""
+
+        with self._lifecycle_lock:
+            self._closing.set()
+            self._stop.set()
+            self._wakeup.set()
+            thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join()
+        self._clear_dead_thread()
+
+    def _clear_dead_thread(self) -> None:
+        with self._lifecycle_lock:
+            thread = self._thread
+            if thread is not None and not thread.is_alive():
+                self._thread = None
+
+    def _loop(self) -> None:
+        current = threading.current_thread()
+        try:
+            while not self._stop.is_set():
+                self.run_once()
+                if self._stop.is_set():
+                    return
+                self._wakeup.wait(timeout=self.next_delay_seconds)
+                self._wakeup.clear()
+        finally:
+            with self._lifecycle_lock:
+                if self._thread is current:
+                    self._thread = None

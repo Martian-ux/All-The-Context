@@ -1,5 +1,48 @@
 # Architecture decisions
 
+## ADR-199: Integrate Windows hardening as bounded, check-only source evidence
+
+**Status:** accepted locally on 2026-09-03 after integration from exact
+protected-main SHA `e3e81c4c3288c02067122661d2cf5a619355c622`; hosted checks
+must bind to the final pushed commit.
+
+The Windows OTA installer accepts only the exact setup executable, canonical
+installed-component manifest, and checksum from a release archive whose
+identity is covered by signed release metadata. The manifest is canonical,
+bounded, version- and package-bound, and fixes the
+ordered roles for the main, MCP, recovery, and updater executables. The
+journal carries the manifest binding, and the independent recovery helper
+revalidates the manifest and all four installed target bytes before publishing
+forward health. Existing journaled rollback copies and their independent
+digests remain the rollback authority; no database migration is part of this
+wave.
+
+The native Windows reproducibility contract performs two clean source builds
+with pinned Python 3.12.10, PyInstaller 6.21.0, uv 0.11.32, and reviewed lock
+digests. It compares the four executable byte/size identities, stages only the
+second matching build, and emits a bounded receipt with relative component
+filenames. The receipt and its workflow artifact are provenance evidence, not
+a signature, publication, Defender result, clean-machine result, or permission
+to execute downloaded candidates.
+
+Availability automation is an in-process per-user worker only. It runs through
+the serialized `UpdateManager`, prevents overlapping cycles, and applies the
+daily cadence plus bounded retry/backoff only when update preferences and a
+configured trusted channel allow it. Retry attempts and lifecycle join time
+are explicitly capped, and worker start is published while the lifecycle lock
+is held so concurrent shutdown cannot join an unstarted thread. The worker has
+no download, install, process-launch, OS task/service, Core shutdown, or reboot
+authority. Automatic install and automatic restart are disabled by policy;
+restart-required state remains operator-driven. The scheduled-capture change is
+limited to a wider asynchronous acceptance-poll bound for loaded Windows
+xdist workers.
+
+This wave preserves the unsigned distribution plan. SmartScreen/unknown-
+publisher warnings are acceptable, while Defender quarantine or deletion is
+not. Source contracts and local disposable evidence remain separate from
+hosted checks, artifact-level scanning, and clean-machine evidence. None of
+those boundaries is inferred from metadata alone.
+
 ## ADR-198: Efficiency changes stay bounded by transaction and invalidation authority
 
 **Status:** accepted locally on 2026-09-03 after the post-PR-#110 efficiency audit;

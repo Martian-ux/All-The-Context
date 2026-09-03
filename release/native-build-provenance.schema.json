@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "All The Context Native Build Provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "architecture",
+    "builds",
+    "components",
+    "contract",
+    "platform",
+    "provenance_type",
+    "schema_version",
+    "source_commit",
+    "version"
+  ],
+  "properties": {
+    "architecture": { "const": "x86_64" },
+    "builds": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/build" }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "contract": { "$ref": "#/$defs/contract" },
+    "platform": { "const": "windows" },
+    "provenance_type": { "const": "native-build" },
+    "schema_version": { "const": 1 },
+    "source_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-beta\\.[1-9][0-9]*)?$"
+    }
+  },
+  "$defs": {
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["build_filename", "filename", "role", "sha256", "size"],
+      "properties": {
+        "build_filename": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\\.exe$" },
+        "filename": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\\.exe$" },
+        "role": { "enum": ["main", "mcp", "recovery", "updater"] },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "exclusiveMinimum": 0 }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["components", "label"],
+      "properties": {
+        "components": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/component" }
+        },
+        "label": { "enum": ["clean-build-1", "clean-build-2"] }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "build_count",
+        "comparison",
+        "id",
+        "locks",
+        "matching",
+        "path_policy",
+        "toolchain"
+      ],
+      "properties": {
+        "build_count": { "const": 2 },
+        "comparison": { "const": "sha256-and-size" },
+        "id": { "const": "native-windows-clean-double-build-v1" },
+        "locks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uv.lock", "apps/dashboard/package-lock.json"],
+          "properties": {
+            "uv.lock": { "$ref": "#/$defs/lock" },
+            "apps/dashboard/package-lock.json": { "$ref": "#/$defs/lock" }
+          }
+        },
+        "matching": { "const": true },
+        "path_policy": { "const": "relative-component-filenames-only" },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["python", "pyinstaller", "uv"],
+          "properties": {
+            "python": { "const": "3.12.10" },
+            "pyinstaller": { "const": "6.21.0" },
+            "uv": { "const": "0.11.32" }
+          }
+        }
+      }
+    },
+    "lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256"],
+      "properties": { "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+    }
+  }
+}

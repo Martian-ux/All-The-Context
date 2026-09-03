@@ -80,6 +80,11 @@ def _wait_for_successful_capture(
     current_items: int,
     deleted_items: int = 0,
 ) -> None:
+    # A loaded Windows xdist worker can spend several seconds scheduling the
+    # non-daemon Core worker and its SQLite work. The predicate returns as soon
+    # as the durable capture projection is complete, so this larger bound adds
+    # no delay to successful runs while keeping lifecycle failures bounded.
+    capture_timeout = 15.0
     expected_last_run_at = clock()
 
     def captured() -> bool:
@@ -94,7 +99,7 @@ def _wait_for_successful_capture(
             and search(service.retrieval).total == current_items
         )
 
-    _wait_until(captured)
+    _wait_until(captured, timeout=capture_timeout)
 
 
 def test_scheduled_packet_f_local_source_is_useful_without_dashboard(

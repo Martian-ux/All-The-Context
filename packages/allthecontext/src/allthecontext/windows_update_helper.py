@@ -37,6 +37,13 @@ from .credentials import (
     KeyringCredentialStore,
     development_file_credentials_enabled,
 )
+from .installed_component_manifest import (
+    CHECKSUM_FILE_NAME,
+    MANIFEST_FILE_NAME,
+    InstalledComponentManifestError,
+    component_descriptors,
+    validate_manifest_bytes,
+)
 from .platform_compat import windows_dll, windows_registry
 from .release_manifest import ManifestError, ReleaseVersion, load_keyring, verify_manifest
 
@@ -102,6 +109,7 @@ STARTUP_RECOVERY_DIAGNOSTIC_CODES = frozenset(
         "helper_launch_failed",
         "diagnostic_unreadable",
         "diagnostic_invalid",
+        "component_manifest_invalid",
     }
 )
 POST_COMMIT_DEGRADED_ERROR = (
@@ -922,6 +930,14 @@ def _validate_journal_storage_paths(
         Path(journal.database_backup_path),
         Path(journal.state_path),
         Path(journal.helper_path),
+        *(
+            [
+                Path(journal.component_manifest_path),
+                Path(journal.component_manifest_path).with_name(CHECKSUM_FILE_NAME),
+            ]
+            if journal.component_manifest_path is not None
+            else []
+        ),
     ):
         _validate_plain_file_path(path, boundary_code, required=True)
     # A newly prepared transaction validates this path before the first save;
@@ -955,6 +971,17 @@ def _validate_journal_storage_paths(
             Path(journal.helper_path),
             journal.recovery_helper_sha256,
             journal.recovery_helper_size,
+        ),
+        *(
+            [
+                (
+                    Path(journal.component_manifest_path),
+                    journal.component_manifest_sha256,
+                    journal.component_manifest_size,
+                )
+            ]
+            if journal.component_manifest_path is not None
+            else []
         ),
         *(
             [
@@ -1147,6 +1174,9 @@ class UpdateJournal:
     last_error_code: str | None = None
     recovery_authority_mac: str | None = None
     terminal_authority_mac: str | None = None
+    component_manifest_path: str | None = None
+    component_manifest_sha256: str | None = None
+    component_manifest_size: int | None = None
     schema_version: int = JOURNAL_SCHEMA_VERSION
 
     @classmethod
@@ -1155,9 +1185,22 @@ class UpdateJournal:
         _plain_file_stat(path, "journal_untrusted")
         value = _read_json(path, MAX_JOURNAL_BYTES, boundary_code="journal_untrusted")
         expected = set(cls.__dataclass_fields__)
-        legacy_fields = {"recovery_authority_mac", "terminal_authority_mac"}
+        legacy_fields = {
+            "recovery_authority_mac",
+            "terminal_authority_mac",
+            "component_manifest_path",
+            "component_manifest_sha256",
+            "component_manifest_size",
+        }
+        component_fields = {
+            "component_manifest_path",
+            "component_manifest_sha256",
+            "component_manifest_size",
+        }
         if set(value) == expected - legacy_fields:
             value.update({field: None for field in legacy_fields})
+        elif set(value) == expected - component_fields:
+            value.update({field: None for field in component_fields})
         elif set(value) != expected:
             raise HelperError("journal_shape_invalid")
         try:
@@ -1205,6 +1248,23 @@ class UpdateJournal:
             and not _valid_digest(self.terminal_authority_mac)
         ):
             raise HelperError("journal_digest_invalid")
+        component_manifest = (
+            self.component_manifest_path,
+            self.component_manifest_sha256,
+            self.component_manifest_size,
+        )
+        if any(item is None for item in component_manifest) != all(
+            item is None for item in component_manifest
+        ):
+            raise HelperError("journal_component_manifest_invalid")
+        if self.component_manifest_sha256 is not None and (
+            not _valid_digest(self.component_manifest_sha256)
+            or isinstance(self.component_manifest_size, bool)
+            or not isinstance(self.component_manifest_size, int)
+            or self.component_manifest_size <= 0
+            or self.component_manifest_size > MAX_STAGING_MANIFEST_BYTES
+        ):
+            raise HelperError("journal_component_manifest_invalid")
         if (
             isinstance(self.parent_pid, bool)
             or not isinstance(self.parent_pid, int)
@@ -1294,6 +1354,7 @@ class UpdateJournal:
             self.database_backup_path,
             self.state_path,
             self.helper_path,
+            *([self.component_manifest_path] if self.component_manifest_path is not None else []),
         )
         if any(not isinstance(item, str) or not item for item in path_values):
             raise HelperError("journal_path_invalid")
@@ -1315,6 +1376,14 @@ class UpdateJournal:
                 Path(self.rollback_update_helper_path),
                 *([Path(self.rollback_mcp_path)] if self.rollback_mcp_path else []),
                 *([Path(self.rollback_recovery_path)] if self.rollback_recovery_path else []),
+                *(
+                    [
+                        Path(self.component_manifest_path),
+                        Path(self.component_manifest_path).with_name(CHECKSUM_FILE_NAME),
+                    ]
+                    if self.component_manifest_path is not None
+                    else []
+                ),
             ):
                 if not _within(child, transaction_dir):
                     raise HelperError("journal_path_invalid")
@@ -1363,6 +1432,16 @@ class UpdateJournal:
             Path(self.rollback_update_helper_path),
             *([Path(self.rollback_mcp_path)] if self.rollback_mcp_path else []),
             *([Path(self.rollback_recovery_path)] if self.rollback_recovery_path else []),
+            *(
+                [Path(self.component_manifest_path)]
+                if self.component_manifest_path is not None
+                else []
+            ),
+            *(
+                [Path(self.component_manifest_path).with_name(CHECKSUM_FILE_NAME)]
+                if self.component_manifest_path is not None
+                else []
+            ),
         ):
             if not _within(child, transaction_dir):
                 raise HelperError("journal_path_invalid")
@@ -1399,6 +1478,16 @@ def _prebinding_transaction_files(journal: UpdateJournal, journal_path: Path) ->
         Path(journal.helper_path),
         *([Path(journal.rollback_mcp_path)] if journal.rollback_mcp_path else []),
         *([Path(journal.rollback_recovery_path)] if journal.rollback_recovery_path else []),
+        *(
+            [Path(journal.component_manifest_path)]
+            if journal.component_manifest_path is not None
+            else []
+        ),
+        *(
+            [Path(journal.component_manifest_path).with_name(CHECKSUM_FILE_NAME)]
+            if journal.component_manifest_path is not None
+            else []
+        ),
     )
 
 
@@ -1963,6 +2052,132 @@ def _verified(path: Path, digest: str, size: int) -> bool:
         return False
 
 
+def _read_stable_bytes(
+    path: Path,
+    *,
+    maximum_bytes: int,
+    code: str,
+    expected_digest: str | None = None,
+    expected_size: int | None = None,
+) -> bytes:
+    """Read one bounded plain file while retaining its path/file identity."""
+
+    try:
+        before = _plain_file_stat(path, code)
+        if before.st_size > maximum_bytes or (
+            expected_size is not None and before.st_size != expected_size
+        ):
+            raise HelperError(code)
+        with path.open("rb") as stream:
+            raw = stream.read(maximum_bytes + 1)
+            opened = os.fstat(stream.fileno())
+        after = _plain_file_stat(path, code)
+    except (HelperError, OSError, ValueError) as exc:
+        if isinstance(exc, HelperError):
+            raise
+        raise HelperError(code) from exc
+    if (
+        len(raw) > maximum_bytes
+        or not _same_file(before, opened)
+        or not _same_file(before, after)
+        or (expected_size is not None and len(raw) != expected_size)
+        or (expected_digest is not None and hashlib.sha256(raw).hexdigest() != expected_digest)
+    ):
+        raise HelperError(code)
+    return raw
+
+
+def _validate_component_manifest(journal: UpdateJournal) -> None:
+    """Independently bind all four installed target binaries to the archive manifest."""
+
+    fields = (
+        journal.component_manifest_path,
+        journal.component_manifest_sha256,
+        journal.component_manifest_size,
+    )
+    if all(value is None for value in fields):
+        raise HelperError("component_manifest_invalid")
+    if any(value is None for value in fields):
+        raise HelperError("component_manifest_invalid")
+    manifest_path = Path(cast(str, journal.component_manifest_path))
+    expected_manifest = Path(journal.helper_path).parent / MANIFEST_FILE_NAME
+    checksum_path = manifest_path.with_name(CHECKSUM_FILE_NAME)
+    expected_checksum = expected_manifest.with_name(CHECKSUM_FILE_NAME)
+    if not _same_path(manifest_path, expected_manifest) or not _same_path(
+        checksum_path, expected_checksum
+    ):
+        raise HelperError("component_manifest_invalid")
+    try:
+        raw_manifest = _read_stable_bytes(
+            manifest_path,
+            maximum_bytes=MAX_STAGING_MANIFEST_BYTES,
+            code="component_manifest_invalid",
+            expected_digest=cast(str, journal.component_manifest_sha256),
+            expected_size=cast(int, journal.component_manifest_size),
+        )
+        raw_checksum = _read_stable_bytes(
+            checksum_path,
+            maximum_bytes=256,
+            code="component_manifest_invalid",
+        )
+        payload = validate_manifest_bytes(
+            raw_manifest,
+            raw_checksum,
+            expected_version=journal.target_version,
+            expected_package_sha256=journal.replacement_sha256,
+            expected_package_size=journal.replacement_size,
+        )
+        bindings = component_descriptors(payload)
+    except (HelperError, InstalledComponentManifestError, OSError, TypeError, ValueError) as exc:
+        if isinstance(exc, HelperError):
+            raise
+        raise HelperError("component_manifest_invalid") from exc
+    install_root = _validate_install_targets(journal, "component_manifest_invalid")
+    paths = {
+        "main": Path(journal.application_path),
+        "mcp": Path(journal.mcp_path),
+        "recovery": Path(journal.recovery_path),
+        "updater": Path(journal.stable_update_helper_path),
+    }
+    for role, path in paths.items():
+        if not _within(path, install_root):
+            raise HelperError("component_manifest_invalid")
+        digest, size = bindings[role]
+        if not _verified(path, digest, size):
+            raise HelperError("component_manifest_invalid")
+
+
+def _validate_rollback_components(journal: UpdateJournal) -> None:
+    """Recheck every restored executable before publishing a rollback outcome."""
+
+    install_root = _validate_install_targets(journal, "rollback_component_invalid")
+    bindings = (
+        (
+            Path(journal.application_path),
+            journal.rollback_application_sha256,
+            journal.rollback_application_size,
+        ),
+        (Path(journal.mcp_path), journal.rollback_mcp_sha256, journal.rollback_mcp_size),
+        (
+            Path(journal.recovery_path),
+            journal.rollback_recovery_sha256,
+            journal.rollback_recovery_size,
+        ),
+        (
+            Path(journal.stable_update_helper_path),
+            journal.rollback_update_helper_sha256,
+            journal.rollback_update_helper_size,
+        ),
+    )
+    if any(digest is None or size is None for _path, digest, size in bindings):
+        raise HelperError("rollback_component_invalid")
+    for path, digest, size in bindings:
+        if not _within(path, install_root) or not _verified(
+            path, cast(str, digest), cast(int, size)
+        ):
+            raise HelperError("rollback_component_invalid")
+
+
 def _run_bounded(command: tuple[str, ...], environment: dict[str, str]) -> int:
     try:
         completed = subprocess.run(
@@ -2023,6 +2238,7 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
         if time.monotonic() >= deadline:
             raise HelperError("binary_cutover_failed")
         time.sleep(0.25)
+    _validate_component_manifest(journal)
     try:
         value = _read_json(report, MAX_JOURNAL_BYTES)
         expected_keys = {
@@ -2089,6 +2305,7 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
 
 def _verify_diagnostics(journal: UpdateJournal, journal_path: Path) -> None:
     _validate_application(journal, journal.replacement_sha256, journal.replacement_size)
+    _validate_component_manifest(journal)
     report = journal_path.parent / "diagnostics.json"
     _unlink_plain_file_if_present(report, "transaction_report_untrusted")
     if (
@@ -2119,6 +2336,7 @@ def _verify_diagnostics(journal: UpdateJournal, journal_path: Path) -> None:
 
 def _verify_health(journal: UpdateJournal, journal_path: Path) -> None:
     _validate_application(journal, journal.replacement_sha256, journal.replacement_size)
+    _validate_component_manifest(journal)
     report = journal_path.parent / "health.json"
     _unlink_plain_file_if_present(report, "transaction_report_untrusted")
     if (
@@ -2289,28 +2507,29 @@ def _restore_binaries(journal: UpdateJournal) -> None:
         journal.rollback_application_size,
         target_root=install_root,
     )
-    if journal.rollback_mcp_path is not None:
-        _copy_verified(
-            Path(journal.rollback_mcp_path),
-            Path(journal.mcp_path),
-            cast(str, journal.rollback_mcp_sha256),
-            cast(int, journal.rollback_mcp_size),
-            target_root=install_root,
-        )
-    else:
-        _validate_write_target(Path(journal.mcp_path), install_root, "rollback_target_invalid")
-        _unlink_plain_file_if_present(Path(journal.mcp_path), "rollback_target_invalid")
-    if journal.rollback_recovery_path is not None:
-        _copy_verified(
-            Path(journal.rollback_recovery_path),
-            Path(journal.recovery_path),
-            cast(str, journal.rollback_recovery_sha256),
-            cast(int, journal.rollback_recovery_size),
-            target_root=install_root,
-        )
-    else:
-        _validate_write_target(Path(journal.recovery_path), install_root, "rollback_target_invalid")
-        _unlink_plain_file_if_present(Path(journal.recovery_path), "rollback_target_invalid")
+    if (
+        journal.rollback_mcp_path is None
+        or journal.rollback_mcp_sha256 is None
+        or journal.rollback_mcp_size is None
+        or journal.rollback_recovery_path is None
+        or journal.rollback_recovery_sha256 is None
+        or journal.rollback_recovery_size is None
+    ):
+        raise HelperError("rollback_component_invalid")
+    _copy_verified(
+        Path(journal.rollback_mcp_path),
+        Path(journal.mcp_path),
+        journal.rollback_mcp_sha256,
+        journal.rollback_mcp_size,
+        target_root=install_root,
+    )
+    _copy_verified(
+        Path(journal.rollback_recovery_path),
+        Path(journal.recovery_path),
+        journal.rollback_recovery_sha256,
+        journal.rollback_recovery_size,
+        target_root=install_root,
+    )
     _copy_verified(
         Path(journal.rollback_update_helper_path),
         Path(journal.stable_update_helper_path),
@@ -2507,6 +2726,7 @@ def _rollback(journal: UpdateJournal, journal_path: Path, error_code: str) -> No
     journal.save(journal_path)
     try:
         _restore_binaries(journal)
+        _validate_rollback_components(journal)
         _restore_database(journal)
         message = "The update did not become healthy; the previous app and vault were restored"
         _update_state(
