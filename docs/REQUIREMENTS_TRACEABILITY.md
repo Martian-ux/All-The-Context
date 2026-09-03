@@ -22,6 +22,16 @@ The P1 pre-binding crash boundary and authenticated retirement replay are
 covered by ADR-195.
 The completed-identity operation-binding containment follow-up is covered by
 ADR-196.
+The bounded efficiency hardening follow-up is covered by ADR-197.
+
+### 2026-09-03 bounded efficiency hardening
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| PERF-01 — multi-observation transactions must not rebuild all integrity groups once per observation | `CoreStore._evaluate_observation_tx`; `finish_ingestion`; `evaluate_staged_observations`; `publish_source_rebuild`; batch recomputation regressions in `test_automatic_context_policy.py` and `test_memory_truth.py`; ADR-197 | Implemented and locally tested. Each qualifying batch defers the existing integrity request and performs one transaction-final recomputation; single-observation callers remain immediate and final observation dispositions/records are asserted |
+| PERF-02 — retrieval conflict lookup must scale with the bounded candidate set | `retrieval.py::_conflict_states`; migration `019_integrity_member_reverse_lookup.sql`; targeted trace and query-plan regression in `test_memory_integrity_purge.py`; ADR-197 | Implemented and locally tested. Requested IDs are deduplicated and queried in 500-ID chunks through `(record_id, group_id)`; unrelated memberships are not loaded |
+| PERF-03 — bounded integrity listing and audit writes must avoid avoidable connections/queries | `CoreStore.list_integrity_groups`; `CoreStore._vault_id_tx`; `CoreStore._audit`; query-count and connection-count regressions in `test_memory_integrity_purge.py`; ADR-197 | Implemented and locally tested. One membership query serves the at-most-500-group page, and audit insertion reuses its caller transaction |
+| PERF-04 — dashboard polling must not overlap or update after lifecycle stop | `api.ts::importSource`; `App.tsx::refreshStatus`; completion-driven timer and fake-timer regressions in `api.test.ts` and `App.test.tsx`; ADR-197 | Implemented and locally tested. The next request is scheduled only after settlement, in-flight status refreshes are shared, late import callbacks are suppressed, unmount cancels polling, and hidden documents receive no periodic status work |
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;

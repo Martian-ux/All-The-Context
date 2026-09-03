@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-As of 2026-09-02 UTC, protected main integrates false-by-default Continuous
+As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
 boundaries. After one setup opt-in, ordinary user prompts and rendered
 assistant responses are observed locally without per-turn commands. Core alone
@@ -19,18 +19,18 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
-At this boundary, protected main contains the merged Import Truth and the
+At this boundary, protected main through PR #110 at exact `origin/main`
+`e155487cf5b663d435e1c4f208f457d5f5dd1db4` contains the merged Import Truth and the
 subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
 client read/explicit-memory foundations, Continuous Capture, replacement
 workflow hardening, updater/recovery trust hardening, the Windows timing test
 correction, exact candidate-evidence reconciliation, the private handoff guard
 correction, the update-child dialog containment change, the import-heartbeat
 test stabilization, Windows startup-recovery hardening from PR #107, and
-startup-recovery diagnostic containment from PR #108 at the exact
-`origin/main` merge base `466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` used for
-this local follow-up. The current updater metadata-authority containment is
-source-level branch work; hosted CI, exact-artifact, and release evidence for a
-later candidate remain separate gates. Source and hosted evidence does not
+startup-recovery diagnostic containment from PR #108, and updater
+metadata-authority containment from PR #110. The current efficiency hardening
+is source-level branch work; hosted CI, exact-artifact, and release evidence
+for a later candidate remain separate gates. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -41,6 +41,34 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-09-03 — bounded runtime and dashboard efficiency hardening
+
+The post-PR-#110 efficiency audit was rechecked against the exact merged code
+instead of accepting its older-worktree conclusions wholesale. Three bounded
+issues were confirmed and corrected. Batch ingestion finish, startup staged
+evaluation, and atomic source rebuild now defer per-observation integrity
+maintenance and perform at most one rebuild in the transaction. Integrity
+group listing fetches all members for its bounded page in one query, audit
+events reuse the caller's connection, and retrieval conflict state reads only
+the requested record IDs in 500-ID chunks through migration 019's reverse
+member index. Dashboard import and Core-status polling now serialize requests,
+suppress late callbacks after stop/unmount, and suspend periodic status work
+while the document is hidden.
+
+Focused integrated Python validation passes 248 tests. Dashboard validation
+passes 69 tests plus TypeScript checking, production build, and a zero-finding
+production dependency audit. Repository-wide Python and documentation gates
+remain required on the final integrated commit before merge. No package,
+signing, publishing, Defender change, Microsoft submission, release, or
+downloaded-candidate execution is implied.
+
+The audit's proposed global search-result cache, startup repair marker, and
+connection-pool/WAL lifecycle changes were not adopted. Search authorization,
+temporal state, purge/restore, migration, and repair invalidation are not yet
+proven complete, and pre-ledger secret repair must continue to cover restored
+older data. Those items require measurement and a complete invalidation or
+security-repair design before implementation.
 
 ### 2026-09-03 — PR #110 completed-identity binding containment
 

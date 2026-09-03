@@ -1,5 +1,37 @@
 # Architecture decisions
 
+## ADR-197: Efficiency changes stay bounded by transaction and invalidation authority
+
+**Status:** accepted locally on 2026-09-03 after the post-PR-#110 efficiency audit;
+hosted checks must bind to the final pushed commit.
+
+Integrity derivation is transaction-final work. Multi-observation ingestion
+finish, legacy/startup staged evaluation, and source-rebuild publication defer
+the same recomputation that each qualifying observation previously requested,
+then run it once before commit. Paths that previously returned before asking
+for recomputation do not make the deferred batch dirty. Single-observation
+callers retain immediate recomputation. Regression tests bind the three batch
+entrypoints to one recomputation while checking final dispositions and records.
+
+Read-side optimization is narrowly indexed and bounded. Retrieval conflict
+state queries only the requested record IDs in 500-ID chunks; migration 019
+adds `(record_id, group_id)` lookup order. Integrity-group listing retains its
+500-group page bound and fetches that page's memberships once. Audit insertion
+reads the authoritative vault ID through the caller's existing transaction
+instead of opening a nested connection.
+
+Browser polling is completion-driven rather than interval-driven. Import and
+Core-status polling schedule the next request only after the current request
+settles, share an in-flight status refresh, suppress late callbacks after stop
+or unmount, and pause periodic status polling while hidden. The initial status
+refresh remains immediate.
+
+No global retrieval cache, durable mutation-generation marker, startup repair
+marker, connection pool, or WAL initialization redesign is accepted here.
+Those proposals cross authorization, temporal, purge/restore, migration, or
+pre-ledger secret-repair invalidation boundaries without complete proof. They
+remain measurement-led future work, not implied hardening.
+
 ## ADR-196: Completed terminal identity requires an authenticated operation binding
 
 **Status:** accepted locally on 2026-09-03 as the final-review follow-up for PR
