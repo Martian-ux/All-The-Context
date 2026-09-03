@@ -57,6 +57,7 @@ from .windows_update_helper import (
     journal_handoff_identity,
     launch_recovery_helper,
     recovery_authority_retirement_status,
+    prepare_handoff_state,
     register_recovery,
     request_rollback,
     retire_recovery_authority,
@@ -1492,6 +1493,7 @@ class PlatformInstaller:
             )
             journal.validate(journal_path)
             journal.save(journal_path)
+            prepare_handoff_state(journal, journal_path)
             bind_recovery_authority(journal, journal_path)
             bind_handoff_state(journal, journal_path)
             register_recovery(copied_helper, journal_path, plan.operation_id)

@@ -2490,7 +2490,7 @@ def test_windows_adapter_enables_automatic_install_with_independent_helper(
     assert installer.supported is True
 
 
-@pytest.mark.parametrize("failure", [None, "register", "launch"])
+@pytest.mark.parametrize("failure", [None, "state", "register", "launch"])
 def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     tmp_path: Path, monkeypatch: Any, failure: str | None
 ) -> None:
@@ -2558,6 +2558,12 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
 
     monkeypatch.setattr(updater_module, "register_recovery", register)
     monkeypatch.setattr(updater_module, "launch_recovery_helper", launch)
+    if failure == "state":
+
+        def fail_state_binding(_journal: UpdateJournal, _journal_path: Path) -> str:
+            raise OSError("state binding interrupted")
+
+        monkeypatch.setattr(updater_module, "bind_handoff_state", fail_state_binding)
     installer = PlatformInstaller(
         system="Windows",
         frozen=True,
@@ -2591,15 +2597,22 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     journal = UpdateJournal.load(journal_path)
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert journal.phase is HelperPhase.PREPARED
-    assert state["handoff_identity"] == journal_handoff_identity(journal)
+    identity = journal_handoff_identity(journal)
+    assert state["handoff_identity"] == (None if failure == "state" else identity)
+    assert state["pending_handoff_identity"] == (identity if failure == "state" else None)
     assert state["transaction_path"] == str(journal_path)
     assert Path(journal.rollback_application_path).read_bytes() == b"old application"
     assert Path(journal.rollback_mcp_path or "").read_bytes() == b"old mcp"
     assert Path(journal.rollback_recovery_path or "").read_bytes() == b"old recovery"
     assert Path(journal.rollback_update_helper_path).read_bytes() == b"old update helper"
     assert Path(journal.replacement_path).read_bytes() == b"new application"
-    assert registrations == [(Path(journal.helper_path), journal_path, operation_id)]
-    expected_launches = [] if failure == "register" else [(Path(journal.helper_path), journal_path)]
+    expected_registrations = (
+        [] if failure == "state" else [(Path(journal.helper_path), journal_path, operation_id)]
+    )
+    assert registrations == expected_registrations
+    expected_launches = (
+        [] if failure in {"state", "register"} else [(Path(journal.helper_path), journal_path)]
+    )
     assert launches == expected_launches
 
 

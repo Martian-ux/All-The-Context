@@ -1390,6 +1390,182 @@ def journal_handoff_identity(journal: UpdateJournal) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _prebinding_transaction_files(journal: UpdateJournal, journal_path: Path) -> tuple[Path, ...]:
+    return (
+        journal_path,
+        Path(journal.replacement_path),
+        Path(journal.rollback_application_path),
+        Path(journal.rollback_update_helper_path),
+        Path(journal.helper_path),
+        *([Path(journal.rollback_mcp_path)] if journal.rollback_mcp_path else []),
+        *([Path(journal.rollback_recovery_path)] if journal.rollback_recovery_path else []),
+    )
+
+
+def _path_key(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _remove_prebinding_file(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    file_expected: os.stat_result,
+) -> bool:
+    try:
+        parent_before = _plain_directory_stat(path.parent, "startup_state_untrusted")
+        file_before = path.lstat()
+        if not _same_directory(parent_expected, parent_before) or not _same_file(
+            file_expected, file_before
+        ):
+            return False
+        parent_after = _plain_directory_stat(path.parent, "startup_state_untrusted")
+        file_after = path.lstat()
+        if not _same_directory(parent_expected, parent_after) or not _same_file(
+            file_expected, file_after
+        ):
+            return False
+        path.unlink()
+        return True
+    except (HelperError, OSError, RecursionError):
+        return False
+
+
+def _remove_prebinding_directory(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    directory_expected: os.stat_result,
+) -> bool:
+    try:
+        parent_before = _plain_directory_stat(path.parent, "startup_state_untrusted")
+        directory_before = _plain_directory_stat(path, "startup_state_untrusted")
+        if not _same_directory(parent_expected, parent_before) or not _same_directory(
+            directory_expected, directory_before
+        ):
+            return False
+        parent_after = _plain_directory_stat(path.parent, "startup_state_untrusted")
+        directory_after = _plain_directory_stat(path, "startup_state_untrusted")
+        if not _same_directory(parent_expected, parent_after) or not _same_directory(
+            directory_expected, directory_after
+        ):
+            return False
+        path.rmdir()
+        return True
+    except (HelperError, OSError, RecursionError):
+        return False
+
+
+def _reclaim_prebinding_transaction(
+    transaction_dir: Path,
+    *,
+    journal: UpdateJournal | None = None,
+    journal_path: Path | None = None,
+) -> bool:
+    """Reclaim only a bounded, stable transaction tree before authority binding."""
+
+    try:
+        _plain_directory_chain(transaction_dir.parent, "startup_state_untrusted")
+        try:
+            transaction_stat = transaction_dir.lstat()
+        except FileNotFoundError:
+            return True
+        if (
+            stat.S_ISLNK(transaction_stat.st_mode)
+            or bool(getattr(transaction_stat, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT)
+            or not stat.S_ISDIR(transaction_stat.st_mode)
+        ):
+            return False
+        parent_stat = _plain_directory_stat(transaction_dir.parent, "startup_state_untrusted")
+
+        expected_files: dict[str, Path] | None = None
+        expected_directories: dict[str, Path] | None = None
+        if journal is not None and journal_path is not None:
+            expected_files = {}
+            for expected in _prebinding_transaction_files(journal, journal_path):
+                if not _within(expected, transaction_dir):
+                    return False
+                key = _path_key(expected)
+                if key in expected_files:
+                    return False
+                expected_files[key] = expected
+            expected_directories = {_path_key(transaction_dir): transaction_dir}
+            for expected in expected_files.values():
+                directory = expected.parent
+                while _within(directory, transaction_dir):
+                    expected_directories[_path_key(directory)] = directory
+                    if _path_key(directory) == _path_key(transaction_dir):
+                        break
+                    directory = directory.parent
+
+        files: list[tuple[Path, os.stat_result, os.stat_result]] = []
+        directories: list[tuple[Path, os.stat_result, os.stat_result, int]] = [
+            (transaction_dir, parent_stat, transaction_stat, 0)
+        ]
+        seen_files: set[str] = set()
+        stack: list[tuple[Path, os.stat_result, os.stat_result, int]] = [
+            (transaction_dir, transaction_stat, parent_stat, 0)
+        ]
+        entries_seen = 0
+        while stack:
+            directory, directory_expected, _directory_parent, depth = stack.pop()
+            if depth > MAX_TRANSACTION_EVIDENCE_DEPTH:
+                return False
+            current_directory = _plain_directory_stat(directory, "startup_state_untrusted")
+            if not _same_directory(directory_expected, current_directory):
+                return False
+            for child in directory.iterdir():
+                entries_seen += 1
+                if entries_seen > MAX_TRANSACTION_EVIDENCE_ENTRIES:
+                    return False
+                child_stat = child.lstat()
+                if stat.S_ISLNK(child_stat.st_mode) or bool(
+                    getattr(child_stat, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+                ):
+                    return False
+                child_key = _path_key(child)
+                if stat.S_ISDIR(child_stat.st_mode):
+                    if expected_directories is not None and child_key not in expected_directories:
+                        return False
+                    directories.append((child, directory_expected, child_stat, depth + 1))
+                    stack.append((child, child_stat, directory_expected, depth + 1))
+                    continue
+                if not stat.S_ISREG(child_stat.st_mode) or getattr(child_stat, "st_nlink", 1) != 1:
+                    return False
+                if expected_files is None or child_key not in expected_files:
+                    return False
+                if child_key in seen_files:
+                    return False
+                seen_files.add(child_key)
+                files.append((child, directory_expected, child_stat))
+        if expected_files is not None and seen_files != set(expected_files):
+            return False
+
+        for path, parent_expected, file_expected in files:
+            if not _remove_prebinding_file(
+                path,
+                parent_expected=parent_expected,
+                file_expected=file_expected,
+            ):
+                return False
+        for path, parent_expected, directory_expected, _depth in sorted(
+            directories[1:], key=lambda item: item[3], reverse=True
+        ):
+            if not _remove_prebinding_directory(
+                path,
+                parent_expected=parent_expected,
+                directory_expected=directory_expected,
+            ):
+                return False
+        return _remove_prebinding_directory(
+            transaction_dir,
+            parent_expected=parent_stat,
+            directory_expected=transaction_stat,
+        )
+    except (HelperError, OSError, RecursionError, ValueError):
+        return False
+
+
 def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
     journal.validate(journal_path, boundary_code="application_state_untrusted")
     validate_recovery_authority(journal, journal_path)
@@ -1529,6 +1705,41 @@ def _transition_handoff_state(
     return identity
 
 
+def prepare_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
+    """Record the bounded pre-binding marker before journal authority exists."""
+
+    journal.validate(journal_path, boundary_code="application_state_untrusted")
+    state_path = Path(journal.state_path)
+    state = _read_json(
+        state_path,
+        MAX_STATE_BYTES,
+        boundary_code="application_state_untrusted",
+    )
+    transaction_path = state.get("transaction_path")
+    identity = journal_handoff_identity(journal)
+    if (
+        state.get("operation_id") != journal.operation_id
+        or state.get("phase") not in {"restart_required", "error"}
+        or not isinstance(transaction_path, str)
+        or not _same_path(Path(transaction_path), journal_path)
+        or state.get("handoff_identity") not in {None, identity}
+        or state.get("pending_handoff_identity") not in {None, identity}
+        or (
+            state.get("handoff_identity") is not None
+            and state.get("pending_handoff_identity") is not None
+        )
+        or state.get("completed_handoff_identity") is not None
+    ):
+        raise HelperError("application_state_mismatch")
+    if state.get("handoff_identity") == identity and state.get("pending_handoff_identity") is None:
+        return identity
+    state["handoff_identity"] = state.get("handoff_identity")
+    state["pending_handoff_identity"] = identity
+    state["completed_handoff_identity"] = state.get("completed_handoff_identity")
+    _atomic_json(state_path, state, boundary_code="application_state_untrusted")
+    return identity
+
+
 def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
     """Publish one prepared journal identity before recovery can be registered."""
 
@@ -1543,11 +1754,15 @@ def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
     identity = journal_handoff_identity(journal)
     if (
         state.get("operation_id") != journal.operation_id
-        or state.get("phase") != "restart_required"
+        or state.get("phase") not in {"restart_required", "error"}
         or not isinstance(transaction_path, str)
         or not _same_path(Path(transaction_path), journal_path)
         or state.get("handoff_identity") not in {None, identity}
-        or state.get("pending_handoff_identity") is not None
+        or state.get("pending_handoff_identity") not in {None, identity}
+        or (
+            state.get("handoff_identity") is not None
+            and state.get("pending_handoff_identity") is not None
+        )
     ):
         raise HelperError("application_state_mismatch")
     state["handoff_identity"] = identity
@@ -2558,6 +2773,40 @@ def record_startup_recovery_parser_failure() -> None:
     )
 
 
+def _reset_unbound_startup_state(state_path: Path, state: dict[str, Any], phase: str) -> bool:
+    state.update(
+        {
+            "phase": "error",
+            "last_error": "The update stopped before installation and was reset safely",
+            "downloaded_path": None,
+            "backup_path": None,
+            "operation_id": None,
+            "manifest_identity": None,
+            "transaction_path": None,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    try:
+        _atomic_json(state_path, state, boundary_code="startup_state_untrusted")
+    except (HelperError, OSError):
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_reset_failed",
+            phase=phase,
+        )
+        return False
+    _write_startup_recovery_diagnostic(
+        state_path,
+        status="cleared",
+        code="unbound_preparation_reset",
+        phase="error",
+    )
+    return True
+
+
 def ensure_recovery_before_core() -> bool:
     """Return false after starting recovery when an ordinary Core must stay down."""
 
@@ -2761,14 +3010,6 @@ def ensure_recovery_before_core() -> bool:
         )
         return False
     if handoff_identity is None:
-        if pending_identity is not None:
-            _write_startup_recovery_diagnostic(
-                state_path,
-                status="blocked",
-                code="startup_state_invalid",
-                phase=phase,
-            )
-            return False
         expected = (
             _data_directory()
             / "updates"
@@ -2776,14 +3017,7 @@ def ensure_recovery_before_core() -> bool:
             / cast(str, operation_id)
             / "journal.json"
         )
-        try:
-            transaction_matches = _same_path(Path(transaction), expected)
-            if transaction_matches:
-                _plain_directory_chain(expected.parent, "startup_state_untrusted")
-                _plain_file_stat(expected, "startup_state_untrusted")
-        except (HelperError, OSError, ValueError):
-            transaction_matches = False
-        if state.get("phase") != "restart_required" or not transaction_matches:
+        if phase not in {"restart_required", "error"}:
             _write_startup_recovery_diagnostic(
                 state_path,
                 status="blocked",
@@ -2791,39 +3025,72 @@ def ensure_recovery_before_core() -> bool:
                 phase=phase,
             )
             return False
-        # No helper from this schema can cross cutover without the parent-published
-        # binding, so an interrupted preparation can safely return to the old app.
-        state.update(
-            {
-                "phase": "error",
-                "last_error": "The update stopped before installation and was reset safely",
-                "downloaded_path": None,
-                "backup_path": None,
-                "operation_id": None,
-                "manifest_identity": None,
-                "transaction_path": None,
-                "handoff_identity": None,
-                "pending_handoff_identity": None,
-                "completed_handoff_identity": None,
-            }
-        )
         try:
-            _atomic_json(state_path, state, boundary_code="startup_state_untrusted")
-        except (HelperError, OSError):
+            if not isinstance(transaction, str) or not _same_path(Path(transaction), expected):
+                raise HelperError("startup_state_mismatch")
+            transaction_dir = expected.parent
+            journal_file = _plain_file_stat_if_present(expected, "startup_state_untrusted")
+            if journal_file is None:
+                if not _reclaim_prebinding_transaction(transaction_dir):
+                    raise HelperError("startup_state_untrusted")
+                if not retire_recovery_authority(cast(str, operation_id)):
+                    raise HelperError("startup_state_reset_failed")
+                return _reset_unbound_startup_state(state_path, state, phase)
+
+            journal = UpdateJournal.load(expected)
+            if journal.operation_id != operation_id:
+                raise HelperError("startup_state_mismatch")
+            journal_identity = journal_handoff_identity(journal)
+            if pending_identity not in {None, journal_identity}:
+                raise HelperError("startup_state_mismatch")
+            if journal.recovery_authority_mac is not None:
+                validate_recovery_authority(journal, expected)
+                if journal.phase in TERMINAL_PHASES:
+                    raise HelperError("journal_invalid")
+                bind_handoff_state(journal, expected)
+                try:
+                    launch_recovery_helper(Path(journal.helper_path), expected)
+                except (HelperError, OSError):
+                    _write_startup_recovery_diagnostic(
+                        state_path,
+                        status="blocked",
+                        code="helper_launch_failed",
+                        phase=phase,
+                    )
+                    return False
+                return False
+            if journal.terminal_authority_mac is not None or (
+                journal.phase is not HelperPhase.PREPARED
+            ):
+                raise HelperError("journal_invalid")
+            if not _reclaim_prebinding_transaction(
+                transaction_dir,
+                journal=journal,
+                journal_path=expected,
+            ):
+                raise HelperError("startup_state_untrusted")
+            if not retire_recovery_authority(cast(str, operation_id)):
+                raise HelperError("startup_state_reset_failed")
+            return _reset_unbound_startup_state(state_path, state, phase)
+        except (HelperError, OSError, RecursionError, TypeError, ValueError) as error:
+            diagnostic_code = (
+                error.code
+                if isinstance(error, HelperError)
+                and error.code
+                in {
+                    "startup_state_mismatch",
+                    "startup_state_untrusted",
+                    "startup_state_reset_failed",
+                }
+                else "journal_invalid"
+            )
             _write_startup_recovery_diagnostic(
                 state_path,
                 status="blocked",
-                code="startup_state_reset_failed",
+                code=diagnostic_code,
                 phase=phase,
             )
             return False
-        _write_startup_recovery_diagnostic(
-            state_path,
-            status="cleared",
-            code="unbound_preparation_reset",
-            phase="error",
-        )
-        return True
     expected = (
         _data_directory() / "updates" / "transactions" / cast(str, operation_id) / "journal.json"
     )

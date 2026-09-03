@@ -1509,7 +1509,42 @@ def test_core_start_guard_recovers_interrupted_unbound_preparation(
     state["handoff_identity"] = None
     fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
 
+    assert ensure_recovery_before_core() is False
+    assert ensure_recovery_before_core() is False
+
+    recovered = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert recovered["phase"] == "restart_required"
+    assert recovered["transaction_path"] == str(fixture.journal_path)
+    assert recovered["operation_id"] == "a" * 24
+    assert recovered["handoff_identity"] == helper_module.journal_handoff_identity(
+        UpdateJournal.load(fixture.journal_path)
+    )
+    assert recovered["pending_handoff_identity"] is None
+    assert len(launched) == 2
+
+
+def test_core_start_guard_reclaims_prebinding_crash_and_allows_new_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.recovery_authority_mac = None
+    journal.terminal_authority_mac = None
+    journal.save(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    state["pending_handoff_identity"] = helper_module.journal_handoff_identity(journal)
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is True
     assert ensure_recovery_before_core() is True
 
     recovered = json.loads(fixture.state_path.read_text(encoding="utf-8"))
@@ -1517,6 +1552,115 @@ def test_core_start_guard_recovers_interrupted_unbound_preparation(
     assert recovered["transaction_path"] is None
     assert recovered["operation_id"] is None
     assert recovered["handoff_identity"] is None
+    assert recovered["pending_handoff_identity"] is None
+    assert not fixture.journal_path.parent.exists()
+    assert _RECOVERY_AUTHORITY_VALUES == {}
+
+
+def test_core_start_guard_reclaims_empty_prebinding_tree_after_cleanup_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.recovery_authority_mac = None
+    journal.terminal_authority_mac = None
+    journal.save(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    state["pending_handoff_identity"] = helper_module.journal_handoff_identity(journal)
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    original_atomic = helper_module._atomic_json
+    failed = False
+
+    def fail_state_reset(
+        path: Path,
+        value: dict[str, Any],
+        *,
+        boundary_code: str = "metadata_untrusted",
+    ) -> None:
+        nonlocal failed
+        if path == fixture.state_path and not failed:
+            failed = True
+            raise HelperError("state_reset_interrupted")
+        original_atomic(path, value, boundary_code=boundary_code)
+
+    monkeypatch.setattr(helper_module, "_atomic_json", fail_state_reset)
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_text(encoding="utf-8")
+    assert not fixture.journal_path.parent.exists()
+
+    monkeypatch.setattr(helper_module, "_atomic_json", original_atomic)
+    assert ensure_recovery_before_core() is True
+    recovered = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert recovered["transaction_path"] is None
+    assert recovered["operation_id"] is None
+
+
+@pytest.mark.parametrize("raw", [b'{"phase":', b"not-json"])
+def test_core_start_guard_preserves_partial_prebinding_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: bytes
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    fixture.journal_path.write_bytes(raw)
+    state_before = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state_before["handoff_identity"] = None
+    state_before["pending_handoff_identity"] = "a" * 64
+    fixture.state_path.write_text(json.dumps(state_before), encoding="utf-8")
+    state_bytes = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+
+    assert fixture.state_path.read_bytes() == state_bytes
+    assert fixture.journal_path.read_bytes() == raw
+    assert fixture.journal_path.parent.exists()
+
+
+def test_core_start_guard_preserves_invalid_prebinding_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.recovery_authority_mac = "0" * 64
+    journal.save(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    state["pending_handoff_identity"] = helper_module.journal_handoff_identity(journal)
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    state_bytes = fixture.state_path.read_bytes()
+    journal_bytes = fixture.journal_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+
+    assert fixture.state_path.read_bytes() == state_bytes
+    assert fixture.journal_path.read_bytes() == journal_bytes
+    assert fixture.journal_path.parent.exists()
+
+
+def test_core_start_guard_preserves_extra_prebinding_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.recovery_authority_mac = None
+    journal.terminal_authority_mac = None
+    journal.save(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    state["pending_handoff_identity"] = helper_module.journal_handoff_identity(journal)
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    marker = fixture.journal_path.parent / "unexpected.bin"
+    marker.write_bytes(b"untrusted")
+    state_bytes = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+
+    assert fixture.state_path.read_bytes() == state_bytes
+    assert marker.read_bytes() == b"untrusted"
+    assert fixture.journal_path.is_file()
 
 
 def test_core_start_guard_resets_pre_cutover_install_without_transaction(
@@ -1946,7 +2090,7 @@ def test_core_start_guard_does_not_treat_pending_identity_as_unbound(
             encoding="utf-8"
         )
     )
-    assert diagnostic["code"] == "startup_state_invalid"
+    assert diagnostic["code"] == "startup_state_mismatch"
 
 
 def test_core_start_guard_rejects_reparse_state_parent(
@@ -2380,6 +2524,33 @@ def test_pending_handoff_transition_reconciles_either_crash_side(
     promoted = helper_module._validate_handoff_state(journal, fixture.journal_path)
     assert promoted["handoff_identity"] == next_identity
     assert promoted["pending_handoff_identity"] is None
+
+
+def test_prebinding_handoff_transition_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.recovery_authority_mac = None
+    journal.terminal_authority_mac = None
+    journal.save(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["handoff_identity"] = None
+    state["pending_handoff_identity"] = None
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    identity = helper_module.prepare_handoff_state(journal, fixture.journal_path)
+    assert helper_module.prepare_handoff_state(journal, fixture.journal_path) == identity
+    pending = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert pending["handoff_identity"] is None
+    assert pending["pending_handoff_identity"] == identity
+
+    helper_module.bind_recovery_authority(journal, fixture.journal_path)
+    assert helper_module.bind_handoff_state(journal, fixture.journal_path) == identity
+    assert helper_module.bind_handoff_state(journal, fixture.journal_path) == identity
+    bound = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert bound["handoff_identity"] == identity
+    assert bound["pending_handoff_identity"] is None
 
 
 def test_terminal_replay_requires_completed_journal_binding(
