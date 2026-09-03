@@ -197,10 +197,17 @@ def _offer_graphical_retry(error: Exception) -> bool:
 def windows_install_directory() -> Path:
     configured = os.environ.get("ATC_INSTALL_DIR")
     if configured:
-        return Path(configured).expanduser().resolve()
+        # Keep the spelling intact until the bootstrap transaction has
+        # lstat-validated every existing parent.  Resolving here could turn a
+        # junction or symlink into an apparently trusted install root.
+        return Path(os.path.abspath(os.fspath(Path(configured).expanduser())))
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
-        return Path(local_app_data).resolve() / "Programs" / "All The Context"
+        return (
+            Path(os.path.abspath(os.fspath(Path(local_app_data).expanduser())))
+            / "Programs"
+            / "All The Context"
+        )
     data_path = Path(user_data_path("AllTheContext", "AllTheContext", roaming=False))
     return data_path.parent / "Programs" / "All The Context"
 
@@ -314,19 +321,6 @@ def _copy_macos_bundle_atomically(source: Path, target: Path, *, trusted_base: P
             shutil.rmtree(staged)
         if backup.exists() and target.exists():
             shutil.rmtree(backup)
-
-
-def _install_mcp_helper(source: Path, target: Path) -> Path:
-    """Update the stable helper or install a content-addressed copy if an AI app holds it open."""
-    try:
-        _copy_atomically(source, target)
-        return target
-    except PermissionError:
-        with source.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()[:12]
-        versioned = target.with_name(f"{target.stem}-{digest}{target.suffix}")
-        _copy_atomically(source, versioned)
-        return versioned
 
 
 def _stop_installed_core_for_upgrade() -> None:
@@ -461,6 +455,12 @@ def prepare_installed_runtime(
     if system != "Windows":
         return runtime, False
 
+    from .windows_bootstrap_install import (
+        bootstrap_journal_root,
+        canonical_targets,
+        install_windows_components,
+    )
+
     helper_source = runtime.mcp_executable
     if helper_source is None or not helper_source.is_file():
         raise RuntimeError("The packaged MCP helper is missing. Download the installer again.")
@@ -472,22 +472,46 @@ def prepare_installed_runtime(
         raise RuntimeError("The packaged update helper is missing. Download the installer again.")
 
     install_dir = windows_install_directory()
-    app_target = install_dir / WINDOWS_APP_NAME
-    helper_target = install_dir / WINDOWS_MCP_NAME
-    recovery_target = install_dir / WINDOWS_RECOVERY_NAME
-    update_target = install_dir / WINDOWS_UPDATE_HELPER_NAME
-    app_needs_update = not _same_file(runtime.executable, app_target)
-    if runtime.executable != app_target and app_target.is_file() and app_needs_update:
-        _stop_installed_core_for_upgrade()
-    installed_helper = _install_mcp_helper(helper_source, helper_target)
-    _copy_atomically(recovery_source, recovery_target)
-    _copy_atomically(update_source, update_target)
-    _copy_atomically(runtime.executable, app_target)
+    sources = {
+        "main": runtime.executable,
+        "mcp": helper_source,
+        "recovery": recovery_source,
+        "updater": update_source,
+    }
+    targets = canonical_targets(install_dir)
+
+    # Probe only for lifecycle bookkeeping.  The stop routine independently
+    # authenticates and waits for Core to exit before the first target replace.
+    core_was_running = probe_core(CoreConfig.default()) is not CoreProbe.UNREACHABLE
+
+    def restart_prior_core() -> None:
+        prior_runtime = RuntimeCommand(
+            targets["main"],
+            mcp_executable=targets["mcp"],
+            update_executable=targets["updater"],
+            recovery_executable=targets["recovery"],
+        )
+        _relaunch_installed_runtime(prior_runtime, ("--core",))
+
+    result = install_windows_components(
+        sources,
+        install_dir,
+        core_was_running=core_was_running,
+        stop_core=_stop_installed_core_for_upgrade,
+        restart_core=restart_prior_core,
+        journal_root=bootstrap_journal_root(install_dir),
+    )
+    app_target = result.targets["main"]
+    helper_target = result.targets["mcp"]
+    recovery_target = result.targets["recovery"]
+    update_target = result.targets["updater"]
     if runtime.executable != app_target:
+        # Shortcut/registry registration is intentionally outside the binary
+        # transaction and runs only after its complete commit.
         install_application_entrypoints(app_target)
     installed = RuntimeCommand(
         app_target,
-        mcp_executable=installed_helper,
+        mcp_executable=helper_target,
         update_executable=update_target,
         recovery_executable=recovery_target,
     )

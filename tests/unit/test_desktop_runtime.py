@@ -12,9 +12,7 @@ from allthecontext.desktop import (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS,
     WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS,
     WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS,
-    _copy_atomically,
     _copy_macos_bundle_atomically,
-    _install_mcp_helper,
     _run_silent_internal_mode,
     _schedule_windows_install_removal,
     _stop_installed_core_for_upgrade,
@@ -712,29 +710,6 @@ def test_uninstall_revokes_managed_ai_clients_and_deletes_their_credentials(
     assert fallback.get(f"client:{claude.id}") is None
     assert fallback.get(f"client:{unrelated.id}") is not None
     assert scheduled == [tmp_path]
-
-
-def test_locked_mcp_helper_uses_a_content_addressed_update(tmp_path: Path, monkeypatch) -> None:
-    source = tmp_path / "source" / "AllTheContextMCP.exe"
-    target = tmp_path / "installed" / "AllTheContextMCP.exe"
-    source.parent.mkdir()
-    target.parent.mkdir()
-    source.write_bytes(b"new helper")
-    target.write_bytes(b"running helper")
-
-    def locked_copy(source_path: Path, target_path: Path) -> None:
-        if target_path == target:
-            raise PermissionError("in use")
-        _copy_atomically(source_path, target_path)
-
-    monkeypatch.setattr("allthecontext.desktop._copy_atomically", locked_copy)
-
-    installed = _install_mcp_helper(source, target)
-
-    assert installed.name.startswith("AllTheContextMCP-")
-    assert installed.suffix == ".exe"
-    assert installed.read_bytes() == b"new helper"
-    assert target.read_bytes() == b"running helper"
 
 
 def test_legacy_upgrade_uses_and_revokes_a_one_time_credential(tmp_path: Path, monkeypatch) -> None:
