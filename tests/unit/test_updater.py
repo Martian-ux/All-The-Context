@@ -1090,6 +1090,108 @@ def test_pointerless_recovery_rejects_recomputed_identity_forgery(tmp_path: Path
     assert journal_path.parent.is_dir()
 
 
+@pytest.mark.parametrize("action", ["clear_error", "configure", "defer", "check"])
+@pytest.mark.parametrize(
+    "operation_id",
+    [None, "b" * 23],
+    ids=["missing-operation", "corrupt-operation"],
+)
+def test_completed_identity_without_operation_blocks_lifecycle_mutations(
+    tmp_path: Path, action: str, operation_id: str | None
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    persisted["operation_id"] = operation_id
+    state_bytes = json.dumps(persisted).encode("utf-8")
+    manager.state_path.write_bytes(state_bytes)
+
+    broken, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert broken._state_write_allowed is False
+    with pytest.raises(UpdateError):
+        if action == "clear_error":
+            broken.clear_error()
+        elif action == "configure":
+            broken.configure(enabled=True, channel="stable")
+        elif action == "defer":
+            broken.defer()
+        else:
+            broken.check()
+    assert transport.metadata_calls == 0
+    assert broken.state_path.read_bytes() == state_bytes
+    assert tombstone.is_file()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+@pytest.mark.parametrize(
+    "operation_id",
+    [None, "b" * 23],
+    ids=["missing-operation", "corrupt-operation"],
+)
+def test_completed_identity_without_operation_blocks_pruning_and_preserves_authority(
+    tmp_path: Path, operation_id: str | None
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    shutil.rmtree(manager.state_path.parent / "transactions" / operation)
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    persisted["operation_id"] = operation_id
+    manager.state_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+    broken, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert broken._state_write_allowed is False
+    assert broken._prune_retirement_tombstones() is False
+    assert tombstone.is_file()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_completed_identity_without_operation_is_deterministically_blocked_on_restart(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    shutil.rmtree(manager.state_path.parent / "transactions" / operation)
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    persisted["operation_id"] = None
+    manager.state_path.write_text(json.dumps(persisted), encoding="utf-8")
+    state_bytes = manager.state_path.read_bytes()
+
+    first, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    second, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert first._state_write_allowed is False
+    assert second._state_write_allowed is False
+    assert first.state_path.read_bytes() == state_bytes
+    assert second.state_path.read_bytes() == state_bytes
+    assert tombstone.is_file()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_completed_identity_with_forged_operation_preserves_bound_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    persisted["operation_id"] = "b" * 24
+    state_bytes = json.dumps(persisted).encode("utf-8")
+    manager.state_path.write_bytes(state_bytes)
+
+    broken, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert broken._state_write_allowed is False
+    assert broken.state_path.read_bytes() == state_bytes
+    assert tombstone.is_file()
+    assert (manager.state_path.parent / "transactions" / operation).is_dir()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
 def test_completed_cleanup_retires_authority_after_tree_removal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1131,6 +1233,21 @@ def test_completed_cleanup_retires_authority_after_tree_removal(
     assert events == ["tree", "tree", "retire"]
     assert removed_paths == [operation_dir, transaction_dir]
     assert not transaction_dir.exists()
+
+
+def test_intact_completed_binding_retires_after_transaction_tree_removal(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    transaction_dir = manager.state_path.parent / "transactions" / operation
+    shutil.rmtree(transaction_dir)
+
+    assert manager._clear_completed_recovery_evidence() is True
+    assert manager.state.completed_handoff_identity is None
+    assert not tombstone.exists()
+    assert f"transaction:{operation}" not in _RECOVERY_AUTHORITY_VALUES
 
 
 @pytest.mark.parametrize("outcome", ["installed", "rolled_back"])

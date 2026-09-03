@@ -42,6 +42,40 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-03 — PR #110 completed-identity binding containment
+
+Before this follow-up mutation, PR #110 was verified open with base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` and exact head
+`c286202fb544a0a451ace6c721fa867469a2cf6e`. A non-null
+`completed_handoff_identity` is now considered safe only when its operation ID
+is a valid 24-character lowercase hexadecimal value and the state binds to the
+same authenticated terminal journal or canonical bounded retirement tombstone.
+Missing, corrupt, or forged operation references preserve the state, journal,
+tombstone, transaction evidence, and credential authority and disable updater
+writes and cleanup. `clear_error`, `configure`, `defer`, `check`, retirement,
+and pruning cannot bypass that state.
+
+Frozen Windows Core startup now stays blocked when a completed state has no
+transaction evidence and its authenticated tombstone still has live or
+unavailable credential authority. It can proceed only after the intact
+operation/tombstone binding confirms that the credential is already retired;
+the updater can still complete bounded tombstone retirement after transaction
+tree removal when the binding remains intact. Repeated restart and cleanup
+attempts are deterministic, and malformed or ambiguous evidence remains
+fail-closed.
+
+Local evidence for this follow-up is green: the updater/helper focused suite
+reports 307 passed and 3 expected filesystem skips; the full suite reports
+2,673 passed, 13 expected skips, and 2 existing Starlette deprecation
+warnings. Ruff lint and format checks, mypy, documentation validation, and
+diff validation pass. The rebuilt Windows frozen desktop artifact, console
+recovery helper, packaged first-run/restart/OTA-recovery/rollback/uninstall
+smoke, direct unsigned beta package, native credential/startup acceptance,
+beta source validation, and release-keyring validation/audit also pass. Hosted
+check results must bind to the pushed commit and remain separate from this
+local evidence. No release, signing, publishing, Defender, Microsoft
+submission, or downloaded-candidate execution is implied.
+
 ### 2026-09-03 — PR #110 clear-error retirement guard
 
 Before this follow-up mutation, PR #110 was verified open with base

@@ -2674,7 +2674,11 @@ def completed_transaction_is_authoritative(
 
 
 def _retirement_tombstone_is_authoritative(
-    state_path: Path, state: dict[str, Any], phase: str
+    state_path: Path,
+    state: dict[str, Any],
+    phase: str,
+    *,
+    require_credential_retired: bool = False,
 ) -> bool:
     """Recognize terminal cleanup evidence after its credential was retired."""
 
@@ -2742,11 +2746,15 @@ def _retirement_tombstone_is_authoritative(
             cast(str, value["terminal_phase"]),
             cast(str, value["terminal_authority_mac"]),
         )
-        if status not in {"valid", "missing"}:
+        if status not in {"valid", "missing"} or (
+            require_credential_retired and status != "missing"
+        ):
             return False
         journal_path = state_path.parent / "transactions" / cast(str, operation_id) / "journal.json"
         if _plain_file_stat_if_present(journal_path, "startup_state_untrusted") is None:
-            return True
+            return not _plain_directory_chain_if_present(
+                journal_path.parent, "startup_state_untrusted"
+            )
         journal = UpdateJournal.load(journal_path, validate_storage=False)
         journal_value = asdict(journal)
         journal_value["phase"] = journal.phase.value
@@ -2857,6 +2865,16 @@ def ensure_recovery_before_core() -> bool:
             phase=phase,
         )
         return False
+    if completed_identity is not None and (
+        phase not in {"installed", "rolled_back"} or not _valid_operation_id(operation_id)
+    ):
+        _write_startup_recovery_diagnostic(
+            state_path,
+            status="blocked",
+            code="startup_state_invalid",
+            phase=phase,
+        )
+        return False
     if transaction is None:
         try:
             transaction_evidence = _transaction_evidence_without_state(state_path)
@@ -2880,6 +2898,25 @@ def ensure_recovery_before_core() -> bool:
                     if phase == "installing"
                     else "startup_state_missing_with_transaction"
                 ),
+                phase=phase,
+            )
+            return False
+        if (
+            completed_identity is not None
+            and not transaction_evidence
+            and not (
+                _retirement_tombstone_is_authoritative(
+                    state_path,
+                    state,
+                    phase,
+                    require_credential_retired=True,
+                )
+            )
+        ):
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_active_without_transaction",
                 phase=phase,
             )
             return False

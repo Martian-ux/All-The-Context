@@ -82,6 +82,7 @@ from .windows_update_helper import (
 from .windows_update_helper import (
     _transaction_entry_has_recovery_evidence as _helper_transaction_entry_has_recovery_evidence,
 )
+from .windows_update_helper import _valid_operation_id as _helper_valid_operation_id
 
 CURRENT_VERSION = __version__
 MAX_MANIFEST_BYTES = 128 * 1024
@@ -1580,6 +1581,7 @@ class UpdateManager:
         self.state_path = self.config.data_dir / "state.json"
         self._preferences_write_allowed = True
         self._state_write_allowed = True
+        self._unsafe_completed_operation_reference = False
         with self._operation_lock:
             self.preferences = self._load_preferences()
             self.state = self._load_state()
@@ -1853,11 +1855,17 @@ class UpdateManager:
     def _retirement_tombstone_state_matches(self) -> bool:
         operation = self.state.operation_id
         identity = self.state.completed_handoff_identity
-        if operation is None or self.state.phase not in {
-            UpdatePhase.INSTALLED,
-            UpdatePhase.ROLLED_BACK,
-        }:
+        if (
+            not _helper_valid_operation_id(operation)
+            or (identity is not None and not _valid_digest(identity))
+            or self.state.phase
+            not in {
+                UpdatePhase.INSTALLED,
+                UpdatePhase.ROLLED_BACK,
+            }
+        ):
             return False
+        operation = cast(str, operation)
         try:
             candidates = self._retirement_tombstone_candidates(operation)
             if len(candidates) != 1:
@@ -1876,6 +1884,7 @@ class UpdateManager:
                     if self.state.phase is UpdatePhase.INSTALLED
                     else HelperPhase.ROLLED_BACK.value
                 )
+                and self._validate_retirement_tombstone(candidates[0], payload)
             )
         except (HelperError, OSError, RecursionError, TypeError, ValueError):
             return False
@@ -2051,10 +2060,14 @@ class UpdateManager:
     def _clear_completed_recovery_evidence(self) -> bool:
         """Retire terminal evidence through a crash-replayable tombstone."""
 
+        if self._unsafe_completed_operation_reference:
+            return self._retirement_cleanup_failed(invalid=True)
         identity = self.state.completed_handoff_identity
-        operation = self.state.operation_id
-        if identity is None or operation is None or self.state.transaction_path is not None:
+        if identity is None:
             return True
+        if not self._completed_recovery_binding_is_valid():
+            return self._retirement_cleanup_failed(invalid=True)
+        operation = cast(str, self.state.operation_id)
         try:
             tombstone_path, tombstone = self._ensure_retirement_tombstone()
         except _RetirementEvidenceError:
@@ -2110,6 +2123,14 @@ class UpdateManager:
     def _prune_retirement_tombstones(self) -> bool:
         """Reap only authenticated, already-retired orphan tombstones."""
 
+        if self._unsafe_completed_operation_reference:
+            return self._retirement_cleanup_failed(invalid=True)
+        if self.state.completed_handoff_identity is not None:
+            if not self._completed_recovery_binding_is_valid():
+                return self._retirement_cleanup_failed(invalid=True)
+            pending_operation = cast(str, self.state.operation_id)
+        else:
+            pending_operation = None
         root = self._retirement_root()
         try:
             if not _helper_plain_directory_chain_if_present(root, "metadata_untrusted"):
@@ -2117,9 +2138,6 @@ class UpdateManager:
             entries = list(root.iterdir())
         except (HelperError, OSError, RecursionError):
             return False
-        pending_operation = (
-            self.state.operation_id if self.state.completed_handoff_identity is not None else None
-        )
         for entry in entries:
             if pending_operation is not None and entry.name.startswith(f"{pending_operation}-"):
                 continue
@@ -2238,6 +2256,13 @@ class UpdateManager:
                 last_error="Persisted update state could not be read safely",
             )
         except (ValueError, TypeError, KeyError):
+            if (
+                isinstance(value, dict)
+                and value.get("completed_handoff_identity") is not None
+                and not _helper_valid_operation_id(value.get("operation_id"))
+            ):
+                self._unsafe_completed_operation_reference = True
+                self._state_write_allowed = False
             if self._recovery_evidence_present():
                 self._state_write_allowed = False
                 return UpdateState(
@@ -2366,6 +2391,34 @@ class UpdateManager:
             and transaction_stat.st_size > 0
         )
 
+    def _completed_recovery_binding_is_valid(self) -> bool:
+        """Require a completed identity to retain an authenticated operation binding."""
+
+        identity = self.state.completed_handoff_identity
+        operation = self.state.operation_id
+        if identity is None:
+            return True
+        if (
+            not _helper_valid_operation_id(operation)
+            or not _valid_digest(identity)
+            or self.state.phase not in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK}
+            or self.state.transaction_path is not None
+        ):
+            return False
+        state = asdict(self.state)
+        state["phase"] = self.state.phase.value
+        try:
+            if completed_transaction_is_authoritative(
+                self.state_path,
+                state,
+                self.state.phase.value,
+                validate_storage=False,
+            ):
+                return True
+        except (HelperError, OSError, RecursionError, TypeError, ValueError):
+            return False
+        return self._retirement_tombstone_state_matches()
+
     def _validate_internal_state(self) -> None:
         invalid = False
         recovery_authority_fields_present = (
@@ -2383,6 +2436,12 @@ class UpdateManager:
             self.state.phase = UpdatePhase.ERROR
             self.state.last_error = message
 
+        if (
+            self.state.completed_handoff_identity is not None
+            and not self._completed_recovery_binding_is_valid()
+        ):
+            preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
+            return
         if not self._active_recovery_metadata_complete():
             preserve_recovery_authority(RECOVERY_EVIDENCE_INCOMPLETE_ERROR)
             return

@@ -1,5 +1,46 @@
 # Architecture decisions
 
+## ADR-196: Completed terminal identity requires an authenticated operation binding
+
+**Status:** accepted locally on 2026-09-03 as the final-review follow-up for PR
+#110; hosted checks must bind to the pushed commit and PR #110 remains open.
+
+The terminal state invariant is exact: when `completed_handoff_identity` is
+non-null, `operation_id` must be a valid 24-character lowercase hexadecimal
+operation, the phase must be `installed` or `rolled_back`,
+`transaction_path` must be cleared, and the operation must bind to either the
+same authenticated terminal journal or one canonical bounded retirement
+tombstone. The journal path, terminal phase/outcome, handoff identity, terminal
+HMAC, and journal digest must agree; the tombstone's operation and identity must
+also agree with state. A missing, malformed, stale, or forged operation
+reference is unsafe even if a completed identity is otherwise parseable.
+
+An unsafe completed binding is preserved in place: the updater disables state
+writes, does not clear the completed identity, does not retire the credential,
+does not prune tombstones or transaction evidence, and blocks `clear_error`,
+`configure`, `defer`, `check`, and other new-operation paths. This applies
+before constructor cleanup and again at direct retirement/pruning boundaries,
+so a missing operation cannot turn authenticated evidence into an orphan.
+
+The bounded retry path remains valid when the binding is intact. It writes and
+verifies the tombstone, removes staging and the transaction tree, retires the
+operation credential, clears the completed identity, and only then unlinks the
+tombstone. If the tree is already gone, the same authenticated tombstone and
+operation binding permit the updater to finish retirement; repeated restarts
+remain idempotent. Frozen Windows Core startup is stricter for a pointerless
+completed state: if no transaction evidence remains, it stays blocked while the
+tombstone's credential is live, unavailable, or invalid, and proceeds only when
+the validated credential status is already `missing`. Missing, corrupt, or
+forged tombstones and operation references fail closed without evidence
+deletion.
+
+This closes the completed-identity/operation-retirement boundary only. The
+local OS credential store and ACL remain a trust assumption, and the existing
+filesystem race residual remains because the implementation does not claim
+handle-based no-follow atomicity against concurrent same-user mutation. No
+signing, release, Defender, Microsoft, or downloaded-candidate acceptance
+follows from this decision.
+
 ## ADR-195: Final-review recovery authority is keyed and retires after evidence cleanup
 
 **Status:** accepted locally on 2026-09-03 as the PR #110 final-review

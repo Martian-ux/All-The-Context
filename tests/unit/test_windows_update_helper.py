@@ -493,6 +493,29 @@ def _isolate_runtime(monkeypatch: pytest.MonkeyPatch, launched: list[str]) -> No
     )
 
 
+def _write_retirement_tombstone(fixture: TransactionFixture) -> Path:
+    journal = UpdateJournal.load(fixture.journal_path)
+    assert journal.phase is HelperPhase.COMMITTED
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    identity = helper_module.journal_handoff_identity(journal)
+    assert state["completed_handoff_identity"] == identity
+    payload = {
+        "schema_version": helper_module.RETIREMENT_TOMBSTONE_SCHEMA_VERSION,
+        "operation_id": journal.operation_id,
+        "outcome": "installed",
+        "terminal_phase": journal.phase.value,
+        "handoff_identity": identity,
+        "terminal_authority_mac": journal.terminal_authority_mac,
+        "journal_sha256": hashlib.sha256(fixture.journal_path.read_bytes()).hexdigest(),
+    }
+    raw = json.dumps(payload, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+    root = fixture.state_path.parent / helper_module.RETIREMENT_TOMBSTONE_DIRECTORY
+    root.mkdir()
+    path = root / f"{journal.operation_id}-{hashlib.sha256(raw).hexdigest()}.json"
+    path.write_bytes(raw)
+    return path
+
+
 def test_independent_helper_commits_after_real_state_and_database_transition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1498,6 +1521,79 @@ def test_core_start_guard_allows_published_terminal_pointerless_state(
 
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
 
+    assert ensure_recovery_before_core() is True
+
+
+def test_core_start_guard_blocks_live_retirement_authority_after_tree_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    assert run_transaction(fixture.journal_path) == 0
+    tombstone = _write_retirement_tombstone(fixture)
+    state_before = fixture.state_path.read_bytes()
+    shutil.rmtree(fixture.journal_path.parent)
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == state_before
+    assert tombstone.is_file()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{'a' * 24}"]
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_active_without_transaction"
+
+
+def test_core_start_guard_rejects_completed_identity_without_operation_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    assert run_transaction(fixture.journal_path) == 0
+    tombstone = _write_retirement_tombstone(fixture)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["operation_id"] = None
+    state_before = json.dumps(state).encode("utf-8")
+    fixture.state_path.write_bytes(state_before)
+    shutil.rmtree(fixture.journal_path.parent)
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == state_before
+    assert tombstone.is_file()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{'a' * 24}"]
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_invalid"
+
+
+def test_core_start_guard_allows_removed_tree_after_intact_retirement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    assert run_transaction(fixture.journal_path) == 0
+    tombstone = _write_retirement_tombstone(fixture)
+    _RECOVERY_AUTHORITY_VALUES.clear()
+    shutil.rmtree(fixture.journal_path.parent)
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert tombstone.is_file()
+    assert ensure_recovery_before_core() is True
     assert ensure_recovery_before_core() is True
 
 
