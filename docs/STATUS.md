@@ -59,8 +59,8 @@ while the document is hidden.
 Focused integrated Python validation passes 248 tests. Dashboard validation
 passes 69 tests plus TypeScript checking, production build, and a zero-finding
 production dependency audit. The final sequential repository suite collects
-2,695 items and passes 2,682 with 13 expected capability skips and the two
-existing Starlette deprecation warnings in 679.53 seconds; sequential and
+2,696 items and passes 2,683 with 13 expected capability skips and the two
+existing Starlette deprecation warnings in 828.88 seconds; sequential and
 four-worker collections are identical. Ruff format/lint, mypy, documentation,
 lock, and diff validation pass. No package, signing, publishing, Defender
 change, Microsoft submission, release, or downloaded-candidate execution is
