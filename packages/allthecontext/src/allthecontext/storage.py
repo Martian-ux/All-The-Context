@@ -7744,9 +7744,7 @@ class CoreStore:
                 "ORDER BY g.updated_at DESC,g.id LIMIT ? OFFSET ?",
                 [*parameters, bounded_limit, max(offset, 0)],
             ).fetchall()
-            members_by_group: dict[str, list[str]] = {
-                str(group["id"]): [] for group in groups
-            }
+            members_by_group: dict[str, list[str]] = {str(group["id"]): [] for group in groups}
             if members_by_group:
                 placeholders = ",".join("?" for _ in members_by_group)
                 member_rows = connection.execute(

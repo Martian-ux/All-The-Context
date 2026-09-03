@@ -1578,11 +1578,7 @@ def _conflict_states(
         ).fetchall()
         for row in rows:
             record_id = str(row["record_id"])
-            state = (
-                ConflictState.ACTIVE
-                if str(row["status"]) == "open"
-                else ConflictState.RESOLVED
-            )
+            state = ConflictState.ACTIVE if str(row["status"]) == "open" else ConflictState.RESOLVED
             if state is ConflictState.ACTIVE or states[record_id] is ConflictState.CLEAR:
                 states[record_id] = state
     return states

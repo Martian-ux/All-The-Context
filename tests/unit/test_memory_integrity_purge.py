@@ -295,15 +295,11 @@ def test_conflict_state_lookup_is_targeted_and_uses_reverse_member_index(tmp_pat
     assert second_id not in states
     assert unrelated_id not in states
     lookup_statements = [
-        statement
-        for statement in statements
-        if "FROM integrity_group_members" in statement
+        statement for statement in statements if "FROM integrity_group_members" in statement
     ]
     assert len(lookup_statements) == 1
     assert "WHERE m.record_id IN" in lookup_statements[0]
-    assert any(
-        "idx_integrity_group_members_record_group" in str(row["detail"]) for row in plan
-    )
+    assert any("idx_integrity_group_members_record_group" in str(row["detail"]) for row in plan)
 
 
 def test_supersession_removes_old_record_from_integrity_group(tmp_path: Path) -> None:
