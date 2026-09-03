@@ -8,7 +8,11 @@ import pytest
 from allthecontext.release_manifest import (
     MAX_KEYRING_BYTES,
     MAX_PRIVATE_KEY_BYTES,
+    MAX_VERSION_COMPONENT_DIGITS,
+    MAX_VERSION_COMPONENTS,
+    MAX_VERSION_TEXT_LENGTH,
     ManifestError,
+    ReleaseVersion,
     canonical_payload,
     create_manifest,
     load_keyring,
@@ -72,6 +76,71 @@ def test_manifest_is_deterministic_and_verifies(tmp_path: Path) -> None:
     repeated, _ = _release(tmp_path)
     assert json.dumps(manifest, sort_keys=True) == json.dumps(repeated, sort_keys=True)
     verify_manifest(manifest, keyring, current_version="0.1.0", expected_channel="stable")
+
+
+def test_release_version_parser_accepts_conservative_boundaries() -> None:
+    exact_component = f"{'1' * MAX_VERSION_COMPONENT_DIGITS}.0.0"
+    exact_text = (
+        f"{'1' * MAX_VERSION_COMPONENT_DIGITS}."
+        f"{'1' * MAX_VERSION_COMPONENT_DIGITS}."
+        f"{'1' * MAX_VERSION_COMPONENT_DIGITS}-beta.11"
+    )
+
+    parsed = ReleaseVersion.parse(exact_component)
+    assert parsed.major == int("1" * MAX_VERSION_COMPONENT_DIGITS)
+    assert len(exact_text) == MAX_VERSION_TEXT_LENGTH
+    assert ReleaseVersion.parse(exact_text).stability == 0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "not-a-version",
+        "-1.2.3",
+        "1.-2.3",
+        "1.2.-3",
+        "01.2.3",
+        "1.02.3",
+        "1.2.03",
+        "1.2.3-beta.01",
+    ],
+)
+def test_release_version_parser_rejects_malformed_values_without_echo(value: str) -> None:
+    with pytest.raises(ManifestError, match=r"^invalid release version$") as raised:
+        ReleaseVersion.parse(value)
+    if value:
+        assert value not in str(raised.value)
+
+
+@pytest.mark.parametrize("value", [None, 123, b"1.2.3"])
+def test_release_version_parser_rejects_non_string_values(value: object) -> None:
+    with pytest.raises(ManifestError, match=r"^invalid release version$"):
+        ReleaseVersion.parse(value)  # type: ignore[arg-type]
+
+
+def test_release_version_parser_rejects_component_digit_and_text_overflow() -> None:
+    component_overflow = f"{'1' * (MAX_VERSION_COMPONENT_DIGITS + 1)}.0.0"
+    pathological_component = f"{'1' * 5_000}.0.0"
+    text_overflow = (
+        f"{'1' * MAX_VERSION_COMPONENT_DIGITS}."
+        f"{'1' * MAX_VERSION_COMPONENT_DIGITS}."
+        f"{'1' * MAX_VERSION_COMPONENT_DIGITS}-beta.111"
+    )
+
+    for value in (component_overflow, pathological_component, text_overflow):
+        with pytest.raises(ManifestError, match=r"^invalid release version$") as raised:
+            ReleaseVersion.parse(value)
+        assert value not in str(raised.value)
+
+
+def test_release_version_parser_rejects_too_many_components() -> None:
+    value = "1.2.3-beta.1.2"
+    assert value.count(".") + 1 == MAX_VERSION_COMPONENTS + 1
+
+    with pytest.raises(ManifestError, match=r"^invalid release version$") as raised:
+        ReleaseVersion.parse(value)
+    assert value not in str(raised.value)
 
 
 @pytest.mark.parametrize(

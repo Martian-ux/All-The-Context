@@ -31,6 +31,9 @@ PLATFORMS = frozenset({"windows", "macos", "linux"})
 ARCHITECTURES = frozenset({"x86_64", "arm64"})
 MAX_KEYRING_BYTES = 16 * 1024
 MAX_PRIVATE_KEY_BYTES = 16 * 1024
+MAX_VERSION_TEXT_LENGTH = 64
+MAX_VERSION_COMPONENTS = 4
+MAX_VERSION_COMPONENT_DIGITS = 18
 WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SHA256_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
@@ -55,17 +58,39 @@ class ReleaseVersion:
 
     @classmethod
     def parse(cls, value: str) -> ReleaseVersion:
+        if not isinstance(value, str) or len(value) > MAX_VERSION_TEXT_LENGTH:
+            raise ManifestError("invalid release version")
+        if value.count(".") + 1 > MAX_VERSION_COMPONENTS:
+            raise ManifestError("invalid release version")
         match = VERSION.fullmatch(value)
         if match is None:
-            raise ManifestError(f"invalid release version: {value!r}")
+            raise ManifestError("invalid release version")
+        components = [
+            match.group("major"),
+            match.group("minor"),
+            match.group("patch"),
+            match.group("number"),
+        ]
+        numeric_components = [component for component in components if component is not None]
+        if (
+            len(numeric_components) > MAX_VERSION_COMPONENTS
+            or any(
+                len(component) > MAX_VERSION_COMPONENT_DIGITS
+                for component in numeric_components
+            )
+        ):
+            raise ManifestError("invalid release version")
         label = match.group("label")
-        return cls(
-            int(match.group("major")),
-            int(match.group("minor")),
-            int(match.group("patch")),
-            1 if label is None else 0,
-            0 if label is None else int(match.group("number")),
-        )
+        try:
+            return cls(
+                int(match.group("major")),
+                int(match.group("minor")),
+                int(match.group("patch")),
+                1 if label is None else 0,
+                0 if label is None else int(match.group("number")),
+            )
+        except ValueError as exc:
+            raise ManifestError("invalid release version") from exc
 
 
 def _base64url_encode(value: bytes) -> str:

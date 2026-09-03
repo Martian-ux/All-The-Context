@@ -25,6 +25,7 @@ from allthecontext.windows_update_helper import (
     ensure_recovery_before_core,
     journal_failure_diagnostic,
     main,
+    record_startup_recovery_parser_failure,
     run_transaction,
     startup_recovery_diagnostic,
 )
@@ -1388,6 +1389,61 @@ def test_core_start_guard_rejects_malformed_inactive_state_matrix(
     )
     assert diagnostic["code"] == "startup_state_invalid"
     assert diagnostic["phase"] is None
+
+
+def test_core_start_guard_contains_numeric_version_parser_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["offered_version"] = "1" * 5_000 + ".0.0"
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_invalid"
+    assert "1" * 5_000 not in json.dumps(diagnostic)
+
+
+def test_startup_parser_failure_diagnostic_is_fixed_and_content_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(tmp_path / "data"))
+
+    record_startup_recovery_parser_failure()
+
+    diagnostic = json.loads(
+        (tmp_path / "data" / "updates" / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["status"] == "blocked"
+    assert diagnostic["code"] == "startup_state_invalid"
+    assert diagnostic["phase"] is None
+
+
+def test_helper_contains_huge_manifest_version_without_echo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _, manifest_path, _ = _signed_staging(fixture, monkeypatch)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    huge_version = "1" * 5_000 + ".0.0"
+    manifest["version"] = huge_version
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["manifest_identity"] = _digest(manifest_path)[0]
+
+    assert helper_module._pre_cutover_staging_evidence("a" * 24, state) is False
 
 
 def test_core_start_guard_rejects_unsigned_pre_cutover_manifest(

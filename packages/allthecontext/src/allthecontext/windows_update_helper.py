@@ -711,7 +711,7 @@ def _validate_startup_state(value: dict[str, Any]) -> str:
         raise HelperError("startup_state_invalid")
     try:
         ReleaseVersion.parse(current_version)
-    except ManifestError as exc:
+    except ValueError as exc:
         raise HelperError("startup_state_invalid") from exc
     offered_version = value.get("offered_version")
     if offered_version is not None:
@@ -719,7 +719,7 @@ def _validate_startup_state(value: dict[str, Any]) -> str:
             raise HelperError("startup_state_invalid")
         try:
             ReleaseVersion.parse(offered_version)
-        except ManifestError as exc:
+        except ValueError as exc:
             raise HelperError("startup_state_invalid") from exc
     if not isinstance(value.get("mandatory"), bool):
         raise HelperError("startup_state_invalid")
@@ -865,7 +865,7 @@ class UpdateJournal:
         try:
             ReleaseVersion.parse(self.current_version)
             ReleaseVersion.parse(self.target_version)
-        except ManifestError as exc:
+        except ValueError as exc:
             raise HelperError("journal_version_invalid") from exc
         if (
             self.core_host != "127.0.0.1"
@@ -2036,6 +2036,17 @@ def completed_transaction_is_authoritative(
         )
     except (HelperError, OSError, RecursionError, TypeError, ValueError):
         return False
+
+
+def record_startup_recovery_parser_failure() -> None:
+    """Persist a fixed diagnostic when the outer frozen startup guard is hit."""
+
+    state_path = _data_directory() / "updates" / "state.json"
+    _write_startup_recovery_diagnostic(
+        state_path,
+        status="blocked",
+        code="startup_state_invalid",
+    )
 
 
 def ensure_recovery_before_core() -> bool:
