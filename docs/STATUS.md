@@ -51,15 +51,23 @@ order: automatic verified update staging
 `4ddbc11e0442fba71b7002bae104cdc5de425441`, clean-machine acceptance evidence
 `5efdffc9eb70446d22980d8816a37bee762ccfbe`, and the bounded Windows Defender
 receipt tool `b5eb29adc2e53e90bd4df14392691cf068c7f184`. The first three
-cherry-picks applied without conflicts; formatter-only cleanup and this
-documentation are the remaining integration changes.
+cherry-picks applied without conflicts. The staging-safety remediation
+`ecc79ec7984a974e0a81904ba3010a845b9d62c6`, whose parent is the original
+staging worker, was then independently verified and cherry-picked once after
+the local staging equivalent. It adds the explicit-consent, lifecycle,
+packaged-Windows, and transfer-deadline safeguards below.
 
-The in-process update worker may revalidate and stage a signed-metadata-bound
-candidate using the existing serialized `UpdateManager`, bounded disk/retry
-controls, and operation-scoped staging. It does not register a task or service,
-launch a process, shut down Core, force an application restart, or reboot
-Windows. Installation and activation remain operator-driven, and the dashboard
-surfaces the restart prerequisite for a staged update.
+Older users who had only the prior `enabled=true` check preference remain
+check-only: automatic staging is a separately persisted explicit
+`automatic_staging_enabled` consent and defaults to false when absent. Only a
+packaged Windows capability can honor that consent. When enabled, the
+in-process worker may revalidate and stage a signed-metadata-bound candidate
+using the existing serialized `UpdateManager`, bounded disk/retry controls,
+operation-scoped staging, a total transfer deadline, and durable pause after
+cancellation. Shutdown signals cancellation and uses a bounded join. It does
+not register a task or service, launch a process, shut down Core, force an
+application restart, or reboot Windows. READY remains inert; installation and
+activation remain operator-driven, and the dashboard surfaces the prerequisite.
 
 The clean-machine command is an operator-evidence auditor: it never launches an
 installer or product executable. Its strict path-free receipt binds a claimed
@@ -71,10 +79,13 @@ The new schemas and source tests are contracts only: they do not claim a real
 Defender scan, ordinary clean-machine execution, artifact release, signing,
 publication, or execution of a downloaded candidate.
 
-The focused integrated run passed 416 tests with 3 expected filesystem-
-capability skips (symlink/reparse inputs). Full exact-SHA gates, dashboard
-validation, package/build checks, release-keyring and repository-security
-checks, and hosted checks remain to be recorded against the final pushed SHA.
+The remediation worker evidence is separately bound to `ecc79ec…`: updater
+189 passed with 2 expected symlink skips, Core API 20 passed, and dashboard
+70 passed with TypeScript checking/build. The held pre-remediation integration
+also passed 2,755 tests with 14 expected filesystem-capability skips and 2
+existing Starlette deprecation warnings; its safe source package/build and
+independent manifest checks passed. Final exact-SHA gates, package/build hashes,
+and hosted checks must be recorded against the post-remediation head.
 The distribution plan remains unsigned; SmartScreen warnings are accepted,
 but Defender quarantine or deletion is not.
 

@@ -1,20 +1,27 @@
 # Architecture decisions
 
-## ADR-200: Automatic Windows staging and evidence receipts remain bounded gates
+## ADR-200: Explicit Windows staging and evidence receipts remain bounded gates
 
 **Status:** accepted locally on 2026-09-03 after integration from exact clean
-base `db5218c988d1a131a3d4371599e86f7d955e0389`; hosted checks must bind to the
+base `db5218c988d1a131a3d4371599e86f7d955e0389`, amended by remediation worker
+`ecc79ec7984a974e0a81904ba3010a845b9d62c6`; hosted checks must bind to the
 final pushed commit.
 
 This wave integrates the single-parent worker commits
 `4ddbc11e0442fba71b7002bae104cdc5de425441`,
 `5efdffc9eb70446d22980d8816a37bee762ccfbe`, and
-`b5eb29adc2e53e90bd4df14392691cf068c7f184` in that order. The update worker
-may perform signed-metadata revalidation and operation-scoped download/staging
-inside the Core lifetime, with serialized access, bounded retry/disk controls,
-and a visible activation prerequisite. It has no OS task/service registration,
-process-launch, Core-shutdown, forced-restart, or reboot authority. Install and
-activation remain operator-driven.
+`b5eb29adc2e53e90bd4df14392691cf068c7f184` in that order. The staging-safety
+remediation is the single-parent commit
+`ecc79ec7984a974e0a81904ba3010a845b9d62c6` with parent
+`4ddbc11e0442fba71b7002bae104cdc5de425441`. Older persisted `enabled=true`
+preferences remain check-only because `automatic_staging_enabled` is a
+separate persisted consent that defaults false. A packaged Windows capability
+is required before consent can trigger signed-metadata revalidation and
+operation-scoped staging inside the Core lifetime. The worker uses bounded
+retry/disk controls, a total transfer deadline, durable cancellation pause,
+and bounded shutdown join. READY remains inert. It has no OS task/service
+registration, process-launch, Core-shutdown, forced-restart, or reboot
+authority. Install and activation remain operator-driven.
 
 The clean-machine receipt is an auditor for operator-run evidence and never
 launches an installer or product executable. The Defender receipt is a

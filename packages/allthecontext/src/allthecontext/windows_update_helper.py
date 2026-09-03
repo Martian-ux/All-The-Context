@@ -1035,9 +1035,8 @@ def _validate_startup_state(value: dict[str, Any]) -> str:
             raise HelperError("startup_state_invalid") from exc
     if not isinstance(value.get("mandatory"), bool):
         raise HelperError("startup_state_invalid")
-    if (
-        "automatic_staging_paused" in value
-        and not isinstance(value.get("automatic_staging_paused"), bool)
+    if "automatic_staging_paused" in value and not isinstance(
+        value.get("automatic_staging_paused"), bool
     ):
         raise HelperError("startup_state_invalid")
     for field in (

@@ -390,9 +390,7 @@ def _manager(
         transport=transport,
         installer=active_installer,
         health_probe=health or FakeHealth(True),
-        automation_policy=UpdateAutomationPolicy(
-            automatic_download_enabled=automatic_staging
-        ),
+        automation_policy=UpdateAutomationPolicy(automatic_download_enabled=automatic_staging),
     )
     if automatic_staging:
         manager.configure(
@@ -3284,9 +3282,7 @@ def test_update_automation_shutdown_cancels_slow_download_and_persists_pause(
     tmp_path: Path,
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, _ = _manager(
-        tmp_path, manifest, artifact, keyring, automatic_staging=True
-    )
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring, automatic_staging=True)
     entered = threading.Event()
 
     def slow_stream(
@@ -3352,9 +3348,10 @@ def test_update_automation_shutdown_without_pending_offer_does_not_pause_staging
     UpdateAutomation(manager).shutdown()
 
     assert manager.state.automatic_staging_paused is False
-    assert json.loads(manager.state_path.read_text(encoding="utf-8"))[
-        "automatic_staging_paused"
-    ] is False
+    assert (
+        json.loads(manager.state_path.read_text(encoding="utf-8"))["automatic_staging_paused"]
+        is False
+    )
 
 
 def test_update_automation_does_not_expose_an_unstarted_thread_to_shutdown(
@@ -3535,9 +3532,7 @@ def test_automatic_download_uses_the_current_candidate_after_supersession(
     tmp_path: Path,
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, _ = _manager(
-        tmp_path, manifest, artifact, keyring, automatic_staging=True
-    )
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring, automatic_staging=True)
     replacement, _, _ = _fixture(tmp_path, version="0.3.0")
     original_check = manager.scheduled_check
 
@@ -3579,9 +3574,7 @@ def test_automatic_download_checks_disk_budget_before_transport(
 
 def test_staged_update_survives_restart_without_redownload(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, _ = _manager(
-        tmp_path, manifest, artifact, keyring, automatic_staging=True
-    )
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring, automatic_staging=True)
     assert UpdateAutomation(manager).run_once()["phase"] == "ready"
     staged = manager._operation_directory() / "artifact.zip"
 
