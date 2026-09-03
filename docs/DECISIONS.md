@@ -26,6 +26,33 @@ publication authoritative and blocks unsafe mutation. Retirement deletes the
 per-operation secret only after both staged and transaction trees have been
 removed safely.
 
+The handoff has a separate pre-binding crash boundary. The installer persists
+the prepared journal and records its immutable handoff identity as a pending
+state marker before creating the credential authority. It then creates the
+per-operation secret, binds the journal HMAC, promotes the state identity, and
+only after those writes registers and launches the helper. Frozen startup
+reconciles a valid authority-bound journal with an unbound or pending state and
+retries the bind/launch. Before authority exists, only a bounded, exact
+expected transaction tree can be reclaimed; any journal, regular file,
+reparse/link, extra entry, malformed record, or unstable tree remains
+fail-closed evidence. The transition is idempotent across repeated startups.
+
+Retirement uses one canonical, bounded 16 KiB tombstone containing the schema,
+operation, terminal outcome/phase, handoff identity, terminal HMAC, and exact
+journal digest. The tombstone is written and re-read before staging and
+transaction trees are removed. Authority deletion follows successful removal
+of both trees, then terminal state clears its completed identity, and only
+then is the tombstone unlinked. A crash before any of those steps leaves the
+completed state, tombstone, tree, or credential for retry; a crash after
+credential deletion is recognized as already retired; a tombstone left after
+state clearing is pruned only after the same authenticated evidence checks.
+The frozen startup guard and `UpdateManager` use these same tombstone/journal
+checks, so neither can treat a partial retirement as an ordinary new start.
+
+No updater operation can bypass this authority: new check/download/install
+work, `defer`, `configure`, `clear_error`, recovery cleanup, and pruning all
+remain blocked or retry-only while active evidence is present or unsafe.
+
 An empty pre-authority operation directory is not evidence by itself and may
 be reclaimed. A journal, regular file, link/reparse object, non-directory, or
 ambiguous/pathological tree remains credible recovery evidence and is retained

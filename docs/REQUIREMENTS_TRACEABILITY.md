@@ -18,6 +18,8 @@ The invalid active-journal authority and operator private-key read follow-up
 is covered by ADR-191 and ADR-192.
 The terminal publication lifecycle and numeric version containment follow-up
 is covered by ADR-193 and ADR-194.
+The P1 pre-binding crash boundary and authenticated retirement replay are
+covered by ADR-195.
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;
@@ -92,16 +94,17 @@ trees, budget boundaries, and RecursionError. Hosted follow-up checks must bind
 to the corrected commit.
 
 The 2026-09-03 PR #110 final-review integration is covered by ADR-195; it
-adds keyed recovery authority, explicit terminal side-effect behavior, and
-evidence-aware cleanup while retaining the local trust and filesystem-race
-residuals below.
+adds keyed recovery authority, explicit terminal side-effect behavior,
+pre-binding crash reconciliation, and authenticated tombstone retirement while
+retaining the local trust and filesystem-race residuals below.
 
 ### 2026-09-03 PR #110 final-review remediation integration
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| UPDATER-10 — terminal recovery authority must be authenticated independently of recomputable metadata and must survive post-publication failures | `windows_update_helper.py::bind_recovery_authority`; `windows_update_helper.py::seal_terminal_recovery_authority`; `windows_update_helper.py::validate_recovery_authority`; `windows_update_helper.py::_transition_handoff_state`; `windows_update_helper.py::_commit`; `windows_update_helper.py::_rollback`; `updater.py::_clear_completed_recovery_evidence`; `updater.py::configure`; `updater.py::defer`; `updater.py::check`; `tests/unit/test_updater.py::test_pointerless_recovery_rejects_recomputed_identity_forgery`; `test_completed_cleanup_retires_authority_after_tree_removal`; `tests/unit/test_windows_update_helper.py::test_same_operation_forged_mutable_authority_is_rejected`; `test_terminal_replay_requires_completed_journal_binding`; ADR-195 | Implemented locally. A per-operation OS-credential-store secret HMAC-authenticates the immutable journal identity and terminal phase; plain journal/identity hashes cannot forge authority. State-first publication and pending/current identity reconciliation preserve the terminal outcome across crashes. After keyed `COMMITTED` publication, unregister/launch failure is degraded terminal follow-up and cannot trigger rollback. Completed identity is retired only after safe staging and transaction cleanup; cleanup failure preserves authority and blocks ordinary mutation. |
-| UPDATER-11 — orphan transaction cleanup must distinguish empty pre-authority directories from credible recovery evidence | `windows_update_helper.py::_transaction_entry_has_recovery_evidence`; `updater.py::_transaction_evidence_requires_preservation`; `updater.py::_clear_completed_recovery_evidence`; `tests/unit/test_updater.py::test_pre_authority_transaction_directories_are_reclaimed_after_handoff_failure`; `test_partial_journal_creation_keeps_recovery_authority_after_restart`; `test_malicious_nonempty_transaction_directory_remains_fail_closed`; `test_successful_terminal_recovery_removes_staging_and_transaction_evidence`; ADR-195 | Implemented locally. Empty operation directories and empty nested directory structure may be reclaimed before authority exists. Journals, regular files, links/reparse objects, non-directories, and ambiguous/pathological trees remain credible evidence and are preserved fail-closed. Successful terminal recovery removes the staged artifact/manifest and transaction tree before retiring the authority, while retaining the canonical database, verified backup, and required rollback/source material. |
+| UPDATER-10 — terminal recovery authority must be authenticated independently of recomputable metadata and must survive post-publication failures | `windows_update_helper.py::bind_recovery_authority`; `windows_update_helper.py::seal_terminal_recovery_authority`; `windows_update_helper.py::validate_recovery_authority`; `windows_update_helper.py::_transition_handoff_state`; `windows_update_helper.py::_commit`; `windows_update_helper.py::_rollback`; `updater.py::_clear_completed_recovery_evidence`; `updater.py::configure`; `updater.py::defer`; `updater.py::check`; `ensure_recovery_before_core`; `tests/unit/test_updater.py::test_pointerless_recovery_rejects_recomputed_identity_forgery`; `test_completed_cleanup_retires_authority_after_tree_removal`; `tests/unit/test_windows_update_helper.py::test_same_operation_forged_mutable_authority_is_rejected`; `test_terminal_replay_requires_completed_journal_binding`; ADR-195 | Implemented locally. A per-operation OS-credential-store secret HMAC-authenticates the immutable journal identity and terminal phase; plain journal/identity hashes cannot forge authority. State-first publication and pending/current identity reconciliation preserve the terminal outcome across crashes. After keyed `COMMITTED` or `ROLLED_BACK` publication, state persistence, unregister, credential retirement, staging/transaction cleanup, or Core launch failure is degraded/retryable follow-up and cannot trigger rollback. Completed identity is retired only after safe staging and transaction cleanup; a bounded authenticated tombstone bridges every cleanup/credential-deletion crash window, while failure preserves authority and blocks ordinary mutation. Frozen startup and `UpdateManager` accept the same validated tombstone semantics. |
+| UPDATER-11 — orphan transaction cleanup must distinguish empty pre-authority directories from credible recovery evidence | `windows_update_helper.py::_transaction_entry_has_recovery_evidence`; `updater.py::_transaction_evidence_requires_preservation`; `updater.py::_clear_completed_recovery_evidence`; `updater.py::_prune_retirement_tombstones`; `tests/unit/test_updater.py::test_pre_authority_transaction_directories_are_reclaimed_after_handoff_failure`; `test_partial_journal_creation_keeps_recovery_authority_after_restart`; `test_malicious_nonempty_transaction_directory_remains_fail_closed`; `test_successful_terminal_recovery_removes_staging_and_transaction_evidence`; `test_retirement_tombstone_orphan_is_reaped_by_startup_pruning`; ADR-195 | Implemented locally. Empty operation directories and empty nested directory structure may be reclaimed before authority exists. Journals, regular files, links/reparse objects, non-directories, and ambiguous/pathological trees remain credible evidence and are preserved fail-closed. Successful terminal recovery removes the staged artifact/manifest and transaction tree before retiring the authority, while retaining the canonical database, verified backup, and required rollback/source material. Orphan tombstones are removed only after bounded canonical-payload, journal-digest, terminal-HMAC, and already-retired-credential checks. |
+| UPDATER-12 — pre-binding and authority-bound/state-unbound crashes must recover or reclaim safely across repeated frozen startups | `windows_update_helper.py::prepare_handoff_state`; `windows_update_helper.py::bind_recovery_authority`; `windows_update_helper.py::bind_handoff_state`; `windows_update_helper.py::_reclaim_prebinding_transaction`; `windows_update_helper.py::ensure_recovery_before_core`; `updater.py::PlatformInstaller.handoff`; `tests/unit/test_updater.py::test_windows_adapter_prepares_strict_journal_before_detached_handoff`; `tests/unit/test_windows_update_helper.py::test_core_start_guard_reclaims_prebinding_crash_and_allows_new_start`; `test_core_start_guard_reclaims_empty_prebinding_tree_after_cleanup_crash`; `test_core_start_guard_preserves_partial_prebinding_journal`; `test_core_start_guard_preserves_invalid_prebinding_authority`; `test_core_start_guard_preserves_extra_prebinding_evidence`; `test_prebinding_handoff_transition_is_idempotent`; ADR-195 | Implemented locally. The pending identity is recorded before credential creation; a valid authority-bound journal with an unbound state is reconciled and relaunched, while a strictly empty expected pre-binding tree is reclaimed and its authority is retired. Repeated startups are idempotent. Partial/malformed/malicious/extra/unstable evidence is preserved byte-for-byte, frozen Core remains down, and the updater cannot clear, configure, defer, check, install, or prune around the unresolved authority. |
 
 The integrated evidence is limited to sanitized synthetic/disposable local
 state. The OS credential store and its local ACL are trusted; a host
@@ -112,13 +115,13 @@ filesystem syscall. Hosted checks, exact candidate-artifact acceptance,
 signing, publication, release, Defender, Microsoft, and downloaded-candidate
 execution remain separate gates.
 
-Local validation for this integration passed 269 focused updater/helper tests
-(3 expected Windows capability skips), 453 tests in the broader focused lane
-(6 expected capability skips), and 2,635 tests in the full suite (13 expected
-capability skips plus 2 existing Starlette deprecation warnings). Ruff,
-format, mypy over 107 source files, documentation, and diff checks passed;
-desktop/package/recovery/first-run lifecycle smokes and release-keyring
-validate/audit passed as well.
+Local validation for this integration passed 287 adversarial updater/helper
+tests (3 expected Windows capability skips), 573 focused updater/helper/
+recovery/manifest/desktop tests (6 expected capability skips), and 2,653 tests
+in the full suite (13 expected capability skips plus 2 existing Starlette
+deprecation warnings). Ruff, format, mypy over 107 source files, documentation,
+and diff checks passed; desktop/package/recovery/first-run lifecycle smokes
+and release-keyring validate/audit passed as well.
 
 ### 2026-09-02 Terminal recovery publication authority and numeric version containment
 

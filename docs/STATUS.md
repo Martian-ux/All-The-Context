@@ -42,6 +42,65 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-03 — PR #110 P1 recovery-boundary remediation completion
+
+Before mutation, PR #110 was verified open with base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` and exact head
+`c687a90b9c5388bef43c14f161c11c20cf70e677`. The three requested commits were
+cherry-picked in order: `ec491f37cc92cc5cd4cdff6d450d44b76620d46c`,
+`e74e823211fe6beceb35c3fa8d222967f36c990d`, and
+`02ab40f46cba37076648618d1dbda2788e3d727e`. The first two applied cleanly;
+the third had one import-only conflict in `updater.py`, resolved by retaining
+both `prepare_handoff_state` and `recovery_authority_retirement_status`.
+
+The handoff ordering is now explicit: the prepared journal and transaction
+state are durably written, a pending handoff identity is recorded before any
+credential authority exists, the per-operation OS credential is HMAC-bound to
+the immutable journal identity, the state identity is promoted, and only then
+does registration and detached-helper launch occur. A crash with a valid
+journal but an unbound state can be re-bound and relaunched on repeated frozen
+startups. A pre-binding tree may be reclaimed only when it is exactly the
+bounded expected file/directory set; a journal, regular file, reparse/link,
+non-directory, extra entry, malformed record, or unstable/pathological tree is
+credible evidence and remains preserved fail-closed.
+
+Terminal publication is ordered state-first, terminal-journal-second, and
+cleanup-last. Once a keyed `COMMITTED` or `ROLLED_BACK` journal is durably
+published, state-cleanup persistence, RunOnce unregister, credential
+retirement, staging/transaction cleanup, and Core launch are only retryable
+follow-up work. None can reopen rollback or replace the terminal outcome.
+The bounded 16 KiB retirement tombstone authenticates the operation, outcome,
+terminal phase, handoff identity, terminal HMAC, and journal digest. It is
+written and verified before staging/transaction cleanup; the per-operation
+credential is deleted only after both trees are safely gone. A crash at any
+step leaves retryable state, credential, or tombstone evidence, and an orphan
+already-retired tombstone is reaped only after the same validation. Frozen
+startup and `UpdateManager` accept pointerless terminal state through the same
+validated tombstone/journal rules.
+
+All new-operation, defer, configure, clear-error, check/install, and pruning
+paths remain behind active recovery-authority checks. Invalid or ambiguous
+authority, tombstone, state, journal, or physical evidence blocks Core startup
+and updater mutation without replacing the evidence. The local OS credential
+store and its ACL are trusted and are not an independent defense against a
+host administrator or compromised store. Final cross-platform path/identity
+checks also do not claim handle-based no-follow atomicity across a concurrent
+same-user mutation and the final Windows filesystem syscall.
+
+Local validation for this completion passed 573 focused updater/helper/
+recovery/manifest/desktop tests with 6 expected capability skips and the full
+suite with 2,653 passed, 13 expected capability skips, and 2 existing
+Starlette deprecation warnings. Ruff check, Ruff format check, mypy over 107
+source files, documentation checks, and `git diff --check` passed. The source
+desktop build, direct unsigned package build/verification, desktop artifact
+inspection, packaged recovery/admin smoke, and disposable first-run/
+restart/rollback/uninstall smoke passed. Release-keyring validation accepted
+2 public keys and the audit covered 575 tracked files with no private-key
+material detected. These are local source/disposable results only; hosted
+checks must bind to the final pushed SHA, and no signing, publishing, tagging,
+Defender change, Microsoft submission, release, or downloaded-candidate
+execution was performed.
+
 ### 2026-09-03 — PR #110 final-review remediation integration
 
 Before mutation, PR #110 was verified open with base
