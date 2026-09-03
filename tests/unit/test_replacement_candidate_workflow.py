@@ -14,7 +14,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "replacement-candidate.yml"
 # This digest is deliberately owned by the reviewed test code, not by the
 # workflow. It covers the complete file as UTF-8 bytes, including comments,
 # whitespace, scalar syntax, and Unicode. No YAML parser is an authority here.
-EXPECTED_WORKFLOW_SHA256 = "fb74d52e116cb4bf79a63b798de13e5db1d09ec05fd9f92e9a4946df5817ce11"
+EXPECTED_WORKFLOW_SHA256 = "01ea1d8977a388db9964137d4398eddd4e005c5c1532443ee487d5d9a80d7957"
 
 INDEPENDENT_VERIFIER_SCRIPT = "verify_installed_component_manifest_independent.py"
 INDEPENDENT_VERIFIER_NAME = "Independently verify exact Windows candidate archive and manifest"
@@ -32,7 +32,7 @@ EXPECTED_STEP_HEADERS = [
     "name: Verify exact green source-health matrix on this SHA",
     "name: Validate exact source metadata and Windows runner",
     "name: Validate native Windows x86-64 runner",
-    "name: Build native desktop bytes without executing them",
+    "name: Build and verify reproducible native desktop bytes without executing them",
     "name: Build direct unsigned package and installed-component provenance",
     "name: Build deterministic Windows archive and metadata",
     "name: Build direct package SPDX subject metadata",
@@ -52,7 +52,7 @@ EXPECTED_ACTION_REFS = [
 ]
 
 EXPECTED_PRODUCER_NAMES = [
-    "Build native desktop bytes without executing them",
+    "Build and verify reproducible native desktop bytes without executing them",
     "Build direct unsigned package and installed-component provenance",
     "Build deterministic Windows archive and metadata",
     "Build direct package SPDX subject metadata",
@@ -75,6 +75,8 @@ EXPECTED_HANDOFF_MAPPINGS = [
     '"components/installed-component-manifest-v1.json" =',
     '"components/installed-component-manifest-v1.json.sha256" =',
     '"source/matrix-evidence.json" = "dist/source-evidence/matrix-evidence.json"',
+    '"source/native-build-provenance-v1.json" =',
+    '"source/native-build-provenance-v1.json.sha256" =',
 ]
 
 CANONICAL_INDEPENDENT_VERIFIER_BODY = (
@@ -218,6 +220,14 @@ def _assert_workflow_semantics(text: str) -> None:
     assert "--scope artifacts" in text
     assert "not malware or Defender scanning" in text
 
+    reproducibility = _step_block(
+        text, "Build and verify reproducible native desktop bytes without executing them"
+    )
+    assert "python scripts/verify_reproducible_build.py" in reproducibility
+    assert "SOURCE_COMMIT: ${{ github.sha }}" in reproducibility
+    assert '--source-commit "$env:SOURCE_COMMIT"' in reproducibility
+    assert "--output-dir dist/native-build-provenance" in reproducibility
+
     verifier = _step_block(text, INDEPENDENT_VERIFIER_NAME)
     assert "        shell: pwsh\n" in verifier
     assert (
@@ -321,7 +331,7 @@ def test_workflow_matches_code_owned_raw_byte_digest() -> None:
     text = _read_workflow()
 
     assert _workflow_sha256(text) == EXPECTED_WORKFLOW_SHA256
-    assert len(text.encode("utf-8")) == 19716
+    assert len(text.encode("utf-8")) == 20277
     assert "\ufeff" not in text
     assert "\u2028" not in text
     assert "\u2029" not in text
