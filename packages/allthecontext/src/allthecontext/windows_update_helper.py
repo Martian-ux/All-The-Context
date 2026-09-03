@@ -8,9 +8,11 @@ data directory and never accepts arbitrary command lines or filesystem roots.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import platform
+import secrets
 import shutil
 import sqlite3
 import stat
@@ -29,10 +31,17 @@ from filelock import FileLock, Timeout
 from platformdirs import user_data_path
 
 from . import __version__
+from .credentials import (
+    CredentialStore,
+    DevelopmentFileCredentialStore,
+    KeyringCredentialStore,
+    development_file_credentials_enabled,
+)
 from .platform_compat import windows_dll, windows_registry
 from .release_manifest import ManifestError, ReleaseVersion, load_keyring, verify_manifest
 
-JOURNAL_SCHEMA_VERSION = 2
+JOURNAL_SCHEMA_VERSION = 3
+LEGACY_JOURNAL_SCHEMA_VERSION = 2
 MAX_JOURNAL_BYTES = 64 * 1024
 MAX_STATE_BYTES = 64 * 1024
 MAX_STAGING_MANIFEST_BYTES = 128 * 1024
@@ -41,6 +50,12 @@ STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1
 STARTUP_RECOVERY_DIAGNOSTIC_NAME = "startup-recovery.json"
 MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES = 16 * 1024
 STARTUP_RECOVERY_DIAGNOSTIC_STATUSES = frozenset({"blocked", "cleared"})
+RECOVERY_AUTHORITY_SCHEMA_VERSION = 1
+RECOVERY_AUTHORITY_NAME_PREFIX = "transaction:"
+RECOVERY_AUTHORITY_SERVICE = "All The Context updater recovery authority"
+RECOVERY_AUTHORITY_CONTEXT = (
+    f"all-the-context-recovery-authority-v{RECOVERY_AUTHORITY_SCHEMA_VERSION}\0"
+).encode("ascii")
 STARTUP_RECOVERY_PHASES = frozenset(
     {
         "idle",
@@ -562,6 +577,180 @@ def _valid_operation_id(value: object) -> bool:
     )
 
 
+def _recovery_authority_store() -> CredentialStore:
+    """Return the OS-backed store, with an explicit smoke-only fallback."""
+
+    if development_file_credentials_enabled():
+        return DevelopmentFileCredentialStore(
+            _data_directory() / "recovery-authority.development.json"
+        )
+    return KeyringCredentialStore(RECOVERY_AUTHORITY_SERVICE)
+
+
+def _recovery_authority_name(operation_id: str) -> str:
+    return f"{RECOVERY_AUTHORITY_NAME_PREFIX}{operation_id}"
+
+
+def _recovery_authority_secret(operation_id: str, *, create: bool) -> bytes:
+    if not _valid_operation_id(operation_id):
+        raise HelperError("recovery_authority_invalid")
+    store = _recovery_authority_store()
+    try:
+        value = store.get(_recovery_authority_name(operation_id))
+    except Exception as exc:
+        raise HelperError("recovery_authority_unavailable") from exc
+    if value is None:
+        if not create:
+            raise HelperError("recovery_authority_missing")
+        value = secrets.token_hex(32)
+        try:
+            store.set(_recovery_authority_name(operation_id), value)
+            stored = store.get(_recovery_authority_name(operation_id))
+        except Exception as exc:
+            raise HelperError("recovery_authority_unavailable") from exc
+        if stored != value:
+            raise HelperError("recovery_authority_unavailable")
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise HelperError("recovery_authority_invalid")
+    return bytes.fromhex(value)
+
+
+def _recovery_authority_message(
+    operation_id: str,
+    journal_identity: str,
+    terminal_phase: str | None = None,
+) -> bytes:
+    phase = terminal_phase or ""
+    return (
+        RECOVERY_AUTHORITY_CONTEXT
+        + operation_id.encode("ascii")
+        + b"\0"
+        + journal_identity.encode("ascii")
+        + b"\0"
+        + phase.encode("ascii")
+    )
+
+
+def _recovery_authority_mac(
+    secret: bytes,
+    operation_id: str,
+    journal_identity: str,
+    terminal_phase: str | None = None,
+) -> str:
+    return hmac.new(
+        secret,
+        _recovery_authority_message(operation_id, journal_identity, terminal_phase),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def validate_recovery_authority(
+    journal: UpdateJournal,
+    journal_path: Path,
+    *,
+    require_terminal: bool = False,
+) -> None:
+    """Verify keyed journal authority and, when needed, its terminal proof."""
+
+    del journal_path
+    identity = journal_handoff_identity(journal)
+    handoff_mac = journal.recovery_authority_mac
+    terminal_mac = journal.terminal_authority_mac
+    if not _valid_digest(handoff_mac):
+        raise HelperError("recovery_authority_invalid")
+    if journal.phase in TERMINAL_PHASES:
+        if not _valid_digest(terminal_mac):
+            raise HelperError("recovery_authority_invalid")
+        expected_terminal_mac = terminal_mac
+    elif terminal_mac is not None:
+        raise HelperError("recovery_authority_invalid")
+    else:
+        expected_terminal_mac = None
+    secret = _recovery_authority_secret(journal.operation_id, create=False)
+    if not hmac.compare_digest(
+        cast(str, handoff_mac),
+        _recovery_authority_mac(secret, journal.operation_id, identity),
+    ):
+        raise HelperError("recovery_authority_invalid")
+    if require_terminal and journal.phase not in TERMINAL_PHASES:
+        raise HelperError("recovery_authority_invalid")
+    if expected_terminal_mac is not None and not hmac.compare_digest(
+        expected_terminal_mac,
+        _recovery_authority_mac(
+            secret,
+            journal.operation_id,
+            identity,
+            journal.phase.value,
+        ),
+    ):
+        raise HelperError("recovery_authority_invalid")
+
+
+def bind_recovery_authority(journal: UpdateJournal, journal_path: Path) -> str:
+    """Create the durable local authority before a handoff can be launched."""
+
+    journal.validate(
+        journal_path,
+        boundary_code="application_state_untrusted",
+        validate_storage=False,
+    )
+    identity = journal_handoff_identity(journal)
+    secret = _recovery_authority_secret(journal.operation_id, create=True)
+    journal.recovery_authority_mac = _recovery_authority_mac(
+        secret,
+        journal.operation_id,
+        identity,
+    )
+    journal.terminal_authority_mac = None
+    journal.save(journal_path)
+    validate_recovery_authority(journal, journal_path)
+    return identity
+
+
+def seal_terminal_recovery_authority(journal: UpdateJournal) -> None:
+    """Add the helper-only terminal proof before the terminal journal save."""
+
+    if journal.phase not in TERMINAL_PHASES:
+        raise HelperError("recovery_authority_invalid")
+    identity = journal_handoff_identity(journal)
+    secret = _recovery_authority_secret(journal.operation_id, create=False)
+    authority_mac = journal.recovery_authority_mac
+    if not _valid_digest(authority_mac):
+        raise HelperError("recovery_authority_invalid")
+    if not hmac.compare_digest(
+        cast(str, authority_mac),
+        _recovery_authority_mac(secret, journal.operation_id, identity),
+    ):
+        raise HelperError("recovery_authority_invalid")
+    journal.terminal_authority_mac = _recovery_authority_mac(
+        secret,
+        journal.operation_id,
+        identity,
+        journal.phase.value,
+    )
+    if not _valid_digest(journal.terminal_authority_mac):
+        raise HelperError("recovery_authority_invalid")
+
+
+def retire_recovery_authority(operation_id: str) -> bool:
+    """Delete authority material only after its transaction tree is gone."""
+
+    if not _valid_operation_id(operation_id):
+        return False
+    store = _recovery_authority_store()
+    try:
+        if store.get(_recovery_authority_name(operation_id)) is None:
+            return True
+        store.delete(_recovery_authority_name(operation_id))
+        return store.get(_recovery_authority_name(operation_id)) is None
+    except Exception:
+        return False
+
+
 def _data_directory() -> Path:
     configured = os.environ.get("ATC_CORE_DATA_DIR")
     if configured:
@@ -701,6 +890,57 @@ def _validate_journal_storage_paths(
     database = Path(journal.database_path)
     for suffix in ("-wal", "-shm", "-journal"):
         _validate_plain_file_path(database.with_name(f"{database.name}{suffix}"), boundary_code)
+    for path, digest, size in (
+        (
+            Path(journal.replacement_path),
+            journal.replacement_sha256,
+            journal.replacement_size,
+        ),
+        (
+            Path(journal.rollback_application_path),
+            journal.rollback_application_sha256,
+            journal.rollback_application_size,
+        ),
+        (
+            Path(journal.rollback_update_helper_path),
+            journal.rollback_update_helper_sha256,
+            journal.rollback_update_helper_size,
+        ),
+        (
+            Path(journal.database_backup_path),
+            journal.database_backup_sha256,
+            journal.database_backup_size,
+        ),
+        (
+            Path(journal.helper_path),
+            journal.recovery_helper_sha256,
+            journal.recovery_helper_size,
+        ),
+        *(
+            [
+                (
+                    Path(journal.rollback_mcp_path),
+                    journal.rollback_mcp_sha256,
+                    journal.rollback_mcp_size,
+                )
+            ]
+            if journal.rollback_mcp_path is not None
+            else []
+        ),
+        *(
+            [
+                (
+                    Path(journal.rollback_recovery_path),
+                    journal.rollback_recovery_sha256,
+                    journal.rollback_recovery_size,
+                )
+            ]
+            if journal.rollback_recovery_path is not None
+            else []
+        ),
+    ):
+        if digest is None or size is None or not _verified(path, digest, size):
+            raise HelperError("journal_digest_invalid")
 
 
 def _validate_startup_state(value: dict[str, Any]) -> str:
@@ -817,6 +1057,8 @@ class UpdateJournal:
     created_at: str
     updated_at: str
     last_error_code: str | None = None
+    recovery_authority_mac: str | None = None
+    terminal_authority_mac: str | None = None
     schema_version: int = JOURNAL_SCHEMA_VERSION
 
     @classmethod
@@ -825,7 +1067,10 @@ class UpdateJournal:
         _plain_file_stat(path, "journal_untrusted")
         value = _read_json(path, MAX_JOURNAL_BYTES, boundary_code="journal_untrusted")
         expected = set(cls.__dataclass_fields__)
-        if set(value) != expected:
+        legacy_fields = {"recovery_authority_mac", "terminal_authority_mac"}
+        if set(value) == expected - legacy_fields:
+            value.update({field: None for field in legacy_fields})
+        elif set(value) != expected:
             raise HelperError("journal_shape_invalid")
         try:
             value["phase"] = HelperPhase(value["phase"])
@@ -855,10 +1100,25 @@ class UpdateJournal:
     ) -> None:
         if not isinstance(self.phase, HelperPhase):
             raise HelperError("journal_value_invalid")
-        if self.schema_version != JOURNAL_SCHEMA_VERSION or not _valid_operation_id(
+        if self.schema_version not in {
+            JOURNAL_SCHEMA_VERSION,
+            LEGACY_JOURNAL_SCHEMA_VERSION,
+        } or not _valid_operation_id(
             self.operation_id
         ):
             raise HelperError("journal_identity_invalid")
+        if self.schema_version == LEGACY_JOURNAL_SCHEMA_VERSION and (
+            self.recovery_authority_mac is not None or self.terminal_authority_mac is not None
+        ):
+            raise HelperError("journal_identity_invalid")
+        if (
+            self.recovery_authority_mac is not None
+            and not _valid_digest(self.recovery_authority_mac)
+        ) or (
+            self.terminal_authority_mac is not None
+            and not _valid_digest(self.terminal_authority_mac)
+        ):
+            raise HelperError("journal_digest_invalid")
         if (
             isinstance(self.parent_pid, bool)
             or not isinstance(self.parent_pid, int)
@@ -1030,7 +1290,13 @@ def journal_handoff_identity(journal: UpdateJournal) -> str:
     """Bind transaction authority independently of mutable progress fields."""
 
     value = asdict(journal)
-    for mutable in ("phase", "updated_at", "last_error_code"):
+    for mutable in (
+        "phase",
+        "updated_at",
+        "last_error_code",
+        "recovery_authority_mac",
+        "terminal_authority_mac",
+    ):
         value.pop(mutable)
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
         "ascii"
@@ -1040,6 +1306,7 @@ def journal_handoff_identity(journal: UpdateJournal) -> str:
 
 def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
     journal.validate(journal_path, boundary_code="application_state_untrusted")
+    validate_recovery_authority(journal, journal_path)
     state_path = Path(journal.state_path)
     state = _read_json(
         state_path,
@@ -1130,13 +1397,23 @@ def _transition_handoff_state(
     )
     transaction_path = state.get("transaction_path")
     identity = journal_handoff_identity(journal)
+    if not _valid_digest(previous_identity):
+        raise HelperError("application_state_mismatch")
+    secret = _recovery_authority_secret(journal.operation_id, create=False)
+    authority_mac = journal.recovery_authority_mac
+    if not _valid_digest(authority_mac):
+        raise HelperError("recovery_authority_invalid")
+    if not hmac.compare_digest(
+        cast(str, authority_mac),
+        _recovery_authority_mac(secret, journal.operation_id, previous_identity),
+    ):
+        raise HelperError("recovery_authority_invalid")
     if (
         state.get("operation_id") != journal.operation_id
         or not isinstance(transaction_path, str)
         or not _same_path(Path(transaction_path), journal_path)
         or state.get("handoff_identity") != previous_identity
         or state.get("pending_handoff_identity") is not None
-        or not _valid_digest(previous_identity)
     ):
         raise HelperError("application_state_mismatch")
     if identity == previous_identity:
@@ -1144,6 +1421,12 @@ def _transition_handoff_state(
         return identity
     state["pending_handoff_identity"] = identity
     _atomic_json(state_path, state, boundary_code="application_state_untrusted")
+    journal.recovery_authority_mac = _recovery_authority_mac(
+        secret,
+        journal.operation_id,
+        identity,
+    )
+    journal.terminal_authority_mac = None
     journal.save(journal_path)
     promoted = _read_json(state_path, MAX_STATE_BYTES)
     if (
@@ -1194,6 +1477,7 @@ def transaction_outcome(path: Path, *, validate_storage: bool = True) -> str:
         journal = UpdateJournal.load(path, validate_storage=validate_storage)
         phase = journal.phase
         if phase in TERMINAL_PHASES:
+            validate_recovery_authority(journal, path, require_terminal=True)
             _validate_terminal_handoff_state(journal, path)
     except HelperError:
         return "failed"
@@ -1645,6 +1929,8 @@ def _refresh_database_backup(journal: UpdateJournal, journal_path: Path) -> None
         journal.database_backup_sha256 = candidate.database_backup_sha256
         journal.database_backup_size = candidate.database_backup_size
         journal.last_error_code = candidate.last_error_code
+        journal.recovery_authority_mac = candidate.recovery_authority_mac
+        journal.terminal_authority_mac = candidate.terminal_authority_mac
         journal.updated_at = candidate.updated_at
     finally:
         _unlink_plain_file_if_present(temporary, "database_backup_invalid")
@@ -1743,6 +2029,11 @@ def _update_state(
     path = Path(journal.state_path)
     journal_path = Path(journal.helper_path).parent / "journal.json"
     journal.validate(journal_path, boundary_code="application_state_untrusted")
+    validate_recovery_authority(
+        journal,
+        journal_path,
+        require_terminal=journal.phase in TERMINAL_PHASES,
+    )
     value = _read_json(path, MAX_STATE_BYTES, boundary_code="application_state_untrusted")
     if value.get("operation_id") != journal.operation_id:
         raise HelperError("application_state_mismatch")
@@ -1866,6 +2157,7 @@ def _commit(journal: UpdateJournal, journal_path: Path) -> None:
     _update_state(journal, phase="installed", error=None, clear_transaction=False)
     journal.phase = HelperPhase.COMMITTED
     journal.last_error_code = None
+    seal_terminal_recovery_authority(journal)
     journal.save(journal_path)
     _update_state(journal, phase="installed", error=None, clear_transaction=True)
     _finish_terminal_handoff(journal, launch_core=True)
@@ -1890,6 +2182,7 @@ def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code
     _fault_after_abort_state()
     journal.phase = HelperPhase.ROLLED_BACK
     journal.last_error_code = error_code
+    seal_terminal_recovery_authority(journal)
     journal.save(journal_path)
     _update_state(
         journal,
@@ -1918,6 +2211,7 @@ def _rollback(journal: UpdateJournal, journal_path: Path, error_code: str) -> No
             clear_transaction=False,
         )
         journal.phase = HelperPhase.ROLLED_BACK
+        seal_terminal_recovery_authority(journal)
         journal.save(journal_path)
         _update_state(
             journal,
@@ -1965,6 +2259,7 @@ def run_transaction(journal_path: Path) -> int:
     try:
         journal = UpdateJournal.load(resolved)
         if journal.phase in TERMINAL_PHASES:
+            validate_recovery_authority(journal, resolved, require_terminal=True)
             _update_state(
                 journal,
                 phase="installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back",
@@ -1980,6 +2275,7 @@ def run_transaction(journal_path: Path) -> int:
             )
             _finish_terminal_handoff(journal, launch_core=True)
             return 0
+        validate_recovery_authority(journal, resolved)
         register_recovery(Path(journal.helper_path), resolved, journal.operation_id)
         if journal.phase is HelperPhase.ABORT_REQUESTED:
             _abort_before_cutover(journal, resolved, journal.last_error_code or "cutover_failed")
@@ -2000,6 +2296,8 @@ def run_transaction(journal_path: Path) -> int:
                     previous_identity=previous_identity,
                 )
                 journal.parent_pid = transitioned.parent_pid
+                journal.recovery_authority_mac = transitioned.recovery_authority_mac
+                journal.terminal_authority_mac = transitioned.terminal_authority_mac
                 journal.updated_at = transitioned.updated_at
                 _refresh_database_backup(journal, resolved)
             if journal.phase in {
@@ -2067,6 +2365,7 @@ def completed_transaction_is_authoritative(
         expected_journal_phase = (
             HelperPhase.COMMITTED if phase == "installed" else HelperPhase.ROLLED_BACK
         )
+        validate_recovery_authority(journal, expected, require_terminal=True)
         return (
             journal.phase is expected_journal_phase
             and journal_handoff_identity(journal) == completed_identity

@@ -45,6 +45,7 @@ from allthecontext.windows_update_helper import (
     HelperPhase,
     UpdateJournal,
     bind_handoff_state,
+    bind_recovery_authority,
     journal_failure_diagnostic,
 )
 from mcp import ClientSession, StdioServerParameters
@@ -320,6 +321,7 @@ def prepare_packaged_update_transaction(
         updated_at=now,
     )
     journal.save(journal_path)
+    bind_recovery_authority(journal, journal_path)
     bind_handoff_state(journal, journal_path)
     return transaction_helper, journal_path
 
@@ -1057,6 +1059,7 @@ def main() -> int:
         helper_authority = {
             "ATC_CORE_DATA_DIR": environment["ATC_CORE_DATA_DIR"],
             "ATC_INSTALL_DIR": environment["ATC_INSTALL_DIR"],
+            DEVELOPMENT_FALLBACK_ENV: "1",
         }
         with _temporary_environment(helper_authority):
             crash_helper, crash_journal = prepare_packaged_update_transaction(

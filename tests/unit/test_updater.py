@@ -45,6 +45,28 @@ from allthecontext.windows_update_helper import (
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SEED = bytes(range(32))
+_RECOVERY_AUTHORITY_VALUES: dict[str, str] = {}
+
+
+class _RecoveryAuthorityStore:
+    def get(self, name: str) -> str | None:
+        return _RECOVERY_AUTHORITY_VALUES.get(name)
+
+    def set(self, name: str, value: str) -> None:
+        _RECOVERY_AUTHORITY_VALUES[name] = value
+
+    def delete(self, name: str) -> None:
+        _RECOVERY_AUTHORITY_VALUES.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
+def _use_test_recovery_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    _RECOVERY_AUTHORITY_VALUES.clear()
+    monkeypatch.setattr(
+        update_helper_module,
+        "_recovery_authority_store",
+        lambda: _RecoveryAuthorityStore(),
+    )
 
 
 class FakeTransport:
@@ -137,6 +159,10 @@ class FakeInstaller:
         for path in transaction_files:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"test transaction evidence")
+        evidence_digest = hashlib.sha256(b"test transaction evidence").hexdigest()
+        evidence_size = len(b"test transaction evidence")
+        backup_digest = hashlib.sha256(plan.database_backup_path.read_bytes()).hexdigest()
+        backup_size = plan.database_backup_path.stat().st_size
         journal = UpdateJournal(
             operation_id=plan.operation_id,
             phase=HelperPhase.PREPARED,
@@ -145,38 +171,39 @@ class FakeInstaller:
             parent_pid=0,
             application_path=str(install_dir / "AllTheContext.exe"),
             replacement_path=str(replacement),
-            replacement_sha256="a" * 64,
-            replacement_size=1,
+            replacement_sha256=evidence_digest,
+            replacement_size=evidence_size,
             rollback_application_path=str(rollback_dir / "AllTheContext.exe"),
-            rollback_application_sha256="b" * 64,
-            rollback_application_size=1,
+            rollback_application_sha256=evidence_digest,
+            rollback_application_size=evidence_size,
             mcp_path=str(install_dir / "AllTheContextMCP.exe"),
             rollback_mcp_path=str(rollback_dir / "AllTheContextMCP.exe"),
-            rollback_mcp_sha256="c" * 64,
-            rollback_mcp_size=1,
+            rollback_mcp_sha256=evidence_digest,
+            rollback_mcp_size=evidence_size,
             recovery_path=str(install_dir / "AllTheContextRecovery.exe"),
             rollback_recovery_path=str(rollback_dir / "AllTheContextRecovery.exe"),
-            rollback_recovery_sha256="d" * 64,
-            rollback_recovery_size=1,
+            rollback_recovery_sha256=evidence_digest,
+            rollback_recovery_size=evidence_size,
             stable_update_helper_path=str(install_dir / "AllTheContextUpdater.exe"),
             rollback_update_helper_path=str(rollback_dir / "AllTheContextUpdater.exe"),
-            rollback_update_helper_sha256="e" * 64,
-            rollback_update_helper_size=1,
+            rollback_update_helper_sha256=evidence_digest,
+            rollback_update_helper_size=evidence_size,
             database_path=str(plan.database_path),
             database_backup_path=str(plan.database_backup_path),
-            database_backup_sha256="f" * 64,
-            database_backup_size=1,
+            database_backup_sha256=backup_digest,
+            database_backup_size=backup_size,
             state_path=str(plan.state_path),
             helper_path=str(plan.transaction_dir / "AllTheContextUpdater.exe"),
             core_host=plan.core_host,
             core_port=plan.core_port,
-            recovery_helper_sha256="0" * 64,
-            recovery_helper_size=1,
+            recovery_helper_sha256=evidence_digest,
+            recovery_helper_size=evidence_size,
             created_at="2026-01-01T00:00:00+00:00",
             updated_at="2026-01-01T00:00:00+00:00",
         )
         journal_path = plan.transaction_dir / "journal.json"
         journal.save(journal_path)
+        update_helper_module.bind_recovery_authority(journal, journal_path)
         state = json.loads(plan.state_path.read_text(encoding="utf-8"))
         state["handoff_identity"] = journal_handoff_identity(journal)
         state["pending_handoff_identity"] = None
@@ -321,6 +348,7 @@ def _publish_helper_terminal(
     )
     manager.state_path.write_text(json.dumps(state), encoding="utf-8")
     journal.phase = terminal_phase
+    update_helper_module.seal_terminal_recovery_authority(journal)
     journal.save(journal_path)
     if clear_transaction:
         state.update(
@@ -1002,6 +1030,74 @@ def test_successful_terminal_recovery_removes_staging_and_transaction_evidence(
     assert (tmp_path / "core.sqlite3").is_file()
     assert backup.is_file()
     assert (tmp_path / "all-the-context-0.2.0-windows-x86_64.zip").is_file()
+
+
+def test_pointerless_recovery_rejects_recomputed_identity_forgery(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    _publish_helper_terminal(manager, "installed")
+
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    operation = persisted["operation_id"]
+    journal_path = manager.state_path.parent / "transactions" / operation / "journal.json"
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    journal.parent_pid += 1
+    forged_identity = journal_handoff_identity(journal)
+    journal.save(journal_path)
+    persisted["completed_handoff_identity"] = forged_identity
+    manager.state_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+    recovered, _, _ = _manager(tmp_path, manifest, artifact, keyring, current_version="0.2.0")
+
+    assert recovered.public_status()["phase"] == "error"
+    assert recovered.public_status()["last_error"] == (
+        updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    )
+    assert recovered._state_write_allowed is False
+    assert journal_path.is_file()
+    assert journal_path.parent.is_dir()
+
+
+def test_completed_cleanup_retires_authority_after_tree_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    _publish_helper_terminal(manager, "installed")
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    operation = persisted["operation_id"]
+    transaction_dir = manager.state_path.parent / "transactions" / operation
+    manager.state.phase = UpdatePhase.INSTALLED
+    manager.state.transaction_path = None
+    manager.state.handoff_identity = None
+    manager.state.pending_handoff_identity = None
+    manager.state.completed_handoff_identity = persisted["completed_handoff_identity"]
+
+    events: list[str] = []
+    original_remove = updater_module._remove_owned_tree
+    original_retire = updater_module.retire_recovery_authority
+
+    def remove_tree(path: Path, *, expected: object) -> bool:
+        events.append("tree")
+        return original_remove(path, expected=expected)
+
+    def retire_authority(value: str) -> bool:
+        events.append("retire")
+        assert not transaction_dir.exists()
+        return original_retire(value)
+
+    monkeypatch.setattr(updater_module, "_remove_owned_tree", remove_tree)
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", retire_authority)
+
+    assert manager._clear_completed_recovery_evidence() is True
+    assert events == ["tree", "retire"]
+    assert not transaction_dir.exists()
 
 
 @pytest.mark.parametrize("outcome", ["installed", "rolled_back"])

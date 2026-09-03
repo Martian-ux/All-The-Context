@@ -48,12 +48,15 @@ from .windows_update_helper import (
     HelperPhase,
     UpdateJournal,
     bind_handoff_state,
+    bind_recovery_authority,
     completed_transaction_is_authoritative,
     journal_handoff_identity,
     launch_recovery_helper,
     register_recovery,
     request_rollback,
+    retire_recovery_authority,
     transaction_outcome,
+    validate_recovery_authority,
 )
 from .windows_update_helper import (
     _atomic_json as _helper_atomic_json,
@@ -1469,6 +1472,7 @@ class PlatformInstaller:
             )
             journal.validate(journal_path)
             journal.save(journal_path)
+            bind_recovery_authority(journal, journal_path)
             bind_handoff_state(journal, journal_path)
             register_recovery(copied_helper, journal_path, plan.operation_id)
             launch_recovery_helper(copied_helper, journal_path)
@@ -1744,7 +1748,9 @@ class UpdateManager:
             expected = _plain_directory_stat_if_present(transaction_dir)
         except (HelperError, OSError, RecursionError):
             return False
-        return expected is None or _remove_owned_tree(transaction_dir, expected=expected)
+        if expected is not None and not _remove_owned_tree(transaction_dir, expected=expected):
+            return False
+        return retire_recovery_authority(operation)
 
     def _load_state(self) -> UpdateState:
         try:
@@ -1903,6 +1909,12 @@ class UpdateManager:
             if transaction_stat is None or transaction_stat.st_size <= 0:
                 return False
             journal = UpdateJournal.load(expected_transaction, validate_storage=False)
+            validate_recovery_authority(
+                journal,
+                expected_transaction,
+                require_terminal=self.state.phase
+                in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK},
+            )
             journal_identity = journal_handoff_identity(journal)
             if (
                 journal.operation_id != operation

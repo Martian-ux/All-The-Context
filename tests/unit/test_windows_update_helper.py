@@ -31,6 +31,29 @@ from allthecontext.windows_update_helper import (
 )
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+_RECOVERY_AUTHORITY_VALUES: dict[str, str] = {}
+
+
+class _RecoveryAuthorityStore:
+    def get(self, name: str) -> str | None:
+        return _RECOVERY_AUTHORITY_VALUES.get(name)
+
+    def set(self, name: str, value: str) -> None:
+        _RECOVERY_AUTHORITY_VALUES[name] = value
+
+    def delete(self, name: str) -> None:
+        _RECOVERY_AUTHORITY_VALUES.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
+def _use_test_recovery_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    _RECOVERY_AUTHORITY_VALUES.clear()
+    monkeypatch.setattr(
+        helper_module,
+        "_recovery_authority_store",
+        lambda: _RecoveryAuthorityStore(),
+    )
+
 
 def _digest(path: Path) -> tuple[str, int]:
     value = path.read_bytes()
@@ -253,7 +276,9 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         created_at=now,
         updated_at=now,
     ).save(journal_path)
-    helper_module.bind_handoff_state(UpdateJournal.load(journal_path), journal_path)
+    journal = UpdateJournal.load(journal_path)
+    helper_module.bind_recovery_authority(journal, journal_path)
+    helper_module.bind_handoff_state(journal, journal_path)
     return TransactionFixture(
         journal_path,
         application,
@@ -666,7 +691,7 @@ def test_same_operation_forged_journal_is_rejected_by_state_binding(
     journal["replacement_size"] = len(forged)
     fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
 
-    with pytest.raises(HelperError, match="application_state_mismatch"):
+    with pytest.raises(HelperError, match="recovery_authority_invalid"):
         run_transaction(fixture.journal_path)
 
     assert fixture.application.read_bytes() == fixture.old_application
@@ -689,10 +714,63 @@ def test_same_operation_forged_mutable_authority_is_rejected(
         journal["database_backup_size"] = size
     fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
 
-    with pytest.raises(HelperError, match="application_state_mismatch"):
+    with pytest.raises(HelperError, match="recovery_authority_invalid"):
         run_transaction(fixture.journal_path)
 
     assert fixture.application.read_bytes() == fixture.old_application
+
+
+@pytest.mark.parametrize("mutation", ["artifact", "digest"])
+def test_pointerless_validation_rejects_artifact_or_digest_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path, validate_storage=False)
+    if mutation == "artifact":
+        Path(journal.replacement_path).write_bytes(b"mutated replacement")
+    else:
+        journal.replacement_sha256 = "0" * 64
+        journal.save(fixture.journal_path)
+
+    with pytest.raises(HelperError, match="journal_digest_invalid"):
+        UpdateJournal.load(fixture.journal_path, validate_storage=False)
+
+    assert fixture.journal_path.is_file()
+    assert fixture.journal_path.parent.is_dir()
+
+
+@pytest.mark.parametrize(
+    ("health_result", "expected_code", "expected_outcome"),
+    [(0, 0, "installed"), (1, 2, "rolled_back")],
+)
+def test_terminal_recovery_authority_accepts_legitimate_outcomes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    health_result: int,
+    expected_code: int,
+    expected_outcome: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(
+        helper_module,
+        "_run_bounded",
+        _fake_commands(fixture, health_result=health_result),
+    )
+
+    assert run_transaction(fixture.journal_path) == expected_code
+
+    journal = UpdateJournal.load(fixture.journal_path, validate_storage=False)
+    helper_module.validate_recovery_authority(
+        journal,
+        fixture.journal_path,
+        require_terminal=True,
+    )
+    assert helper_module.transaction_outcome(
+        fixture.journal_path,
+        validate_storage=False,
+    ) == expected_outcome
 
 
 def test_failed_health_restores_previous_binary_mcp_and_database(
@@ -858,6 +936,7 @@ def test_bind_handoff_state_accepts_clean_install_target_tail(
     journal.recovery_path = str(install_root / "AllTheContextRecovery.exe")
     journal.stable_update_helper_path = str(install_root / "AllTheContextUpdater.exe")
     journal.save(fixture.journal_path)
+    helper_module.bind_recovery_authority(journal, fixture.journal_path)
     state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
     state["handoff_identity"] = None
     state["pending_handoff_identity"] = None
@@ -1104,6 +1183,7 @@ def test_handoff_publication_failure_aborts_without_parent_identity_wedge(
     journal = UpdateJournal.load(fixture.journal_path)
     journal.parent_pid = 123
     journal.save(fixture.journal_path)
+    helper_module.bind_recovery_authority(journal, fixture.journal_path)
     state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
     state["handoff_identity"] = None
     fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -1206,7 +1286,7 @@ def test_recovery_helper_swap_is_rejected_before_detached_launch(
         lambda command, **_kwargs: launches.append(command),
     )
 
-    with pytest.raises(HelperError, match="recovery_helper_untrusted"):
+    with pytest.raises(HelperError, match="journal_digest_invalid"):
         helper_module.launch_recovery_helper(helper, fixture.journal_path)
     assert launches == []
 
@@ -1224,7 +1304,7 @@ def test_replacement_swap_is_rejected_before_subprocess(
         lambda command, _environment: executed.append(command) or 0,
     )
 
-    with pytest.raises(HelperError, match="replacement_untrusted"):
+    with pytest.raises(HelperError, match="journal_digest_invalid"):
         helper_module._apply_replacement(
             UpdateJournal.load(fixture.journal_path),
             fixture.journal_path,
@@ -2191,6 +2271,12 @@ def test_pending_handoff_transition_reconciles_either_crash_side(
     original_identity = state["handoff_identity"]
     journal.parent_pid = 123
     next_identity = helper_module.journal_handoff_identity(journal)
+    secret = helper_module._recovery_authority_secret(journal.operation_id, create=False)
+    journal.recovery_authority_mac = helper_module._recovery_authority_mac(
+        secret,
+        journal.operation_id,
+        next_identity,
+    )
 
     state["pending_handoff_identity"] = next_identity
     fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -2220,7 +2306,7 @@ def test_terminal_replay_requires_completed_journal_binding(
     journal["replacement_sha256"] = "0" * 64
     fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
 
-    with pytest.raises(HelperError, match="application_state_mismatch"):
+    with pytest.raises(HelperError, match="journal_digest_invalid"):
         run_transaction(fixture.journal_path)
 
 
@@ -2232,7 +2318,7 @@ def test_terminal_journal_requires_state_first_terminal_phase(
     journal.phase = HelperPhase.COMMITTED
     journal.save(fixture.journal_path)
 
-    with pytest.raises(HelperError, match="application_state_mismatch"):
+    with pytest.raises(HelperError, match="recovery_authority_invalid"):
         run_transaction(fixture.journal_path)
 
     state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
