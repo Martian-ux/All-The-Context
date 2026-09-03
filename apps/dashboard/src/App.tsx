@@ -249,22 +249,63 @@ function App() {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [status, setStatus] = useState<CoreStatus | null>(null);
   const [statusError, setStatusError] = useState<unknown>(null);
+  const mountedRef = useRef(true);
+  const statusRefreshRef = useRef<Promise<boolean> | null>(null);
 
-  const refreshStatus = useCallback(async () => {
-    try {
-      setStatus(await api.status());
-      setStatusError(null);
-      return true;
-    } catch (error) {
-      setStatusError(error);
-      return false;
-    }
+  const refreshStatus = useCallback((): Promise<boolean> => {
+    if (statusRefreshRef.current) return statusRefreshRef.current;
+    const request = (async () => {
+      try {
+        const nextStatus = await api.status();
+        if (mountedRef.current) {
+          setStatus(nextStatus);
+          setStatusError(null);
+        }
+        return true;
+      } catch (error) {
+        if (mountedRef.current) setStatusError(error);
+        return false;
+      }
+    })();
+    statusRefreshRef.current = request;
+    void request.finally(() => {
+      if (statusRefreshRef.current === request) statusRefreshRef.current = null;
+    });
+    return request;
   }, []);
 
   useEffect(() => {
-    void refreshStatus();
-    const timer = window.setInterval(() => void refreshStatus(), 30_000);
-    return () => window.clearInterval(timer);
+    mountedRef.current = true;
+    let stopped = false;
+    let timer: number | undefined;
+    const clearTimer = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = undefined;
+    };
+    const schedule = () => {
+      if (stopped || document.hidden || timer !== undefined) return;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        void run();
+      }, 30_000);
+    };
+    const run = async () => {
+      if (stopped || document.hidden) return;
+      await refreshStatus();
+      schedule();
+    };
+    const onVisibilityChange = () => {
+      clearTimer();
+      if (!document.hidden) void run();
+    };
+    void refreshStatus().then(schedule);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stopped = true;
+      mountedRef.current = false;
+      clearTimer();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [refreshStatus]);
 
   useEffect(() => {

@@ -166,7 +166,44 @@ describe("dashboard", () => {
     });
     window.sessionStorage.setItem("atc.browserSession", "test-browser-session");
   });
-  afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.unstubAllGlobals(); });
+  afterEach(() => {
+    cleanup();
+    window.sessionStorage.clear();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("waits for each status refresh and stops polling after unmount", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    const statusResolvers: Array<(response: Response) => void> = [];
+    const fetch = vi.fn((request: RequestInfo | URL) => {
+      if (String(request).includes("/context/status")) {
+        return new Promise<Response>((resolve) => statusResolvers.push(resolve));
+      }
+      return Promise.resolve(json({ items: [] }));
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const view = render(<App />);
+    expect(statusResolvers).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(statusResolvers).toHaveLength(1);
+
+    statusResolvers[0](json(status()));
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(statusResolvers).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(statusResolvers).toHaveLength(2);
+
+    view.unmount();
+    statusResolvers[1](json(status()));
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(statusResolvers).toHaveLength(2);
+  });
 
   it("explains direct-Core mobile access without offering hosted setup", async () => {
     window.history.replaceState(null, "", "/?page=connections");
