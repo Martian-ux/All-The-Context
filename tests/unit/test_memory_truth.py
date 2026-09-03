@@ -340,6 +340,71 @@ def test_valid_publish_binds_rebuild_tombstone_to_session_generation_and_marker(
     assert store.record_history(record_id)
 
 
+def test_source_rebuild_recomputes_integrity_once_for_all_observations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"fiction archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key=f"archive:{source.id}:fixture-parser:rebuild:1",
+    )
+    session_id = str(session["session_id"])
+    submitted = store.submit_batch(
+        session_id,
+        "multi-rebuild-batch",
+        [
+            CandidateInput(
+                kind="goal",
+                content=f"Retain synthetic archive objective {index}.",
+                source_id=source.id,
+                source_reference=f"message:{index}",
+                source_service="fiction-provider",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+            for index in range(3)
+        ],
+    )
+    store.finish_ingestion(
+        session_id,
+        CoverageReport(available=["fiction-archive"], complete=True),
+        publish=False,
+    )
+    marker = source_rebuild_marker(source.id, source.content_hash, 1)
+    store.update_source_import(
+        source.id,
+        import_status="processing",
+        metadata={
+            "rebuild_generation": 1,
+            "rebuild_in_progress": True,
+            "rebuild_source_marker": marker,
+        },
+        parser_warnings=[],
+    )
+    recomputes = 0
+    original_recompute = store._recompute_integrity
+
+    def counted_recompute(connection: sqlite3.Connection) -> None:
+        nonlocal recomputes
+        recomputes += 1
+        original_recompute(connection)
+
+    monkeypatch.setattr(store, "_recompute_integrity", counted_recompute)
+
+    assert store.publish_source_rebuild(source.id, session_id, rebuild_generation=1) == []
+    observations = [store.get_observation(str(item)) for item in submitted["candidate_ids"]]
+    assert recomputes == 1
+    assert all(item.disposition == ObservationDisposition.APPLIED for item in observations)
+    assert all(item.record_id is not None for item in observations)
+
+
 @pytest.mark.parametrize("reason", ["audited restore", SOURCE_REBUILD_REASON])
 def test_user_restore_marker_blocks_later_source_rebuild_without_replacement(
     tmp_path: Path, reason: str
@@ -569,8 +634,8 @@ def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restor
             ),
         )
     partial_restarted = CoreStore(partial_database)
-    assert partial_restarted.migrate() == 18
-    assert partial_restarted.migrate() == 18
+    assert partial_restarted.migrate() == 19
+    assert partial_restarted.migrate() == 19
     with (
         partial_restarted.connect() as connection,
         pytest.raises(sqlite3.IntegrityError, match="append-only"),
@@ -583,8 +648,8 @@ def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restor
         connection.execute("DROP TABLE context_user_mutations")
         connection.execute("DELETE FROM schema_migrations WHERE version=13")
     legacy_restarted = CoreStore(database)
-    assert legacy_restarted.migrate() == 18
-    assert legacy_restarted.migrate() == 18
+    assert legacy_restarted.migrate() == 19
+    assert legacy_restarted.migrate() == 19
     with legacy_restarted.connect() as connection:
         marker = connection.execute(
             "SELECT mutation_kind,mutation_origin,actor FROM context_user_mutations "
@@ -632,8 +697,8 @@ def test_migration_013_repairs_each_append_only_trigger_when_already_applied(
         )
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 18
-    assert restarted.migrate() == 18
+    assert restarted.migrate() == 19
+    assert restarted.migrate() == 19
     with restarted.connect() as connection:
         triggers = {
             str(row[0])
@@ -661,12 +726,12 @@ def test_migration_013_repairs_each_append_only_trigger_when_already_applied(
 def test_migration_014_fresh_and_restart_passes_are_idempotent(tmp_path: Path) -> None:
     database = tmp_path / "fresh-014.sqlite3"
     store = CoreStore(database)
-    assert store.migrate() == 18
-    assert store.migrate() == 18
+    assert store.migrate() == 19
+    assert store.migrate() == 19
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 18
-    assert restarted.migrate() == 18
+    assert restarted.migrate() == 19
+    assert restarted.migrate() == 19
     with restarted.connect() as connection:
         columns = {
             str(row["name"])
@@ -721,8 +786,8 @@ def test_migration_014_repairs_missing_typed_action_columns_when_already_applied
             connection.execute(f"ALTER TABLE context_record_versions DROP COLUMN {column}")
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 18
-    assert restarted.migrate() == 18
+    assert restarted.migrate() == 19
+    assert restarted.migrate() == 19
     with restarted.connect() as connection:
         columns = {
             str(row["name"])
@@ -780,8 +845,8 @@ def test_migration_014_repairs_missing_index_without_changing_typed_rows(
         connection.execute("DROP INDEX uq_context_record_versions_user_action")
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 18
-    assert restarted.migrate() == 18
+    assert restarted.migrate() == 19
+    assert restarted.migrate() == 19
     with restarted.connect() as connection:
         assert [
             tuple(row)
@@ -825,8 +890,8 @@ def test_migration_014_repair_keeps_all_typed_local_action_paths_operational(
         connection.execute("ALTER TABLE context_record_versions DROP COLUMN user_action_key")
 
     repaired = CoreStore(database)
-    assert repaired.migrate() == 18
-    assert repaired.migrate() == 18
+    assert repaired.migrate() == 19
+    assert repaired.migrate() == 19
 
     correction_source = repaired.add_source(
         b"correction action",
@@ -950,7 +1015,7 @@ def test_legacy_upgrade_keeps_trusted_rebuild_tombstone_automatic(
         connection.execute("DROP TABLE context_user_mutations")
         connection.execute("DELETE FROM schema_migrations WHERE version=13")
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 18
+    assert restarted.migrate() == 19
     with restarted.connect() as connection:
         assert (
             connection.execute(

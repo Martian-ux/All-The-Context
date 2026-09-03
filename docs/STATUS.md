@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-As of 2026-09-02 UTC, protected main integrates false-by-default Continuous
+As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
 boundaries. After one setup opt-in, ordinary user prompts and rendered
 assistant responses are observed locally without per-turn commands. Core alone
@@ -19,18 +19,18 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
-At this boundary, protected main contains the merged Import Truth and the
+At this boundary, protected main contains the merged Import Truth through PR
+#110 at exact `origin/main` `e155487cf5b663d435e1c4f208f457d5f5dd1db4`, and the
 subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
 client read/explicit-memory foundations, Continuous Capture, replacement
 workflow hardening, updater/recovery trust hardening, the Windows timing test
 correction, exact candidate-evidence reconciliation, the private handoff guard
 correction, the update-child dialog containment change, the import-heartbeat
-test stabilization, Windows startup-recovery hardening from PR #107, and
-startup-recovery diagnostic containment from PR #108 at the exact
-`origin/main` merge base `466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` used for
-this local follow-up. The current updater metadata-authority containment is
-source-level branch work; hosted CI, exact-artifact, and release evidence for a
-later candidate remain separate gates. Source and hosted evidence does not
+test stabilization, Windows startup-recovery hardening from PR #107,
+startup-recovery diagnostic containment from PR #108, and updater
+metadata-authority containment from PR #110. The current efficiency hardening
+is source-level branch work; hosted CI, exact-artifact, and release evidence
+for a later candidate remain separate gates. Source and hosted evidence does not
 become release, exact-artifact, live client/provider, or private-data
 acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -41,6 +41,80 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-09-03 — bounded runtime and dashboard efficiency hardening
+
+The post-PR-#110 efficiency audit was rechecked against the exact merged code
+instead of accepting its older-worktree conclusions wholesale. Three bounded
+issues were confirmed and corrected. Batch ingestion finish, startup staged
+evaluation, and atomic source rebuild now defer per-observation integrity
+maintenance and perform at most one rebuild in the transaction. Integrity
+group listing fetches all members for its bounded page in one query, audit
+events reuse the caller's connection, and retrieval conflict state reads only
+the requested record IDs in 500-ID chunks through migration 019's reverse
+member index. Dashboard import and Core-status polling now serialize requests,
+suppress late callbacks after stop/unmount, and suspend periodic status work
+while the document is hidden.
+
+Focused integrated Python validation passes 248 tests. Dashboard validation
+passes 69 tests plus TypeScript checking, production build, and a zero-finding
+production dependency audit. The final sequential repository suite collects
+2,696 items and passes 2,683 with 13 expected capability skips and the two
+existing Starlette deprecation warnings in 828.88 seconds; sequential and
+four-worker collections are identical. Ruff format/lint, mypy, documentation,
+lock, and diff validation pass. No package, signing, publishing, Defender
+change, Microsoft submission, release, or downloaded-candidate execution is
+implied.
+
+The audit's proposed global search-result cache, startup repair marker, and
+connection-pool/WAL lifecycle changes were not adopted. Search authorization,
+temporal state, purge/restore, migration, and repair invalidation are not yet
+proven complete, and pre-ledger secret repair must continue to cover restored
+older data. Those items require measurement and a complete invalidation or
+security-repair design before implementation.
+
+### 2026-09-03 — Windows Python test execution acceleration candidate
+
+The Python CI matrix now installs hash-locked `pytest-xdist` and proves that
+the sequential and four-worker collections contain the identical required
+nodeid set before running `python -m pytest -n 4 --dist=loadfile`. Whole-file
+scheduling preserves the existing per-file test order and leaves every test,
+platform skip, warning, fixture, assertion, and post-test CI step in the gate.
+The existing `python -m pytest` command remains the sequential/debug fallback.
+The workflow check remains named `Tests and platform smoke coverage`; no new
+check is introduced, so branch-protection mapping does not need a second
+required status. Hosted timing and hosted flake evidence remain pending until
+this candidate is merged and run on `windows-latest`.
+
+On this Windows 11 host (Python 3.14.3, Ryzen 9 5900X, 12 physical/24 logical
+cores), exact-head collection found 2,686 nodeids across 169 files, comprising
+2,673 passes and 13 capability skips in the existing full run. The inherited
+exact-head hosted baseline is 30:08 for Windows; the pre-contract-test clean
+four-worker benchmark completed in 302.79 seconds of pytest time (303.83
+seconds wrapper elapsed) with 2,673 passed and 13 skipped. An eight-worker
+trial completed in 235.18 seconds but had one isolation-sensitive `input
+changed during read` failure, so four workers is the conservative candidate.
+The final four-worker CI-equivalent run collected 2,689 items, passed 2,676,
+skipped 13, and completed in 300.67 seconds of pytest time (301.80 seconds
+wrapper elapsed). Its JUnit aggregation identified the heaviest files as
+`test_memory_reliability_spec.py` (103.92s across 39 tests),
+`test_windows_update_helper.py` (102.46s across 141),
+`test_retrieval_m3_current_candidate.py` (80.11s across 7),
+`test_updater.py` (55.70s across 169), and
+`test_import_operations.py` (54.52s across 57); slowest individual calls
+were 95.90s in the memory-reliability specification, 41.34s in the current
+retrieval candidate, and 38.74s in cross-client acceptance. These are local
+Windows results, not hosted evidence. The required post-change sequential
+fallback also passed 2,676 tests and skipped 13 in 749.42 seconds of pytest
+time (751.13 seconds wrapper elapsed), so the earlier local four-worker result
+was a 59.9% reduction against the local sequential result. A final clean
+four-worker run on the exact final tree passed 2,676 and skipped 13 in 277.84
+seconds of pytest time (278.83 seconds wrapper elapsed), a 62.9% reduction
+against the local sequential result. The three repeated
+isolation-sensitive four-worker runs each passed 446 and skipped 3 in 111.14s,
+116.27s, and 112.81s wrapper elapsed. The supplied exact-head hosted Windows
+baseline remains 30:08; neither that hosted measurement nor a post-merge
+hosted p95/flake rate is inferred from these local runs.
 
 ### 2026-09-03 — PR #110 completed-identity binding containment
 

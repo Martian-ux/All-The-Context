@@ -38,6 +38,7 @@ dev = [
   # PYSEC-2026-1845: lock-export audit requires >=9.0.3 (8.4.x is vulnerable).
   "pytest>=9.0.3,<10",
   "pytest-cov>=6.2,<7",
+  "pytest-xdist>=3.8,<4",
   "ruff>=0.12,<1",
 ]
 packaging = [

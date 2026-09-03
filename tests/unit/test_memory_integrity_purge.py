@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from allthecontext.admissibility import ConflictState
 from allthecontext.export import create_export, restore_export
 from allthecontext.models import CandidateInput, IngestionMode
 from allthecontext.replication import (
@@ -18,6 +20,7 @@ from allthecontext.replication import (
     sign_event,
     verify_event,
 )
+from allthecontext.retrieval import _conflict_states
 from allthecontext.storage import (
     SOURCE_BLOB_CHUNK_BYTES,
     CoreStore,
@@ -113,7 +116,7 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             ),
         )
     store = CoreStore(database)
-    assert store.migrate() == 18
+    assert store.migrate() == 19
     with store.connect() as connection:
         candidate_columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(context_candidates)")
@@ -206,6 +209,97 @@ def test_slot_metadata_stays_proposed_until_approval_and_groups_are_deterministi
     store.delete_record(second_id, reason="ordinary reversible deletion")
     groups = store.list_integrity_groups()
     assert groups["items"][0]["record_ids"] == sorted([first.id, third_id])
+
+
+def test_integrity_group_listing_fetches_members_in_one_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path / "core.sqlite3")
+    _approve(store, "Blue", entity_key="user:1", attribute_key="color")
+    _approve(store, "Green", entity_key="user:1", attribute_key="color")
+    _approve(store, "Tea", entity_key="user:1", attribute_key="drink")
+    _approve(store, "Coffee", entity_key="user:1", attribute_key="drink")
+    statements: list[str] = []
+    original_connect = store.connect
+
+    @contextmanager
+    def traced_connect():
+        with original_connect() as connection:
+            connection.set_trace_callback(statements.append)
+            try:
+                yield connection
+            finally:
+                connection.set_trace_callback(None)
+
+    monkeypatch.setattr(store, "connect", traced_connect)
+    groups = store.list_integrity_groups()
+
+    assert groups["total"] == 2
+    member_queries = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("SELECT")
+        and "FROM integrity_group_members" in statement
+    ]
+    assert len(member_queries) == 1
+    assert "WHERE group_id IN" in member_queries[0]
+
+
+def test_audit_reuses_the_callers_database_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path / "core.sqlite3")
+    connect_calls = 0
+    original_connect = store.connect
+
+    @contextmanager
+    def counted_connect():
+        nonlocal connect_calls
+        connect_calls += 1
+        with original_connect() as connection:
+            yield connection
+
+    monkeypatch.setattr(store, "connect", counted_connect)
+    with store.transaction() as connection:
+        audit_id = store._audit(connection, "test", "synthetic_audit", [])
+
+    assert connect_calls == 1
+    assert store.list_audit()[0]["id"] == audit_id
+
+
+def test_conflict_state_lookup_is_targeted_and_uses_reverse_member_index(tmp_path: Path) -> None:
+    store = _store(tmp_path / "core.sqlite3")
+    first_id = _approve(store, "Blue", entity_key="user:1", attribute_key="color")
+    second_id = _approve(store, "Green", entity_key="user:1", attribute_key="color")
+    unrelated_id = _approve(store, "Tea", entity_key="user:1", attribute_key="drink")
+    _approve(store, "Coffee", entity_key="user:1", attribute_key="drink")
+
+    statements: list[str] = []
+    with store.connect() as connection:
+        connection.set_trace_callback(statements.append)
+        states = _conflict_states(connection, [first_id, "missing-record"])
+        connection.set_trace_callback(None)
+        plan = connection.execute(
+            "EXPLAIN QUERY PLAN "
+            "SELECT m.record_id,g.status FROM integrity_group_members m "
+            "JOIN integrity_groups g ON g.id=m.group_id "
+            "WHERE m.record_id IN (?) AND g.group_type='conflict' "
+            "ORDER BY m.record_id,g.id",
+            (first_id,),
+        ).fetchall()
+
+    assert states == {
+        first_id: ConflictState.ACTIVE,
+        "missing-record": ConflictState.CLEAR,
+    }
+    assert second_id not in states
+    assert unrelated_id not in states
+    lookup_statements = [
+        statement for statement in statements if "FROM integrity_group_members" in statement
+    ]
+    assert len(lookup_statements) == 1
+    assert "WHERE m.record_id IN" in lookup_statements[0]
+    assert any("idx_integrity_group_members_record_group" in str(row["detail"]) for row in plan)
 
 
 def test_supersession_removes_old_record_from_integrity_group(tmp_path: Path) -> None:

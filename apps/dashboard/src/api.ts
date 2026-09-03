@@ -1139,12 +1139,20 @@ export const api = {
     options?.onOperation?.(started);
     const pollMs = options?.pollMs ?? 1000;
     let stopPolling = false;
-    const poll = window.setInterval(() => {
+    let pollTimer: number | undefined;
+    const pollOperation = async (): Promise<void> => {
       if (stopPolling) return;
-      void api.getImportOperation(started.operation_id).then((operation) => {
-        options?.onOperation?.(operation);
-      }).catch(() => undefined);
-    }, pollMs);
+      try {
+        const operation = await api.getImportOperation(started.operation_id);
+        if (!stopPolling) options?.onOperation?.(operation);
+      } catch {
+        // Upload remains authoritative; transient status failures retry quietly.
+      }
+      if (!stopPolling) {
+        pollTimer = window.setTimeout(() => void pollOperation(), pollMs);
+      }
+    };
+    pollTimer = window.setTimeout(() => void pollOperation(), pollMs);
     try {
       const finished = await api.uploadImportOperation(started.operation_id, file);
       options?.onOperation?.(finished);
@@ -1162,7 +1170,7 @@ export const api = {
       throw new ApiError(asBoundedString(finished.error_message, MAX_REASON_CHARS, false) ?? "Import operation failed.", 422, finished);
     } finally {
       stopPolling = true;
-      window.clearInterval(poll);
+      if (pollTimer !== undefined) window.clearTimeout(pollTimer);
     }
   },
   reprocessSource: async (sourceId: string, options?: { rebuild?: boolean }): Promise<ImportResult> =>

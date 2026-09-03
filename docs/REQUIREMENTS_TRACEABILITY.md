@@ -22,6 +22,28 @@ The P1 pre-binding crash boundary and authenticated retirement replay are
 covered by ADR-195.
 The completed-identity operation-binding containment follow-up is covered by
 ADR-196.
+The bounded efficiency hardening follow-up is covered by ADR-198.
+
+### 2026-09-03 bounded efficiency hardening
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| PERF-01 — multi-observation transactions must not rebuild all integrity groups once per observation | `CoreStore._evaluate_observation_tx`; `finish_ingestion`; `evaluate_staged_observations`; `publish_source_rebuild`; batch recomputation regressions in `test_automatic_context_policy.py` and `test_memory_truth.py`; ADR-198 | Implemented and locally tested. Each qualifying batch defers the existing integrity request and performs one transaction-final recomputation; single-observation callers remain immediate and final observation dispositions/records are asserted |
+| PERF-02 — retrieval conflict lookup must scale with the bounded candidate set | `retrieval.py::_conflict_states`; migration `019_integrity_member_reverse_lookup.sql`; targeted trace and query-plan regression in `test_memory_integrity_purge.py`; ADR-198 | Implemented and locally tested. Requested IDs are deduplicated and queried in 500-ID chunks through `(record_id, group_id)`; unrelated memberships are not loaded |
+| PERF-03 — bounded integrity listing and audit writes must avoid avoidable connections/queries | `CoreStore.list_integrity_groups`; `CoreStore._vault_id_tx`; `CoreStore._audit`; query-count and connection-count regressions in `test_memory_integrity_purge.py`; ADR-198 | Implemented and locally tested. One membership query serves the at-most-500-group page, and audit insertion reuses its caller transaction |
+| PERF-04 — dashboard polling must not overlap or update after lifecycle stop | `api.ts::importSource`; `App.tsx::refreshStatus`; completion-driven timer and fake-timer regressions in `api.test.ts` and `App.test.tsx`; ADR-198 | Implemented and locally tested. The next request is scheduled only after settlement, in-flight status refreshes are shared, late import callbacks are suppressed, unmount cancels polling, and hidden documents receive no periodic status work |
+
+The Windows Python CI execution candidate is covered by ADR-197. It changes
+test scheduling only: the collection contract must prove the sequential and
+four-worker file-level nodeid sets are identical before the existing full
+Python gate runs. Hosted timing, flake, and branch-protection evidence remain
+separate post-merge checks.
+
+### 2026-09-03 Windows Python test execution acceleration candidate
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| CI-TEST-01 — the accelerated Python gate must execute the complete required test set without selector-based omissions | `scripts/check_test_collection.py`; `.github/workflows/ci.yml`; `tests/unit/test_pytest_collection_contract.py`; `pytest-xdist>=3.8,<4` in `pyproject.toml` and `uv.lock`; ADR-197 | Implemented locally. The collection proof compares sequential and four-worker `--dist=loadfile` nodeid sets and fails on collection errors, empty output, or any difference. The initial isolated Windows benchmark collected 2,686 nodeids across 169 files (2,673 pass outcomes and 13 capability skips); after the three contract tests were added, that worker branch collected 2,689 items and passed 2,676 with 13 skips in 277.84 seconds of pytest time. Its required sequential fallback passed the same set in 749.42 seconds. After integration added the efficiency regressions, the final branch collected 2,696 identical sequential/four-worker nodeids; its full sequential run passed 2,683 with 13 skips in 828.88 seconds, and an independent full four-worker run on the code-identical pre-documentation SHA passed the same set in 296.21 seconds. Three repeated Windows isolation-sensitive four-worker runs each passed 446 and skipped 3. The existing check name, full suite, platform skips, and downstream build/security steps remain unchanged. Hosted timing, post-merge p95/flake evidence, and final branch-protection confirmation remain required after merge. |
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;

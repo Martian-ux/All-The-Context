@@ -43,8 +43,10 @@ jobs:
         run: python -m mypy packages/allthecontext/src
       - name: Documentation checks
         run: python scripts/check_docs.py
+      - name: Verify complete pytest collection before parallel execution
+        run: python scripts/check_test_collection.py --workers 4
       - name: Tests and platform smoke coverage
-        run: python -m pytest
+        run: python -m pytest -n 4 --dist=loadfile
       - name: Build Python artifacts
         run: python -m build --outdir dist/python
       - name: Diagnose Python package resources

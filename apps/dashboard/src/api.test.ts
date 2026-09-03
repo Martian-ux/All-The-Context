@@ -2,9 +2,15 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, normalizeClosedCoverage, sourceCoverageForRecord } from "./api";
+import type { ImportOperation } from "./types";
 
 describe("desktop browser session", () => {
-  afterEach(() => { window.sessionStorage.clear(); vi.unstubAllGlobals(); });
+  afterEach(() => {
+    window.sessionStorage.clear();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
 
   it("uses the tab-scoped opaque session established by Core", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
@@ -794,6 +800,58 @@ describe("desktop browser session", () => {
       outcomes: { applied: 1, tentative: 1 },
       operation_id: "op-1",
     });
+  });
+
+  it("serializes import polling and suppresses callbacks after upload stops it", async () => {
+    vi.useFakeTimers();
+    const started: ImportOperation = {
+      operation_id: "op-serial",
+      status: "awaiting_upload",
+      phase: "awaiting_upload",
+      declared_byte_size: 7,
+      bytes_received: 0,
+      bytes_committed: 0,
+      cancel_requested: false,
+      progress: { percent: 0, phase: "awaiting_upload" },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const polled: ImportOperation = {
+      ...started,
+      status: "processing",
+      phase: "processing",
+    };
+    vi.spyOn(api, "startImportOperation").mockResolvedValue(started);
+    let rejectUpload: (error: Error) => void = () => undefined;
+    vi.spyOn(api, "uploadImportOperation").mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectUpload = reject; }),
+    );
+    let resolvePoll: (operation: ImportOperation) => void = () => undefined;
+    const getOperation = vi.spyOn(api, "getImportOperation").mockImplementation(
+      () => new Promise((resolve) => { resolvePoll = resolve; }),
+    );
+    const seen: string[] = [];
+    const pending = api.importSource(
+      new File(["archive"], "export.zip"),
+      "chatgpt",
+      { pollMs: 100, onOperation: (operation) => seen.push(operation.status) },
+    );
+    const outcome = pending.catch((error: unknown) => error);
+    await Promise.resolve();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(getOperation).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getOperation).toHaveBeenCalledTimes(1);
+
+    rejectUpload(new ApiError("synthetic upload failure", 500));
+    await expect(outcome).resolves.toBeInstanceOf(ApiError);
+    resolvePoll(polled);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(getOperation).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual(["awaiting_upload"]);
   });
 
   it("counts only valid bounded import IDs and strict nonnegative stats", async () => {

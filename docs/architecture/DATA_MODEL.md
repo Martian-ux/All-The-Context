@@ -46,7 +46,11 @@ Migration `015_continuous_capture.sql` is the provider-neutral Continuous
 Capture foundation. Migration `016_registered_source_admission.sql` adds the
 nullable registered-source provenance seam to existing candidates. Migration
 `017_capture_page_recovery.sql` adds bounded page-recovery state to the capture
-checkpoint row; the next free Core migration number is `018`.
+checkpoint row. Migration `018_client_capture_source.sql` binds a capture source
+to its registered client principal and preserves lifecycle/formation event
+lineage. Migration `019_integrity_member_reverse_lookup.sql` adds the reverse
+record-to-integrity-group lookup index; the next free Core migration number is
+`020`.
 
 The compatibility schema may retain historical table or column names such as
 `context_candidate` and `approval_status` during migration. Those are storage

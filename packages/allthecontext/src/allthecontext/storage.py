@@ -1093,12 +1093,16 @@ class CoreStore:
             connection.execute("VACUUM")
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
-    def vault_id(self) -> str:
-        with self.connect() as connection:
-            row = connection.execute("SELECT id FROM vaults ORDER BY created_at LIMIT 1").fetchone()
+    @staticmethod
+    def _vault_id_tx(connection: sqlite3.Connection) -> str:
+        row = connection.execute("SELECT id FROM vaults ORDER BY created_at LIMIT 1").fetchone()
         if row is None:
             raise InvalidStateError("Core vault is not initialized")
         return str(row["id"])
+
+    def vault_id(self) -> str:
+        with self.connect() as connection:
+            return self._vault_id_tx(connection)
 
     def add_source(
         self,
@@ -2876,6 +2880,7 @@ class CoreStore:
                 "WHERE session_id=? AND disposition='staged' ORDER BY created_at,id",
                 (session_id,),
             ).fetchall()
+            deferred_integrity_recompute = [False]
             for item in staged:
                 self._evaluate_observation_tx(
                     connection,
@@ -2883,9 +2888,11 @@ class CoreStore:
                     origin=ObservationOrigin.ARCHIVE_IMPORT,
                     actor=actor,
                     principal=None,
+                    deferred_integrity_recompute=deferred_integrity_recompute,
                 )
-            if withdrawn:
+            if withdrawn or deferred_integrity_recompute[0]:
                 self._recompute_integrity(connection)
+            if withdrawn:
                 self._audit(
                     connection,
                     actor,
@@ -4248,6 +4255,7 @@ class CoreStore:
                 # Re-bind from durable registrations; never trust caller-supplied scopes
                 # for witness / archive explicitness (principal-shape hardening).
                 policy_principal = self._policy_principal_tx(connection, client)
+                deferred_integrity_recompute = [False]
                 for item in staged:
                     self._evaluate_observation_tx(
                         connection,
@@ -4255,7 +4263,10 @@ class CoreStore:
                         origin=origin,
                         actor=actor,
                         principal=policy_principal,
+                        deferred_integrity_recompute=deferred_integrity_recompute,
                     )
+                if deferred_integrity_recompute[0]:
+                    self._recompute_integrity(connection)
         result = self.get_session(session_id)
         result["replayed"] = replayed
         return result
@@ -5483,6 +5494,7 @@ class CoreStore:
         actor: str,
         principal: ClientPrincipal | None = None,
         canonical_record_id: str | None = None,
+        deferred_integrity_recompute: list[bool] | None = None,
     ) -> CandidateOut:
         observation = connection.execute(
             "SELECT * FROM context_candidates WHERE id=?", (observation_id,)
@@ -5566,6 +5578,7 @@ class CoreStore:
                     record_id,
                     reason="Explicit user forget request",
                     actor=actor,
+                    recompute_integrity=False,
                     user_mutation=(
                         None if origin == ObservationOrigin.ARCHIVE_IMPORT else "delete"
                     ),
@@ -5764,7 +5777,10 @@ class CoreStore:
                                 str(current["id"]),
                                 "corroborated",
                             )
-        self._recompute_integrity(connection)
+        if deferred_integrity_recompute is None:
+            self._recompute_integrity(connection)
+        else:
+            deferred_integrity_recompute[0] = True
         updated = connection.execute(
             "SELECT * FROM context_candidates WHERE id=?", (observation_id,)
         ).fetchone()
@@ -5793,6 +5809,7 @@ class CoreStore:
                 "ORDER BY c.created_at,c.id LIMIT ?",
                 (IngestionMode.ARCHIVE.value, min(max(limit, 1), 100_000)),
             ).fetchall()
+            deferred_integrity_recompute = [False]
             for row in rows:
                 if str(row["source_type"] or "") == "client_capture":
                     origin = ObservationOrigin.CLIENT_CAPTURE
@@ -5819,8 +5836,11 @@ class CoreStore:
                     origin=origin,
                     actor=effective_client_id or "automatic-migration",
                     principal=principal,
+                    deferred_integrity_recompute=deferred_integrity_recompute,
                 )
                 evaluated += 1
+            if deferred_integrity_recompute[0]:
+                self._recompute_integrity(connection)
         return evaluated
 
     def approve_candidate(
@@ -7725,13 +7745,18 @@ class CoreStore:
                 "ORDER BY g.updated_at DESC,g.id LIMIT ? OFFSET ?",
                 [*parameters, bounded_limit, max(offset, 0)],
             ).fetchall()
+            members_by_group: dict[str, list[str]] = {str(group["id"]): [] for group in groups}
+            if members_by_group:
+                placeholders = ",".join("?" for _ in members_by_group)
+                member_rows = connection.execute(
+                    "SELECT group_id,record_id FROM integrity_group_members "
+                    f"WHERE group_id IN ({placeholders}) ORDER BY group_id,record_id",
+                    list(members_by_group),
+                ).fetchall()
+                for member in member_rows:
+                    members_by_group[str(member["group_id"])].append(str(member["record_id"]))
             items = []
             for group in groups:
-                member_rows = connection.execute(
-                    "SELECT record_id FROM integrity_group_members "
-                    "WHERE group_id=? ORDER BY record_id",
-                    (group["id"],),
-                ).fetchall()
                 items.append(
                     {
                         "id": str(group["id"]),
@@ -7739,7 +7764,7 @@ class CoreStore:
                         "attribute_key": str(group["attribute_key"]),
                         "group_type": str(group["group_type"]),
                         "status": str(group["status"]),
-                        "record_ids": [str(member["record_id"]) for member in member_rows],
+                        "record_ids": members_by_group[str(group["id"])],
                         "created_at": str(group["created_at"]),
                         "updated_at": str(group["updated_at"]),
                     }
@@ -7813,7 +7838,7 @@ class CoreStore:
             "metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
             (
                 audit_id,
-                self.vault_id(),
+                self._vault_id_tx(connection),
                 _normalize_actor(client_id),
                 action,
                 trace_id or new_id(),

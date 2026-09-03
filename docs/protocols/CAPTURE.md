@@ -76,8 +76,9 @@ When a newer migration is pending, the repair probe is bounded through the
 already-applied capture migration version inside that pending migration's
 transaction, before the newer migration statements run. Successful migration
 retains the full repaired state; a failed transaction does not retain a partial
-repair. The architecture data model already records migration 017 as used and
-018 as next.
+repair. Migrations 018 and 019 are now also allocated to client-capture source
+ownership/event lineage and the integrity-member reverse lookup, respectively;
+the next free Core migration number is 020.
 
 ## Contracts and replay
 
