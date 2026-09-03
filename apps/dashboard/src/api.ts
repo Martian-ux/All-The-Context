@@ -43,6 +43,7 @@ import type {
   TruthCoverage,
   TruthEvidence,
   TruthSource,
+  UpdatePhase,
   UpdateStatus,
 } from "./types";
 
@@ -80,6 +81,7 @@ const CONFLICT_STATES: readonly TruthConflictState[] = ["none", "active", "resol
 const AVAILABILITIES: readonly Availability[] = ["always_available", "core_available", "local_only"];
 const SENSITIVITIES = ["normal", "sensitive", "highly_sensitive"] as const;
 const DISPOSITIONS = ["staged", "applied", "reinforced", "tentative", "ignored"] as const;
+const UPDATE_PHASES: readonly UpdatePhase[] = ["idle", "disabled", "checking", "current", "unpublished", "available", "deferred", "downloading", "ready", "installing", "restart_required", "installed", "rolled_back", "manual_required", "error", "cancelled"];
 
 const MAX_COUNT = 2_147_483_647;
 const MAX_CONTEXT_CHARS = 64_000;
@@ -962,6 +964,72 @@ function historyItemFromWire(value: unknown): ContextRecordVersion {
   };
 }
 
+function updateStatusFromWire(value: unknown): UpdateStatus {
+  if (!isRecord(value) || !UPDATE_PHASES.includes(value.phase as UpdatePhase)) throw invalidWireError();
+  const currentVersion = asRequiredString(value.current_version, MAX_GENERIC_STRING_CHARS);
+  const recoveryAttempts = asCount(value.recovery_attempts);
+  const channel = value.channel === "stable" || value.channel === "beta" ? value.channel : undefined;
+  if (
+    currentVersion === undefined
+    || recoveryAttempts === undefined
+    || channel === undefined
+    || typeof value.mandatory !== "boolean"
+    || typeof value.enabled !== "boolean"
+    || typeof value.automatic_install_supported !== "boolean"
+    || typeof value.verified_artifact_available !== "boolean"
+    || typeof value.installer_detail !== "string"
+    || value.installer_detail.length > MAX_GENERIC_STRING_CHARS
+    || typeof value.configured !== "boolean"
+  ) throw invalidWireError();
+  const nullableStrings = (key: string, maxLength: number): string | null | undefined => {
+    if (!(key in value)) return undefined;
+    const normalized = asNullableString(value[key], maxLength);
+    if (normalized === undefined) throw invalidWireError();
+    return normalized;
+  };
+  const availableChannels = (value.available_channels === undefined
+    ? (value.configured ? [channel] : [])
+    : strictStringArray(value.available_channels, 2, 16)) as Array<"stable" | "beta"> | null;
+  if (
+    availableChannels === null
+    || availableChannels.some((item) => item !== "stable" && item !== "beta")
+  ) throw invalidWireError();
+  const optionalTimestamp = (key: string): string | null | undefined => {
+    if (!(key in value)) return undefined;
+    const normalized = asNullableTimestamp(value[key]);
+    if (normalized === undefined) throw invalidWireError();
+    return normalized;
+  };
+  const booleanOrDefault = (key: string, fallback: boolean): boolean => {
+    if (!(key in value)) return fallback;
+    if (typeof value[key] !== "boolean") throw invalidWireError();
+    return value[key] as boolean;
+  };
+  return {
+    phase: value.phase as UpdatePhase,
+    current_version: currentVersion,
+    offered_version: nullableStrings("offered_version", MAX_GENERIC_STRING_CHARS),
+    mandatory: value.mandatory,
+    release_notes_url: nullableStrings("release_notes_url", 2_048),
+    last_checked_at: optionalTimestamp("last_checked_at"),
+    last_error: nullableStrings("last_error", MAX_GENERIC_STRING_CHARS),
+    recovery_attempts: recoveryAttempts,
+    enabled: value.enabled,
+    channel,
+    deferred_version: nullableStrings("deferred_version", MAX_GENERIC_STRING_CHARS),
+    automatic_staging_enabled: booleanOrDefault("automatic_staging_enabled", false),
+    automatic_staging_paused: booleanOrDefault("automatic_staging_paused", false),
+    automatic_install_supported: value.automatic_install_supported,
+    automatic_download_enabled: booleanOrDefault("automatic_download_enabled", false),
+    automatic_staging_supported: booleanOrDefault("automatic_staging_supported", false),
+    activation_prerequisite: nullableStrings("activation_prerequisite", MAX_GENERIC_STRING_CHARS),
+    verified_artifact_available: value.verified_artifact_available,
+    installer_detail: value.installer_detail,
+    configured: value.configured,
+    available_channels: availableChannels,
+  };
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -1269,19 +1337,20 @@ export const api = {
   },
   exportBackup: (passphrase: string): Promise<Blob> =>
     requestDownload("/admin/export", { passphrase }),
-  updateStatus: () => request<UpdateStatus>("/admin/updates"),
-  updatePreferences: (enabled: boolean, channel: "stable" | "beta") =>
-    request<UpdateStatus>("/admin/updates/preferences", {
+  updateStatus: async (): Promise<UpdateStatus> =>
+    updateStatusFromWire(await request<unknown>("/admin/updates")),
+  updatePreferences: (enabled: boolean, channel: "stable" | "beta", automaticStagingEnabled: boolean) =>
+    request<unknown>("/admin/updates/preferences", {
       method: "PUT",
-      body: JSON.stringify({ enabled, channel }),
-    }),
-  checkForUpdates: () => request<UpdateStatus>("/admin/updates/check", { method: "POST" }),
-  downloadUpdate: () => request<UpdateStatus>("/admin/updates/download", { method: "POST" }),
+      body: JSON.stringify({ enabled, channel, automatic_staging_enabled: automaticStagingEnabled }),
+    }).then(updateStatusFromWire),
+  checkForUpdates: () => request<unknown>("/admin/updates/check", { method: "POST" }).then(updateStatusFromWire),
+  downloadUpdate: () => request<unknown>("/admin/updates/download", { method: "POST" }).then(updateStatusFromWire),
   verifiedUpdateArtifact: (): Promise<Blob> => requestDownload("/admin/updates/artifact"),
-  installUpdate: () => request<UpdateStatus>("/admin/updates/install", { method: "POST" }),
-  deferUpdate: () => request<UpdateStatus>("/admin/updates/defer", { method: "POST" }),
-  cancelUpdate: () => request<UpdateStatus>("/admin/updates/cancel", { method: "POST" }),
-  clearUpdateError: () => request<UpdateStatus>("/admin/updates/error", { method: "DELETE" }),
+  installUpdate: () => request<unknown>("/admin/updates/install", { method: "POST" }).then(updateStatusFromWire),
+  deferUpdate: () => request<unknown>("/admin/updates/defer", { method: "POST" }).then(updateStatusFromWire),
+  cancelUpdate: () => request<unknown>("/admin/updates/cancel", { method: "POST" }).then(updateStatusFromWire),
+  clearUpdateError: () => request<unknown>("/admin/updates/error", { method: "DELETE" }).then(updateStatusFromWire),
   /** Server-side revoke of the short-lived browser capability; clears tab storage. */
   revokeBrowserSession: async (): Promise<{ revoked: boolean }> => {
     const result = await request<{ revoked: boolean }>("/browser/session/revoke", {

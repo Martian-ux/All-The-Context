@@ -20,6 +20,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -101,6 +102,7 @@ MAX_STATE_BYTES = 64 * 1024
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 20.0
+TRANSFER_TIMEOUT_SECONDS = 20.0
 MAX_REDIRECTS = 1
 CHECK_INTERVAL = timedelta(hours=24)
 UPDATE_RETRY_INITIAL_DELAY = timedelta(minutes=5)
@@ -189,14 +191,14 @@ class UpdateBusyError(UpdateError):
 class UpdateAutomationPolicy:
     """Product policy for the in-process unattended update worker.
 
-    Verified download/staging is safe to perform in the Core lifetime and is
-    enabled with the existing automatic-update preference.  Installation and
-    restart remain separate policy decisions: this class does not create an
+    Checks are enabled by default, while verified download/staging requires a
+    separate explicit preference and a packaged-Windows capability. Installation
+    and restart remain separate policy decisions: this class does not create an
     OS task, service, or reboot action.
     """
 
     checks_enabled: bool = True
-    automatic_download_enabled: bool = True
+    automatic_download_enabled: bool = False
     automatic_install_enabled: bool = False
     automatic_restart_enabled: bool = False
 
@@ -258,6 +260,7 @@ _PUBLIC_ERROR_MESSAGES = frozenset(
         "Release artifact declares an unsupported size",
         "Release download length differs from signed metadata",
         "Update download was cancelled",
+        "Release download exceeded the total time limit",
         "Release download exceeded its signed size",
         "Release download was truncated",
         "Insufficient disk space to stage and recover this update",
@@ -462,6 +465,7 @@ class UpdatePreferences:
     enabled: bool = True
     channel: Channel = "stable"
     deferred_version: str | None = None
+    automatic_staging_enabled: bool = False
 
 
 @dataclass(slots=True)
@@ -482,6 +486,7 @@ class UpdateState:
     handoff_identity: str | None = None
     pending_handoff_identity: str | None = None
     completed_handoff_identity: str | None = None
+    automatic_staging_paused: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1232,6 +1237,7 @@ class HttpsTransport:
             raise UpdateError("Release artifact declares an unsupported size")
         digest = hashlib.sha256()
         received = 0
+        deadline = time.monotonic() + TRANSFER_TIMEOUT_SECONDS
         try:
             with (
                 self._open(url, allow_release_redirect=True) as response,
@@ -1243,12 +1249,23 @@ class HttpsTransport:
                 while True:
                     if cancelled():
                         raise UpdateError("Update download was cancelled")
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise UpdateError("Release download exceeded the total time limit")
+                    raw = getattr(response, "fp", None)
+                    socket = getattr(getattr(raw, "raw", None), "_sock", None)
+                    if socket is not None:
+                        socket.settimeout(min(READ_TIMEOUT_SECONDS, remaining))
                     chunk = response.read(min(1024 * 1024, expected_bytes - received + 1))
                     if not chunk:
+                        if time.monotonic() > deadline:
+                            raise UpdateError("Release download exceeded the total time limit")
                         break
                     received += len(chunk)
                     if received > expected_bytes:
                         raise UpdateError("Release download exceeded its signed size")
+                    if time.monotonic() > deadline:
+                        raise UpdateError("Release download exceeded the total time limit")
                     digest.update(chunk)
                     output.write(chunk)
                 output.flush()
@@ -1256,9 +1273,11 @@ class HttpsTransport:
             if received != expected_bytes:
                 raise UpdateError("Release download was truncated")
             return digest.hexdigest(), received
-        except BaseException:
+        except BaseException as exc:
             with suppress(OSError, UpdateError):
                 _unlink_plain_file(target, "The partial release artifact is not a plain file")
+            if isinstance(exc, (TimeoutError, OSError)) and time.monotonic() >= deadline:
+                raise UpdateError("Release download exceeded the total time limit") from exc
             raise
 
 
@@ -1763,6 +1782,8 @@ class UpdateManager:
             self.preferences = self._load_preferences()
             self.state = self._load_state()
             self.state.current_version = config.current_version
+            if self.state.automatic_staging_paused:
+                self._cancel.set()
             self._validate_internal_state()
             if self._state_write_allowed and self.state.completed_handoff_identity is not None:
                 # A failed retirement remains a valid terminal state with a
@@ -1823,7 +1844,11 @@ class UpdateManager:
                 MAX_PREFERENCES_BYTES,
                 label="Persisted update preferences",
             ).value
-            if not isinstance(value, dict) or not isinstance(value.get("enabled", True), bool):
+            if (
+                not isinstance(value, dict)
+                or not isinstance(value.get("enabled", True), bool)
+                or not isinstance(value.get("automatic_staging_enabled", False), bool)
+            ):
                 raise ValueError("invalid preferences")
             channel = value.get("channel")
             if channel not in {"stable", "beta"}:
@@ -1844,6 +1869,7 @@ class UpdateManager:
                 enabled=value.get("enabled", True),
                 channel=selected_channel,
                 deferred_version=deferred,
+                automatic_staging_enabled=value.get("automatic_staging_enabled", False),
             )
         except _PersistedMetadataError as exc:
             self._preferences_write_allowed = exc.safe_to_replace
@@ -2380,6 +2406,8 @@ class UpdateManager:
                 ReleaseVersion.parse(state.offered_version)
             if not isinstance(state.mandatory, bool):
                 raise ValueError("invalid mandatory flag")
+            if not isinstance(state.automatic_staging_paused, bool):
+                raise ValueError("invalid automatic staging pause")
             if (
                 isinstance(state.recovery_attempts, bool)
                 or not isinstance(state.recovery_attempts, int)
@@ -2794,6 +2822,8 @@ class UpdateManager:
                 return
             self.state.phase = UpdatePhase.CANCELLED
             self.state.last_error = "The interrupted update operation was safely cancelled"
+            self.state.automatic_staging_paused = True
+            self._cancel.set()
             self._save()
 
     def _recovery_cleanup_failed(self) -> dict[str, Any]:
@@ -3084,6 +3114,24 @@ class UpdateManager:
             )
         return None
 
+    def _packaged_windows_staging_supported(self) -> bool:
+        """Return whether this process can safely stage unattended Windows updates."""
+
+        return bool(
+            self.config.platform_name == "windows"
+            and self.config.architecture == "x86_64"
+            and self.installer.supported
+        )
+
+    def _automatic_staging_allowed(self) -> bool:
+        return bool(
+            self.preferences.automatic_staging_enabled
+            and not self.state.automatic_staging_paused
+            and not self._cancel.is_set()
+            and self.automation_policy.automatic_download_enabled
+            and self._packaged_windows_staging_supported()
+        )
+
     def public_status(self) -> dict[str, Any]:
         with self._operation_lock:
             result = asdict(self.state)
@@ -3095,6 +3143,8 @@ class UpdateManager:
                     "enabled": self.preferences.enabled,
                     "channel": self.preferences.channel,
                     "deferred_version": self.preferences.deferred_version,
+                    "automatic_staging_enabled": self.preferences.automatic_staging_enabled,
+                    "automatic_staging_paused": self.state.automatic_staging_paused,
                     "automatic_install_supported": self.installer.supported,
                     "verified_artifact_available": self.state.downloaded_path is not None
                     and self.state.phase in {UpdatePhase.READY, UpdatePhase.MANUAL_REQUIRED},
@@ -3110,6 +3160,10 @@ class UpdateManager:
                     "available_channels": sorted(self.config.manifest_urls),
                     "automatic_download_enabled": (
                         self.automation_policy.automatic_download_enabled
+                    ),
+                    "automatic_staging_supported": (
+                        self.automation_policy.automatic_download_enabled
+                        and self._packaged_windows_staging_supported()
                     ),
                     "automatic_install_enabled": self.automation_policy.automatic_install_enabled,
                     "automatic_restart_enabled": self.automation_policy.automatic_restart_enabled,
@@ -3135,9 +3189,19 @@ class UpdateManager:
             result.pop("completed_handoff_identity", None)
             return result
 
-    def configure(self, *, enabled: bool, channel: Channel) -> dict[str, Any]:
+    def configure(
+        self,
+        *,
+        enabled: bool,
+        channel: Channel,
+        automatic_staging_enabled: bool = False,
+    ) -> dict[str, Any]:
         if channel not in {"stable", "beta"}:
             raise UpdateError("Update channel must be stable or beta")
+        if not isinstance(automatic_staging_enabled, bool):
+            raise UpdateError("Automatic staging consent must be a boolean")
+        if not enabled or not automatic_staging_enabled:
+            self._cancel.set()
         with self._exclusive():
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed(preferences=True)
@@ -3147,7 +3211,12 @@ class UpdateManager:
                 and not self._clear_completed_recovery_evidence()
             ):
                 raise UpdateError("Updater staging cleanup could not be completed safely")
-            next_preferences = UpdatePreferences(enabled, channel, None)
+            next_preferences = UpdatePreferences(
+                enabled=enabled,
+                channel=channel,
+                deferred_version=None,
+                automatic_staging_enabled=automatic_staging_enabled,
+            )
             cleanup_failed = channel_changed and (
                 not self._clean_operation()
                 or not self._prune_directory(self.config.data_dir / "staging", keep=None)
@@ -3159,6 +3228,11 @@ class UpdateManager:
                 raise UpdateError("Updater staging cleanup could not be completed safely")
             self._atomic_json(self.preferences_path, asdict(next_preferences))
             self.preferences = next_preferences
+            if automatic_staging_enabled:
+                self.state.automatic_staging_paused = False
+                self._cancel.clear()
+            else:
+                self.state.automatic_staging_paused = False
             if channel_changed:
                 self.state.offered_version = None
                 self.state.mandatory = False
@@ -3193,7 +3267,10 @@ class UpdateManager:
             ):
                 raise UpdateError("Updater staging cleanup could not be completed safely")
             next_preferences = UpdatePreferences(
-                self.preferences.enabled, self.preferences.channel, self.state.offered_version
+                enabled=self.preferences.enabled,
+                channel=self.preferences.channel,
+                deferred_version=self.state.offered_version,
+                automatic_staging_enabled=self.preferences.automatic_staging_enabled,
             )
             self._atomic_json(self.preferences_path, asdict(next_preferences))
             self.preferences = next_preferences
@@ -3210,15 +3287,53 @@ class UpdateManager:
                 and not self._clear_completed_recovery_evidence()
             ):
                 raise UpdateError("Updater staging cleanup could not be completed safely")
+            was_staging_paused = self.state.automatic_staging_paused
             self.state.last_error = None
+            if not was_staging_paused:
+                self._cancel.clear()
             if self.state.phase in {UpdatePhase.ERROR, UpdatePhase.CANCELLED}:
                 self.state.phase = UpdatePhase.IDLE
             self._save()
             return self.public_status()
 
-    def cancel(self) -> dict[str, Any]:
+    def request_cancel(self) -> None:
+        """Signal an in-flight operation without waiting for its operation gate."""
+
         self._cancel.set()
+
+    def persist_cancel_if_idle(self) -> None:
+        """Persist lifecycle cancellation only when no update operation is active."""
+
+        if not self._operation_gate.acquire(blocking=False):
+            return
+        try:
+            with self._operation_lock:
+                if self.state.phase in {
+                    UpdatePhase.AVAILABLE,
+                    UpdatePhase.DEFERRED,
+                    UpdatePhase.CHECKING,
+                }:
+                    self.state.automatic_staging_paused = True
+                    self.state.phase = UpdatePhase.CANCELLED
+                    self.state.last_error = "Update download was cancelled"
+                if self._state_write_allowed:
+                    self._save()
+        finally:
+            self._operation_gate.release()
+
+    def cancel(self) -> dict[str, Any]:
+        self.request_cancel()
         with self._operation_gate, self._operation_lock:
+            self.state.automatic_staging_paused = True
+            if self.state.phase in {
+                UpdatePhase.AVAILABLE,
+                UpdatePhase.DEFERRED,
+                UpdatePhase.CHECKING,
+            }:
+                self.state.phase = UpdatePhase.CANCELLED
+                self.state.last_error = "Update download was cancelled"
+            if self._state_write_allowed:
+                self._save()
             return self.public_status()
 
     def scheduled_check(self, *, interval: timedelta = CHECK_INTERVAL) -> dict[str, Any]:
@@ -3270,7 +3385,6 @@ class UpdateManager:
                 )
                 self._save()
                 return self.public_status()
-            self._cancel.clear()
             self.state.phase = UpdatePhase.CHECKING
             self.state.last_error = None
             self._save()
@@ -3405,10 +3519,16 @@ class UpdateManager:
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed()
             if automatic:
-                if self._cancel.is_set() or self.state.phase is not UpdatePhase.AVAILABLE:
+                if (
+                    not self._automatic_staging_allowed()
+                    or self.state.phase is not UpdatePhase.AVAILABLE
+                ):
                     return self.public_status()
             elif self.state.phase not in {UpdatePhase.AVAILABLE, UpdatePhase.CANCELLED}:
                 raise UpdateError("A verified available update is required before download")
+            if not automatic:
+                self.state.automatic_staging_paused = False
+                self._cancel.clear()
             try:
                 manifest = self._revalidate_persisted_manifest()
             except UpdateError as exc:
@@ -3435,8 +3555,6 @@ class UpdateManager:
                 self.state.downloaded_path = None
                 self._save()
                 return self.public_status()
-            if not automatic:
-                self._cancel.clear()
             self.state.phase = UpdatePhase.DOWNLOADING
             self.state.last_error = None
             self._save()
@@ -3464,9 +3582,10 @@ class UpdateManager:
                 with suppress(OSError, UpdateError):
                     _unlink_plain_file(target, "The partial release artifact is not a plain file")
                 self.state.downloaded_path = None
-                self.state.phase = (
-                    UpdatePhase.CANCELLED if "cancel" in str(exc).casefold() else UpdatePhase.ERROR
-                )
+                cancelled = self._cancel.is_set() or "cancel" in str(exc).casefold()
+                self.state.phase = UpdatePhase.CANCELLED if cancelled else UpdatePhase.ERROR
+                if cancelled:
+                    self.state.automatic_staging_paused = True
                 self.state.last_error = _public_error_message(
                     exc, fallback="Update download failed safely"
                 )
@@ -3692,6 +3811,7 @@ class UpdateAutomation:
             if policy is not None
             else getattr(manager, "automation_policy", UpdateAutomationPolicy()),
         )
+        self.manager.automation_policy = self.policy
         self._lifecycle_lock = threading.Lock()
         self._cycle_lock = threading.Lock()
         self._retry_lock = threading.Lock()
@@ -3748,17 +3868,24 @@ class UpdateAutomation:
             else:
                 self._failed_attempts = 0
 
+    def _request_manager_cancel(self) -> None:
+        request_cancel = getattr(self.manager, "request_cancel", None)
+        if callable(request_cancel):
+            request_cancel()
+
+    def _persist_manager_cancel_if_idle(self) -> None:
+        persist_cancel_if_idle = getattr(self.manager, "persist_cancel_if_idle", None)
+        if callable(persist_cancel_if_idle):
+            persist_cancel_if_idle()
+
     def _cancel_pending_for_cycle(self) -> bool:
-        """Honor a recent cancel before scheduled checking can clear it."""
+        """Keep a user or lifecycle cancellation authoritative for this worker."""
 
         with self.manager._operation_lock:
-            if not self.manager._cancel.is_set():
-                return False
-            last = _parse_time(getattr(self.manager.state, "last_checked_at", None))
-            if last is not None and datetime.now(UTC) - last < self.config.check_interval:
-                return True
-            self.manager._cancel.clear()
-            return False
+            return bool(
+                self.manager._cancel.is_set()
+                or getattr(self.manager.state, "automatic_staging_paused", False)
+            )
 
     def run_once(self) -> dict[str, Any]:
         """Run one non-overlapping check and, when enabled, verified staging."""
@@ -3768,8 +3895,6 @@ class UpdateAutomation:
         if not self._cycle_lock.acquire(blocking=False):
             return self.manager.public_status()
         try:
-            if self._cancel_pending_for_cycle():
-                return self.manager.public_status()
             try:
                 status = self.manager.scheduled_check(interval=self.config.check_interval)
             except (OSError, UpdateError):
@@ -3779,6 +3904,8 @@ class UpdateAutomation:
                 # unattended worker; the next bounded retry will try again.
                 with self._retry_lock:
                     self._failed_attempts += 1
+                return self.manager.public_status()
+            if self._stop.is_set() or self._closing.is_set():
                 return self.manager.public_status()
             if (
                 status.get("phase") == UpdatePhase.AVAILABLE.value
@@ -3826,6 +3953,7 @@ class UpdateAutomation:
     def stop(self) -> None:
         """Signal the worker and join it for a bounded lifecycle handoff."""
 
+        self._request_manager_cancel()
         with self._lifecycle_lock:
             self._stop.set()
             self._wakeup.set()
@@ -3837,14 +3965,18 @@ class UpdateAutomation:
     def shutdown(self) -> None:
         """Permanently stop the worker and wait for any bounded request."""
 
+        self._request_manager_cancel()
         with self._lifecycle_lock:
             self._closing.set()
             self._stop.set()
             self._wakeup.set()
             thread = self._thread
-        if thread is not None and thread is not threading.current_thread():
-            thread.join()
+        if thread is not None and thread is not threading.current_thread() and thread.is_alive():
+            thread.join(timeout=self.config.join_timeout_seconds)
         self._clear_dead_thread()
+        if thread is None or not thread.is_alive():
+            with suppress(UpdateError):
+                self._persist_manager_cancel_if_idle()
 
     def _clear_dead_thread(self) -> None:
         with self._lifecycle_lock:

@@ -266,22 +266,39 @@ def test_update_controls_are_admin_scoped_and_persist_preferences(tmp_path: Path
                 "enabled": True,
                 "channel": "stable",
                 "configured": False,
+                "automatic_staging_enabled": False,
+                "automatic_staging_paused": False,
+                "automatic_download_enabled": False,
+                "automatic_staging_supported": False,
                 "current_version": __version__,
             }.items()
         )
         changed = client.put(
             "/v1/admin/updates/preferences",
-            json={"enabled": False, "channel": "beta"},
+            json={
+                "enabled": False,
+                "channel": "beta",
+                "automatic_staging_enabled": False,
+            },
         )
         assert changed.status_code == 200
         assert changed.json()["phase"] == "disabled"
         assert json.loads(
             (tmp_path / "updates" / "preferences.json").read_text(encoding="utf-8")
-        ) == {"channel": "beta", "deferred_version": None, "enabled": False}
+        ) == {
+            "automatic_staging_enabled": False,
+            "channel": "beta",
+            "deferred_version": None,
+            "enabled": False,
+        }
 
         invalid = client.put(
             "/v1/admin/updates/preferences",
-            json={"enabled": True, "channel": "nightly"},
+            json={
+                "enabled": True,
+                "channel": "nightly",
+                "automatic_staging_enabled": False,
+            },
         )
         assert invalid.status_code == 422
 

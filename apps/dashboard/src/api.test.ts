@@ -728,6 +728,41 @@ describe("desktop browser session", () => {
     expect(init.body).toBeUndefined();
   });
 
+  it("sends explicit automatic-staging consent in update preferences", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "browser-session");
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      phase: "idle",
+      current_version: "0.1.0",
+      offered_version: null,
+      mandatory: false,
+      last_checked_at: null,
+      last_error: null,
+      recovery_attempts: 0,
+      enabled: true,
+      channel: "stable",
+      deferred_version: null,
+      automatic_staging_enabled: true,
+      automatic_staging_paused: false,
+      automatic_install_supported: false,
+      automatic_download_enabled: false,
+      automatic_staging_supported: false,
+      verified_artifact_available: false,
+      installer_detail: "Manual installation is required",
+      configured: true,
+      available_channels: ["stable"],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+
+    await api.updatePreferences(true, "stable", true);
+
+    expect(fetch.mock.calls[0]?.[0]).toBe("/v1/admin/updates/preferences");
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      enabled: true,
+      channel: "stable",
+      automatic_staging_enabled: true,
+    });
+  });
+
   it("maps automatic import outcomes without review-era labels", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
     const importResult = {

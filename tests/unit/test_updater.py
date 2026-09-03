@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import threading
+import time
 import urllib.error
 import zipfile
 from dataclasses import dataclass
@@ -368,6 +369,7 @@ def _manager(
     current_version: str = "0.1.0",
     installer: FakeInstaller | None = None,
     health: FakeHealth | None = None,
+    automatic_staging: bool = False,
 ) -> tuple[UpdateManager, FakeTransport, FakeInstaller]:
     database = tmp_path / "core.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -388,7 +390,16 @@ def _manager(
         transport=transport,
         installer=active_installer,
         health_probe=health or FakeHealth(True),
+        automation_policy=UpdateAutomationPolicy(
+            automatic_download_enabled=automatic_staging
+        ),
     )
+    if automatic_staging:
+        manager.configure(
+            enabled=True,
+            channel="stable",
+            automatic_staging_enabled=True,
+        )
     return manager, transport, active_installer
 
 
@@ -3072,6 +3083,49 @@ def test_metadata_transport_preserves_the_http_status_code() -> None:
     assert str(error.value) == "Update endpoint returned HTTP 404"
 
 
+def test_release_download_has_a_total_transfer_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = b"slow"
+
+    class SlowResponse:
+        fp = None
+
+        def __init__(self) -> None:
+            self.headers = {"Content-Length": str(len(artifact))}
+
+        def __enter__(self) -> SlowResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _size: int = -1) -> bytes:
+            time.sleep(0.02)
+            return artifact
+
+    class SlowOpener:
+        @staticmethod
+        def open(_request: Any, *, timeout: float) -> SlowResponse:
+            assert timeout == updater_module.CONNECT_TIMEOUT_SECONDS
+            return SlowResponse()
+
+    monkeypatch.setattr(updater_module, "TRANSFER_TIMEOUT_SECONDS", 0.01)
+    transport = HttpsTransport()
+    transport._opener = cast(Any, SlowOpener())
+    target = tmp_path / "artifact.zip"
+
+    with pytest.raises(UpdateError, match="total time limit"):
+        transport.stream(
+            "https://updates.example.test/releases/v0.2.0/artifact.zip",
+            target,
+            expected_bytes=len(artifact),
+            cancelled=lambda: False,
+        )
+
+    assert not target.exists()
+
+
 def test_defer_is_persisted_and_mandatory_update_cannot_be_deferred(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
@@ -3096,8 +3150,56 @@ def test_update_automation_policy_defaults_to_check_only_without_restart_authori
     policy = UpdateAutomationPolicy()
 
     assert policy.checks_enabled is True
+    assert policy.automatic_download_enabled is False
     assert policy.automatic_install_enabled is False
     assert policy.automatic_restart_enabled is False
+
+
+def test_enabled_preferences_remain_check_only_without_explicit_staging_consent(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, automatic_staging=True)
+    manager.preferences_path.write_text(
+        json.dumps({"enabled": True, "channel": "stable", "deferred_version": None}),
+        encoding="utf-8",
+    )
+    transport = FakeTransport(manifest, artifact)
+    restarted = UpdateManager(
+        manager.config,
+        database_path=manager.database_path,
+        transport=transport,
+        installer=FakeInstaller(),
+        health_probe=FakeHealth(True),
+        automation_policy=UpdateAutomationPolicy(automatic_download_enabled=True),
+    )
+
+    status = UpdateAutomation(restarted).run_once()
+
+    assert status["phase"] == "available"
+    assert status["automatic_staging_enabled"] is False
+    assert status["automatic_staging_supported"] is True
+    assert transport.metadata_calls == 1
+    assert transport.stream_calls == 0
+
+
+def test_automatic_staging_requires_packaged_windows_support(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        installer=FakeInstaller(supported=False),
+        automatic_staging=True,
+    )
+
+    status = UpdateAutomation(manager).run_once()
+
+    assert status["phase"] == "available"
+    assert status["automatic_staging_enabled"] is True
+    assert status["automatic_staging_supported"] is False
+    assert transport.stream_calls == 0
 
 
 def test_disabled_update_automation_does_not_start_a_worker_or_check(
@@ -3178,6 +3280,83 @@ def test_update_automation_runs_periodically_in_process_without_host_registratio
     assert not (tmp_path / "service").exists()
 
 
+def test_update_automation_shutdown_cancels_slow_download_and_persists_pause(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    entered = threading.Event()
+
+    def slow_stream(
+        url: str,
+        target: Path,
+        *,
+        expected_bytes: int,
+        cancelled: Any,
+    ) -> tuple[str, int]:
+        del url, target, expected_bytes
+        entered.set()
+        while not cancelled():
+            time.sleep(0.01)
+        raise UpdateError("Update download was cancelled")
+
+    transport.stream = slow_stream  # type: ignore[method-assign]
+    automation = UpdateAutomation(
+        manager,
+        config=UpdateAutomationConfig(
+            check_interval=timedelta(seconds=10),
+            retry_initial_delay=timedelta(seconds=1),
+            retry_max_delay=timedelta(seconds=3),
+            retry_attempts=2,
+            join_timeout_seconds=1,
+        ),
+    )
+    automation.start()
+    assert entered.wait(timeout=2)
+
+    started = time.monotonic()
+    automation.shutdown()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2
+    assert automation.status()["automation_running"] is False
+    assert manager.state.phase is UpdatePhase.CANCELLED
+    assert manager.state.automatic_staging_paused is True
+    assert (
+        json.loads(manager.state_path.read_text(encoding="utf-8"))["automatic_staging_paused"]
+        is True
+    )
+
+    restarted_transport = FakeTransport(manifest, artifact)
+    restarted = UpdateManager(
+        manager.config,
+        database_path=manager.database_path,
+        transport=restarted_transport,
+        installer=FakeInstaller(),
+        health_probe=FakeHealth(True),
+        automation_policy=UpdateAutomationPolicy(automatic_download_enabled=True),
+    )
+    resumed = UpdateAutomation(restarted).run_once()
+    assert resumed["automatic_staging_paused"] is True
+    assert restarted_transport.stream_calls == 0
+
+
+def test_update_automation_shutdown_without_pending_offer_does_not_pause_staging(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    UpdateAutomation(manager).shutdown()
+
+    assert manager.state.automatic_staging_paused is False
+    assert json.loads(manager.state_path.read_text(encoding="utf-8"))[
+        "automatic_staging_paused"
+    ] is False
+
+
 def test_update_automation_does_not_expose_an_unstarted_thread_to_shutdown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3245,7 +3424,9 @@ def test_update_automation_offline_retry_is_bounded_and_non_destructive(
     tmp_path: Path,
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     transport.metadata_error = UpdateError(
         "Update endpoint could not be reached within the time limit"
     )
@@ -3312,7 +3493,9 @@ def test_update_automation_downloads_and_verifies_enabled_windows_updates_withou
     tmp_path: Path,
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     automation = UpdateAutomation(manager)
 
     status = automation.run_once()
@@ -3331,7 +3514,9 @@ def test_update_automation_downloads_and_verifies_enabled_windows_updates_withou
 
 def test_automatic_download_does_not_clear_a_pending_cancel(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     assert manager.check()["phase"] == "available"
     manager.cancel()
     automation = UpdateAutomation(manager)
@@ -3339,8 +3524,8 @@ def test_automatic_download_does_not_clear_a_pending_cancel(tmp_path: Path) -> N
     first = automation.run_once()
     second = automation.run_once()
 
-    assert first["phase"] == "available"
-    assert second["phase"] == "available"
+    assert first["phase"] == "cancelled"
+    assert second["phase"] == "cancelled"
     assert transport.stream_calls == 0
     assert installer.handed_off is False
     assert not (manager._operation_directory() / "artifact.zip").exists()
@@ -3350,7 +3535,9 @@ def test_automatic_download_uses_the_current_candidate_after_supersession(
     tmp_path: Path,
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, _ = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     replacement, _, _ = _fixture(tmp_path, version="0.3.0")
     original_check = manager.scheduled_check
 
@@ -3373,7 +3560,9 @@ def test_automatic_download_checks_disk_budget_before_transport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     monkeypatch.setattr(
         updater_module.shutil,
         "disk_usage",
@@ -3390,7 +3579,9 @@ def test_automatic_download_checks_disk_budget_before_transport(
 
 def test_staged_update_survives_restart_without_redownload(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, _ = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     assert UpdateAutomation(manager).run_once()["phase"] == "ready"
     staged = manager._operation_directory() / "artifact.zip"
 
@@ -3412,7 +3603,9 @@ def test_automatic_download_failures_use_bounded_retry_backoff(
     tmp_path: Path,
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     transport.download_error = UpdateError(
         "Update endpoint could not be reached within the time limit"
     )
@@ -3442,7 +3635,9 @@ def test_automatic_download_rechecks_signed_metadata_before_streaming(
     tmp_path: Path,
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     assert manager.check()["phase"] == "available"
     persisted = manager._operation_directory() / "manifest.json"
     value = json.loads(persisted.read_text(encoding="utf-8"))

@@ -1639,12 +1639,17 @@ function UpdatesView() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [channel, setChannel] = useState<"stable" | "beta">("stable");
   const [enabled, setEnabled] = useState(true);
+  const [stagingEnabled, setStagingEnabled] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const apply = useCallback((next: UpdateStatus) => {
-    setStatus(next); setChannel(next.channel); setEnabled(next.enabled); setError(null);
+    setStatus(next);
+    setChannel(next.channel);
+    setEnabled(next.enabled);
+    setStagingEnabled(next.automatic_staging_enabled);
+    setError(null);
   }, []);
   useEffect(() => {
     void api.updateStatus().then(apply).catch((caught) => setError(errorMessage(caught)));
@@ -1697,12 +1702,15 @@ function UpdatesView() {
         <div className="section-heading"><div><h2>Preferences</h2><p>Only channels backed by bundled trust metadata are selectable.</p></div></div>
         <div className="update-preferences">
           <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={busy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable" disabled={!availableChannels.includes("stable")}>Stable</option><option value="beta" disabled={!availableChannels.includes("beta")}>Beta</option></select></label>
-          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} /> Check and stage verified updates automatically at launch, at most daily</label>
-          <button className="secondary-button" disabled={busy || !selectedChannelAvailable || (status?.enabled === enabled && status?.channel === channel)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel))}>Save preferences</button>
+          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} /> Check for updates automatically at launch, at most daily</label>
+          <label className="update-checkbox"><input type="checkbox" checked={stagingEnabled} disabled={busy || !status?.automatic_staging_supported} onChange={(event) => setStagingEnabled(event.target.checked)} /> Stage verified updates automatically (packaged Windows only)</label>
+          {status?.automatic_staging_paused ? <Notice kind="info">Automatic staging is paused after cancellation. Save preferences with staging enabled to resume it.</Notice> : null}
+          <button className="secondary-button" disabled={busy || !selectedChannelAvailable || (status?.enabled === enabled && status?.channel === channel && status?.automatic_staging_enabled === stagingEnabled)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel, stagingEnabled))}>Save preferences</button>
         </div>
         <div className="decision-bar update-actions">
           {status?.last_error ? <button className="quiet-button" disabled={busy} onClick={() => void act("clear", api.clearUpdateError)}>Clear error</button> : null}
           {status?.phase === "available" && !status.mandatory ? <button className="secondary-button" disabled={busy} onClick={() => void act("defer", api.deferUpdate)}>Defer</button> : null}
+          {status?.phase === "downloading" ? <button className="secondary-button" disabled={busy} onClick={() => void act("cancel", api.cancelUpdate)}>Cancel download</button> : null}
           {status?.phase === "available" ? <button className="primary-button" disabled={busy} onClick={() => void act("download", api.downloadUpdate)}><Download size={15} /> Download &amp; verify</button> : null}
           {status?.verified_artifact_available ? <button className="primary-button" disabled={busy} onClick={() => void saveVerifiedArtifact()}><Download size={15} /> Save verified package</button> : null}
           {status?.phase === "ready" && status.automatic_install_supported ? <button className="primary-button" disabled={busy} onClick={() => void act("install", api.installUpdate)}>Install &amp; restart</button> : null}
