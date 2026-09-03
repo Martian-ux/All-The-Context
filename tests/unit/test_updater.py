@@ -8,6 +8,7 @@ import threading
 import urllib.error
 import zipfile
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -33,6 +34,9 @@ from allthecontext.updater import (
     HttpsTransport,
     InstallPlan,
     PlatformInstaller,
+    UpdateAutomation,
+    UpdateAutomationConfig,
+    UpdateAutomationPolicy,
     UpdateBusyError,
     UpdateConfig,
     UpdateEndpointHttpError,
@@ -3086,3 +3090,176 @@ def test_defer_is_persisted_and_mandatory_update_cannot_be_deferred(tmp_path: Pa
     manager.check()
     with pytest.raises(UpdateError, match="cannot be deferred"):
         manager.defer()
+
+
+def test_update_automation_policy_defaults_to_check_only_without_restart_authority() -> None:
+    policy = UpdateAutomationPolicy()
+
+    assert policy.checks_enabled is True
+    assert policy.automatic_install_enabled is False
+    assert policy.automatic_restart_enabled is False
+
+
+def test_disabled_update_automation_does_not_start_a_worker_or_check(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    automation = UpdateAutomation(
+        manager,
+        policy=UpdateAutomationPolicy(checks_enabled=False),
+    )
+
+    automation.start()
+    status = automation.run_once()
+
+    assert status["phase"] == "idle"
+    assert transport.metadata_calls == 0
+    assert automation.status()["automation_running"] is False
+
+
+def test_update_automation_rejects_unbounded_cadence_and_retry_configuration() -> None:
+    with pytest.raises(ValueError, match="interval must be positive"):
+        UpdateAutomationConfig(check_interval=timedelta(0))
+    with pytest.raises(ValueError, match="maximum must not exceed"):
+        UpdateAutomationConfig(
+            check_interval=timedelta(seconds=1),
+            retry_initial_delay=timedelta(seconds=1),
+            retry_max_delay=timedelta(seconds=2),
+        )
+    with pytest.raises(ValueError, match="attempts must be positive"):
+        UpdateAutomationConfig(retry_attempts=0)
+
+
+def test_update_automation_runs_periodically_in_process_without_host_registration(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    automation = UpdateAutomation(
+        manager,
+        config=UpdateAutomationConfig(
+            check_interval=timedelta(milliseconds=20),
+            retry_initial_delay=timedelta(milliseconds=1),
+            retry_max_delay=timedelta(milliseconds=5),
+            join_timeout_seconds=1,
+        ),
+    )
+    reached_second_check = threading.Event()
+    original_check = manager.scheduled_check
+    calls = 0
+
+    def scheduled_check(*, interval: timedelta) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        result = original_check(interval=interval)
+        if calls >= 2:
+            reached_second_check.set()
+            automation.stop()
+        return result
+
+    manager.scheduled_check = scheduled_check  # type: ignore[method-assign]
+    automation.start()
+    assert reached_second_check.wait(timeout=2)
+    automation.shutdown()
+
+    assert calls >= 2
+    assert transport.metadata_calls >= 2
+    assert automation.status()["automation_running"] is False
+    assert not (tmp_path / "service").exists()
+
+
+def test_update_automation_is_single_flight_against_a_concurrent_cycle(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    automation = UpdateAutomation(manager)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def scheduled_check(*, interval: timedelta) -> dict[str, Any]:
+        nonlocal calls
+        assert interval == automation.config.check_interval
+        calls += 1
+        entered.set()
+        assert release.wait(timeout=2)
+        return manager.public_status()
+
+    manager.scheduled_check = scheduled_check  # type: ignore[method-assign]
+    worker = threading.Thread(target=automation.run_once)
+    worker.start()
+    assert entered.wait(timeout=2)
+
+    concurrent = automation.run_once()
+    release.set()
+    worker.join(timeout=2)
+
+    assert concurrent["phase"] == "idle"
+    assert calls == 1
+    assert not worker.is_alive()
+
+
+def test_update_automation_offline_retry_is_bounded_and_non_destructive(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    transport.metadata_error = UpdateError(
+        "Update endpoint could not be reached within the time limit"
+    )
+    automation = UpdateAutomation(
+        manager,
+        config=UpdateAutomationConfig(
+            check_interval=timedelta(seconds=10),
+            retry_initial_delay=timedelta(seconds=1),
+            retry_max_delay=timedelta(seconds=3),
+            retry_attempts=2,
+        ),
+    )
+
+    first = automation.run_once()
+    assert first["phase"] == "error"
+    assert transport.metadata_calls == 1
+    assert transport.stream_calls == 0
+    assert installer.handed_off is False
+    assert not list((tmp_path / "updates" / "staging").rglob("artifact.zip"))
+    assert automation.next_delay_seconds == 1
+
+    automation.run_once()
+    assert automation.next_delay_seconds == 2
+    automation.run_once()
+    assert automation.next_delay_seconds == 10
+    assert transport.metadata_calls == 3
+
+
+def test_update_automation_preserves_staged_install_and_surfaces_restart_deferral(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    assert manager.download()["phase"] == "ready"
+    staged = Path(manager.state.downloaded_path or "")
+    metadata_calls = transport.metadata_calls
+    stream_calls = transport.stream_calls
+    transport.metadata_error = UpdateError("proxy unavailable")
+    automation = UpdateAutomation(manager)
+
+    status = automation.run_once()
+
+    assert status["phase"] == "ready"
+    assert transport.metadata_calls == metadata_calls
+    assert transport.stream_calls == stream_calls
+    assert staged.is_file()
+    assert installer.handed_off is False
+
+    manager.state.phase = UpdatePhase.RESTART_REQUIRED
+    deferred = automation.status()
+    assert deferred["restart_required"] is True
+    assert deferred["restart_deferred"] is True
+    assert deferred["automatic_install_enabled"] is False
+    assert deferred["automatic_restart_enabled"] is False
+    assert automation.run_once()["phase"] == "restart_required"
+    assert transport.metadata_calls == metadata_calls
