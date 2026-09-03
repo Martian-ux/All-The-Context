@@ -507,6 +507,57 @@ def test_archive_finish_recomputes_integrity_once_for_the_batch(
     assert all(item.record_id is not None for item in observations)
 
 
+def test_archive_forget_recomputes_integrity_once_at_batch_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    current = store.add_candidate(
+        CandidateInput(
+            kind="interaction_preference",
+            content="Keep detailed technical context.",
+            explicit_user_statement=True,
+        )
+    )
+    assert current.record_id is not None
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["archive"],
+        unavailable_sources=[],
+    )
+    submitted = store.submit_batch(
+        str(session["session_id"]),
+        "batch-forget",
+        [
+            CandidateInput(
+                kind="context_forget",
+                content="The user explicitly requested deletion.",
+                source_type="provider_archive",
+                supersedes=current.record_id,
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    recomputes = 0
+    original_recompute = store._recompute_integrity
+
+    def counted_recompute(connection: sqlite3.Connection) -> None:
+        nonlocal recomputes
+        recomputes += 1
+        original_recompute(connection)
+
+    monkeypatch.setattr(store, "_recompute_integrity", counted_recompute)
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=["archive"], complete=True),
+    )
+
+    observation = store.get_candidate(str(submitted["candidate_ids"][0]))
+    assert recomputes == 1
+    assert observation.disposition == ObservationDisposition.APPLIED
+    assert observation.record_id == current.record_id
+    assert store.get_record(current.record_id, include_deleted=True).deleted_at is not None
+
+
 def test_startup_staged_evaluation_recomputes_integrity_once_for_the_batch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

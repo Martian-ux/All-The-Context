@@ -5578,6 +5578,7 @@ class CoreStore:
                     record_id,
                     reason="Explicit user forget request",
                     actor=actor,
+                    recompute_integrity=False,
                     user_mutation=(
                         None if origin == ObservationOrigin.ARCHIVE_IMPORT else "delete"
                     ),
