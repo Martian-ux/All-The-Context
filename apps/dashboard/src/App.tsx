@@ -1690,13 +1690,14 @@ function UpdatesView() {
         {error ? <Notice kind="error">{error}</Notice> : null}
         {notice ? <Notice kind="success">{notice}</Notice> : null}
         {status?.deferred_version ? <Notice kind="info">Version {status.deferred_version} is deferred. A manual check can offer it again.</Notice> : null}
+        {status?.activation_prerequisite ? <Notice kind="info">{status.activation_prerequisite}</Notice> : null}
         {status?.phase === "unpublished" ? <Notice kind="info">No signed {status.channel} release has been published yet. Automatic checks remain enabled and will detect the first release after protected channel promotion.</Notice> : null}
       </section>
       <section className="section-block update-controls">
         <div className="section-heading"><div><h2>Preferences</h2><p>Only channels backed by bundled trust metadata are selectable.</p></div></div>
         <div className="update-preferences">
           <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={busy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable" disabled={!availableChannels.includes("stable")}>Stable</option><option value="beta" disabled={!availableChannels.includes("beta")}>Beta</option></select></label>
-          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} /> Check automatically at launch, at most daily</label>
+          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} /> Check and stage verified updates automatically at launch, at most daily</label>
           <button className="secondary-button" disabled={busy || !selectedChannelAvailable || (status?.enabled === enabled && status?.channel === channel)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel))}>Save preferences</button>
         </div>
         <div className="decision-bar update-actions">

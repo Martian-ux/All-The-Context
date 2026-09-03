@@ -112,6 +112,10 @@ MAX_UPDATE_AUTOMATION_JOIN_TIMEOUT_SECONDS = 120.0
 MAX_CLEANUP_ENTRIES = 32
 MAX_CLEANUP_DEPTH = 32
 MAX_COMPONENT_CHECKSUM_BYTES = 256
+AUTOMATIC_ACTIVATION_DEFERRED = (
+    "Automatic activation is deferred until a non-disruptive application boundary is proven; "
+    "a deliberate application restart is required to activate the verified update."
+)
 RECOVERY_EVIDENCE_INCOMPLETE_ERROR = (
     "Persisted update recovery evidence was incomplete; manual recovery is required"
 )
@@ -183,15 +187,16 @@ class UpdateBusyError(UpdateError):
 
 @dataclass(frozen=True, slots=True)
 class UpdateAutomationPolicy:
-    """Product policy for the in-process unattended update foundation.
+    """Product policy for the in-process unattended update worker.
 
-    Availability checks are deliberately separate from installation and
-    restart policy.  The latter two remain disabled until a later product
-    decision explicitly enables them; this class does not create an OS task,
-    service, or reboot action.
+    Verified download/staging is safe to perform in the Core lifetime and is
+    enabled with the existing automatic-update preference.  Installation and
+    restart remain separate policy decisions: this class does not create an
+    OS task, service, or reboot action.
     """
 
     checks_enabled: bool = True
+    automatic_download_enabled: bool = True
     automatic_install_enabled: bool = False
     automatic_restart_enabled: bool = False
 
@@ -1050,6 +1055,17 @@ def _hash_stable_file(path: Path, *, maximum_bytes: int) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _require_staging_disk_space(path: Path, required_bytes: int) -> None:
+    """Require room for the download, extraction, and retained rollback copy."""
+
+    try:
+        free = shutil.disk_usage(path).free
+    except OSError as exc:
+        raise UpdateError("Insufficient disk space to stage and recover this update") from exc
+    if free < required_bytes * 3:
+        raise UpdateError("Insufficient disk space to stage and recover this update")
+
+
 class UpdateTransport(Protocol):
     def get_bytes(self, url: str, *, maximum_bytes: int) -> bytes: ...
 
@@ -1359,10 +1375,7 @@ class PlatformInstaller:
         return "This platform has no safe automatic installer handoff"
 
     def preflight(self, artifact: Path, required_bytes: int) -> None:
-        free = shutil.disk_usage(artifact.parent).free
-        # Keep enough room for archive, extraction, and a retained recovery copy.
-        if free < required_bytes * 3:
-            raise UpdateError("Insufficient disk space to stage and recover this update")
+        _require_staging_disk_space(artifact.parent, required_bytes)
         if self.supported and not zipfile.is_zipfile(artifact):
             raise UpdateError("The Windows release artifact is not a valid ZIP archive")
 
@@ -3054,11 +3067,29 @@ class UpdateManager:
             return False
         return _apply_cleanup_actions(actions)
 
+    def _activation_prerequisite(self) -> str | None:
+        """Describe why a staged update cannot activate in the worker lifetime."""
+
+        if self.state.phase in {UpdatePhase.READY, UpdatePhase.RESTART_REQUIRED}:
+            if self.installer.supported:
+                return AUTOMATIC_ACTIVATION_DEFERRED
+            return _public_error_message(
+                UpdateError(self.installer.unsupported_reason),
+                fallback="Manual installation is required for this verified update",
+            )
+        if self.state.phase is UpdatePhase.MANUAL_REQUIRED:
+            return _public_error_message(
+                UpdateError(self.installer.unsupported_reason),
+                fallback="Manual installation is required for this verified update",
+            )
+        return None
+
     def public_status(self) -> dict[str, Any]:
         with self._operation_lock:
             result = asdict(self.state)
             result["phase"] = self.state.phase.value
             result["release_notes_url"] = _safe_public_url(self.state.release_notes_url)
+            activation_prerequisite = self._activation_prerequisite()
             result.update(
                 {
                     "enabled": self.preferences.enabled,
@@ -3077,8 +3108,12 @@ class UpdateManager:
                     ),
                     "configured": self.preferences.channel in self.config.manifest_urls,
                     "available_channels": sorted(self.config.manifest_urls),
+                    "automatic_download_enabled": (
+                        self.automation_policy.automatic_download_enabled
+                    ),
                     "automatic_install_enabled": self.automation_policy.automatic_install_enabled,
                     "automatic_restart_enabled": self.automation_policy.automatic_restart_enabled,
+                    "activation_prerequisite": activation_prerequisite,
                     "restart_required": self.state.phase is UpdatePhase.RESTART_REQUIRED,
                     "restart_deferred": (
                         self.state.phase is UpdatePhase.RESTART_REQUIRED
@@ -3200,6 +3235,11 @@ class UpdateManager:
                     UpdatePhase.INSTALLING,
                     UpdatePhase.RESTART_REQUIRED,
                 }
+                or (
+                    self.state.phase is UpdatePhase.CANCELLED
+                    and last is not None
+                    and datetime.now(UTC) - last < interval
+                )
                 or (
                     self.state.last_error is None
                     and last is not None
@@ -3346,10 +3386,28 @@ class UpdateManager:
             return self.public_status()
 
     def download(self) -> dict[str, Any]:
+        return self._download(automatic=False)
+
+    def download_automatically(self) -> dict[str, Any]:
+        """Stage the current offer without clearing a pending user cancel.
+
+        The operation gate is acquired before the candidate is selected.  A
+        manual check, preference change, or defer therefore either happens
+        before this method and supplies the candidate selected here, or waits
+        until the verified download has finished; an older offer is never
+        streamed after it has been superseded.
+        """
+
+        return self._download(automatic=True)
+
+    def _download(self, *, automatic: bool) -> dict[str, Any]:
         with self._exclusive():
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed()
-            if self.state.phase not in {UpdatePhase.AVAILABLE, UpdatePhase.CANCELLED}:
+            if automatic:
+                if self._cancel.is_set() or self.state.phase is not UpdatePhase.AVAILABLE:
+                    return self.public_status()
+            elif self.state.phase not in {UpdatePhase.AVAILABLE, UpdatePhase.CANCELLED}:
                 raise UpdateError("A verified available update is required before download")
             try:
                 manifest = self._revalidate_persisted_manifest()
@@ -3368,6 +3426,7 @@ class UpdateManager:
                     "The updater staging directory is not a trusted plain directory",
                 )
                 _unlink_plain_file(target, "The previous staged artifact is not a plain file")
+                _require_staging_disk_space(target.parent, cast(int, manifest["size"]))
             except UpdateError as exc:
                 self.state.phase = UpdatePhase.ERROR
                 self.state.last_error = _public_error_message(
@@ -3376,7 +3435,8 @@ class UpdateManager:
                 self.state.downloaded_path = None
                 self._save()
                 return self.public_status()
-            self._cancel.clear()
+            if not automatic:
+                self._cancel.clear()
             self.state.phase = UpdatePhase.DOWNLOADING
             self.state.last_error = None
             self._save()
@@ -3605,13 +3665,16 @@ class UpdateManager:
 
 
 class UpdateAutomation:
-    """Run bounded per-user availability checks for the Core lifetime.
+    """Run bounded per-user checks and verified staging for the Core lifetime.
 
-    This worker intentionally has no download, install, process-launch, OS
-    task, service, shutdown, or reboot capability.  A verified offer remains
-    an availability result until an operator explicitly uses the existing
-    download/install controls.  The worker is an in-process lifecycle object,
-    so development and tests never register host automation.
+    The worker may download only through :class:`UpdateManager`, which
+    revalidates the signed manifest and streams into private operation-scoped
+    staging.  It intentionally has no install, process-launch, OS task,
+    service, shutdown, or reboot capability.  A staged update remains
+    activation-deferred until an operator deliberately restarts the app (or a
+    future installer proves a non-disruptive natural boundary).  The worker
+    is an in-process lifecycle object, so development and tests never register
+    host automation.
     """
 
     def __init__(
@@ -3685,14 +3748,28 @@ class UpdateAutomation:
             else:
                 self._failed_attempts = 0
 
+    def _cancel_pending_for_cycle(self) -> bool:
+        """Honor a recent cancel before scheduled checking can clear it."""
+
+        with self.manager._operation_lock:
+            if not self.manager._cancel.is_set():
+                return False
+            last = _parse_time(getattr(self.manager.state, "last_checked_at", None))
+            if last is not None and datetime.now(UTC) - last < self.config.check_interval:
+                return True
+            self.manager._cancel.clear()
+            return False
+
     def run_once(self) -> dict[str, Any]:
-        """Run one non-overlapping check without staging or installing."""
+        """Run one non-overlapping check and, when enabled, verified staging."""
 
         if not self.policy.checks_enabled or not self._checks_allowed():
             return self.manager.public_status()
         if not self._cycle_lock.acquire(blocking=False):
             return self.manager.public_status()
         try:
+            if self._cancel_pending_for_cycle():
+                return self.manager.public_status()
             try:
                 status = self.manager.scheduled_check(interval=self.config.check_interval)
             except (OSError, UpdateError):
@@ -3703,6 +3780,16 @@ class UpdateAutomation:
                 with self._retry_lock:
                     self._failed_attempts += 1
                 return self.manager.public_status()
+            if (
+                status.get("phase") == UpdatePhase.AVAILABLE.value
+                and self.policy.automatic_download_enabled
+            ):
+                try:
+                    status = self.manager.download_automatically()
+                except (OSError, UpdateError):
+                    with self._retry_lock:
+                        self._failed_attempts += 1
+                    return self.manager.public_status()
             self._record_result(status)
             return status
         finally:
