@@ -1,6 +1,6 @@
 # Architecture decisions
 
-## ADR-197: Efficiency changes stay bounded by transaction and invalidation authority
+## ADR-198: Efficiency changes stay bounded by transaction and invalidation authority
 
 **Status:** accepted locally on 2026-09-03 after the post-PR-#110 efficiency audit;
 hosted checks must bind to the final pushed commit.
@@ -31,6 +31,34 @@ marker, connection pool, or WAL initialization redesign is accepted here.
 Those proposals cross authorization, temporal, purge/restore, migration, or
 pre-ledger secret-repair invalidation boundaries without complete proof. They
 remain measurement-led future work, not implied hardening.
+
+## ADR-197: Fixed four-worker file-level scheduling for the Python CI gate
+
+**Status:** accepted locally on 2026-09-03 as a post-PR #110 performance
+candidate; hosted checks must bind to the final pushed commit.
+
+The Python CI test step uses the reviewed, hash-locked `pytest-xdist` package
+with exactly four workers and `--dist=loadfile`. Four workers are a deliberate
+fixed setting for the current Windows hosted runner class: the clean local
+run reduced the inherited 30:08 Windows baseline to 302.79 seconds, while an
+eight-worker trial was faster but exposed one isolation-sensitive file-read
+failure. Whole-file scheduling keeps each test file's existing order and
+prevents the CI command from silently filtering, deselecting, or weakening any
+required test.
+
+Before execution, CI runs `scripts/check_test_collection.py`, which invokes
+the same `tests` target sequentially and with the four-worker xdist command and
+compares the normalized nodeid sets. The script fails on an empty collection,
+pytest collection error, or any missing/extra nodeid. The unit contract also
+pins the workflow command and rejects common omission selectors. Plain
+`python -m pytest` remains the sequential/debug fallback for local diagnosis.
+
+This decision changes only execution scheduling and the reviewed dev/test
+dependency. The existing check remains named `Tests and platform smoke
+coverage`, so branch protection does not gain or lose a required status. The
+full build, package, vulnerability, security, dashboard, and platform smoke
+steps remain in their existing CI positions. Local evidence does not establish
+hosted timing, hosted flake rates, or branch-protection behavior after merge.
 
 ## ADR-196: Completed terminal identity requires an authenticated operation binding
 

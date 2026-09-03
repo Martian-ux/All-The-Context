@@ -20,13 +20,14 @@ one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
 At this boundary, protected main through PR #110 at exact `origin/main`
-`e155487cf5b663d435e1c4f208f457d5f5dd1db4` contains the merged Import Truth and the
+`e155487cf5b663d435e1c4f208f457d5f5dd1db4` contains the merged Import Truth
+and the
 subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
 client read/explicit-memory foundations, Continuous Capture, replacement
 workflow hardening, updater/recovery trust hardening, the Windows timing test
 correction, exact candidate-evidence reconciliation, the private handoff guard
 correction, the update-child dialog containment change, the import-heartbeat
-test stabilization, Windows startup-recovery hardening from PR #107, and
+test stabilization, Windows startup-recovery hardening from PR #107,
 startup-recovery diagnostic containment from PR #108, and updater
 metadata-authority containment from PR #110. The current efficiency hardening
 is source-level branch work; hosted CI, exact-artifact, and release evidence
@@ -69,6 +70,49 @@ temporal state, purge/restore, migration, and repair invalidation are not yet
 proven complete, and pre-ledger secret repair must continue to cover restored
 older data. Those items require measurement and a complete invalidation or
 security-repair design before implementation.
+
+### 2026-09-03 — Windows Python test execution acceleration candidate
+
+The Python CI matrix now installs hash-locked `pytest-xdist` and proves that
+the sequential and four-worker collections contain the identical required
+nodeid set before running `python -m pytest -n 4 --dist=loadfile`. Whole-file
+scheduling preserves the existing per-file test order and leaves every test,
+platform skip, warning, fixture, assertion, and post-test CI step in the gate.
+The existing `python -m pytest` command remains the sequential/debug fallback.
+The workflow check remains named `Tests and platform smoke coverage`; no new
+check is introduced, so branch-protection mapping does not need a second
+required status. Hosted timing and hosted flake evidence remain pending until
+this candidate is merged and run on `windows-latest`.
+
+On this Windows 11 host (Python 3.14.3, Ryzen 9 5900X, 12 physical/24 logical
+cores), exact-head collection found 2,686 nodeids across 169 files, comprising
+2,673 passes and 13 capability skips in the existing full run. The inherited
+exact-head hosted baseline is 30:08 for Windows; the pre-contract-test clean
+four-worker benchmark completed in 302.79 seconds of pytest time (303.83
+seconds wrapper elapsed) with 2,673 passed and 13 skipped. An eight-worker
+trial completed in 235.18 seconds but had one isolation-sensitive `input
+changed during read` failure, so four workers is the conservative candidate.
+The final four-worker CI-equivalent run collected 2,689 items, passed 2,676,
+skipped 13, and completed in 300.67 seconds of pytest time (301.80 seconds
+wrapper elapsed). Its JUnit aggregation identified the heaviest files as
+`test_memory_reliability_spec.py` (103.92s across 39 tests),
+`test_windows_update_helper.py` (102.46s across 141),
+`test_retrieval_m3_current_candidate.py` (80.11s across 7),
+`test_updater.py` (55.70s across 169), and
+`test_import_operations.py` (54.52s across 57); slowest individual calls
+were 95.90s in the memory-reliability specification, 41.34s in the current
+retrieval candidate, and 38.74s in cross-client acceptance. These are local
+Windows results, not hosted evidence. The required post-change sequential
+fallback also passed 2,676 tests and skipped 13 in 749.42 seconds of pytest
+time (751.13 seconds wrapper elapsed), so the earlier local four-worker result
+was a 59.9% reduction against the local sequential result. A final clean
+four-worker run on the exact final tree passed 2,676 and skipped 13 in 277.84
+seconds of pytest time (278.83 seconds wrapper elapsed), a 62.9% reduction
+against the local sequential result. The three repeated
+isolation-sensitive four-worker runs each passed 446 and skipped 3 in 111.14s,
+116.27s, and 112.81s wrapper elapsed. The supplied exact-head hosted Windows
+baseline remains 30:08; neither that hosted measurement nor a post-merge
+hosted p95/flake rate is inferred from these local runs.
 
 ### 2026-09-03 — PR #110 completed-identity binding containment
 
