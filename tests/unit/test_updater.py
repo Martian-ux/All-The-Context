@@ -679,6 +679,31 @@ def test_valid_n_minus_one_update_download_backup_and_handoff(tmp_path: Path) ->
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
 
 
+def test_install_readiness_check_runs_under_exclusive_gate_before_mutation(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, installer = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    assert manager.download()["phase"] == "ready"
+    state_before = manager.state_path.read_bytes()
+    observed_gate = False
+
+    def refuse_busy_install() -> None:
+        nonlocal observed_gate
+        observed_gate = not manager._operation_gate.acquire(blocking=False)
+        raise UpdateError("Update activation deferred until Core activity is quiescent")
+
+    with pytest.raises(UpdateError, match="Core activity is quiescent"):
+        manager.install(readiness_check=refuse_busy_install)
+
+    assert observed_gate is True
+    assert manager.state.phase is UpdatePhase.READY
+    assert manager.state_path.read_bytes() == state_before
+    assert installer.handed_off is False
+    assert not (manager.config.data_dir / "backups").exists()
+
+
 def test_equal_version_is_truthfully_current_and_can_be_disabled(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path, version="0.1.0")
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)

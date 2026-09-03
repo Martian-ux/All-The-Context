@@ -178,6 +178,7 @@ _CLAUDE_CODE_MEMORY_VALIDATION_ROUTES = {
     "/v1/claude-code/memory/correct": "correct",
     "/v1/claude-code/memory/forget": "forget",
 }
+UPDATE_ACTIVATION_BUSY_REASON = "Update activation deferred until Core activity is quiescent"
 
 
 class _LifecycleBodyTooLarge(Exception):
@@ -403,6 +404,7 @@ def create_app(
     )
     operation_observer_executor: ThreadPoolExecutor | None = None
     operation_observer_executor_lock = threading.Lock()
+    recovery_timer: threading.Timer | None = None
 
     def get_operation_observer_executor() -> ThreadPoolExecutor:
         nonlocal operation_observer_executor
@@ -416,7 +418,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        nonlocal operation_observer_executor
+        nonlocal operation_observer_executor, recovery_timer
         observer_executor = get_operation_observer_executor()
         try:
             await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
@@ -428,14 +430,17 @@ def create_app(
                 ):
                     update_automation.start()
                 if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
-                    recovery = threading.Timer(1.0, updates.recover_after_restart)
-                    recovery.daemon = True
-                    recovery.start()
+                    recovery_timer = threading.Timer(1.0, updates.recover_after_restart)
+                    recovery_timer.daemon = True
+                    recovery_timer.start()
             # Never start the legacy Edge network worker. Cleanup routes construct
             # outbound contacts only when an operator explicitly decommissions an
             # already-configured residual connection.
             yield
         finally:
+            if recovery_timer is not None:
+                recovery_timer.cancel()
+                recovery_timer = None
             try:
                 await run_in_threadpool(update_automation.shutdown)
             finally:
@@ -454,6 +459,7 @@ def create_app(
                             with operation_observer_executor_lock:
                                 if operation_observer_executor is observer_executor:
                                     operation_observer_executor = None
+                            await run_in_threadpool(core.close)
 
     app = FastAPI(
         title="All The Context Core",
@@ -2273,6 +2279,22 @@ def create_app(
         except UpdateError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    def ensure_update_activation_ready() -> None:
+        """Refuse explicit activation while Core-owned work is still active."""
+
+        try:
+            imports = core.import_operations.activity_snapshot()
+            capture = core.capture_scheduler.activity_snapshot()
+        except (OSError, sqlite3.Error, StorageError) as error:
+            raise UpdateError(UPDATE_ACTIVATION_BUSY_REASON) from error
+        if (
+            bool(imports.get("active"))
+            or bool(capture.get("foreground_run_active"))
+            or bool(capture.get("scheduled_cycle_active"))
+            or bool(capture.get("durable_lease_active"))
+        ):
+            raise UpdateError(UPDATE_ACTIVATION_BUSY_REASON)
+
     @app.post("/v1/admin/updates/check")
     def check_for_updates(principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
@@ -2319,7 +2341,16 @@ def create_app(
     @app.post("/v1/admin/updates/install")
     def install_update(principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        status = update_action(updates.install)
+
+        def install_when_ready() -> dict[str, Any]:
+            # The first observation gives the explicit route an immediate
+            # content-free refusal. UpdateManager repeats the same callback
+            # after acquiring its exclusive operation gate and before any
+            # install state, backup, credential, or helper mutation.
+            ensure_update_activation_ready()
+            return updates.install(readiness_check=ensure_update_activation_ready)
+
+        status = update_action(install_when_ready)
         if (
             status.get("phase") == UpdatePhase.RESTART_REQUIRED.value
             and status.get("automatic_install_supported") is True

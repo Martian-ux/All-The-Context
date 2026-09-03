@@ -25,6 +25,7 @@ from typing import Any, Literal, Protocol, cast
 from .ids import new_id, utc_now
 from .secret_boundary import contains_secret_like_text
 from .storage import (
+    MAX_ACTIVITY_SNAPSHOT_ITEMS,
     ConflictError,
     CoreStore,
     NotFoundError,
@@ -1233,6 +1234,27 @@ class CaptureLedger:
                 changed += 1
         return changed
 
+    def active_lease_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free durable capture lease activity."""
+
+        now = self.clock()
+        vault_id = self.store.vault_id()
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT 1 FROM capture_runs AS r "
+                "JOIN capture_sources AS s ON s.id=r.source_id "
+                "WHERE s.vault_id=? AND r.state='running' AND r.lease_expires_at>? "
+                "LIMIT ?",
+                (vault_id, now, MAX_ACTIVITY_SNAPSHOT_ITEMS + 1),
+            ).fetchall()
+        truncated = len(rows) > MAX_ACTIVITY_SNAPSHOT_ITEMS
+        count = min(len(rows), MAX_ACTIVITY_SNAPSHOT_ITEMS)
+        return {
+            "active": count > 0,
+            "count": count,
+            "truncated": truncated,
+        }
+
     def begin_run(self, source_id: str) -> tuple[CaptureRunHandle, CaptureSource, int]:
         self.recover_expired_runs()
         now = self.clock()
@@ -1932,6 +1954,17 @@ class CaptureCoordinator:
 
     def status(self, source_id: str) -> dict[str, Any]:
         return self.ledger.status(source_id)
+
+    def activity_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free foreground and durable run activity."""
+
+        leases = self.ledger.active_lease_snapshot()
+        return {
+            "foreground_run_active": self._run_lock.locked(),
+            "durable_lease_active": bool(leases["active"]),
+            "durable_lease_count": int(leases["count"]),
+            "durable_lease_truncated": bool(leases["truncated"]),
+        }
 
     def capability_manifest(self, source_id: str) -> CaptureCapabilityManifest:
         """Return the registered adapter's bounded capability declaration."""

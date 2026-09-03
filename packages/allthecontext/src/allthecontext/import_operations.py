@@ -102,6 +102,11 @@ class ImportOperationService:
         self.staging_root = self.data_dir / STAGING_DIR_NAME
         self.staging_root.mkdir(parents=True, exist_ok=True)
 
+    def activity_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free durable import activity."""
+
+        return self.store.active_import_operation_snapshot()
+
     def recover_interrupted_operations(self) -> list[dict[str, Any]]:
         """After process restart, terminalize orphan non-terminal operations safely."""
         recovered: list[dict[str, Any]] = []

@@ -3680,9 +3680,11 @@ class UpdateManager:
             )
             return PreparedArtifact(export_path, filename, copied)
 
-    def install(self) -> dict[str, Any]:
+    def install(self, *, readiness_check: Callable[[], None] | None = None) -> dict[str, Any]:
         with self._exclusive():
             self._require_no_active_handoff()
+            if readiness_check is not None:
+                readiness_check()
             self._require_metadata_writes_allowed()
             if self.state.phase != UpdatePhase.READY or self.state.downloaded_path is None:
                 raise UpdateError("A completely verified update must be ready before install")

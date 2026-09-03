@@ -118,6 +118,7 @@ MutationEvidenceKind = Literal[
 # Fail-fast and let the heartbeat scheduler retry within the public 5s allowance.
 LIVENESS_BUSY_TIMEOUT_MS = 250
 LIVENESS_CONNECT_TIMEOUT_SECONDS = 0.25
+MAX_ACTIVITY_SNAPSHOT_ITEMS = 500
 
 
 @dataclass(frozen=True)
@@ -1975,6 +1976,25 @@ class CoreStore:
                 "ORDER BY created_at"
             ).fetchall()
         return [self._import_operation_out(row) for row in rows]
+
+    def active_import_operation_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free nonterminal import activity."""
+
+        vault_id = self.vault_id()
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT 1 FROM import_operations "
+                "WHERE vault_id=? AND status IN ('awaiting_upload','uploading','processing') "
+                "LIMIT ?",
+                (vault_id, MAX_ACTIVITY_SNAPSHOT_ITEMS + 1),
+            ).fetchall()
+        truncated = len(rows) > MAX_ACTIVITY_SNAPSHOT_ITEMS
+        count = min(len(rows), MAX_ACTIVITY_SNAPSHOT_ITEMS)
+        return {
+            "active": count > 0,
+            "count": count,
+            "truncated": truncated,
+        }
 
     def begin_incomplete_source_blob(
         self,

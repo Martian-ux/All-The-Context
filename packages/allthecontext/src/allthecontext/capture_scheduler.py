@@ -730,6 +730,21 @@ class CoreCaptureScheduler:
             running=running,
         )
 
+    def activity_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free scheduler and capture activity."""
+
+        with self._lifecycle_lock:
+            thread = self._thread
+            worker_active = thread is not None and thread.is_alive()
+        activity = self.coordinator.activity_snapshot()
+        activity.update(
+            {
+                "scheduled_worker_active": worker_active,
+                "scheduled_cycle_active": self._cycle_lock.locked(),
+            }
+        )
+        return activity
+
     def enable(self) -> dict[str, Any]:
         with self._control_lock:
             write_scheduler_enabled(self.config.data_dir, enabled=True)
