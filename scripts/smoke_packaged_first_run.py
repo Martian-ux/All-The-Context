@@ -18,6 +18,7 @@ Manager and macOS Keychain round-trips are exercised separately by
 from __future__ import annotations
 
 import atexit
+import hashlib
 import html
 import json
 import os
@@ -48,6 +49,11 @@ from allthecontext.credentials import (
     FALLBACK_CREDENTIAL_STORAGE,
 )
 from allthecontext.desktop import WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS
+from allthecontext.installed_component_manifest import (
+    CHECKSUM_FILE_NAME,
+    MANIFEST_FILE_NAME,
+    canonical_json,
+)
 from allthecontext.release_manifest import sha256_file
 from allthecontext.windows_update_helper import (
     HelperPhase,
@@ -289,6 +295,61 @@ def prepare_packaged_update_transaction(
     rollback_update_digest, rollback_update_size = sha256_file(rollback_update_helper)
     recovery_helper_digest, recovery_helper_size = sha256_file(transaction_helper)
     backup_digest, backup_size = sha256_file(backup)
+    component_manifest = transaction_dir / MANIFEST_FILE_NAME
+    component_payload = {
+        "architecture": "x86_64",
+        "component_count": 4,
+        "components": [
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContext.exe",
+                "role": "main",
+                "sha256": replacement_digest,
+                "size": replacement_size,
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextMCP.exe",
+                "role": "mcp",
+                "sha256": rollback_mcp_digest,
+                "size": rollback_mcp_size,
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextRecovery.exe",
+                "role": "recovery",
+                "sha256": rollback_recovery_digest,
+                "size": rollback_recovery_size,
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextUpdater.exe",
+                "role": "updater",
+                "sha256": rollback_update_digest,
+                "size": rollback_update_size,
+            },
+        ],
+        "manifest_type": "installed-component",
+        "package": {
+            "direct_package": {
+                "filename": "all-the-context-direct-unsigned.exe",
+                "sha256": replacement_digest,
+                "size": replacement_size,
+            },
+            "filename": "AllTheContextSetup.exe",
+            "sha256": replacement_digest,
+            "size": replacement_size,
+        },
+        "platform": "windows",
+        "schema_version": 1,
+        "source_commit": "0" * 40,
+        "version": target_version,
+    }
+    component_raw = canonical_json(component_payload)
+    component_manifest.write_bytes(component_raw)
+    component_manifest.with_name(CHECKSUM_FILE_NAME).write_bytes(
+        f"{hashlib.sha256(component_raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    )
     now = "2026-07-22T12:00:00+00:00"
     journal = UpdateJournal(
         operation_id=operation_id,
@@ -325,6 +386,9 @@ def prepare_packaged_update_transaction(
         core_port=core_port,
         recovery_helper_sha256=recovery_helper_digest,
         recovery_helper_size=recovery_helper_size,
+        component_manifest_path=str(component_manifest),
+        component_manifest_sha256=hashlib.sha256(component_raw).hexdigest(),
+        component_manifest_size=len(component_raw),
         created_at=now,
         updated_at=now,
     )

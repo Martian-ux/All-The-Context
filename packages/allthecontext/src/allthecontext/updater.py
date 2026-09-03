@@ -35,6 +35,15 @@ from platformdirs import user_data_path
 
 from . import __version__
 from .desktop_runtime import RuntimeCommand
+from .installed_component_manifest import (
+    CHECKSUM_FILE_NAME,
+    MANIFEST_FILE_NAME,
+    InstalledComponentManifestError,
+    validate_manifest_bytes,
+)
+from .installed_component_manifest import (
+    MAX_MANIFEST_BYTES as MAX_INSTALLED_COMPONENT_MANIFEST_BYTES,
+)
 from .release_manifest import (
     ManifestError,
     ReleaseVersion,
@@ -95,6 +104,7 @@ MAX_REDIRECTS = 1
 CHECK_INTERVAL = timedelta(hours=24)
 MAX_CLEANUP_ENTRIES = 32
 MAX_CLEANUP_DEPTH = 32
+MAX_COMPONENT_CHECKSUM_BYTES = 256
 RECOVERY_EVIDENCE_INCOMPLETE_ERROR = (
     "Persisted update recovery evidence was incomplete; manual recovery is required"
 )
@@ -192,6 +202,8 @@ _PUBLIC_ERROR_MESSAGES = frozenset(
         "Installer process crashed",
         "Manual installation is required for this verified update",
         "The Windows release artifact is not a valid ZIP archive",
+        "The Windows release does not contain a valid four-component manifest",
+        "The Windows four-component manifest changed during handoff",
         "Release archive contains an unsafe path",
         "Release archive expands beyond the safety limit",
         "Release archive contains multiple Windows setup programs",
@@ -413,6 +425,13 @@ class PreparedArtifact:
     path: Path
     filename: str
     size: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ExtractedWindowsPackage:
+    setup: Path
+    component_manifest: Path
+    component_checksum: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -1243,6 +1262,7 @@ class PlatformInstaller:
             self.system == "Windows"
             and self.frozen
             and self.application_path.is_file()
+            and self.mcp_path.is_file()
             and self.helper_path is not None
             and self.helper_path.is_file()
             and self.stable_update_helper_path.is_file()
@@ -1258,6 +1278,11 @@ class PlatformInstaller:
                 return (
                     "The installed Windows recovery/admin helper is unavailable; reinstall the "
                     "current desktop package before applying updates"
+                )
+            if not self.mcp_path.is_file():
+                return (
+                    "The installed Windows MCP helper is unavailable; reinstall the current "
+                    "desktop package before applying updates"
                 )
             return (
                 "The installed Windows update helper is unavailable; reinstall the current "
@@ -1283,9 +1308,12 @@ class PlatformInstaller:
             raise UpdateError("The Windows release artifact is not a valid ZIP archive")
 
     @staticmethod
-    def _extract_windows_setup(archive: Path | BinaryIO, target: Path) -> Path:
+    def _extract_windows_package(
+        archive: Path | BinaryIO, target: Path
+    ) -> _ExtractedWindowsPackage:
         target.mkdir(parents=True, exist_ok=False)
         setup: Path | None = None
+        extracted_files: list[Path] = []
         with zipfile.ZipFile(archive) as bundle:
             entries = bundle.infolist()
             expanded = 0
@@ -1293,10 +1321,12 @@ class PlatformInstaller:
                 if "\\" in entry.filename or ":" in entry.filename:
                     raise UpdateError("Release archive contains an unsafe path")
                 name = PurePosixPath(entry.filename)
-                if name.is_absolute() or ".." in name.parts or entry.is_dir():
-                    if entry.is_dir():
-                        continue
+                if name.is_absolute() or ".." in name.parts:
                     raise UpdateError("Release archive contains an unsafe path")
+                if entry.is_dir():
+                    raise UpdateError(
+                        "The Windows release does not contain a valid four-component manifest"
+                    )
                 expanded += entry.file_size
                 if expanded > MAX_ARTIFACT_BYTES * 2:
                     raise UpdateError("Release archive expands beyond the safety limit")
@@ -1304,6 +1334,7 @@ class PlatformInstaller:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 with bundle.open(entry) as source, destination.open("xb") as output:
                     shutil.copyfileobj(source, output, length=1024 * 1024)
+                extracted_files.append(destination)
                 if destination.name.casefold() == "allthecontextsetup.exe":
                     if setup is not None:
                         raise UpdateError(
@@ -1312,7 +1343,30 @@ class PlatformInstaller:
                     setup = destination
         if setup is None:
             raise UpdateError("Release archive does not contain AllTheContextSetup.exe")
-        return setup
+        manifest = setup.with_name(MANIFEST_FILE_NAME)
+        checksum = setup.with_name(CHECKSUM_FILE_NAME)
+        expected_names = {
+            setup.name.casefold(),
+            MANIFEST_FILE_NAME.casefold(),
+            CHECKSUM_FILE_NAME.casefold(),
+        }
+        if (
+            len(extracted_files) != 3
+            or any(path.parent != setup.parent for path in extracted_files)
+            or {path.name.casefold() for path in extracted_files} != expected_names
+            or not manifest.is_file()
+            or not checksum.is_file()
+        ):
+            raise UpdateError(
+                "The Windows release does not contain a valid four-component manifest"
+            )
+        return _ExtractedWindowsPackage(setup, manifest, checksum)
+
+    @staticmethod
+    def _extract_windows_setup(archive: Path | BinaryIO, target: Path) -> Path:
+        """Compatibility wrapper returning only the setup executable."""
+
+        return PlatformInstaller._extract_windows_package(archive, target).setup
 
     @staticmethod
     def _hash_archive_stream(stream: BinaryIO) -> tuple[str, int]:
@@ -1325,6 +1379,21 @@ class PlatformInstaller:
                 raise UpdateError("Release artifact exceeded the safety limit at handoff")
             digest.update(chunk)
         return digest.hexdigest(), size
+
+    @staticmethod
+    def _read_bounded(path: Path, maximum_bytes: int) -> bytes:
+        try:
+            with path.open("rb") as stream:
+                raw = stream.read(maximum_bytes + 1)
+        except OSError as exc:
+            raise UpdateError(
+                "The Windows release does not contain a valid four-component manifest"
+            ) from exc
+        if len(raw) > maximum_bytes:
+            raise UpdateError(
+                "The Windows release does not contain a valid four-component manifest"
+            )
+        return raw
 
     @staticmethod
     def _copy_verified(source: Path, target: Path) -> tuple[str, int]:
@@ -1404,8 +1473,7 @@ class PlatformInstaller:
                     raise UpdateError(
                         "Release artifact checksum does not match signed metadata at handoff"
                     )
-                plan.transaction_dir.mkdir(parents=True, exist_ok=False)
-                setup = self._extract_windows_setup(
+                extracted = self._extract_windows_package(
                     archive_stream,
                     plan.operation_dir / "extracted",
                 )
@@ -1420,8 +1488,42 @@ class PlatformInstaller:
                     raise UpdateError("The verified release archive changed during extraction")
                 if final_digest != plan.artifact_sha256 or final_size != plan.artifact_size:
                     raise UpdateError("The verified release archive changed during extraction")
+            replacement_digest, replacement_size = sha256_file(extracted.setup)
+            try:
+                component_manifest_raw = self._read_bounded(
+                    extracted.component_manifest,
+                    MAX_INSTALLED_COMPONENT_MANIFEST_BYTES,
+                )
+                component_checksum_raw = self._read_bounded(
+                    extracted.component_checksum,
+                    MAX_COMPONENT_CHECKSUM_BYTES,
+                )
+                validate_manifest_bytes(
+                    component_manifest_raw,
+                    component_checksum_raw,
+                    expected_version=plan.target_version,
+                    expected_package_sha256=replacement_digest,
+                    expected_package_size=replacement_size,
+                )
+            except (InstalledComponentManifestError, OSError, RecursionError, TypeError) as exc:
+                raise UpdateError(
+                    "The Windows release does not contain a valid four-component manifest"
+                ) from exc
+            plan.transaction_dir.mkdir(parents=True, exist_ok=False)
+            setup = extracted.setup
+            manifest_digest = hashlib.sha256(component_manifest_raw).hexdigest()
+            manifest_size = len(component_manifest_raw)
             replacement = plan.transaction_dir / "replacement" / "AllTheContextSetup.exe"
             replacement_digest, replacement_size = self._copy_verified(setup, replacement)
+            component_manifest = plan.transaction_dir / MANIFEST_FILE_NAME
+            copied_manifest_digest, copied_manifest_size = self._copy_verified(
+                extracted.component_manifest,
+                component_manifest,
+            )
+            component_checksum = plan.transaction_dir / CHECKSUM_FILE_NAME
+            self._copy_verified(extracted.component_checksum, component_checksum)
+            if (copied_manifest_digest, copied_manifest_size) != (manifest_digest, manifest_size):
+                raise UpdateError("The Windows four-component manifest changed during handoff")
             rollback_application = plan.transaction_dir / "rollback" / "AllTheContext.exe"
             rollback_digest, rollback_size = self._copy_verified(
                 self.application_path, rollback_application
@@ -1429,19 +1531,17 @@ class PlatformInstaller:
             rollback_mcp: Path | None = None
             rollback_mcp_digest: str | None = None
             rollback_mcp_size: int | None = None
-            if self.mcp_path.is_file():
-                rollback_mcp = plan.transaction_dir / "rollback" / "AllTheContextMCP.exe"
-                rollback_mcp_digest, rollback_mcp_size = self._copy_verified(
-                    self.mcp_path, rollback_mcp
-                )
+            rollback_mcp = plan.transaction_dir / "rollback" / "AllTheContextMCP.exe"
+            rollback_mcp_digest, rollback_mcp_size = self._copy_verified(
+                self.mcp_path, rollback_mcp
+            )
             rollback_recovery: Path | None = None
             rollback_recovery_digest: str | None = None
             rollback_recovery_size: int | None = None
-            if self.recovery_path.is_file():
-                rollback_recovery = plan.transaction_dir / "rollback" / "AllTheContextRecovery.exe"
-                rollback_recovery_digest, rollback_recovery_size = self._copy_verified(
-                    self.recovery_path, rollback_recovery
-                )
+            rollback_recovery = plan.transaction_dir / "rollback" / "AllTheContextRecovery.exe"
+            rollback_recovery_digest, rollback_recovery_size = self._copy_verified(
+                self.recovery_path, rollback_recovery
+            )
             rollback_update_helper = plan.transaction_dir / "rollback" / "AllTheContextUpdater.exe"
             rollback_update_digest, rollback_update_size = self._copy_verified(
                 self.stable_update_helper_path, rollback_update_helper
@@ -1489,6 +1589,9 @@ class PlatformInstaller:
                 core_port=plan.core_port,
                 recovery_helper_sha256=recovery_helper_digest,
                 recovery_helper_size=recovery_helper_size,
+                component_manifest_path=str(component_manifest),
+                component_manifest_sha256=manifest_digest,
+                component_manifest_size=manifest_size,
                 created_at=now,
                 updated_at=now,
             )

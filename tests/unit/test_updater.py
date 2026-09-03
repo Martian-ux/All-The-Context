@@ -14,6 +14,11 @@ from typing import Any, cast
 import allthecontext.updater as updater_module
 import allthecontext.windows_update_helper as update_helper_module
 import pytest
+from allthecontext.installed_component_manifest import (
+    CHECKSUM_FILE_NAME,
+    MANIFEST_FILE_NAME,
+    canonical_json,
+)
 from allthecontext.release_manifest import (
     canonical_payload,
     create_manifest,
@@ -46,6 +51,62 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SEED = bytes(range(32))
 _RECOVERY_AUTHORITY_VALUES: dict[str, str] = {}
+
+
+def _windows_component_manifest(setup: bytes, *, version: str = "0.2.0") -> tuple[bytes, bytes]:
+    digest = hashlib.sha256(setup).hexdigest()
+    payload = {
+        "architecture": "x86_64",
+        "component_count": 4,
+        "components": [
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContext.exe",
+                "role": "main",
+                "sha256": digest,
+                "size": len(setup),
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextMCP.exe",
+                "role": "mcp",
+                "sha256": digest,
+                "size": len(setup),
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextRecovery.exe",
+                "role": "recovery",
+                "sha256": digest,
+                "size": len(setup),
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextUpdater.exe",
+                "role": "updater",
+                "sha256": digest,
+                "size": len(setup),
+            },
+        ],
+        "manifest_type": "installed-component",
+        "package": {
+            "direct_package": {
+                "filename": "all-the-context-windows-x86_64-unsigned.exe",
+                "sha256": digest,
+                "size": len(setup),
+            },
+            "filename": "AllTheContextSetup.exe",
+            "sha256": digest,
+            "size": len(setup),
+        },
+        "platform": "windows",
+        "schema_version": 1,
+        "source_commit": "0" * 40,
+        "version": version,
+    }
+    raw = canonical_json(payload)
+    checksum = f"{hashlib.sha256(raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    return raw, checksum
 
 
 class _RecoveryAuthorityStore:
@@ -2676,6 +2737,30 @@ def test_windows_archive_rejects_unsafe_member_paths(tmp_path: Path, member_name
         PlatformInstaller._extract_windows_setup(archive, tmp_path / "extracted")
 
 
+@pytest.mark.parametrize(
+    "member_names",
+    [
+        ("AllTheContextSetup.exe", MANIFEST_FILE_NAME),
+        (
+            "AllTheContextSetup.exe",
+            MANIFEST_FILE_NAME,
+            CHECKSUM_FILE_NAME,
+            "unexpected.exe",
+        ),
+    ],
+)
+def test_windows_archive_requires_exact_component_package(
+    tmp_path: Path, member_names: tuple[str, ...]
+) -> None:
+    archive = tmp_path / "artifact.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name in member_names:
+            bundle.writestr(name, b"untrusted package member")
+
+    with pytest.raises(UpdateError, match="four-component manifest"):
+        PlatformInstaller._extract_windows_package(archive, tmp_path / "extracted")
+
+
 def test_windows_adapter_requires_the_packaged_recovery_helper(tmp_path: Path) -> None:
     application = tmp_path / "AllTheContext.exe"
     helper = tmp_path / "AllTheContextUpdater.exe"
@@ -2695,9 +2780,11 @@ def test_windows_adapter_enables_automatic_install_with_independent_helper(
     tmp_path: Path,
 ) -> None:
     application = tmp_path / "AllTheContext.exe"
+    mcp = tmp_path / "AllTheContextMCP.exe"
     helper = tmp_path / "AllTheContextUpdater.exe"
     recovery = tmp_path / "AllTheContextRecovery.exe"
     application.write_bytes(b"application")
+    mcp.write_bytes(b"mcp")
     helper.write_bytes(b"helper")
     recovery.write_bytes(b"recovery")
     installer = PlatformInstaller(
@@ -2705,6 +2792,7 @@ def test_windows_adapter_enables_automatic_install_with_independent_helper(
         frozen=True,
         application_path=application,
         helper_path=helper,
+        mcp_path=mcp,
         recovery_path=recovery,
     )
     assert installer.supported is True
@@ -2744,8 +2832,12 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     operation_dir = updates / "staging" / operation_id
     operation_dir.mkdir(parents=True)
     artifact = operation_dir / "artifact.zip"
+    setup = b"new application"
+    component_manifest, component_checksum = _windows_component_manifest(setup)
     with zipfile.ZipFile(artifact, "w") as bundle:
-        bundle.writestr("AllTheContextSetup.exe", b"new application")
+        bundle.writestr("AllTheContextSetup.exe", setup)
+        bundle.writestr(MANIFEST_FILE_NAME, component_manifest)
+        bundle.writestr(CHECKSUM_FILE_NAME, component_checksum)
     transaction_dir = updates / "transactions" / operation_id
     state_path = updates / "state.json"
     journal_path = transaction_dir / "journal.json"

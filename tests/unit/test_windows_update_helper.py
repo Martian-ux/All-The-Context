@@ -13,6 +13,11 @@ from typing import Any
 
 import allthecontext.windows_update_helper as helper_module
 import pytest
+from allthecontext.installed_component_manifest import (
+    CHECKSUM_FILE_NAME,
+    MANIFEST_FILE_NAME,
+    canonical_json,
+)
 from allthecontext.release_manifest import (
     create_manifest,
     public_key_fingerprint,
@@ -150,6 +155,7 @@ class TransactionFixture:
     update_helper: Path
     database: Path
     state_path: Path
+    component_manifest: Path
     old_application: bytes
     old_mcp: bytes
     old_recovery: bytes
@@ -215,6 +221,64 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
     rollback_update_digest, rollback_update_size = _digest(rollback_update_helper)
     recovery_helper_digest, recovery_helper_size = _digest(helper_path)
     backup_digest, backup_size = _digest(database_backup)
+    new_mcp = b"new mcp binary"
+    new_recovery = b"new recovery helper binary"
+    new_update_helper = b"new update helper binary"
+    component_manifest = transaction_dir / MANIFEST_FILE_NAME
+    component_payload = {
+        "architecture": "x86_64",
+        "component_count": 4,
+        "components": [
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContext.exe",
+                "role": "main",
+                "sha256": replacement_digest,
+                "size": replacement_size,
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextMCP.exe",
+                "role": "mcp",
+                "sha256": hashlib.sha256(new_mcp).hexdigest(),
+                "size": len(new_mcp),
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextRecovery.exe",
+                "role": "recovery",
+                "sha256": hashlib.sha256(new_recovery).hexdigest(),
+                "size": len(new_recovery),
+            },
+            {
+                "authenticode": {"status": "not-present"},
+                "filename": "AllTheContextUpdater.exe",
+                "role": "updater",
+                "sha256": hashlib.sha256(new_update_helper).hexdigest(),
+                "size": len(new_update_helper),
+            },
+        ],
+        "manifest_type": "installed-component",
+        "package": {
+            "direct_package": {
+                "filename": "all-the-context-0.2.0-windows-x86_64-unsigned.exe",
+                "sha256": replacement_digest,
+                "size": replacement_size,
+            },
+            "filename": "AllTheContextSetup.exe",
+            "sha256": replacement_digest,
+            "size": replacement_size,
+        },
+        "platform": "windows",
+        "schema_version": 1,
+        "source_commit": "0" * 40,
+        "version": "0.2.0",
+    }
+    component_raw = canonical_json(component_payload)
+    component_manifest.write_bytes(component_raw)
+    component_manifest.with_name(CHECKSUM_FILE_NAME).write_bytes(
+        f"{hashlib.sha256(component_raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    )
     state_path = updates / "state.json"
     journal_path = transaction_dir / "journal.json"
     state_path.write_text(
@@ -273,6 +337,9 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         core_port=7337,
         recovery_helper_sha256=recovery_helper_digest,
         recovery_helper_size=recovery_helper_size,
+        component_manifest_path=str(component_manifest),
+        component_manifest_sha256=hashlib.sha256(component_raw).hexdigest(),
+        component_manifest_size=len(component_raw),
         created_at=now,
         updated_at=now,
     ).save(journal_path)
@@ -287,6 +354,7 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         stable_update_helper,
         database,
         state_path,
+        component_manifest,
         old_application,
         old_mcp,
         old_recovery,
@@ -493,6 +561,39 @@ def _isolate_runtime(monkeypatch: pytest.MonkeyPatch, launched: list[str]) -> No
     )
 
 
+def _install_new_component_targets(fixture: TransactionFixture) -> None:
+    fixture.application.write_bytes(fixture.replacement)
+    fixture.mcp.write_bytes(b"new mcp binary")
+    fixture.recovery.write_bytes(b"new recovery helper binary")
+    fixture.update_helper.write_bytes(b"new update helper binary")
+
+
+def _mutate_component_manifest(
+    fixture: TransactionFixture,
+    mutation: str,
+) -> UpdateJournal:
+    journal = UpdateJournal.load(fixture.journal_path)
+    payload = json.loads(fixture.component_manifest.read_text(encoding="utf-8"))
+    if mutation == "missing":
+        payload["components"].pop()
+    elif mutation == "extra":
+        payload["components"].append(dict(payload["components"][-1]))
+    elif mutation == "version":
+        payload["version"] = "0.3.0"
+    elif mutation == "digest":
+        payload["components"][1]["sha256"] = "0" * 64
+    else:
+        raise AssertionError(mutation)
+    raw = canonical_json(payload)
+    fixture.component_manifest.write_bytes(raw)
+    fixture.component_manifest.with_name(CHECKSUM_FILE_NAME).write_bytes(
+        f"{hashlib.sha256(raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    )
+    journal.component_manifest_sha256 = hashlib.sha256(raw).hexdigest()
+    journal.component_manifest_size = len(raw)
+    return journal
+
+
 def _write_retirement_tombstone(fixture: TransactionFixture) -> Path:
     journal = UpdateJournal.load(fixture.journal_path)
     assert journal.phase is HelperPhase.COMMITTED
@@ -548,6 +649,44 @@ def test_independent_helper_commits_after_real_state_and_database_transition(
     assert run_transaction(fixture.journal_path) == 0
     replayed_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
     assert replayed_state["transaction_path"] is None
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "version", "digest"])
+def test_component_manifest_rejects_adversarial_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _install_new_component_targets(fixture)
+    journal = _mutate_component_manifest(fixture, mutation)
+
+    with pytest.raises(HelperError, match="component_manifest_invalid"):
+        helper_module._validate_component_manifest(journal)
+
+
+def test_component_manifest_rejects_a_substituted_installed_component(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _install_new_component_targets(fixture)
+    journal = UpdateJournal.load(fixture.journal_path)
+    fixture.mcp.write_bytes(b"substituted mcp binary")
+
+    with pytest.raises(HelperError, match="component_manifest_invalid"):
+        helper_module._validate_component_manifest(journal)
+
+
+def test_component_manifest_file_is_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _install_new_component_targets(fixture)
+    journal = UpdateJournal.load(fixture.journal_path)
+    fixture.component_manifest.unlink()
+
+    with pytest.raises(HelperError, match="component_manifest_invalid"):
+        helper_module._validate_component_manifest(journal)
 
 
 @pytest.mark.parametrize("failed_step", ["state_cleanup", "unregister", "launch"])
@@ -922,6 +1061,43 @@ def test_failed_health_restores_previous_binary_mcp_and_database(
             is None
         )
     assert launched == ["0.1.0"]
+
+
+@pytest.mark.parametrize(
+    "rollback_field",
+    [
+        "rollback_application_path",
+        "rollback_mcp_path",
+        "rollback_recovery_path",
+        "rollback_update_helper_path",
+    ],
+)
+def test_rollback_requires_every_component_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rollback_field: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    Path(getattr(journal, rollback_field)).unlink()
+
+    with pytest.raises(HelperError, match="rollback_target_invalid"):
+        helper_module._restore_binaries(journal)
+
+
+@pytest.mark.parametrize("component", ["application", "mcp", "recovery", "update_helper"])
+def test_rollback_revalidates_each_restored_component(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    component: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    target = getattr(fixture, component)
+    target.write_bytes(b"substituted rollback target")
+
+    with pytest.raises(HelperError, match="rollback_component_invalid"):
+        helper_module._validate_rollback_components(journal)
 
 
 def test_rollback_removes_all_sqlite_sidecars_and_preserves_unrelated_user_files(
