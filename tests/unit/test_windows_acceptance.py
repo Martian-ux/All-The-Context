@@ -179,9 +179,10 @@ def test_windows_clean_receipt_recomputes_with_candidate_inventory() -> None:
     recompute_receipt_artifact_bindings(
         [receipt], inventory_digests=inventory, candidate_sha256=CANDIDATE
     )
-    assert missing_required_gates(
-        [receipt], required_gates={"BETA-P01"}, inventory_digests=inventory
-    ) == []
+    assert (
+        missing_required_gates([receipt], required_gates={"BETA-P01"}, inventory_digests=inventory)
+        == []
+    )
 
     wrong_inventory = dict(inventory)
     wrong_inventory[ARCHIVE_NAME] = "a" * 64

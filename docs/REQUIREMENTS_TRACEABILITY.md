@@ -27,6 +27,25 @@ The Windows hardening wave integration and check-only updater boundary are
 covered by ADR-199. Its four cherry-picked worker commits are preserved in
 the integration ancestry; the final integration commit adds only bounded
 configuration/lifecycle safeguards and documentation.
+This Windows update evidence wave is covered by ADR-200. Its three clean
+single-parent worker commits are preserved in the integration ancestry; the
+source tests and schemas remain evidence contracts rather than real scan,
+clean-machine, release, signing, or publication evidence.
+
+### 2026-09-03 Windows update evidence wave
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| OTA-WIN-04 — configured unattended checks may stage a verified Windows update without activating it | `UpdateAutomation`; `UpdateManager.download_automatically`; `UpdateAutomationPolicy`; updater/dashboard regressions; worker commit `4ddbc11e0442fba71b7002bae104cdc5de425441`; ADR-200 | Implemented as a bounded source contract. The in-process worker revalidates signed metadata, checks staging disk budget, stages through serialized operation-scoped updater state, preserves recent cancellation, and retries within configured bounds. It does not register a task/service, launch a process, shut down Core, force restart, or reboot; install and activation remain operator-driven |
+| WIN-ACC-01 — clean-machine acceptance evidence must bind a complete ordinary lifecycle and exact Windows candidate bytes | `windows_acceptance.py`; `accept_windows_clean_machine.py`; `release/acceptance-receipt.schema.json`; `tests/unit/test_windows_acceptance.py`; worker commit `5efdffc9eb70446d22980d8816a37bee762ccfbe`; ADR-200 | Implemented as a strict, path-free audit contract. It binds candidate inventory, four installed components, native-build provenance, loopback Core, non-elevated prerequisites, lifecycle checks, and zero leftovers, while the command never launches the installer or product executable. Unit tests and schemas do not claim ordinary clean-machine execution or a released artifact |
+| WIN-DEF-01 — Defender evidence must be exact-byte-bound, content-free, and fail closed without changing Defender settings | `scripts/windows_defender_scan.py`; `release/windows-defender-scan-receipt.schema.json`; `tests/unit/test_windows_defender_scan.py`; worker commit `b5eb29adc2e53e90bd4df14392691cf068c7f184`; ADR-200 | Implemented as a source/test contract. The tool uses only `MpCmdRun.exe` custom scan, records no paths or raw output, rehashes the package and four components, compares Defender status/history, and rejects unavailable/stale/disabled/malformed/detected/deleted/mutated/reparse cases. The fake-backend tests do not claim a real Defender scan |
+| WIN-DEF-02 / WIN-ACC-02 — production installer rollback and real external evidence remain required | `desktop.py` around lines 450–498; exact artifact-level Defender and ordinary clean-machine gates; release/signing/publication workflows | Residual. Multi-file installer rollback is not closed by this wave. Real artifact-level Defender scanning and ordinary clean-machine execution remain required; no signing, publication, release, or downloaded-candidate execution is claimed |
+
+The pre-documentation focused integrated run passed 416 tests with 3 expected
+filesystem-capability skips. Final exact-SHA counts, package/build artifacts
+and hashes if built, repository-security/release-keyring results, dashboard
+results, and hosted checks must be added only after the final integration head
+is pushed and verified.
 
 ### 2026-09-03 Windows hardening wave integration
 

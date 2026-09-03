@@ -1,5 +1,36 @@
 # Architecture decisions
 
+## ADR-200: Automatic Windows staging and evidence receipts remain bounded gates
+
+**Status:** accepted locally on 2026-09-03 after integration from exact clean
+base `db5218c988d1a131a3d4371599e86f7d955e0389`; hosted checks must bind to the
+final pushed commit.
+
+This wave integrates the single-parent worker commits
+`4ddbc11e0442fba71b7002bae104cdc5de425441`,
+`5efdffc9eb70446d22980d8816a37bee762ccfbe`, and
+`b5eb29adc2e53e90bd4df14392691cf068c7f184` in that order. The update worker
+may perform signed-metadata revalidation and operation-scoped download/staging
+inside the Core lifetime, with serialized access, bounded retry/disk controls,
+and a visible activation prerequisite. It has no OS task/service registration,
+process-launch, Core-shutdown, forced-restart, or reboot authority. Install and
+activation remain operator-driven.
+
+The clean-machine receipt is an auditor for operator-run evidence and never
+launches an installer or product executable. The Defender receipt is a
+path-free, exact-byte-bound contract around Defender's supported custom scan;
+it changes no Defender settings and fails closed on unavailable, stale,
+malformed, disabled, detected, deleted, mutated, or reparse targets. Source
+tests use disposable fixtures/fakes, so schemas and tests do not constitute a
+real Defender scan, clean-machine execution, released artifact, signing,
+publication, or downloaded-candidate execution claim.
+
+The wave does not resolve the multi-file production installer rollback residual
+in `packages/allthecontext/src/allthecontext/desktop.py` around lines 450–498.
+Real artifact-level Defender evidence and an ordinary clean-machine execution
+remain separate required gates, as do signing, publication, and release
+acceptance.
+
 ## ADR-199: Integrate Windows hardening as bounded, check-only source evidence
 
 **Status:** accepted locally on 2026-09-03 after integration from exact

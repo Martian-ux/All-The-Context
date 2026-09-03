@@ -272,9 +272,7 @@ def audit(arguments: argparse.Namespace) -> Path:
         "installed_component_checksum": _descriptor_bytes(
             manifest_checksum_raw, COMPONENT_CHECKSUM_FILE_NAME, "installed component checksum"
         ),
-        "native_build_provenance": _descriptor(
-            provenance_path, "native build provenance"
-        ),
+        "native_build_provenance": _descriptor(provenance_path, "native build provenance"),
         "native_build_provenance_checksum": _descriptor(
             provenance_checksum, "native build provenance checksum"
         ),
@@ -317,9 +315,7 @@ def audit(arguments: argparse.Namespace) -> Path:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--gate-id", choices=("BETA-P01", "BETA-S03"), required=True
-    )
+    parser.add_argument("--gate-id", choices=("BETA-P01", "BETA-S03"), required=True)
     parser.add_argument("--release-dir", type=Path, required=True)
     parser.add_argument("--component-dir", type=Path, required=True)
     parser.add_argument("--provenance", type=Path, required=True)

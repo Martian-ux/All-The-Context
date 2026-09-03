@@ -42,6 +42,48 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-03 — Windows update evidence wave (integration candidate)
+
+This integration starts from clean `db5218c988d1a131a3d4371599e86f7d955e0389`,
+which matched fetched `origin/main` before mutation and had no conflicting open
+pull request. It cherry-picks each clean single-parent worker exactly once, in
+order: automatic verified update staging
+`4ddbc11e0442fba71b7002bae104cdc5de425441`, clean-machine acceptance evidence
+`5efdffc9eb70446d22980d8816a37bee762ccfbe`, and the bounded Windows Defender
+receipt tool `b5eb29adc2e53e90bd4df14392691cf068c7f184`. The first three
+cherry-picks applied without conflicts; formatter-only cleanup and this
+documentation are the remaining integration changes.
+
+The in-process update worker may revalidate and stage a signed-metadata-bound
+candidate using the existing serialized `UpdateManager`, bounded disk/retry
+controls, and operation-scoped staging. It does not register a task or service,
+launch a process, shut down Core, force an application restart, or reboot
+Windows. Installation and activation remain operator-driven, and the dashboard
+surfaces the restart prerequisite for a staged update.
+
+The clean-machine command is an operator-evidence auditor: it never launches an
+installer or product executable. Its strict path-free receipt binds a claimed
+ordinary clean-machine lifecycle, zero leftovers, exact candidate assets,
+installed four-component bytes, and native-build provenance. The Defender tool
+uses only the supported custom-scan operation, changes no Defender settings,
+and emits a path-free receipt bound to the exact package and four components.
+The new schemas and source tests are contracts only: they do not claim a real
+Defender scan, ordinary clean-machine execution, artifact release, signing,
+publication, or execution of a downloaded candidate.
+
+The focused integrated run passed 416 tests with 3 expected filesystem-
+capability skips (symlink/reparse inputs). Full exact-SHA gates, dashboard
+validation, package/build checks, release-keyring and repository-security
+checks, and hosted checks remain to be recorded against the final pushed SHA.
+The distribution plan remains unsigned; SmartScreen warnings are accepted,
+but Defender quarantine or deletion is not.
+
+Residuals are explicit: multi-file production installer rollback in
+`packages/allthecontext/src/allthecontext/desktop.py` around lines 450–498 is
+not closed by this wave. Real artifact-level Defender scanning and ordinary
+clean-machine execution remain required, along with separate signing,
+publication, and release evidence.
+
 ### 2026-09-03 — Windows hardening wave integration candidate
 
 Starting from the exact clean protected-main SHA
