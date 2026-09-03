@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -206,6 +207,62 @@ def test_slot_metadata_stays_proposed_until_approval_and_groups_are_deterministi
     store.delete_record(second_id, reason="ordinary reversible deletion")
     groups = store.list_integrity_groups()
     assert groups["items"][0]["record_ids"] == sorted([first.id, third_id])
+
+
+def test_integrity_group_listing_fetches_members_in_one_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path / "core.sqlite3")
+    _approve(store, "Blue", entity_key="user:1", attribute_key="color")
+    _approve(store, "Green", entity_key="user:1", attribute_key="color")
+    _approve(store, "Tea", entity_key="user:1", attribute_key="drink")
+    _approve(store, "Coffee", entity_key="user:1", attribute_key="drink")
+    statements: list[str] = []
+    original_connect = store.connect
+
+    @contextmanager
+    def traced_connect():
+        with original_connect() as connection:
+            connection.set_trace_callback(statements.append)
+            try:
+                yield connection
+            finally:
+                connection.set_trace_callback(None)
+
+    monkeypatch.setattr(store, "connect", traced_connect)
+    groups = store.list_integrity_groups()
+
+    assert groups["total"] == 2
+    member_queries = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("SELECT")
+        and "FROM integrity_group_members" in statement
+    ]
+    assert len(member_queries) == 1
+    assert "WHERE group_id IN" in member_queries[0]
+
+
+def test_audit_reuses_the_callers_database_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path / "core.sqlite3")
+    connect_calls = 0
+    original_connect = store.connect
+
+    @contextmanager
+    def counted_connect():
+        nonlocal connect_calls
+        connect_calls += 1
+        with original_connect() as connection:
+            yield connection
+
+    monkeypatch.setattr(store, "connect", counted_connect)
+    with store.transaction() as connection:
+        audit_id = store._audit(connection, "test", "synthetic_audit", [])
+
+    assert connect_calls == 1
+    assert store.list_audit()[0]["id"] == audit_id
 
 
 def test_supersession_removes_old_record_from_integrity_group(tmp_path: Path) -> None:

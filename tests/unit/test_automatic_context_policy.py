@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -462,6 +463,92 @@ def test_archive_observations_stay_staged_until_successful_finish(tmp_path: Path
         CoverageReport(available=["archive"], complete=True),
     )
     assert store.get_candidate(observation_id).disposition == ObservationDisposition.APPLIED
+
+
+def test_archive_finish_recomputes_integrity_once_for_the_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["archive"],
+        unavailable_sources=[],
+    )
+    submitted = store.submit_batch(
+        str(session["session_id"]),
+        "batch-many",
+        [
+            CandidateInput(
+                kind="goal",
+                content=f"Complete synthetic objective {index}.",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+            for index in range(3)
+        ],
+    )
+    recomputes = 0
+    original_recompute = store._recompute_integrity
+
+    def counted_recompute(connection: sqlite3.Connection) -> None:
+        nonlocal recomputes
+        recomputes += 1
+        original_recompute(connection)
+
+    monkeypatch.setattr(store, "_recompute_integrity", counted_recompute)
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=["archive"], complete=True),
+    )
+
+    observations = [store.get_candidate(str(item)) for item in submitted["candidate_ids"]]
+    assert recomputes == 1
+    assert all(item.disposition == ObservationDisposition.APPLIED for item in observations)
+    assert all(item.record_id is not None for item in observations)
+
+
+def test_startup_staged_evaluation_recomputes_integrity_once_for_the_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["archive"],
+        unavailable_sources=[],
+        idempotency_key="legacy-finished-archive",
+    )
+    submitted = store.submit_batch(
+        str(session["session_id"]),
+        "batch-many",
+        [
+            CandidateInput(
+                kind="goal",
+                content=f"Recover synthetic objective {index}.",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+            for index in range(3)
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=["archive"], complete=True),
+        publish=False,
+    )
+    recomputes = 0
+    original_recompute = store._recompute_integrity
+
+    def counted_recompute(connection: sqlite3.Connection) -> None:
+        nonlocal recomputes
+        recomputes += 1
+        original_recompute(connection)
+
+    monkeypatch.setattr(store, "_recompute_integrity", counted_recompute)
+
+    assert store.evaluate_staged_observations() == 3
+    observations = [store.get_candidate(str(item)) for item in submitted["candidate_ids"]]
+    assert recomputes == 1
+    assert all(item.disposition == ObservationDisposition.APPLIED for item in observations)
 
 
 def test_soft_delete_and_version_restore_are_reversible(tmp_path: Path) -> None:

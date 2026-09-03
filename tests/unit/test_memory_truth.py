@@ -340,6 +340,71 @@ def test_valid_publish_binds_rebuild_tombstone_to_session_generation_and_marker(
     assert store.record_history(record_id)
 
 
+def test_source_rebuild_recomputes_integrity_once_for_all_observations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"fiction archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key=f"archive:{source.id}:fixture-parser:rebuild:1",
+    )
+    session_id = str(session["session_id"])
+    submitted = store.submit_batch(
+        session_id,
+        "multi-rebuild-batch",
+        [
+            CandidateInput(
+                kind="goal",
+                content=f"Retain synthetic archive objective {index}.",
+                source_id=source.id,
+                source_reference=f"message:{index}",
+                source_service="fiction-provider",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+            for index in range(3)
+        ],
+    )
+    store.finish_ingestion(
+        session_id,
+        CoverageReport(available=["fiction-archive"], complete=True),
+        publish=False,
+    )
+    marker = source_rebuild_marker(source.id, source.content_hash, 1)
+    store.update_source_import(
+        source.id,
+        import_status="processing",
+        metadata={
+            "rebuild_generation": 1,
+            "rebuild_in_progress": True,
+            "rebuild_source_marker": marker,
+        },
+        parser_warnings=[],
+    )
+    recomputes = 0
+    original_recompute = store._recompute_integrity
+
+    def counted_recompute(connection: sqlite3.Connection) -> None:
+        nonlocal recomputes
+        recomputes += 1
+        original_recompute(connection)
+
+    monkeypatch.setattr(store, "_recompute_integrity", counted_recompute)
+
+    assert store.publish_source_rebuild(source.id, session_id, rebuild_generation=1) == []
+    observations = [store.get_observation(str(item)) for item in submitted["candidate_ids"]]
+    assert recomputes == 1
+    assert all(item.disposition == ObservationDisposition.APPLIED for item in observations)
+    assert all(item.record_id is not None for item in observations)
+
+
 @pytest.mark.parametrize("reason", ["audited restore", SOURCE_REBUILD_REASON])
 def test_user_restore_marker_blocks_later_source_rebuild_without_replacement(
     tmp_path: Path, reason: str
