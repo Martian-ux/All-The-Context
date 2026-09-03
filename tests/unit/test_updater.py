@@ -1171,6 +1171,109 @@ def test_retirement_tombstone_retries_after_credential_deletion_failure(
     assert not list((restarted.state_path.parent / "retirements").iterdir())
 
 
+def test_clear_error_preserves_failed_retirement_evidence_and_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(
+        tmp_path, manifest, artifact, keyring, outcome="rolled_back"
+    )
+    original_retire = updater_module.retire_recovery_authority
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", lambda _value: False)
+
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    retirement_records = list((manager.state_path.parent / "retirements").iterdir())
+    assert len(retirement_records) == 1
+    tombstone = retirement_records[0]
+    assert manager._load_retirement_tombstone(tombstone) is not None
+    assert manager.state.completed_handoff_identity is not None
+    assert manager.state.phase is UpdatePhase.ROLLED_BACK
+    assert manager.state.last_error == "Updater staging cleanup could not be completed safely"
+    failed_error = manager.state.last_error
+    failed_identity = manager.state.completed_handoff_identity
+    failed_tombstone = tombstone.read_bytes()
+    failed_authority = _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    assert manager.state.last_error == failed_error
+    assert manager.state.completed_handoff_identity == failed_identity
+    assert tombstone.read_bytes() == failed_tombstone
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"] == failed_authority
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", original_retire)
+    assert manager.clear_error()["phase"] == "rolled_back"
+    assert manager.state.last_error is None
+    assert manager.state.completed_handoff_identity is None
+    assert not tombstone.exists()
+    assert f"transaction:{operation}" not in _RECOVERY_AUTHORITY_VALUES
+
+    assert manager.clear_error()["phase"] == "rolled_back"
+
+
+def test_clear_error_rejects_missing_retirement_tombstone_after_failed_retirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", lambda _value: False)
+
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    tombstone = next((manager.state_path.parent / "retirements").iterdir())
+    tombstone.unlink()
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    assert manager._state_write_allowed is False
+    assert manager.state.phase is UpdatePhase.ERROR
+    assert manager.state.last_error == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert manager.state.completed_handoff_identity is not None
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_clear_error_rejects_tampered_retirement_tombstone(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, payload = manager._ensure_retirement_tombstone()
+    payload["terminal_authority_mac"] = "0" * 64
+    tombstone.write_text(manager._render_json(payload), encoding="utf-8")
+    tampered = tombstone.read_bytes()
+
+    with pytest.raises(UpdateError, match="staging cleanup"):
+        manager.clear_error()
+
+    assert manager._state_write_allowed is False
+    assert manager.state.phase is UpdatePhase.ERROR
+    assert manager.state.last_error == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert manager.state.completed_handoff_identity is not None
+    assert tombstone.read_bytes() == tampered
+    assert (manager.state_path.parent / "transactions" / operation).is_dir()
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+
+
+def test_clear_error_clears_ordinary_non_recovery_error(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    transport.metadata_error = UpdateError("Update endpoint returned HTTP 503")
+
+    assert manager.check()["phase"] == "error"
+    status = manager.clear_error()
+
+    assert status["phase"] == "idle"
+    assert status["last_error"] is None
+    assert manager.state.completed_handoff_identity is None
+
+
 def test_retirement_tombstone_handles_credential_deleted_before_cleanup_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

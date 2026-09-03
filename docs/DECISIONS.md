@@ -53,6 +53,16 @@ No updater operation can bypass this authority: new check/download/install
 work, `defer`, `configure`, `clear_error`, recovery cleanup, and pruning all
 remain blocked or retry-only while active evidence is present or unsafe.
 
+The administrative `clear_error` entrypoint follows the same bounded
+completed-evidence retirement path as `check`, `defer`, and `configure`. It
+must retire the authenticated tombstone-backed terminal evidence before
+clearing the public error or changing an error/cancelled phase; a retirement
+failure raises without masking the cleanup error or discarding the completed
+identity, tombstone, or recovery authority. A later retry may finish
+retirement, and a repeated call after successful retirement is idempotent.
+Missing or tampered retirement evidence remains fail-closed. Ordinary errors
+without completed recovery evidence retain the normal clear-error behavior.
+
 An empty pre-authority operation directory is not evidence by itself and may
 be reclaimed. A journal, regular file, link/reparse object, non-directory, or
 ambiguous/pathological tree remains credible recovery evidence and is retained

@@ -42,6 +42,34 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-03 — PR #110 clear-error retirement guard
+
+Before this follow-up mutation, PR #110 was verified open with base
+`466b5027a66cf7a8dba4ec0bb79b8b9af72cc9eb` and exact head
+`cb90c940571008b4a437b8962065a82e5a894176`. `UpdateManager.clear_error()` now
+uses the same bounded, authenticated completed-recovery-evidence retirement
+path as `check`, `defer`, and `configure` before clearing `last_error` or
+moving an error/cancelled state to idle. A failed retirement raises and leaves
+the terminal identity, retirement tombstone, recovery authority, and the
+cleanup error available for retry; missing or tampered tombstones remain
+fail-closed. Repeated successful clear-error calls remain idempotent, while
+ordinary non-recovery errors still clear normally. No adjacent admin entrypoint
+was found to bypass this retirement path.
+
+Focused updater/helper tests passed 291 tests with 3 expected capability skips;
+the full suite passed 2,657 tests with 13 expected capability skips and 2
+existing Starlette deprecation warnings. Ruff check, Ruff format check, mypy
+over 107 source files, documentation checks, and `git diff --check` passed.
+The Windows desktop build, frozen artifact/resource and OS-credential smoke,
+direct unsigned Windows package and trust-disclosure smoke, packaged recovery
+admin smoke, packaged first-run/restart/rollback/uninstall smoke, and platform
+credential/startup acceptance smoke passed. Release-keyring validation accepted
+2 public keys and the audit covered 575 tracked files with no private-key
+material detected. These are local source/disposable results only; hosted
+checks must bind to the final pushed SHA, and no signing, publishing, tagging,
+Defender change, Microsoft submission, release, or downloaded-candidate
+execution was performed.
+
 ### 2026-09-03 — PR #110 P1 recovery-boundary remediation completion
 
 Before mutation, PR #110 was verified open with base

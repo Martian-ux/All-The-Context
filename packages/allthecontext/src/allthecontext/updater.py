@@ -2937,6 +2937,11 @@ class UpdateManager:
         with self._exclusive():
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed()
+            if (
+                self.state.completed_handoff_identity is not None
+                and not self._clear_completed_recovery_evidence()
+            ):
+                raise UpdateError("Updater staging cleanup could not be completed safely")
             self.state.last_error = None
             if self.state.phase in {UpdatePhase.ERROR, UpdatePhase.CANCELLED}:
                 self.state.phase = UpdatePhase.IDLE
