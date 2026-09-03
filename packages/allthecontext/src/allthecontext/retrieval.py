@@ -1565,17 +1565,26 @@ def _conflict_states(
     states = dict.fromkeys(eligible, ConflictState.CLEAR)
     if not eligible:
         return states
-    rows = connection.execute(
-        "SELECT m.record_id,g.group_type,g.status FROM integrity_group_members m "
-        "JOIN integrity_groups g ON g.id=m.group_id ORDER BY m.record_id,g.id"
-    ).fetchall()
-    for row in rows:
-        record_id = str(row["record_id"])
-        if record_id not in states or str(row["group_type"]) != "conflict":
-            continue
-        state = ConflictState.ACTIVE if str(row["status"]) == "open" else ConflictState.RESOLVED
-        if state is ConflictState.ACTIVE or states[record_id] is ConflictState.CLEAR:
-            states[record_id] = state
+    eligible_ids = sorted(eligible)
+    for start in range(0, len(eligible_ids), 500):
+        chunk = eligible_ids[start : start + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = connection.execute(
+            "SELECT m.record_id,g.status FROM integrity_group_members m "
+            "JOIN integrity_groups g ON g.id=m.group_id "
+            f"WHERE m.record_id IN ({placeholders}) AND g.group_type='conflict' "
+            "ORDER BY m.record_id,g.id",
+            chunk,
+        ).fetchall()
+        for row in rows:
+            record_id = str(row["record_id"])
+            state = (
+                ConflictState.ACTIVE
+                if str(row["status"]) == "open"
+                else ConflictState.RESOLVED
+            )
+            if state is ConflictState.ACTIVE or states[record_id] is ConflictState.CLEAR:
+                states[record_id] = state
     return states
 
 
