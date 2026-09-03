@@ -527,7 +527,7 @@ def test_independent_helper_commits_after_real_state_and_database_transition(
     assert replayed_state["transaction_path"] is None
 
 
-@pytest.mark.parametrize("failed_step", ["unregister", "launch"])
+@pytest.mark.parametrize("failed_step", ["state_cleanup", "unregister", "launch"])
 def test_post_commit_side_effect_failure_keeps_terminal_install_authoritative(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -541,7 +541,27 @@ def test_post_commit_side_effect_failure_keeps_terminal_install_authoritative(
     def fail_post_commit(_value: object) -> None:
         raise OSError(failed_step)
 
-    if failed_step == "unregister":
+    if failed_step == "state_cleanup":
+        original_update_state = helper_module._update_state
+
+        def fail_state_cleanup(
+            journal: UpdateJournal,
+            *,
+            phase: str,
+            error: str | None,
+            clear_transaction: bool,
+        ) -> None:
+            if clear_transaction and journal.phase is HelperPhase.COMMITTED:
+                raise OSError("state_cleanup")
+            original_update_state(
+                journal,
+                phase=phase,
+                error=error,
+                clear_transaction=clear_transaction,
+            )
+
+        monkeypatch.setattr(helper_module, "_update_state", fail_state_cleanup)
+    elif failed_step == "unregister":
         monkeypatch.setattr(helper_module, "unregister_recovery", fail_post_commit)
     else:
         monkeypatch.setattr(helper_module, "_launch_core", fail_post_commit)
@@ -554,16 +574,79 @@ def test_post_commit_side_effect_failure_keeps_terminal_install_authoritative(
     assert fixture.application.read_bytes() == fixture.replacement
     state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
     assert state["phase"] == "installed"
-    assert state["transaction_path"] is None
-    assert state["completed_handoff_identity"] == helper_module.journal_handoff_identity(journal)
-    assert state["last_error"] == helper_module.POST_COMMIT_DEGRADED_ERROR
-    if failed_step == "unregister":
+    if failed_step == "state_cleanup":
+        assert state["transaction_path"] == str(fixture.journal_path)
+        assert state["handoff_identity"] == helper_module.journal_handoff_identity(journal)
+        assert state["completed_handoff_identity"] is None
+        assert state["last_error"] is None
+    else:
+        assert state["transaction_path"] is None
+        assert state["completed_handoff_identity"] == helper_module.journal_handoff_identity(
+            journal
+        )
+        assert state["last_error"] == helper_module.POST_COMMIT_DEGRADED_ERROR
+    if failed_step in {"state_cleanup", "unregister"}:
         assert launched == ["0.1.0"]
     else:
         assert launched == []
 
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
-    assert ensure_recovery_before_core() is True
+    if failed_step == "state_cleanup":
+        assert ensure_recovery_before_core() is False
+    else:
+        assert ensure_recovery_before_core() is True
+
+
+def test_crash_after_committed_journal_publication_replays_without_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    original_update_state = helper_module._update_state
+    crashed = False
+
+    def crash_after_terminal_journal(
+        journal: UpdateJournal,
+        *,
+        phase: str,
+        error: str | None,
+        clear_transaction: bool,
+    ) -> None:
+        nonlocal crashed
+        if clear_transaction and journal.phase is HelperPhase.COMMITTED and not crashed:
+            crashed = True
+            raise SystemExit(86)
+        original_update_state(
+            journal,
+            phase=phase,
+            error=error,
+            clear_transaction=clear_transaction,
+        )
+
+    monkeypatch.setattr(helper_module, "_update_state", crash_after_terminal_journal)
+
+    with pytest.raises(SystemExit, match="86"):
+        run_transaction(fixture.journal_path)
+
+    assert crashed is True
+    assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.COMMITTED
+    assert fixture.application.read_bytes() == fixture.replacement
+    interrupted_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert interrupted_state["transaction_path"] == str(fixture.journal_path)
+    assert launched == []
+
+    assert run_transaction(fixture.journal_path) == 0
+    replayed_journal = UpdateJournal.load(fixture.journal_path)
+    replayed_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert replayed_journal.phase is HelperPhase.COMMITTED
+    assert replayed_state["transaction_path"] is None
+    assert replayed_state["completed_handoff_identity"] == helper_module.journal_handoff_identity(
+        replayed_journal
+    )
+    assert fixture.application.read_bytes() == fixture.replacement
+    assert launched == ["0.1.0"]
 
 
 @pytest.mark.parametrize("hostile_report_phase", ["apply", "diagnostics", "health"])

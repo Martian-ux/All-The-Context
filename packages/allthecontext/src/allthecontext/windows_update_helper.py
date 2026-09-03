@@ -2153,7 +2153,7 @@ def _record_post_commit_degraded_state(journal: UpdateJournal) -> None:
             error=POST_COMMIT_DEGRADED_ERROR,
             clear_transaction=True,
         )
-    except (OSError, HelperError, sqlite3.Error, ValueError):
+    except Exception:
         return
 
 
@@ -2161,18 +2161,28 @@ def _finish_terminal_handoff(
     journal: UpdateJournal,
     *,
     launch_core: bool,
+    state_error: str | None,
 ) -> None:
-    """Finish terminal helper side effects without reopening the transaction."""
+    """Finish terminal follow-up work without reopening the transaction."""
 
     degraded = False
     try:
+        _update_state(
+            journal,
+            phase="installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back",
+            error=state_error,
+            clear_transaction=True,
+        )
+    except Exception:
+        degraded = True
+    try:
         unregister_recovery(journal.operation_id)
-    except (OSError, HelperError, ValueError):
+    except Exception:
         degraded = True
     if launch_core:
         try:
             _launch_core(journal)
-        except (OSError, HelperError, ValueError):
+        except Exception:
             degraded = True
     if degraded:
         _record_post_commit_degraded_state(journal)
@@ -2205,8 +2215,7 @@ def _commit(journal: UpdateJournal, journal_path: Path) -> None:
     journal.last_error_code = None
     seal_terminal_recovery_authority(journal)
     journal.save(journal_path)
-    _update_state(journal, phase="installed", error=None, clear_transaction=True)
-    _finish_terminal_handoff(journal, launch_core=True)
+    _finish_terminal_handoff(journal, launch_core=True, state_error=None)
 
 
 def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code: str) -> None:
@@ -2230,15 +2239,10 @@ def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code
     journal.last_error_code = error_code
     seal_terminal_recovery_authority(journal)
     journal.save(journal_path)
-    _update_state(
-        journal,
-        phase="rolled_back",
-        error=message,
-        clear_transaction=True,
-    )
     _finish_terminal_handoff(
         journal,
         launch_core=not _process_exists(journal.parent_pid),
+        state_error=message,
     )
 
 
@@ -2259,13 +2263,7 @@ def _rollback(journal: UpdateJournal, journal_path: Path, error_code: str) -> No
         journal.phase = HelperPhase.ROLLED_BACK
         seal_terminal_recovery_authority(journal)
         journal.save(journal_path)
-        _update_state(
-            journal,
-            phase="rolled_back",
-            error=message,
-            clear_transaction=True,
-        )
-        _finish_terminal_handoff(journal, launch_core=True)
+        _finish_terminal_handoff(journal, launch_core=True, state_error=message)
     except (OSError, HelperError, sqlite3.Error) as exc:
         journal.phase = HelperPhase.ROLLING_BACK
         journal.last_error_code = "rollback_retry_required"
@@ -2306,10 +2304,10 @@ def run_transaction(journal_path: Path) -> int:
         journal = UpdateJournal.load(resolved)
         if journal.phase in TERMINAL_PHASES:
             validate_recovery_authority(journal, resolved, require_terminal=True)
-            _update_state(
+            _finish_terminal_handoff(
                 journal,
-                phase="installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back",
-                error=(
+                launch_core=True,
+                state_error=(
                     None
                     if journal.phase is HelperPhase.COMMITTED
                     else (
@@ -2317,9 +2315,7 @@ def run_transaction(journal_path: Path) -> int:
                         "restored"
                     )
                 ),
-                clear_transaction=True,
             )
-            _finish_terminal_handoff(journal, launch_core=True)
             return 0
         validate_recovery_authority(journal, resolved)
         register_recovery(Path(journal.helper_path), resolved, journal.operation_id)
