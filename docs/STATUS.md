@@ -58,10 +58,13 @@ while the document is hidden.
 
 Focused integrated Python validation passes 248 tests. Dashboard validation
 passes 69 tests plus TypeScript checking, production build, and a zero-finding
-production dependency audit. Repository-wide Python and documentation gates
-remain required on the final integrated commit before merge. No package,
-signing, publishing, Defender change, Microsoft submission, release, or
-downloaded-candidate execution is implied.
+production dependency audit. The final sequential repository suite collects
+2,695 items and passes 2,682 with 13 expected capability skips and the two
+existing Starlette deprecation warnings in 679.53 seconds; sequential and
+four-worker collections are identical. Ruff format/lint, mypy, documentation,
+lock, and diff validation pass. No package, signing, publishing, Defender
+change, Microsoft submission, release, or downloaded-candidate execution is
+implied.
 
 The audit's proposed global search-result cache, startup repair marker, and
 connection-pool/WAL lifecycle changes were not adopted. Search authorization,
