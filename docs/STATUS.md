@@ -42,6 +42,54 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-02 — PR #110 terminal publication cleanup and bounded version parsing
+
+The local PR #110 integration now includes the recovery-lifecycle and numeric
+version-containment remediations on top of the exact PR head
+`b8814db1970fd76e06b1db12ff3d16e3710acfec`. Terminal recovery is accepted only
+after the helper has published the expected `COMMITTED` or `ROLLED_BACK`
+journal phase, matching handoff identity, and matching `transaction_outcome`.
+The primary updater retires a terminal transaction tree only when
+`completed_transaction_is_authoritative` proves the state/journal binding and
+the transaction root contains exactly that one operation directory. The
+packaged smoke observes that publication before restarted Core can safely
+retire it.
+
+Registration, launch, rollback, and cleanup failures after journal persistence
+preserve the transaction pointer, handoff identity, journal, and surviving
+evidence. Invalid or ambiguous recovery evidence remains authoritative,
+produces only the fixed recovery error, blocks clear/configure/check/defer/
+install/prune and other new updater operations, and keeps the frozen Windows
+Core startup guard down. Successful terminal cleanup clears only the proven
+terminal publication; failed or ambiguous cleanup cannot be used to erase
+recovery evidence.
+
+Release versions are bounded before comparison or persistence: at most 64
+characters, four dotted numeric components, and 18 digits per component.
+Numeric conversion failures are contained at the journal, helper startup, and
+primary parser boundaries and expose only fixed diagnostics; raw version text
+is not logged or projected into public errors.
+
+On the local Windows host (Python 3.14.3), the focused updater, Windows-helper,
+release-manifest, desktop-runtime, and recovery-admin suite passed 363 tests
+with six expected capability skips. The full suite passed 2,618 tests with 13
+expected capability skips and two existing Starlette deprecation warnings.
+Ruff lint/format, mypy over 107 source files, the source-built desktop package,
+desktop artifact inspection, packaged recovery, isolated first-run/restart/
+rollback/uninstall smoke, and release-key validation/audit all passed. The
+first-run smoke also verified the stable MCP command, browser handoff,
+per-user startup, automatic Windows update recovery, Core shutdown, and
+temporary-data removal. The keyring utility validated two public keys and
+audited 575 tracked files with no private-key material detected.
+
+These are source-level and disposable local results only; hosted checks still
+must bind to the final pushed SHA. No signing, publishing, tagging, Defender
+change, Microsoft submission, release, or downloaded-candidate execution was
+performed. The implementation still does not claim handle-based no-follow
+atomicity across concurrent same-user mutation and the final Windows
+filesystem syscall, nor an independent cryptographic parser or CPU/depth
+budget for numeric version parsing.
+
 ### 2026-09-02 — PR #110 invalid-journal authority and bounded private-key loading
 
 PR #110 now locally integrates the recovery-authority and private-key loading

@@ -16,6 +16,8 @@ ADR-187 and starts from the exact `origin/main` merge base
 and privacy remediation is covered by ADR-188 and ADR-189.
 The invalid active-journal authority and operator private-key read follow-up
 is covered by ADR-191 and ADR-192.
+The terminal publication lifecycle and numeric version containment follow-up
+is covered by ADR-193 and ADR-194.
 
 The startup-recovery evidence also includes install-root and install-parent
 reparse simulations before forward child launch and rollback copy/replace;
@@ -88,6 +90,13 @@ forced cleanup refusal, deterministic parent replacement, exact-limit
 multibyte script reads, oversized raw keyring comparison, deep trees, wide
 trees, budget boundaries, and RecursionError. Hosted follow-up checks must bind
 to the corrected commit.
+
+### 2026-09-02 Terminal recovery publication authority and numeric version containment
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| UPDATER-09 — terminal recovery must require helper-confirmed journal/identity transitions and preserve authority across post-journal failures | `windows_update_helper.py::_commit`; `windows_update_helper.py::_rollback`; `windows_update_helper.py::completed_transaction_is_authoritative`; `updater.py::_clear_completed_recovery_evidence`; `updater.py::_transaction_evidence_requires_preservation`; `tests/unit/test_updater.py::test_valid_terminal_publication_is_cleaned_before_new_operation`; `test_recovery_cleanup_failure_does_not_overwrite_helper_terminal_publication`; `test_handoff_failure_after_journal_persistence_keeps_recovery_authority`; `test_rollback_failure_keeps_authority_across_error_clear_configure_and_restart`; `tests/unit/test_windows_update_helper.py::test_terminal_replay_requires_completed_journal_binding`; `test_terminal_journal_requires_state_first_terminal_phase`; ADR-193 | Implemented and locally tested. Pointerless `installed`/`rolled_back` state is accepted only when the expected operation is the sole transaction directory and the helper-confirmed journal phase, handoff identity, and `transaction_outcome` all match. The primary updater retires only that proven terminal evidence; invalid or ambiguous roots and registration, launch, rollback, or cleanup failures preserve pointers/journal/evidence, expose fixed errors, block clear/configure/check/defer/install/prune/new operations, and keep frozen Core startup blocked. The focused suite passed 363 tests with six expected capability skips; the full suite passed 2,618 tests with 13 expected capability skips and two warnings. Local/disposable evidence only; hosted checks and handle-based no-follow atomicity remain open |
+| RELEASE-VER-01 — numeric release-version parsing must enforce explicit length/component/digit bounds and contain conversion failures | `release_manifest.py::ReleaseVersion.parse`; `windows_update_helper.py::_validate_startup_state`; `windows_update_helper.py::UpdateJournal.validate`; `windows_update_helper.py::record_startup_recovery_parser_failure`; version-bound and parser-failure regressions; ADR-194 | Implemented and locally tested. Version text is limited to 64 characters, four dotted numeric components, and 18 digits per component before conversion. Journal/helper/startup boundaries catch numeric `ValueError` and emit fixed content-free diagnostics without raw version text. Ruff, mypy, the focused/full suites, packaged first-run/restart/rollback/uninstall smoke, desktop build/artifact inspection, and release-key validation/audit passed. The bounds do not claim an independent cryptographic parser or CPU/depth budget, and no signing, release, or candidate-execution acceptance is implied |
 
 ### 2026-09-02 Invalid active-journal authority and private-key read containment
 

@@ -1069,9 +1069,7 @@ def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[
     raise HelperError("application_state_mismatch")
 
 
-def _validate_terminal_handoff_state(
-    journal: UpdateJournal, journal_path: Path
-) -> dict[str, Any]:
+def _validate_terminal_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
     """Require the helper's terminal journal and state publication to agree."""
 
     if journal.phase not in TERMINAL_PHASES:
@@ -1082,9 +1080,7 @@ def _validate_terminal_handoff_state(
         MAX_STATE_BYTES,
         boundary_code="application_state_untrusted",
     )
-    expected_phase = (
-        "installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back"
-    )
+    expected_phase = "installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back"
     expected_version = (
         journal.target_version if expected_phase == "installed" else journal.current_version
     )

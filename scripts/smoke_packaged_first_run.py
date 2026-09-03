@@ -1090,9 +1090,12 @@ def main() -> int:
             check=True,
             timeout=180,
         )
-        wait_for_core(base_url, admin_token)
+        # The helper publishes the committed journal before launching Core.
+        # Core may safely retire that terminal evidence during its startup,
+        # so validate the publication before waiting for the restarted process.
         if json.loads(crash_journal.read_text(encoding="utf-8")).get("phase") != "committed":
             raise SystemExit("packaged updater did not commit after crash recovery")
+        wait_for_core(base_url, admin_token)
         stop_core(base_url, admin_token)
 
         with _temporary_environment(helper_authority):
@@ -1116,10 +1119,12 @@ def main() -> int:
             journal=rollback_journal,
             environment=rollback_environment,
         )
-        wait_for_core(base_url, admin_token)
         rollback_status = json.loads(rollback_journal.read_text(encoding="utf-8"))
         if rollback_status.get("phase") != "rolled_back":
             raise SystemExit(f"packaged updater did not roll back: {rollback_status}")
+        # As with the committed path above, Core may retire the fully
+        # helper-confirmed terminal journal while it starts.
+        wait_for_core(base_url, admin_token)
         restored_files = (
             (
                 Path(str(rollback_status["application_path"])),

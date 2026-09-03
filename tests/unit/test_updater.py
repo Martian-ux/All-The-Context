@@ -866,6 +866,30 @@ def test_successful_restart_health_check_completes_and_cleans_staging(tmp_path: 
     assert recovered.recover_after_restart()["phase"] == "installed"
 
 
+def test_valid_terminal_publication_is_cleaned_before_new_operation(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manager.install()
+    _publish_helper_terminal(manager, "installed")
+    operation_id = manager.state.operation_id or ""
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    assert transaction_dir.is_dir()
+
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+
+    assert recovered.public_status()["phase"] == "installed"
+    assert recovered.state.completed_handoff_identity is None
+    assert not transaction_dir.exists()
+
+
 @pytest.mark.parametrize("outcome", ["installed", "rolled_back"])
 def test_unconfirmed_installer_outcome_cannot_complete_recovery(
     tmp_path: Path,
@@ -2062,6 +2086,7 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
     registrations: list[tuple[Path, Path, str]] = []
     launches: list[tuple[Path, Path]] = []
+
     def register(helper: Path, journal: Path, operation: str) -> None:
         registrations.append((helper, journal, operation))
         if failure == "register":
@@ -2115,9 +2140,7 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     assert Path(journal.rollback_update_helper_path).read_bytes() == b"old update helper"
     assert Path(journal.replacement_path).read_bytes() == b"new application"
     assert registrations == [(Path(journal.helper_path), journal_path, operation_id)]
-    expected_launches = (
-        [] if failure == "register" else [(Path(journal.helper_path), journal_path)]
-    )
+    expected_launches = [] if failure == "register" else [(Path(journal.helper_path), journal_path)]
     assert launches == expected_launches
 
 

@@ -1,5 +1,51 @@
 # Architecture decisions
 
+## ADR-194: Numeric release versions use explicit containment bounds
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the integrated commit and PR #110 remains open.
+
+Release-version text is untrusted metadata. `ReleaseVersion.parse()` rejects
+more than 64 characters, more than four dotted numeric components, and more
+than 18 digits in any component before numeric conversion. The explicit
+full-match grammar and bounded conversion map malformed or oversized numeric
+input to the fixed `ManifestError` vocabulary. Journal loading, helper startup
+validation, and primary updater persistence catch numeric `ValueError` at their
+authority boundaries and retain fixed, content-free diagnostics.
+
+This contains the demonstrated numeric parser failure classes and avoids raw
+version text in diagnostics. It does not claim an independent cryptographic
+parser or CPU/depth budget, and it does not create signing, publication,
+release, or downloaded-candidate acceptance.
+
+## ADR-193: Helper-confirmed terminal recovery remains authoritative until safe retirement
+
+**Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted
+checks must be rerun for the integrated commit and PR #110 remains open.
+
+The recovery helper is the authority for terminal update publication. It
+publishes state-first progress, then the matching `COMMITTED` or
+`ROLLED_BACK` journal phase and handoff identity, and finally the terminal
+state cleanup. The primary updater accepts pointerless terminal state only
+when `completed_transaction_is_authoritative` validates the expected operation,
+exactly one transaction directory, journal phase, handoff identity, and
+`transaction_outcome`. It may retire that proven terminal tree before the next
+ordinary operation; a startup or cleanup failure preserves the publication and
+disables unsafe state mutation.
+
+Registration, launch, rollback, and post-journal cleanup errors therefore keep
+the transaction pointer, active handoff identity, journal, and surviving
+evidence. Clear, configure, check, defer, install, prune, and other new
+operations remain blocked while that authority is present. Invalid or
+ambiguous transaction roots cannot be treated as a clean terminal state, and
+the frozen Windows Core startup guard remains blocked. The packaged smoke
+asserts terminal journal publication before restarted Core can retire it.
+
+This decision narrows terminal authority confusion without claiming
+handle-based no-follow atomicity across concurrent same-user mutation and the
+final Windows filesystem syscall. It does not create signing, SmartScreen,
+Defender, Microsoft, release, or live-user acceptance.
+
 ## ADR-192: Operator private-key loading is single-pass and bounded
 
 **Status:** accepted locally on 2026-09-02 as follow-up remediation; hosted

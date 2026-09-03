@@ -72,12 +72,8 @@ class ReleaseVersion:
             match.group("number"),
         ]
         numeric_components = [component for component in components if component is not None]
-        if (
-            len(numeric_components) > MAX_VERSION_COMPONENTS
-            or any(
-                len(component) > MAX_VERSION_COMPONENT_DIGITS
-                for component in numeric_components
-            )
+        if len(numeric_components) > MAX_VERSION_COMPONENTS or any(
+            len(component) > MAX_VERSION_COMPONENT_DIGITS for component in numeric_components
         ):
             raise ManifestError("invalid release version")
         label = match.group("label")

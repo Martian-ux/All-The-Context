@@ -1557,6 +1557,16 @@ class UpdateManager:
             self.state = self._load_state()
             self.state.current_version = config.current_version
             self._validate_internal_state()
+            if self._state_write_allowed and self.state.completed_handoff_identity is not None:
+                # A helper-confirmed terminal publication is safe to retire before
+                # the primary updater considers a new operation. Ambiguous or
+                # failed cleanup leaves the publication and evidence authoritative.
+                if not self._clear_completed_recovery_evidence():
+                    self._state_write_allowed = False
+                    self.state.phase = UpdatePhase.ERROR
+                    self.state.last_error = "Updater staging cleanup could not be completed safely"
+                else:
+                    self.state.completed_handoff_identity = None
             if self._state_write_allowed and self._transaction_evidence_requires_preservation():
                 self._state_write_allowed = False
                 self.state.phase = UpdatePhase.ERROR
@@ -1698,9 +1708,7 @@ class UpdateManager:
         try:
             if _helper_plain_file_stat_if_present(path, "metadata_untrusted") is not None:
                 return True
-            if not _helper_plain_directory_chain_if_present(
-                path.parent, "metadata_untrusted"
-            ):
+            if not _helper_plain_directory_chain_if_present(path.parent, "metadata_untrusted"):
                 return False
             return any(path.parent.iterdir())
         except (HelperError, OSError):
@@ -1864,10 +1872,10 @@ class UpdateManager:
             backup_path = Path(self.state.backup_path or "")
             transaction_root = self.config.data_dir / "transactions"
             expected_transaction = transaction_root / operation / "journal.json"
-            if (
-                self.state.phase not in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK}
-                and not _same_path(Path(self.state.downloaded_path or ""), expected_artifact)
-            ):
+            if self.state.phase not in {
+                UpdatePhase.INSTALLED,
+                UpdatePhase.ROLLED_BACK,
+            } and not _same_path(Path(self.state.downloaded_path or ""), expected_artifact):
                 return False
             if not _same_path(backup_path.parent, backup_root):
                 return False
@@ -1925,11 +1933,7 @@ class UpdateManager:
                 return False
             if self.state.phase in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK} and (
                 transaction_outcome(expected_transaction, validate_storage=False)
-                != (
-                    "installed"
-                    if self.state.phase is UpdatePhase.INSTALLED
-                    else "rolled_back"
-                )
+                != ("installed" if self.state.phase is UpdatePhase.INSTALLED else "rolled_back")
             ):
                 return False
         except (HelperError, OSError, RecursionError, TypeError, ValueError):
@@ -2455,9 +2459,7 @@ class UpdateManager:
                 if not self._clear_completed_recovery_evidence():
                     self._state_write_allowed = False
                     self.state.phase = UpdatePhase.ERROR
-                    self.state.last_error = (
-                        "Updater staging cleanup could not be completed safely"
-                    )
+                    self.state.last_error = "Updater staging cleanup could not be completed safely"
                     raise UpdateError("Updater staging cleanup could not be completed safely")
                 self.state.completed_handoff_identity = None
             next_preferences = UpdatePreferences(enabled, channel, None)
