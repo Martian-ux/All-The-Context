@@ -73,6 +73,9 @@ from .windows_update_helper import (
 from .windows_update_helper import (
     _prepare_plain_directory_chain as _helper_prepare_plain_directory_chain,
 )
+from .windows_update_helper import (
+    _transaction_entry_has_recovery_evidence as _helper_transaction_entry_has_recovery_evidence,
+)
 
 CURRENT_VERSION = __version__
 MAX_MANIFEST_BYTES = 128 * 1024
@@ -1588,7 +1591,7 @@ class UpdateManager:
                 active_transaction = (
                     Path(self.state.transaction_path).parent.name
                     if self.state.transaction_path is not None
-                    else self.state.operation_id
+                    else None
                 )
                 if cleanup_ok:
                     cleanup_ok = self._prune_directory(
@@ -1660,8 +1663,11 @@ class UpdateManager:
         try:
             if not _helper_plain_directory_chain_if_present(transactions, "metadata_untrusted"):
                 return False
-            return any(transactions.iterdir())
-        except (HelperError, OSError):
+            return any(
+                _helper_transaction_entry_has_recovery_evidence(entry)
+                for entry in transactions.iterdir()
+            )
+        except (HelperError, OSError, RecursionError):
             return True
 
     def _recovery_authority_present(self) -> bool:
@@ -1680,9 +1686,14 @@ class UpdateManager:
             if not _helper_plain_directory_chain_if_present(transactions, "metadata_untrusted"):
                 return False
             entries = list(transactions.iterdir())
-        except (HelperError, OSError):
+        except (HelperError, OSError, RecursionError):
             return True
-        if not entries:
+        evidence_entries = [
+            entry
+            for entry in entries
+            if _helper_transaction_entry_has_recovery_evidence(entry)
+        ]
+        if not evidence_entries:
             return False
 
         allowed: Path | None = None
@@ -1702,7 +1713,7 @@ class UpdateManager:
                 allowed = transactions / operation
         if allowed is None:
             return True
-        return any(not _same_path(entry, allowed) for entry in entries)
+        return any(not _same_path(entry, allowed) for entry in evidence_entries)
 
     def _transaction_evidence_persisted(self) -> bool:
         """Treat an existing transaction file or partial transaction tree as authority."""
@@ -1716,8 +1727,8 @@ class UpdateManager:
                 return True
             if not _helper_plain_directory_chain_if_present(path.parent, "metadata_untrusted"):
                 return False
-            return any(path.parent.iterdir())
-        except (HelperError, OSError):
+            return _helper_transaction_entry_has_recovery_evidence(path.parent)
+        except (HelperError, OSError, RecursionError):
             return True
 
     def _clear_completed_recovery_evidence(self) -> bool:

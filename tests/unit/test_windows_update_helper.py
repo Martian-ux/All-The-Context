@@ -1440,6 +1440,7 @@ def test_core_start_guard_resets_pre_cutover_install_without_transaction(
     original_database = fixture.database.read_bytes()
     _signed_staging(fixture, monkeypatch)
     shutil.rmtree(fixture.journal_path.parent)
+    fixture.journal_path.parent.mkdir()
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
     launched: list[tuple[Path, Path]] = []
     monkeypatch.setattr(
@@ -1477,6 +1478,7 @@ def test_core_start_guard_handles_missing_state_without_pruning_transaction_data
     evidence = transactions / ("a" * 24)
     if has_transaction_evidence:
         evidence.mkdir()
+        (evidence / "journal.json").write_bytes(b"partial journal")
     monkeypatch.setenv("ATC_CORE_DATA_DIR", str(data_dir))
     monkeypatch.setattr(helper_module.platform, "system", lambda: "Windows")
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)

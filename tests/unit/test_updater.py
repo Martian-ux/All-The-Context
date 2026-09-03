@@ -145,6 +145,13 @@ class FakeInstaller:
         if self.failure == "crash":
             raise UpdateError("Installer process crashed")
         plan.transaction_dir.mkdir(parents=True, exist_ok=True)
+        if self.failure in {"empty", "incomplete", "partial-journal"}:
+            if self.failure == "incomplete":
+                (plan.transaction_dir / "replacement").mkdir()
+                (plan.transaction_dir / "rollback").mkdir()
+            elif self.failure == "partial-journal":
+                (plan.transaction_dir / "journal.json").write_bytes(b"{\"phase\":")
+            raise UpdateError("Installer process crashed")
         install_dir = plan.transaction_dir / "installed"
         rollback_dir = plan.transaction_dir / "rollback"
         replacement = plan.transaction_dir / "replacement" / "AllTheContextSetup.exe"
@@ -1728,6 +1735,84 @@ def test_handoff_failure_after_journal_persistence_keeps_recovery_authority(
     with pytest.raises(UpdateBusyError, match="recovery helper"):
         restarted.configure(enabled=True, channel="beta")
     assert journal_path.is_file()
+
+
+@pytest.mark.parametrize("failure", ["empty", "incomplete"])
+def test_pre_authority_transaction_directories_are_reclaimed_after_handoff_failure(
+    tmp_path: Path, failure: str
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    installer = FakeInstaller(failure=failure)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.download()
+
+    status = manager.install()
+
+    operation_id = manager.state.operation_id or ""
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    assert status["phase"] == "error"
+    assert manager.state.transaction_path is None
+    assert transaction_dir.is_dir()
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is True
+    assert not transaction_dir.exists()
+    assert restarted.clear_error()["phase"] == "idle"
+    assert restarted.configure(enabled=True, channel="stable")["phase"] == "idle"
+    assert restarted.check()["phase"] == "available"
+
+
+def test_partial_journal_creation_keeps_recovery_authority_after_restart(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    installer = FakeInstaller(failure="partial-journal")
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.download()
+
+    status = manager.install()
+
+    journal_path = Path(manager.state.transaction_path or "")
+    assert status["phase"] == "error"
+    assert journal_path.read_bytes() == b'{"phase":'
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is False
+    assert restarted.state.transaction_path == str(journal_path)
+    assert journal_path.is_file()
+    with pytest.raises(UpdateError, match=r"recovery helper owns|state cannot be changed safely"):
+        restarted.clear_error()
+    with pytest.raises(UpdateError, match=r"recovery helper owns|state cannot be changed safely"):
+        restarted.configure(enabled=True, channel="beta")
+
+
+def test_malicious_nonempty_transaction_directory_remains_fail_closed(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    operation_id = manager.state.operation_id or ""
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    transaction_dir.mkdir(parents=True)
+    marker = transaction_dir / "unexpected.bin"
+    marker.write_bytes(b"untrusted")
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is False
+    assert restarted.public_status()["phase"] == "error"
+    assert marker.is_file()
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        restarted.check()
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        restarted.clear_error()
+    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+        restarted.configure(enabled=True, channel="stable")
 
 
 def test_rollback_failure_keeps_authority_across_error_clear_configure_and_restart(

@@ -1013,9 +1013,58 @@ def _transaction_evidence_without_state(state_path: Path) -> bool:
     try:
         if not _plain_directory_chain_if_present(transactions, "startup_state_untrusted"):
             return False
-        return any(transactions.iterdir())
-    except OSError as exc:
+        return any(
+            _transaction_entry_has_recovery_evidence(entry)
+            for entry in transactions.iterdir()
+        )
+    except (HelperError, OSError, RecursionError) as exc:
         raise HelperError("startup_state_untrusted") from exc
+
+
+MAX_TRANSACTION_EVIDENCE_ENTRIES = 32
+MAX_TRANSACTION_EVIDENCE_DEPTH = 32
+
+
+def _transaction_entry_has_recovery_evidence(path: Path) -> bool:
+    """Classify a transaction entry without treating directory creation as authority."""
+
+    def is_link_or_reparse(value: os.stat_result) -> bool:
+        return stat.S_ISLNK(value.st_mode) or bool(
+            getattr(value, "st_file_attributes", 0) & WINDOWS_REPARSE_POINT
+        )
+
+    try:
+        value = path.lstat()
+    except (FileNotFoundError, OSError):
+        return True
+    if is_link_or_reparse(value) or not stat.S_ISDIR(value.st_mode):
+        return True
+
+    entries_seen = 0
+    stack: list[tuple[Path, int]] = [(path, 0)]
+    try:
+        while stack:
+            directory, depth = stack.pop()
+            if depth > MAX_TRANSACTION_EVIDENCE_DEPTH:
+                return True
+            _plain_directory_stat(directory, "startup_state_untrusted")
+            for child in directory.iterdir():
+                entries_seen += 1
+                if entries_seen > MAX_TRANSACTION_EVIDENCE_ENTRIES:
+                    return True
+                child_stat = child.lstat()
+                if is_link_or_reparse(child_stat):
+                    return True
+                if child.name == "journal.json":
+                    return True
+                if stat.S_ISREG(child_stat.st_mode):
+                    return True
+                if not stat.S_ISDIR(child_stat.st_mode):
+                    return True
+                stack.append((child, depth + 1))
+    except (FileNotFoundError, HelperError, OSError, RecursionError):
+        return True
+    return False
 
 
 @dataclass(slots=True)
@@ -2450,13 +2499,16 @@ def ensure_recovery_before_core() -> bool:
             return False
         if (
             transaction_evidence
-            and phase != "installing"
             and not completed_transaction_is_authoritative(state_path, state, phase)
         ):
             _write_startup_recovery_diagnostic(
                 state_path,
                 status="blocked",
-                code="startup_state_missing_with_transaction",
+                code=(
+                    "startup_state_active_without_transaction"
+                    if phase == "installing"
+                    else "startup_state_missing_with_transaction"
+                ),
                 phase=phase,
             )
             return False
@@ -2473,11 +2525,13 @@ def ensure_recovery_before_core() -> bool:
                 else None
             )
             try:
-                transaction_evidence = expected_transaction_dir is not None and (
-                    _plain_directory_chain_if_present(
-                        expected_transaction_dir, "startup_state_untrusted"
+                transaction_evidence = False
+                if expected_transaction_dir is not None and _plain_directory_chain_if_present(
+                    expected_transaction_dir, "startup_state_untrusted"
+                ):
+                    transaction_evidence = _transaction_entry_has_recovery_evidence(
+                        expected_transaction_dir
                     )
-                )
             except HelperError:
                 _write_startup_recovery_diagnostic(
                     state_path,
