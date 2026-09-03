@@ -1354,11 +1354,7 @@ class UpdateJournal:
             self.database_backup_path,
             self.state_path,
             self.helper_path,
-            *(
-                [self.component_manifest_path]
-                if self.component_manifest_path is not None
-                else []
-            ),
+            *([self.component_manifest_path] if self.component_manifest_path is not None else []),
         )
         if any(not isinstance(item, str) or not item for item in path_values):
             raise HelperError("journal_path_invalid")
@@ -1488,9 +1484,7 @@ def _prebinding_transaction_files(journal: UpdateJournal, journal_path: Path) ->
             else []
         ),
         *(
-            [
-                Path(journal.component_manifest_path).with_name(CHECKSUM_FILE_NAME)
-            ]
+            [Path(journal.component_manifest_path).with_name(CHECKSUM_FILE_NAME)]
             if journal.component_manifest_path is not None
             else []
         ),

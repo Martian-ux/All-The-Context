@@ -245,10 +245,7 @@ def validate_manifest_bytes(
     if payload["version"] != expected_version:
         _failure("installed-component manifest version does not match the update")
     package = cast(dict[str, Any], payload["package"])
-    if (
-        package["sha256"] != expected_package_sha256
-        or package["size"] != expected_package_size
-    ):
+    if package["sha256"] != expected_package_sha256 or package["size"] != expected_package_size:
         _failure("archive package does not match the installed-component manifest")
     return payload
 
