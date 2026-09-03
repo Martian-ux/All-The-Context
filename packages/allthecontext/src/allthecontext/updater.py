@@ -43,7 +43,11 @@ from .release_manifest import (
     verify_manifest,
 )
 from .windows_update_helper import (
+    MAX_JOURNAL_BYTES,
+    MAX_RETIREMENT_TOMBSTONE_BYTES,
     POST_COMMIT_DEGRADED_ERROR,
+    RETIREMENT_TOMBSTONE_DIRECTORY,
+    RETIREMENT_TOMBSTONE_SCHEMA_VERSION,
     HelperError,
     HelperPhase,
     UpdateJournal,
@@ -52,6 +56,7 @@ from .windows_update_helper import (
     completed_transaction_is_authoritative,
     journal_handoff_identity,
     launch_recovery_helper,
+    recovery_authority_retirement_status,
     register_recovery,
     request_rollback,
     retire_recovery_authority,
@@ -114,6 +119,10 @@ class _PersistedMetadataError(UpdateError):
 
 class _BoundedJsonError(UpdateError):
     """Expected bounded JSON boundary failure, distinct from programming errors."""
+
+
+class _RetirementEvidenceError(UpdateError):
+    """Terminal retirement evidence failed closed and must not be replaced."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,6 +350,14 @@ def _safe_public_url(value: str | None) -> str | None:
     ):
         return None
     return value
+
+
+def _valid_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 class UpdatePhase(StrEnum):
@@ -1567,15 +1584,9 @@ class UpdateManager:
             self.state.current_version = config.current_version
             self._validate_internal_state()
             if self._state_write_allowed and self.state.completed_handoff_identity is not None:
-                # A helper-confirmed terminal publication is safe to retire before
-                # the primary updater considers a new operation. Ambiguous or
-                # failed cleanup leaves the publication and evidence authoritative.
-                if not self._clear_completed_recovery_evidence():
-                    self._state_write_allowed = False
-                    self.state.phase = UpdatePhase.ERROR
-                    self.state.last_error = "Updater staging cleanup could not be completed safely"
-                else:
-                    self.state.completed_handoff_identity = None
+                # A failed retirement remains a valid terminal state with a
+                # tombstone that the next startup can retry.
+                self._clear_completed_recovery_evidence()
             if self._state_write_allowed and self._transaction_evidence_requires_preservation():
                 self._state_write_allowed = False
                 self.state.phase = UpdatePhase.ERROR
@@ -1585,18 +1596,27 @@ class UpdateManager:
             self._normalize_unpublished_channel_state()
             self._recover_interrupted()
             if self._state_write_allowed:
-                cleanup_ok = self._prune_directory(
-                    self.config.data_dir / "staging", keep=self.state.operation_id
+                cleanup_ok = self._prune_retirement_tombstones()
+                cleanup_ok = (
+                    self._prune_directory(
+                        self.config.data_dir / "staging", keep=self.state.operation_id
+                    )
+                    if cleanup_ok
+                    else False
                 )
                 active_transaction = (
                     Path(self.state.transaction_path).parent.name
                     if self.state.transaction_path is not None
                     else None
                 )
+                if active_transaction is None and self.state.completed_handoff_identity is not None:
+                    active_transaction = self.state.operation_id
                 if cleanup_ok:
                     cleanup_ok = self._prune_directory(
                         self.config.data_dir / "transactions", keep=active_transaction
                     )
+                if cleanup_ok:
+                    cleanup_ok = self._prune_retirement_tombstones()
                 if cleanup_ok:
                     cleanup_ok = self._prune_directory(self.config.data_dir / "exports", keep=None)
                 if cleanup_ok:
@@ -1659,6 +1679,14 @@ class UpdateManager:
     def _recovery_evidence_present(self) -> bool:
         """Conservatively retain state authority when a recovery tree exists."""
 
+        retirements = self.config.data_dir / RETIREMENT_TOMBSTONE_DIRECTORY
+        try:
+            if _helper_plain_directory_chain_if_present(retirements, "metadata_untrusted") and any(
+                retirements.iterdir()
+            ):
+                return True
+        except (HelperError, OSError, RecursionError):
+            return True
         transactions = self.config.data_dir / "transactions"
         try:
             if not _helper_plain_directory_chain_if_present(transactions, "metadata_untrusted"):
@@ -1697,18 +1725,24 @@ class UpdateManager:
         allowed: Path | None = None
         if self.state.transaction_path is not None:
             allowed = Path(self.state.transaction_path).parent
-        elif completed_transaction_is_authoritative(
-            self.state_path,
-            {
-                **asdict(self.state),
-                "phase": self.state.phase.value,
-            },
-            self.state.phase.value,
-            validate_storage=False,
+        elif (
+            self.state.operation_id is not None
+            and self.state.phase in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK}
+            and (
+                self._retirement_tombstone_state_matches()
+                or completed_transaction_is_authoritative(
+                    self.state_path,
+                    {
+                        **asdict(self.state),
+                        "phase": self.state.phase.value,
+                    },
+                    self.state.phase.value,
+                    validate_storage=False,
+                )
+            )
         ):
             operation = self.state.operation_id
-            if operation is not None:
-                allowed = transactions / operation
+            allowed = transactions / operation
         if allowed is None:
             return True
         return any(not _same_path(entry, allowed) for entry in evidence_entries)
@@ -1729,37 +1763,389 @@ class UpdateManager:
         except (HelperError, OSError, RecursionError):
             return True
 
+    def _retirement_root(self) -> Path:
+        return self.config.data_dir / RETIREMENT_TOMBSTONE_DIRECTORY
+
+    def _retirement_tombstone_candidates(self, operation: str) -> list[Path]:
+        root = self._retirement_root()
+        if not _helper_plain_directory_chain_if_present(root, "metadata_untrusted"):
+            return []
+        prefix = f"{operation}-"
+        return [
+            entry
+            for entry in root.iterdir()
+            if entry.name.startswith(prefix) and entry.name.endswith(".json")
+        ]
+
+    @staticmethod
+    def _retirement_tombstone_payload(value: Mapping[str, Any]) -> dict[str, Any] | None:
+        fields = {
+            "schema_version",
+            "operation_id",
+            "outcome",
+            "terminal_phase",
+            "handoff_identity",
+            "terminal_authority_mac",
+            "journal_sha256",
+        }
+        if set(value) != fields:
+            return None
+        operation = value.get("operation_id")
+        outcome = value.get("outcome")
+        terminal_phase = value.get("terminal_phase")
+        if (
+            value.get("schema_version") != RETIREMENT_TOMBSTONE_SCHEMA_VERSION
+            or not isinstance(operation, str)
+            or len(operation) != 24
+            or any(character not in "0123456789abcdef" for character in operation)
+            or outcome not in {"installed", "rolled_back"}
+            or terminal_phase not in {HelperPhase.COMMITTED.value, HelperPhase.ROLLED_BACK.value}
+            or not isinstance(value.get("handoff_identity"), str)
+            or len(cast(str, value["handoff_identity"])) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in cast(str, value["handoff_identity"])
+            )
+            or not isinstance(value.get("terminal_authority_mac"), str)
+            or len(cast(str, value["terminal_authority_mac"])) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in cast(str, value["terminal_authority_mac"])
+            )
+            or not isinstance(value.get("journal_sha256"), str)
+            or len(cast(str, value["journal_sha256"])) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in cast(str, value["journal_sha256"])
+            )
+        ):
+            return None
+        return dict(value)
+
+    def _load_retirement_tombstone(self, path: Path) -> tuple[dict[str, Any], bytes] | None:
+        try:
+            bounded = _read_bounded_json(
+                path,
+                MAX_RETIREMENT_TOMBSTONE_BYTES,
+                label="Updater retirement evidence",
+            )
+        except (_PersistedMetadataError, RecursionError, TypeError, ValueError):
+            return None
+        payload = self._retirement_tombstone_payload(bounded.value)
+        if payload is None:
+            return None
+        prefix = f"{payload['operation_id']}-"
+        suffix = ".json"
+        if not path.name.startswith(prefix) or not path.name.endswith(suffix):
+            return None
+        filename_digest = path.name[len(prefix) : -len(suffix)]
+        if (
+            len(filename_digest) != 64
+            or any(character not in "0123456789abcdef" for character in filename_digest)
+            or hashlib.sha256(bounded.raw).hexdigest() != filename_digest
+            or bounded.raw != self._render_json(payload).encode("utf-8")
+        ):
+            return None
+        return payload, bounded.raw
+
+    def _retirement_tombstone_state_matches(self) -> bool:
+        operation = self.state.operation_id
+        identity = self.state.completed_handoff_identity
+        if operation is None or self.state.phase not in {
+            UpdatePhase.INSTALLED,
+            UpdatePhase.ROLLED_BACK,
+        }:
+            return False
+        try:
+            candidates = self._retirement_tombstone_candidates(operation)
+            if len(candidates) != 1:
+                return False
+            loaded = self._load_retirement_tombstone(candidates[0])
+            if loaded is None:
+                return False
+            payload, _ = loaded
+            return bool(
+                (identity is None or payload["handoff_identity"] == identity)
+                and payload["outcome"]
+                == ("installed" if self.state.phase is UpdatePhase.INSTALLED else "rolled_back")
+                and payload["terminal_phase"]
+                == (
+                    HelperPhase.COMMITTED.value
+                    if self.state.phase is UpdatePhase.INSTALLED
+                    else HelperPhase.ROLLED_BACK.value
+                )
+            )
+        except (HelperError, OSError, RecursionError, TypeError, ValueError):
+            return False
+
+    def _build_retirement_tombstone(self) -> tuple[Path, dict[str, Any]]:
+        identity = self.state.completed_handoff_identity
+        operation = self.state.operation_id
+        if (
+            identity is None
+            or operation is None
+            or self.state.phase
+            not in {
+                UpdatePhase.INSTALLED,
+                UpdatePhase.ROLLED_BACK,
+            }
+        ):
+            raise _RetirementEvidenceError("terminal retirement state is incomplete")
+        journal_path = self.config.data_dir / "transactions" / operation / "journal.json"
+        try:
+            bounded = _read_bounded_json(
+                journal_path,
+                MAX_JOURNAL_BYTES,
+                label="Updater terminal recovery journal",
+            )
+            journal = UpdateJournal.load(journal_path, validate_storage=False)
+            expected_phase = (
+                HelperPhase.COMMITTED
+                if self.state.phase is UpdatePhase.INSTALLED
+                else HelperPhase.ROLLED_BACK
+            )
+            if (
+                journal.operation_id != operation
+                or journal.phase is not expected_phase
+                or journal_handoff_identity(journal) != identity
+                or not _same_path(Path(journal.state_path), self.state_path)
+                or not _valid_digest(journal.terminal_authority_mac)
+                or recovery_authority_retirement_status(
+                    operation,
+                    identity,
+                    expected_phase.value,
+                    cast(str, journal.terminal_authority_mac),
+                )
+                not in {"valid", "missing"}
+            ):
+                raise _RetirementEvidenceError("terminal retirement evidence is invalid")
+        except _RetirementEvidenceError:
+            raise
+        except (HelperError, OSError, RecursionError, TypeError, ValueError, UpdateError) as exc:
+            raise _RetirementEvidenceError("terminal retirement evidence is unavailable") from exc
+        payload = {
+            "schema_version": RETIREMENT_TOMBSTONE_SCHEMA_VERSION,
+            "operation_id": operation,
+            "outcome": "installed" if self.state.phase is UpdatePhase.INSTALLED else "rolled_back",
+            "terminal_phase": journal.phase.value,
+            "handoff_identity": identity,
+            "terminal_authority_mac": journal.terminal_authority_mac,
+            "journal_sha256": hashlib.sha256(bounded.raw).hexdigest(),
+        }
+        digest = hashlib.sha256(self._render_json(payload).encode("utf-8")).hexdigest()
+        return self._retirement_root() / f"{operation}-{digest}.json", payload
+
+    def _validate_retirement_tombstone(self, path: Path, payload: Mapping[str, Any]) -> bool:
+        operation = cast(str, payload["operation_id"])
+        identity = cast(str, payload["handoff_identity"])
+        terminal_phase = cast(str, payload["terminal_phase"])
+        status = recovery_authority_retirement_status(
+            operation,
+            identity,
+            terminal_phase,
+            cast(str, payload["terminal_authority_mac"]),
+        )
+        if status not in {"valid", "missing"}:
+            return False
+        journal_path = self.config.data_dir / "transactions" / operation / "journal.json"
+        try:
+            journal_stat = _helper_plain_file_stat_if_present(journal_path, "metadata_untrusted")
+            if journal_stat is None:
+                return True
+            bounded = _read_bounded_json(
+                journal_path,
+                MAX_JOURNAL_BYTES,
+                label="Updater terminal recovery journal",
+            )
+            if hashlib.sha256(bounded.raw).hexdigest() != payload["journal_sha256"]:
+                return False
+            journal = UpdateJournal.load(journal_path, validate_storage=False)
+            return bool(
+                journal.operation_id == operation
+                and journal.phase.value == terminal_phase
+                and journal_handoff_identity(journal) == identity
+                and journal.terminal_authority_mac == payload["terminal_authority_mac"]
+                and (
+                    status == "missing"
+                    or recovery_authority_retirement_status(
+                        operation,
+                        identity,
+                        terminal_phase,
+                        cast(str, journal.terminal_authority_mac),
+                    )
+                    == "valid"
+                )
+            )
+        except (HelperError, OSError, RecursionError, TypeError, ValueError, UpdateError):
+            return False
+
+    def _ensure_retirement_tombstone(self) -> tuple[Path, dict[str, Any]]:
+        operation = self.state.operation_id
+        identity = self.state.completed_handoff_identity
+        if operation is None or identity is None:
+            raise _RetirementEvidenceError("terminal retirement state is incomplete")
+        candidates = self._retirement_tombstone_candidates(operation)
+        if len(candidates) > 1:
+            raise _RetirementEvidenceError("multiple terminal retirement records exist")
+        if candidates:
+            loaded = self._load_retirement_tombstone(candidates[0])
+            if loaded is None:
+                raise _RetirementEvidenceError("terminal retirement record is invalid")
+            payload, _ = loaded
+            expected_outcome = (
+                "installed" if self.state.phase is UpdatePhase.INSTALLED else "rolled_back"
+            )
+            expected_phase = (
+                HelperPhase.COMMITTED.value
+                if expected_outcome == "installed"
+                else HelperPhase.ROLLED_BACK.value
+            )
+            if (
+                payload["operation_id"] != operation
+                or payload["outcome"] != expected_outcome
+                or payload["terminal_phase"] != expected_phase
+                or payload["handoff_identity"] != identity
+                or not self._validate_retirement_tombstone(candidates[0], payload)
+            ):
+                raise _RetirementEvidenceError("terminal retirement record does not match state")
+            return candidates[0], payload
+        path, payload = self._build_retirement_tombstone()
+        _atomic_json(path, payload)
+        loaded = self._load_retirement_tombstone(path)
+        if loaded is None or not self._validate_retirement_tombstone(path, loaded[0]):
+            raise _RetirementEvidenceError("terminal retirement record could not be verified")
+        return path, loaded[0]
+
+    @staticmethod
+    def _remove_retirement_tombstone(path: Path) -> bool:
+        try:
+            parent = _plain_directory_stat_if_present(path.parent)
+            if parent is None:
+                return True
+            target = _helper_plain_file_stat_if_present(path, "metadata_untrusted")
+            if target is None:
+                return True
+            return _unlink_owned_entry(
+                path,
+                parent_expected=parent,
+                target_expected=target,
+            )
+        except (HelperError, OSError, RecursionError):
+            return False
+
+    def _retirement_cleanup_failed(self, *, invalid: bool = False) -> bool:
+        if invalid:
+            self._state_write_allowed = False
+            self.state.phase = UpdatePhase.ERROR
+            self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+            return False
+        self.state.last_error = "Updater staging cleanup could not be completed safely"
+        try:
+            self._save()
+        except UpdateError:
+            self._state_write_allowed = False
+        return False
+
     def _clear_completed_recovery_evidence(self) -> bool:
-        """Remove only terminal evidence already proven safe to retire."""
+        """Retire terminal evidence through a crash-replayable tombstone."""
 
         identity = self.state.completed_handoff_identity
         operation = self.state.operation_id
         if identity is None or operation is None or self.state.transaction_path is not None:
             return True
-        if not completed_transaction_is_authoritative(
-            self.state_path,
-            {
-                **asdict(self.state),
-                "phase": self.state.phase.value,
-            },
-            self.state.phase.value,
-            validate_storage=False,
-        ):
-            return False
-        transaction_dir = self.config.data_dir / "transactions" / operation
+        try:
+            tombstone_path, tombstone = self._ensure_retirement_tombstone()
+        except _RetirementEvidenceError:
+            return self._retirement_cleanup_failed(invalid=True)
+        except (HelperError, OSError, RecursionError, TypeError, ValueError, UpdateError):
+            return self._retirement_cleanup_failed()
+
         operation_dir = self.config.data_dir / "staging" / operation
+        transaction_dir = self.config.data_dir / "transactions" / operation
+        cleanup_ok = True
         try:
             operation_expected = _plain_directory_stat_if_present(operation_dir)
             if operation_expected is not None and not _remove_owned_tree(
                 operation_dir, expected=operation_expected
             ):
-                return False
-            expected = _plain_directory_stat_if_present(transaction_dir)
+                cleanup_ok = False
+        except (HelperError, OSError, RecursionError):
+            cleanup_ok = False
+        try:
+            transaction_expected = _plain_directory_stat_if_present(transaction_dir)
+            if transaction_expected is not None and not _remove_owned_tree(
+                transaction_dir, expected=transaction_expected
+            ):
+                cleanup_ok = False
+        except (HelperError, OSError, RecursionError):
+            cleanup_ok = False
+
+        authority_status = recovery_authority_retirement_status(
+            operation,
+            cast(str, tombstone["handoff_identity"]),
+            cast(str, tombstone["terminal_phase"]),
+            cast(str, tombstone["terminal_authority_mac"]),
+        )
+        authority_ok = authority_status == "missing"
+        if authority_status == "valid":
+            authority_ok = retire_recovery_authority(operation)
+        elif authority_status not in {"valid", "missing"}:
+            return self._retirement_cleanup_failed(invalid=True)
+        if not cleanup_ok or not authority_ok:
+            return self._retirement_cleanup_failed()
+
+        self.state.completed_handoff_identity = None
+        try:
+            self._save()
+        except UpdateError:
+            self.state.completed_handoff_identity = identity
+            return self._retirement_cleanup_failed()
+        # State is cleared before this unlink.  A crash here leaves only an
+        # authenticated, already-retired tombstone for the next startup prune.
+        self._remove_retirement_tombstone(tombstone_path)
+        return True
+
+    def _prune_retirement_tombstones(self) -> bool:
+        """Reap only authenticated, already-retired orphan tombstones."""
+
+        root = self._retirement_root()
+        try:
+            if not _helper_plain_directory_chain_if_present(root, "metadata_untrusted"):
+                return True
+            entries = list(root.iterdir())
         except (HelperError, OSError, RecursionError):
             return False
-        if expected is not None and not _remove_owned_tree(transaction_dir, expected=expected):
-            return False
-        return retire_recovery_authority(operation)
+        pending_operation = (
+            self.state.operation_id if self.state.completed_handoff_identity is not None else None
+        )
+        for entry in entries:
+            if pending_operation is not None and entry.name.startswith(f"{pending_operation}-"):
+                continue
+            loaded = self._load_retirement_tombstone(entry)
+            if loaded is None:
+                return False
+            payload, _ = loaded
+            operation = cast(str, payload["operation_id"])
+            transaction_dir = self.config.data_dir / "transactions" / operation
+            try:
+                if _plain_directory_stat_if_present(transaction_dir) is not None:
+                    continue
+            except (HelperError, OSError, RecursionError):
+                return False
+            status = recovery_authority_retirement_status(
+                operation,
+                cast(str, payload["handoff_identity"]),
+                cast(str, payload["terminal_phase"]),
+                cast(str, payload["terminal_authority_mac"]),
+            )
+            if status == "valid":
+                if not retire_recovery_authority(operation):
+                    continue
+            elif status != "missing":
+                return False
+            if not self._remove_retirement_tombstone(entry):
+                return False
+        return True
 
     def _load_state(self) -> UpdateState:
         try:
@@ -2202,11 +2588,7 @@ class UpdateManager:
         self.state.completed_handoff_identity = completed_identity
         self._save()
         if not self._clear_completed_recovery_evidence():
-            self._state_write_allowed = False
-            self.state.last_error = "Updater staging cleanup could not be completed safely"
             return self.public_status()
-        self.state.completed_handoff_identity = None
-        self._save()
         return self.public_status()
 
     def recover_after_restart(self) -> dict[str, Any]:
@@ -2490,12 +2872,11 @@ class UpdateManager:
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed(preferences=True)
             channel_changed = channel != self.preferences.channel
-            if self.state.completed_handoff_identity is not None:
-                if not self._clear_completed_recovery_evidence():
-                    self._state_write_allowed = False
-                    self.state.last_error = "Updater staging cleanup could not be completed safely"
-                    raise UpdateError("Updater staging cleanup could not be completed safely")
-                self.state.completed_handoff_identity = None
+            if (
+                self.state.completed_handoff_identity is not None
+                and not self._clear_completed_recovery_evidence()
+            ):
+                raise UpdateError("Updater staging cleanup could not be completed safely")
             next_preferences = UpdatePreferences(enabled, channel, None)
             cleanup_failed = channel_changed and (
                 not self._clean_operation()
@@ -2536,12 +2917,11 @@ class UpdateManager:
                 raise UpdateError("There is no available update to defer")
             if self.state.mandatory:
                 raise UpdateError("This compatibility or security update cannot be deferred")
-            if self.state.completed_handoff_identity is not None:
-                if not self._clear_completed_recovery_evidence():
-                    self._state_write_allowed = False
-                    self.state.last_error = "Updater staging cleanup could not be completed safely"
-                    raise UpdateError("Updater staging cleanup could not be completed safely")
-                self.state.completed_handoff_identity = None
+            if (
+                self.state.completed_handoff_identity is not None
+                and not self._clear_completed_recovery_evidence()
+            ):
+                raise UpdateError("Updater staging cleanup could not be completed safely")
             next_preferences = UpdatePreferences(
                 self.preferences.enabled, self.preferences.channel, self.state.offered_version
             )
@@ -2579,13 +2959,11 @@ class UpdateManager:
         with self._exclusive():
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed()
-            if self.state.completed_handoff_identity is not None:
-                if not self._clear_completed_recovery_evidence():
-                    self._state_write_allowed = False
-                    self.state.phase = UpdatePhase.ERROR
-                    self.state.last_error = "Updater staging cleanup could not be completed safely"
-                    return self.public_status()
-                self.state.completed_handoff_identity = None
+            if (
+                self.state.completed_handoff_identity is not None
+                and not self._clear_completed_recovery_evidence()
+            ):
+                return self.public_status()
             if not self.preferences.enabled:
                 self.state.phase = UpdatePhase.DISABLED
                 self._save()

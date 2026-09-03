@@ -49,6 +49,9 @@ _RECOVERY_AUTHORITY_VALUES: dict[str, str] = {}
 
 
 class _RecoveryAuthorityStore:
+    def __init__(self, *, fail_delete: bool = False) -> None:
+        self.fail_delete = fail_delete
+
     def get(self, name: str) -> str | None:
         return _RECOVERY_AUTHORITY_VALUES.get(name)
 
@@ -56,7 +59,8 @@ class _RecoveryAuthorityStore:
         _RECOVERY_AUTHORITY_VALUES[name] = value
 
     def delete(self, name: str) -> None:
-        _RECOVERY_AUTHORITY_VALUES.pop(name, None)
+        if not self.fail_delete:
+            _RECOVERY_AUTHORITY_VALUES.pop(name, None)
 
 
 @pytest.fixture(autouse=True)
@@ -366,6 +370,24 @@ def _publish_helper_terminal(
             }
         )
         manager.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+
+def _completed_manager(
+    tmp_path: Path,
+    manifest: dict[str, Any],
+    artifact: bytes,
+    keyring: Path,
+    *,
+    outcome: str = "installed",
+) -> tuple[UpdateManager, str]:
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    _publish_helper_terminal(manager, outcome)
+    manager.state = manager._load_state()
+    manager.state.current_version = manager.config.current_version
+    return manager, cast(str, manager.state.operation_id)
 
 
 def _beta_manager(tmp_path: Path, keyring: Path) -> UpdateManager:
@@ -1109,6 +1131,144 @@ def test_completed_cleanup_retires_authority_after_tree_removal(
     assert events == ["tree", "tree", "retire"]
     assert removed_paths == [operation_dir, transaction_dir]
     assert not transaction_dir.exists()
+
+
+@pytest.mark.parametrize("outcome", ["installed", "rolled_back"])
+def test_retirement_tombstone_retries_after_credential_deletion_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring, outcome=outcome)
+    staging_dir = manager.state_path.parent / "staging" / operation
+    transaction_dir = manager.state_path.parent / "transactions" / operation
+    original_retire = updater_module.retire_recovery_authority
+    attempts: list[str] = []
+
+    def fail_retirement(value: str) -> bool:
+        attempts.append(value)
+        return False
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", fail_retirement)
+    assert manager._clear_completed_recovery_evidence() is False
+    assert attempts == [operation]
+    assert manager._state_write_allowed is True
+    assert manager.state.completed_handoff_identity is not None
+    assert not staging_dir.exists()
+    assert not transaction_dir.exists()
+    tombstones = list((manager.state_path.parent / "retirements").iterdir())
+    assert len(tombstones) == 1
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert restarted._state_write_allowed is True
+    assert restarted.state.completed_handoff_identity is not None
+    assert restarted.state.phase.value == outcome
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", original_retire)
+    assert restarted._clear_completed_recovery_evidence() is True
+    assert restarted.state.completed_handoff_identity is None
+    assert not list((restarted.state_path.parent / "retirements").iterdir())
+
+
+def test_retirement_tombstone_handles_credential_deleted_before_cleanup_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    original_retire = updater_module.retire_recovery_authority
+
+    def delete_then_report_failure(value: str) -> bool:
+        assert original_retire(value) is True
+        return False
+
+    monkeypatch.setattr(updater_module, "retire_recovery_authority", delete_then_report_failure)
+    assert manager._clear_completed_recovery_evidence() is False
+    assert manager.state.completed_handoff_identity is not None
+    assert not (manager.state_path.parent / "staging" / operation).exists()
+    assert not (manager.state_path.parent / "transactions" / operation).exists()
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert restarted._state_write_allowed is True
+    assert restarted.state.completed_handoff_identity is None
+    assert not list((restarted.state_path.parent / "retirements").iterdir())
+
+
+def test_retirement_tombstone_retries_a_real_store_delete_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _RecoveryAuthorityStore(fail_delete=True)
+    monkeypatch.setattr(update_helper_module, "_recovery_authority_store", lambda: store)
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+
+    assert manager._clear_completed_recovery_evidence() is False
+    assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
+    assert manager.state.completed_handoff_identity is not None
+
+    store.fail_delete = False
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is True
+    assert restarted.state.completed_handoff_identity is None
+    assert f"transaction:{operation}" not in _RECOVERY_AUTHORITY_VALUES
+
+
+@pytest.mark.parametrize("tamper", ["tombstone", "journal"])
+def test_retirement_tampering_preserves_evidence_and_blocks_writes(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, payload = manager._ensure_retirement_tombstone()
+    if tamper == "tombstone":
+        payload["terminal_authority_mac"] = "0" * 64
+        tombstone.write_text(manager._render_json(payload), encoding="utf-8")
+    else:
+        journal_path = manager.state_path.parent / "transactions" / operation / "journal.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["parent_pid"] += 1
+        journal_path.write_text(manager._render_json(journal), encoding="utf-8")
+
+    assert manager._clear_completed_recovery_evidence() is False
+    assert manager._state_write_allowed is False
+    assert manager.state.last_error == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert (manager.state_path.parent / "staging" / operation).exists()
+    assert (manager.state_path.parent / "transactions" / operation).exists()
+
+
+def test_retirement_tombstone_orphan_is_reaped_by_startup_pruning(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _ = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    manager.state.completed_handoff_identity = None
+    manager._save()
+    assert tombstone.is_file()
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    assert restarted._state_write_allowed is True
+    assert not tombstone.exists()
+
+
+def test_frozen_windows_startup_accepts_retirement_tombstone_after_credential_retired(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, operation = _completed_manager(tmp_path, manifest, artifact, keyring)
+    tombstone, _ = manager._ensure_retirement_tombstone()
+    _RECOVERY_AUTHORITY_VALUES.clear()
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(update_helper_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(update_helper_module.sys, "frozen", True, raising=False)
+
+    assert tombstone.is_file()
+    assert (manager.state_path.parent / "transactions" / operation).is_dir()
+    assert update_helper_module.ensure_recovery_before_core() is True
 
 
 @pytest.mark.parametrize("outcome", ["installed", "rolled_back"])

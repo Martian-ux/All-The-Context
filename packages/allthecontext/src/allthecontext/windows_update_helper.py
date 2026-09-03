@@ -50,6 +50,9 @@ STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1
 STARTUP_RECOVERY_DIAGNOSTIC_NAME = "startup-recovery.json"
 MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES = 16 * 1024
 STARTUP_RECOVERY_DIAGNOSTIC_STATUSES = frozenset({"blocked", "cleared"})
+RETIREMENT_TOMBSTONE_SCHEMA_VERSION = 1
+RETIREMENT_TOMBSTONE_DIRECTORY = "retirements"
+MAX_RETIREMENT_TOMBSTONE_BYTES = 16 * 1024
 RECOVERY_AUTHORITY_SCHEMA_VERSION = 1
 RECOVERY_AUTHORITY_NAME_PREFIX = "transaction:"
 RECOVERY_AUTHORITY_SERVICE = "All The Context updater recovery authority"
@@ -688,6 +691,43 @@ def validate_recovery_authority(
         ),
     ):
         raise HelperError("recovery_authority_invalid")
+
+
+def recovery_authority_retirement_status(
+    operation_id: str,
+    journal_identity: str,
+    terminal_phase: str,
+    terminal_authority_mac: str,
+) -> str:
+    """Classify terminal proof while allowing an already-retired credential.
+
+    The updater writes a retirement tombstone before it removes the credential.
+    A missing credential is therefore a successful, idempotent terminal state;
+    an unavailable or malformed store remains distinguishable from that case.
+    """
+
+    if (
+        not _valid_operation_id(operation_id)
+        or not _valid_digest(journal_identity)
+        or terminal_phase not in {phase.value for phase in TERMINAL_PHASES}
+        or not _valid_digest(terminal_authority_mac)
+    ):
+        return "invalid"
+    try:
+        secret = _recovery_authority_secret(operation_id, create=False)
+    except HelperError as exc:
+        if exc.code == "recovery_authority_missing":
+            return "missing"
+        if exc.code == "recovery_authority_unavailable":
+            return "unavailable"
+        return "invalid"
+    expected = _recovery_authority_mac(
+        secret,
+        operation_id,
+        journal_identity,
+        terminal_phase,
+    )
+    return "valid" if hmac.compare_digest(terminal_authority_mac, expected) else "invalid"
 
 
 def bind_recovery_authority(journal: UpdateJournal, journal_path: Path) -> str:
@@ -2418,6 +2458,95 @@ def completed_transaction_is_authoritative(
         return False
 
 
+def _retirement_tombstone_is_authoritative(
+    state_path: Path, state: dict[str, Any], phase: str
+) -> bool:
+    """Recognize terminal cleanup evidence after its credential was retired."""
+
+    operation_id = state.get("operation_id")
+    completed_identity = state.get("completed_handoff_identity")
+    if (
+        phase not in {"installed", "rolled_back"}
+        or not _valid_operation_id(operation_id)
+        or not _valid_digest(completed_identity)
+    ):
+        return False
+    root = state_path.parent / RETIREMENT_TOMBSTONE_DIRECTORY
+    try:
+        if not _plain_directory_chain_if_present(root, "startup_state_untrusted"):
+            return False
+        prefix = f"{cast(str, operation_id)}-"
+        candidates = [
+            entry
+            for entry in root.iterdir()
+            if entry.name.startswith(prefix) and entry.name.endswith(".json")
+        ]
+        if len(candidates) != 1:
+            return False
+        path = candidates[0]
+        value = _read_json(
+            path,
+            MAX_RETIREMENT_TOMBSTONE_BYTES,
+            boundary_code="startup_state_untrusted",
+        )
+        raw = (
+            json.dumps(
+                value,
+                sort_keys=True,
+                indent=2,
+            ).encode("utf-8")
+            + b"\n"
+        )
+        fields = {
+            "schema_version",
+            "operation_id",
+            "outcome",
+            "terminal_phase",
+            "handoff_identity",
+            "terminal_authority_mac",
+            "journal_sha256",
+        }
+        if set(value) != fields:
+            return False
+        expected_outcome = phase
+        expected_terminal_phase = "committed" if phase == "installed" else "rolled_back"
+        if (
+            value.get("schema_version") != RETIREMENT_TOMBSTONE_SCHEMA_VERSION
+            or value.get("operation_id") != operation_id
+            or value.get("outcome") != expected_outcome
+            or value.get("terminal_phase") != expected_terminal_phase
+            or value.get("handoff_identity") != completed_identity
+            or not _valid_digest(value.get("terminal_authority_mac"))
+            or not _valid_digest(value.get("journal_sha256"))
+            or hashlib.sha256(raw).hexdigest() != path.name[len(prefix) : -5]
+        ):
+            return False
+        status = recovery_authority_retirement_status(
+            cast(str, operation_id),
+            cast(str, completed_identity),
+            cast(str, value["terminal_phase"]),
+            cast(str, value["terminal_authority_mac"]),
+        )
+        if status not in {"valid", "missing"}:
+            return False
+        journal_path = state_path.parent / "transactions" / cast(str, operation_id) / "journal.json"
+        if _plain_file_stat_if_present(journal_path, "startup_state_untrusted") is None:
+            return True
+        journal = UpdateJournal.load(journal_path, validate_storage=False)
+        journal_value = asdict(journal)
+        journal_value["phase"] = journal.phase.value
+        journal_raw = json.dumps(journal_value, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+        return bool(
+            journal.operation_id == operation_id
+            and journal.phase.value == expected_terminal_phase
+            and journal_handoff_identity(journal) == completed_identity
+            and journal.terminal_authority_mac == value["terminal_authority_mac"]
+            and hashlib.sha256(journal_raw).hexdigest() == value["journal_sha256"]
+        )
+    except (HelperError, OSError, RecursionError, TypeError, ValueError):
+        return False
+
+
 def record_startup_recovery_parser_failure() -> None:
     """Persist a fixed diagnostic when the outer frozen startup guard is hit."""
 
@@ -2490,8 +2619,9 @@ def ensure_recovery_before_core() -> bool:
                 phase=phase,
             )
             return False
-        if transaction_evidence and not completed_transaction_is_authoritative(
-            state_path, state, phase
+        if transaction_evidence and not (
+            completed_transaction_is_authoritative(state_path, state, phase)
+            or _retirement_tombstone_is_authoritative(state_path, state, phase)
         ):
             _write_startup_recovery_diagnostic(
                 state_path,
