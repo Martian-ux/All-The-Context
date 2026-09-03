@@ -167,6 +167,7 @@ class BootstrapInstallJournal:
     install_root: str
     transaction_dir: str
     core_was_running: bool
+    core_stop_complete: bool
     phase: BootstrapPhase
     cutover_index: int
     core_restart_complete: bool
@@ -183,6 +184,7 @@ class BootstrapInstallJournal:
             "install_root": self.install_root,
             "transaction_dir": self.transaction_dir,
             "core_was_running": self.core_was_running,
+            "core_stop_complete": self.core_stop_complete,
             "phase": self.phase.value,
             "cutover_index": self.cutover_index,
             "core_restart_complete": self.core_restart_complete,
@@ -193,11 +195,21 @@ class BootstrapInstallJournal:
         }
 
     def validate(self, path: Path) -> None:
-        if self.schema_version != BOOTSTRAP_JOURNAL_SCHEMA_VERSION:
+        if (
+            isinstance(self.schema_version, bool)
+            or not isinstance(self.schema_version, int)
+            or self.schema_version != BOOTSTRAP_JOURNAL_SCHEMA_VERSION
+        ):
             raise BootstrapInstallError("bootstrap_journal_invalid")
-        if not _valid_operation_id(self.operation_id):
+        if not isinstance(self.operation_id, str) or not _valid_operation_id(self.operation_id):
             raise BootstrapInstallError("bootstrap_journal_invalid")
         if path.name != BOOTSTRAP_JOURNAL_NAME:
+            raise BootstrapInstallError("bootstrap_journal_invalid")
+        if not isinstance(self.install_root, str) or not self.install_root:
+            raise BootstrapInstallError("bootstrap_journal_invalid")
+        if not isinstance(self.transaction_dir, str) or not self.transaction_dir:
+            raise BootstrapInstallError("bootstrap_journal_invalid")
+        if not isinstance(self.phase, BootstrapPhase):
             raise BootstrapInstallError("bootstrap_journal_invalid")
         if not path.is_absolute() or not Path(self.install_root).is_absolute():
             raise BootstrapInstallError("bootstrap_journal_invalid")
@@ -207,15 +219,19 @@ class BootstrapInstallJournal:
         if not _same_path(transaction.parent, path.parent):
             raise BootstrapInstallError("bootstrap_journal_invalid")
         install_root = _absolute(Path(self.install_root))
-        if isinstance(self.core_was_running, bool) is False or not isinstance(
-            self.core_restart_complete, bool
+        if (
+            not isinstance(self.core_was_running, bool)
+            or not isinstance(self.core_stop_complete, bool)
+            or not isinstance(self.core_restart_complete, bool)
         ):
             raise BootstrapInstallError("bootstrap_journal_invalid")
         if isinstance(self.cutover_index, bool) or not isinstance(self.cutover_index, int):
             raise BootstrapInstallError("bootstrap_journal_invalid")
         if not 0 <= self.cutover_index <= len(CANONICAL_COMPONENTS):
             raise BootstrapInstallError("bootstrap_journal_invalid")
-        if len(self.components) != len(CANONICAL_COMPONENTS):
+        if not isinstance(self.components, list) or len(self.components) != len(
+            CANONICAL_COMPONENTS
+        ):
             raise BootstrapInstallError("bootstrap_journal_invalid")
         seen_roles: set[str] = set()
         seen_names: set[str] = set()
@@ -269,6 +285,8 @@ class BootstrapInstallJournal:
                 raise BootstrapInstallError("bootstrap_journal_invalid")
         if self.core_restart_complete and not self.core_was_running:
             raise BootstrapInstallError("bootstrap_journal_invalid")
+        if self.core_stop_complete and not self.core_was_running:
+            raise BootstrapInstallError("bootstrap_journal_invalid")
         if self.core_restart_complete and self.phase not in {
             BootstrapPhase.COMMITTED,
             BootstrapPhase.ROLLED_BACK,
@@ -307,7 +325,7 @@ class BootstrapInstallJournal:
             raise
         except (OSError, UnicodeError, ValueError, RecursionError) as exc:
             raise BootstrapInstallError("bootstrap_journal_invalid") from exc
-        if not isinstance(value, dict) or set(value) != {
+        required_fields = {
             "schema_version",
             "operation_id",
             "install_root",
@@ -320,7 +338,9 @@ class BootstrapInstallJournal:
             "created_at",
             "updated_at",
             "last_error_code",
-        }:
+        }
+        fields = set(value) if isinstance(value, dict) else None
+        if fields not in (required_fields, required_fields | {"core_stop_complete"}):
             raise BootstrapInstallError("bootstrap_journal_invalid")
         try:
             phase = BootstrapPhase(value["phase"])
@@ -332,6 +352,19 @@ class BootstrapInstallJournal:
                 install_root=value["install_root"],
                 transaction_dir=value["transaction_dir"],
                 core_was_running=value["core_was_running"],
+                core_stop_complete=value.get(
+                    "core_stop_complete",
+                    bool(
+                        value["core_was_running"]
+                        and phase
+                        in {
+                            BootstrapPhase.CORE_STOPPED,
+                            BootstrapPhase.CUTOVER,
+                            BootstrapPhase.VERIFYING,
+                            BootstrapPhase.ROLLED_BACK,
+                        }
+                    ),
+                ),
                 phase=phase,
                 cutover_index=value["cutover_index"],
                 core_restart_complete=value["core_restart_complete"],
@@ -442,6 +475,12 @@ def _plain_directory_chain_if_present(path: Path, code: str) -> bool:
     return True
 
 
+def _plain_directory_chain_stat_if_present(path: Path, code: str) -> os.stat_result | None:
+    if not _plain_directory_chain_if_present(path, code):
+        return None
+    return _plain_directory_stat(path, code)
+
+
 def _ensure_plain_directory(path: Path, code: str) -> None:
     absolute = _absolute(path)
     missing: list[Path] = []
@@ -470,6 +509,41 @@ def _ensure_plain_directory(path: Path, code: str) -> None:
             raise BootstrapInstallError(code) from exc
         _plain_directory_stat(directory, code)
     _plain_directory_chain(absolute, code)
+
+
+def _create_owned_directory(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    code: str,
+) -> os.stat_result:
+    """Create one new directory and retain its identity for later cleanup."""
+
+    absolute = _absolute(path)
+    parent = _plain_directory_stat(absolute.parent, code)
+    if not _same_directory_stat(parent_expected, parent):
+        raise BootstrapInstallAmbiguity(code)
+    try:
+        absolute.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise BootstrapInstallError(code) from exc
+    else:
+        raise BootstrapInstallAmbiguity(code)
+    try:
+        absolute.mkdir()
+    except FileExistsError as exc:
+        raise BootstrapInstallAmbiguity(code) from exc
+    except OSError as exc:
+        raise BootstrapInstallError(code) from exc
+    created = _plain_directory_stat(absolute, code)
+    if not _same_directory_stat(
+        parent_expected,
+        _plain_directory_stat(absolute.parent, code),
+    ):
+        raise BootstrapInstallAmbiguity(code)
+    return created
 
 
 def _plain_file_stat_if_present(path: Path, code: str) -> os.stat_result | None:
@@ -742,10 +816,35 @@ def _relative_name(path: Path, root: Path) -> str:
     return str(relative).replace("\\", "/")
 
 
-def _validate_transaction_tree(journal: BootstrapInstallJournal) -> None:
+def _transaction_file_identities(
+    journal: BootstrapInstallJournal,
+) -> dict[str, ComponentIdentity | None]:
+    transaction = Path(journal.transaction_dir)
+    expected: dict[str, ComponentIdentity | None] = {}
+    for component in journal.components:
+        for path, kind in (
+            (component.staged_path, "staged"),
+            (component.backup_path, "backup"),
+        ):
+            if path is None:
+                continue
+            key = _relative_name(Path(path), transaction).casefold()
+            if key in expected:
+                raise BootstrapInstallError("bootstrap_journal_invalid")
+            expected[key] = _component_identity(component, kind)
+    return expected
+
+
+def _validate_transaction_tree(
+    journal: BootstrapInstallJournal,
+) -> dict[Path, os.stat_result]:
     transaction = _absolute(Path(journal.transaction_dir))
     _plain_directory_chain(transaction, "bootstrap_journal_untrusted")
     expected = _expected_transaction_entries(journal)
+    expected_files = _transaction_file_identities(journal)
+    bindings: dict[Path, os.stat_result] = {
+        transaction: _plain_directory_stat(transaction, "bootstrap_journal_untrusted")
+    }
     stack: list[tuple[Path, str]] = [(transaction, "")]
     count = 0
     while stack:
@@ -762,17 +861,122 @@ def _validate_transaction_tree(journal: BootstrapInstallJournal) -> None:
                 if relative not in expected:
                     raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
                 _plain_directory_stat(entry, "bootstrap_journal_untrusted")
+                bindings[_absolute(entry)] = value
                 stack.append((entry, relative))
             elif stat.S_ISREG(value.st_mode) and getattr(value, "st_nlink", 1) == 1:
                 if relative not in expected:
                     raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
+                identity = expected_files.get(relative.casefold())
+                if identity is None:
+                    raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
+                try:
+                    if not _identity_matches(
+                        entry,
+                        identity,
+                        "bootstrap_journal_untrusted",
+                    ):
+                        raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
+                except BootstrapInstallError as exc:
+                    raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted") from exc
+                bindings[_absolute(entry)] = value
             else:
                 raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
+    return bindings
 
 
-def _remove_transaction_tree(journal: BootstrapInstallJournal) -> None:
+def _verify_bound_file(
+    path: Path,
+    expected_stat: os.stat_result,
+    expected_identity: ComponentIdentity,
+    parent_expected: os.stat_result,
+    code: str,
+) -> None:
+    parent_before = _plain_directory_stat(path.parent, code)
+    file_before = _plain_file_stat(path, code)
+    if not _same_directory_stat(parent_expected, parent_before) or not _same_stat(
+        expected_stat,
+        file_before,
+    ):
+        raise BootstrapInstallAmbiguity(code)
+    if not _identity_matches(path, expected_identity, code):
+        raise BootstrapInstallAmbiguity(code)
+    parent_after = _plain_directory_stat(path.parent, code)
+    file_after = _plain_file_stat(path, code)
+    if not _same_directory_stat(parent_expected, parent_after) or not _same_stat(
+        expected_stat,
+        file_after,
+    ):
+        raise BootstrapInstallAmbiguity(code)
+
+
+def _verify_bound_directory(
+    path: Path,
+    expected_stat: os.stat_result,
+    parent_expected: os.stat_result,
+    code: str,
+) -> None:
+    parent_before = _plain_directory_stat(path.parent, code)
+    directory_before = _plain_directory_stat(path, code)
+    if not _same_directory_stat(parent_expected, parent_before) or not _same_directory_stat(
+        expected_stat,
+        directory_before,
+    ):
+        raise BootstrapInstallAmbiguity(code)
+    parent_after = _plain_directory_stat(path.parent, code)
+    directory_after = _plain_directory_stat(path, code)
+    if not _same_directory_stat(parent_expected, parent_after) or not _same_directory_stat(
+        expected_stat,
+        directory_after,
+    ):
+        raise BootstrapInstallAmbiguity(code)
+
+
+def _remove_empty_owned_directory(
+    path: Path,
+    *,
+    expected_stat: os.stat_result,
+    parent_expected: os.stat_result,
+    code: str,
+) -> None:
+    _verify_bound_directory(path, expected_stat, parent_expected, code)
+    try:
+        if any(path.iterdir()):
+            raise BootstrapInstallAmbiguity(code)
+    except OSError as exc:
+        raise BootstrapInstallError(code) from exc
+    _verify_bound_directory(path, expected_stat, parent_expected, code)
+    path.rmdir()
+
+
+def _remove_transaction_tree(
+    journal: BootstrapInstallJournal,
+    *,
+    expected_transaction: os.stat_result | None = None,
+    expected_entries: Mapping[Path, os.stat_result] | None = None,
+) -> None:
     transaction = _absolute(Path(journal.transaction_dir))
-    _validate_transaction_tree(journal)
+    parent_expected = _plain_directory_stat(transaction.parent, "bootstrap_cleanup_untrusted")
+    bindings = (
+        dict(expected_entries)
+        if expected_entries is not None
+        else _validate_transaction_tree(journal)
+    )
+    transaction_stat = expected_transaction or bindings.get(transaction)
+    if transaction_stat is None:
+        raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
+    if not _same_directory_stat(
+        transaction_stat,
+        _plain_directory_stat(transaction, "bootstrap_cleanup_untrusted"),
+    ):
+        raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
+    current_bindings = _validate_transaction_tree(journal)
+    if set(current_bindings) != set(bindings) or any(
+        not _same_stat(expected, current_bindings[path])
+        if stat.S_ISREG(expected.st_mode)
+        else not _same_directory_stat(expected, current_bindings[path])
+        for path, expected in bindings.items()
+    ):
+        raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
     # The tree is bounded and has already been checked against the journal;
     # remove only named owned files/directories, never with recursive deletion.
     for component in journal.components:
@@ -780,27 +984,128 @@ def _remove_transaction_tree(journal: BootstrapInstallJournal) -> None:
             if value is None:
                 continue
             path = Path(value)
+            absolute = _absolute(path)
+            expected = bindings.get(absolute)
+            current = _plain_file_stat_if_present(path, "bootstrap_cleanup_untrusted")
+            if expected is None:
+                if current is not None:
+                    raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
+                continue
+            identity = _component_identity(
+                component,
+                "staged" if value == component.staged_path else "backup",
+            )
+            if identity is None:
+                raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
+            parent = bindings.get(_absolute(path.parent))
+            if parent is None:
+                raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
+            _verify_bound_file(path, expected, identity, parent, "bootstrap_cleanup_untrusted")
+            path.unlink()
             if _plain_file_stat_if_present(path, "bootstrap_cleanup_untrusted") is not None:
-                path.unlink()
+                raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
     for name in ("staged", "backups"):
         path = transaction / name
-        _plain_directory_stat(path, "bootstrap_cleanup_untrusted")
-        path.rmdir()
-    _plain_directory_stat(transaction, "bootstrap_cleanup_untrusted")
-    transaction.rmdir()
+        expected = bindings.get(_absolute(path))
+        if expected is None:
+            raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
+        _remove_empty_owned_directory(
+            path,
+            expected_stat=expected,
+            parent_expected=transaction_stat,
+            code="bootstrap_cleanup_untrusted",
+        )
+    _remove_empty_owned_directory(
+        transaction,
+        expected_stat=transaction_stat,
+        parent_expected=parent_expected,
+        code="bootstrap_cleanup_untrusted",
+    )
 
 
-def _remove_journal(path: Path) -> None:
-    parent = _plain_directory_stat(path.parent, "bootstrap_journal_untrusted")
-    current = _plain_file_stat(path, "bootstrap_journal_untrusted")
-    if not _same_directory_stat(
-        parent,
+def _capture_journal_binding(path: Path) -> tuple[os.stat_result, os.stat_result]:
+    return (
         _plain_directory_stat(path.parent, "bootstrap_journal_untrusted"),
+        _plain_file_stat(path, "bootstrap_journal_untrusted"),
+    )
+
+
+def _verify_journal_binding(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    file_expected: os.stat_result,
+    code: str,
+) -> None:
+    parent_before = _plain_directory_stat(path.parent, code)
+    file_before = _plain_file_stat(path, code)
+    if not _same_directory_stat(parent_expected, parent_before) or not _same_stat(
+        file_expected,
+        file_before,
     ):
-        raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
-    if not _same_stat(current, _plain_file_stat(path, "bootstrap_journal_untrusted")):
-        raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
+        raise BootstrapInstallAmbiguity(code)
+    parent_after = _plain_directory_stat(path.parent, code)
+    file_after = _plain_file_stat(path, code)
+    if not _same_directory_stat(parent_expected, parent_after) or not _same_stat(
+        file_expected,
+        file_after,
+    ):
+        raise BootstrapInstallAmbiguity(code)
+
+
+def _remove_journal(
+    path: Path,
+    *,
+    parent_expected: os.stat_result | None = None,
+    file_expected: os.stat_result | None = None,
+) -> None:
+    if parent_expected is None or file_expected is None:
+        parent_expected, file_expected = _capture_journal_binding(path)
+    _verify_journal_binding(
+        path,
+        parent_expected=parent_expected,
+        file_expected=file_expected,
+        code="bootstrap_journal_untrusted",
+    )
+    _verify_journal_binding(
+        path,
+        parent_expected=parent_expected,
+        file_expected=file_expected,
+        code="bootstrap_journal_untrusted",
+    )
     path.unlink()
+    if _plain_file_stat_if_present(path, "bootstrap_journal_untrusted") is not None:
+        raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
+
+
+def _remove_unjournaled_transaction(
+    transaction: Path,
+    *,
+    transaction_expected: os.stat_result,
+    staged_expected: os.stat_result,
+    backups_expected: os.stat_result,
+    parent_expected: os.stat_result,
+) -> None:
+    """Remove only the empty tree created before initial journal authority."""
+
+    _remove_empty_owned_directory(
+        transaction / "staged",
+        expected_stat=staged_expected,
+        parent_expected=transaction_expected,
+        code="bootstrap_journal_untrusted",
+    )
+    _remove_empty_owned_directory(
+        transaction / "backups",
+        expected_stat=backups_expected,
+        parent_expected=transaction_expected,
+        code="bootstrap_journal_untrusted",
+    )
+    _remove_empty_owned_directory(
+        transaction,
+        expected_stat=transaction_expected,
+        parent_expected=parent_expected,
+        code="bootstrap_journal_untrusted",
+    )
 
 
 def _prior_identity(component: BootstrapComponent) -> ComponentIdentity | None:
@@ -810,7 +1115,11 @@ def _prior_identity(component: BootstrapComponent) -> ComponentIdentity | None:
 def _prior_core_can_restart(journal: BootstrapInstallJournal) -> bool:
     """Only relaunch a prior Core when the prior canonical main exists."""
 
-    return bool(journal.core_was_running and journal.components[0].prior_present)
+    return bool(
+        journal.core_stop_complete
+        and journal.core_was_running
+        and journal.components[0].prior_present
+    )
 
 
 def _verify_set(journal: BootstrapInstallJournal, *, prior: bool) -> None:
@@ -877,14 +1186,16 @@ def _rollback(
     journal_path: Path,
     *,
     restart_core: Callable[[], None] | None,
+    transaction_expected: os.stat_result | None = None,
+    transaction_entries: Mapping[Path, os.stat_result] | None = None,
 ) -> None:
     journal.phase = BootstrapPhase.ROLLING_BACK
     journal.last_error_code = "bootstrap_rollback_requested"
+    transaction_removed = False
     try:
         journal.save(journal_path)
-    except (OSError, BootstrapInstallError) as exc:
-        raise BootstrapInstallError("bootstrap_retry_required") from exc
-    try:
+        if transaction_entries is None:
+            transaction_entries = _validate_transaction_tree(journal)
         for component in journal.components:
             _restore_component(component)
         _verify_set(journal, prior=True)
@@ -897,11 +1208,26 @@ def _rollback(
             restart_core()
             journal.core_restart_complete = True
             journal.save(journal_path)
-        _remove_transaction_tree(journal)
-        _remove_journal(journal_path)
+        journal_parent, journal_file = _capture_journal_binding(journal_path)
+        _remove_transaction_tree(
+            journal,
+            expected_transaction=transaction_expected,
+            expected_entries=transaction_entries,
+        )
+        transaction_removed = True
+        _remove_journal(
+            journal_path,
+            parent_expected=journal_parent,
+            file_expected=journal_file,
+        )
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
+        if transaction_removed:
+            # ROLLED_BACK was already durably published.  The transaction is
+            # gone, so do not replace that valid terminal journal with a
+            # retry_required phase that would falsely require the tree.
+            raise BootstrapInstallError("bootstrap_retry_required") from exc
         journal.phase = BootstrapPhase.RETRY_REQUIRED
         journal.last_error_code = "bootstrap_retry_required"
         with suppress(BaseException):
@@ -914,6 +1240,8 @@ def _finish_committed(
     journal_path: Path,
     *,
     restart_core: Callable[[], None] | None,
+    transaction_expected: os.stat_result | None = None,
+    transaction_entries: Mapping[Path, os.stat_result] | None = None,
 ) -> None:
     _verify_set(journal, prior=False)
     if journal.core_was_running and not journal.core_restart_complete:
@@ -922,12 +1250,21 @@ def _finish_committed(
         restart_core()
         journal.core_restart_complete = True
         journal.save(journal_path)
+    journal_parent, journal_file = _capture_journal_binding(journal_path)
     if _plain_directory_chain_if_present(
         Path(journal.transaction_dir),
         "bootstrap_cleanup_untrusted",
     ):
-        _remove_transaction_tree(journal)
-    _remove_journal(journal_path)
+        _remove_transaction_tree(
+            journal,
+            expected_transaction=transaction_expected,
+            expected_entries=transaction_entries,
+        )
+    _remove_journal(
+        journal_path,
+        parent_expected=journal_parent,
+        file_expected=journal_file,
+    )
 
 
 def _recover_existing(
@@ -937,22 +1274,40 @@ def _recover_existing(
     stop_core: Callable[[], None] | None,
     restart_core: Callable[[], None] | None,
 ) -> bool:
-    if _plain_file_stat_if_present(journal_path, "bootstrap_journal_untrusted") is None:
+    journal_parent = _plain_directory_stat(journal_path.parent, "bootstrap_journal_untrusted")
+    journal_file = _plain_file_stat_if_present(journal_path, "bootstrap_journal_untrusted")
+    if journal_file is None:
         return False
     journal = BootstrapInstallJournal.load(journal_path)
-    if not _same_path(Path(journal.install_root), install_root):
-        raise BootstrapInstallAmbiguity("bootstrap_install_root_changed")
-    transaction_present = _plain_directory_chain_if_present(
+    _verify_journal_binding(
+        journal_path,
+        parent_expected=journal_parent,
+        file_expected=journal_file,
+        code="bootstrap_journal_untrusted",
+    )
+    transaction_expected = _plain_directory_chain_stat_if_present(
         Path(journal.transaction_dir),
         "bootstrap_journal_untrusted",
     )
-    if transaction_present:
-        _validate_transaction_tree(journal)
-    elif journal.phase not in {BootstrapPhase.COMMITTED, BootstrapPhase.ROLLED_BACK}:
+    transaction_entries: Mapping[Path, os.stat_result] | None = None
+    if transaction_expected is not None:
+        transaction_entries = _validate_transaction_tree(journal)
+    if transaction_expected is None and journal.phase not in {
+        BootstrapPhase.COMMITTED,
+        BootstrapPhase.ROLLED_BACK,
+    }:
         raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
+    if not _same_path(Path(journal.install_root), install_root):
+        raise BootstrapInstallAmbiguity("bootstrap_install_root_changed")
     if journal.phase is BootstrapPhase.COMMITTED:
         try:
-            _finish_committed(journal, journal_path, restart_core=restart_core)
+            _finish_committed(
+                journal,
+                journal_path,
+                restart_core=restart_core,
+                transaction_expected=transaction_expected,
+                transaction_entries=transaction_entries,
+            )
         except (BootstrapInstallError, OSError) as exc:
             # A committed intended set is never sent through the old-set
             # rollback path.  Cleanup or restart is a terminal follow-up;
@@ -965,24 +1320,34 @@ def _recover_existing(
             raise
         return True
     # A pre-cutover journal can be safely reverted only after the complete
-    # target set still matches its recorded preimage.  Cutover journals use the
-    # same rollback routine, which accepts only prior or intended identities.
+    # target set still matches its recorded preimage.  Cutover journals use
+    # the same rollback routine, which accepts only prior or intended identities.
     if journal.phase in _ACTIVE_PHASES or journal.phase is BootstrapPhase.ROLLED_BACK:
         if journal.phase in {BootstrapPhase.STAGING, BootstrapPhase.STAGED}:
             _verify_set(journal, prior=True)
             journal.phase = BootstrapPhase.ROLLED_BACK
             journal.last_error_code = None
             journal.save(journal_path)
-            if transaction_present:
-                _remove_transaction_tree(journal)
-            _remove_journal(journal_path)
+            journal_parent, journal_file = _capture_journal_binding(journal_path)
+            if transaction_expected is not None:
+                _remove_transaction_tree(
+                    journal,
+                    expected_transaction=transaction_expected,
+                    expected_entries=transaction_entries,
+                )
+            _remove_journal(
+                journal_path,
+                parent_expected=journal_parent,
+                file_expected=journal_file,
+            )
             return True
-        if journal.core_was_running and not journal.core_restart_complete and stop_core is None:
+        if journal.core_was_running and not journal.core_stop_complete and stop_core is None:
             raise BootstrapInstallError("core_stop_required")
-        if stop_core is not None and journal.core_was_running and not journal.core_restart_complete:
+        if stop_core is not None and journal.core_was_running and not journal.core_stop_complete:
             journal.phase = BootstrapPhase.STOPPING_CORE
             journal.save(journal_path)
             stop_core()
+            journal.core_stop_complete = journal.core_was_running
             journal.phase = BootstrapPhase.CORE_STOPPED
             journal.save(journal_path)
         if journal.phase is BootstrapPhase.ROLLED_BACK:
@@ -993,11 +1358,25 @@ def _recover_existing(
                 restart_core()
                 journal.core_restart_complete = True
                 journal.save(journal_path)
-            if transaction_present:
-                _remove_transaction_tree(journal)
-            _remove_journal(journal_path)
+            if transaction_expected is not None:
+                _remove_transaction_tree(
+                    journal,
+                    expected_transaction=transaction_expected,
+                    expected_entries=transaction_entries,
+                )
+            _remove_journal(
+                journal_path,
+                parent_expected=journal_parent,
+                file_expected=journal_file,
+            )
             return True
-        _rollback(journal, journal_path, restart_core=restart_core)
+        _rollback(
+            journal,
+            journal_path,
+            restart_core=restart_core,
+            transaction_expected=transaction_expected,
+            transaction_entries=transaction_entries,
+        )
         return True
     raise BootstrapInstallAmbiguity("bootstrap_journal_invalid")
 
@@ -1092,11 +1471,24 @@ def install_windows_components(
         ]
         operation_id = secrets.token_hex(12)
         transaction = evidence_root / operation_id
-        _ensure_plain_directory(transaction, "bootstrap_journal_untrusted")
+        evidence_stat = _plain_directory_stat(evidence_root, "bootstrap_journal_untrusted")
+        transaction_stat = _create_owned_directory(
+            transaction,
+            parent_expected=evidence_stat,
+            code="bootstrap_journal_untrusted",
+        )
         staged_root = transaction / "staged"
         backups_root = transaction / "backups"
-        _ensure_plain_directory(staged_root, "bootstrap_journal_untrusted")
-        _ensure_plain_directory(backups_root, "bootstrap_journal_untrusted")
+        staged_stat = _create_owned_directory(
+            staged_root,
+            parent_expected=transaction_stat,
+            code="bootstrap_journal_untrusted",
+        )
+        backups_stat = _create_owned_directory(
+            backups_root,
+            parent_expected=transaction_stat,
+            code="bootstrap_journal_untrusted",
+        )
         now = _utc_now()
         components = [
             BootstrapComponent(
@@ -1121,6 +1513,7 @@ def install_windows_components(
             install_root=str(root),
             transaction_dir=str(transaction),
             core_was_running=core_was_running,
+            core_stop_complete=False,
             phase=BootstrapPhase.STAGING,
             cutover_index=0,
             core_restart_complete=False,
@@ -1131,7 +1524,31 @@ def install_windows_components(
         # Persist every exact preimage before staging can complete or any
         # target can be touched.  A restart can therefore distinguish a
         # deliberate absence from an unexplained replacement.
-        journal.save(journal_path)
+        try:
+            journal.save(journal_path)
+        except BaseException as exc:
+            journal_present = False
+            with suppress(BaseException):
+                journal_present = (
+                    _plain_file_stat_if_present(
+                        journal_path,
+                        "bootstrap_journal_untrusted",
+                    )
+                    is not None
+                )
+            if not journal_present:
+                _remove_unjournaled_transaction(
+                    transaction,
+                    transaction_expected=transaction_stat,
+                    staged_expected=staged_stat,
+                    backups_expected=backups_stat,
+                    parent_expected=evidence_stat,
+                )
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            if isinstance(exc, BootstrapInstallError):
+                raise
+            raise BootstrapInstallError("bootstrap_journal_write_failed") from exc
         try:
             total = 0
             for component in journal.components:
@@ -1194,6 +1611,7 @@ def install_windows_components(
                 if stop_core is None:
                     raise BootstrapInstallError("core_stop_required")
                 stop_core()
+                journal.core_stop_complete = journal.core_was_running
                 journal.phase = BootstrapPhase.CORE_STOPPED
                 journal.save(journal_path)
             journal.phase = BootstrapPhase.CUTOVER
@@ -1221,8 +1639,18 @@ def install_windows_components(
             journal.phase = BootstrapPhase.COMMITTED
             journal.last_error_code = None
             journal.save(journal_path)
-            _remove_transaction_tree(journal)
-            _remove_journal(journal_path)
+            journal_entries = _validate_transaction_tree(journal)
+            journal_parent, journal_file = _capture_journal_binding(journal_path)
+            _remove_transaction_tree(
+                journal,
+                expected_transaction=transaction_stat,
+                expected_entries=journal_entries,
+            )
+            _remove_journal(
+                journal_path,
+                parent_expected=journal_parent,
+                file_expected=journal_file,
+            )
             return BootstrapInstallResult(root, targets, recovered=recovered)
         except (KeyboardInterrupt, SystemExit):
             raise
@@ -1236,7 +1664,12 @@ def install_windows_components(
             with suppress(BaseException):
                 journal.save(journal_path)
             try:
-                _rollback(journal, journal_path, restart_core=restart_core)
+                _rollback(
+                    journal,
+                    journal_path,
+                    restart_core=restart_core,
+                    transaction_expected=transaction_stat,
+                )
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BootstrapInstallError:
@@ -1252,7 +1685,12 @@ def install_windows_components(
             with suppress(BaseException):
                 journal.save(journal_path)
             try:
-                _rollback(journal, journal_path, restart_core=restart_core)
+                _rollback(
+                    journal,
+                    journal_path,
+                    restart_core=restart_core,
+                    transaction_expected=transaction_stat,
+                )
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BootstrapInstallError:
@@ -1268,7 +1706,12 @@ def install_windows_components(
             with suppress(BaseException):
                 journal.save(journal_path)
             try:
-                _rollback(journal, journal_path, restart_core=restart_core)
+                _rollback(
+                    journal,
+                    journal_path,
+                    restart_core=restart_core,
+                    transaction_expected=transaction_stat,
+                )
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BootstrapInstallError:

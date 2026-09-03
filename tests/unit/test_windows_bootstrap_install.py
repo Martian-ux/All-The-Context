@@ -135,6 +135,63 @@ def test_first_install_partial_failure_restores_absent_preimages(
     assert database.read_bytes() == b"do not delete"
 
 
+def test_failed_core_stop_does_not_restart_core_during_rollback(
+    bundle: tuple[dict[str, Path], Path, Path],
+) -> None:
+    sources, install_root, journal_root = bundle
+    install_root.mkdir()
+    targets = bootstrap.canonical_targets(install_root)
+    for target in targets.values():
+        target.write_bytes(b"prior")
+    events: list[str] = []
+
+    def fail_stop() -> None:
+        events.append("stop")
+        raise OSError("Core did not stop")
+
+    with pytest.raises(bootstrap.BootstrapInstallError):
+        _install(
+            sources,
+            install_root,
+            journal_root,
+            core_was_running=True,
+            stop_core=fail_stop,
+            restart_core=lambda: events.append("restart"),
+        )
+
+    assert events == ["stop"]
+    assert all(target.read_bytes() == b"prior" for target in targets.values())
+    assert not (journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME).exists()
+    assert list(journal_root.glob("????????????????????????")) == []
+
+
+def test_initial_journal_write_failure_reclaims_transaction_and_retries(
+    bundle: tuple[dict[str, Path], Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources, install_root, journal_root = bundle
+    original_atomic_json = bootstrap._atomic_json
+    failed = False
+
+    def fail_initial_journal(path: Path, value: dict[str, object]) -> None:
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("disk full")
+        original_atomic_json(path, value)
+
+    monkeypatch.setattr(bootstrap, "_atomic_json", fail_initial_journal)
+    with pytest.raises(bootstrap.BootstrapInstallError, match="journal_write_failed"):
+        _install(sources, install_root, journal_root)
+
+    journal_path = journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME
+    assert not journal_path.exists()
+    assert list(journal_root.glob("????????????????????????")) == []
+
+    _install(sources, install_root, journal_root)
+    assert bootstrap.is_complete_install(sources, install_root)
+
+
 def test_existing_install_rollback_restores_all_four_components(
     bundle: tuple[dict[str, Path], Path, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -222,12 +279,15 @@ def test_committed_set_retries_cleanup_without_rolling_back(
     original_cleanup = bootstrap._remove_transaction_tree
     failed = False
 
-    def fail_cleanup(journal: bootstrap.BootstrapInstallJournal) -> None:
+    def fail_cleanup(
+        journal: bootstrap.BootstrapInstallJournal,
+        **kwargs: object,
+    ) -> None:
         nonlocal failed
         if not failed:
             failed = True
             raise OSError("cleanup interrupted")
-        original_cleanup(journal)
+        original_cleanup(journal, **kwargs)
 
     monkeypatch.setattr(bootstrap, "_remove_transaction_tree", fail_cleanup)
     with pytest.raises(bootstrap.BootstrapInstallError, match="retry_required"):
@@ -238,6 +298,152 @@ def test_committed_set_retries_cleanup_without_rolling_back(
     assert bootstrap.is_complete_install(sources, install_root)
 
     _install(sources, install_root, journal_root)
+    assert not journal_path.exists()
+
+
+def test_rollback_cleanup_preserves_terminal_journal_when_journal_remove_fails(
+    bundle: tuple[dict[str, Path], Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources, install_root, journal_root = bundle
+    install_root.mkdir()
+    targets = bootstrap.canonical_targets(install_root)
+    for target in targets.values():
+        target.write_bytes(b"prior")
+    original_replace = Path.replace
+    original_remove_journal = bootstrap._remove_journal
+    failed = False
+
+    def fail_cutover(path: Path, destination: Path) -> Path:
+        if path.parent.name == "staged" and destination == targets["main"]:
+            raise OSError("cutover interrupted")
+        return original_replace(path, destination)
+
+    def fail_journal_remove(path: Path, **kwargs: object) -> None:
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("journal is temporarily unavailable")
+        original_remove_journal(path, **kwargs)
+
+    monkeypatch.setattr(Path, "replace", fail_cutover)
+    monkeypatch.setattr(bootstrap, "_remove_journal", fail_journal_remove)
+    with pytest.raises(bootstrap.BootstrapInstallError, match="retry_required"):
+        _install(sources, install_root, journal_root)
+
+    journal_path = journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME
+    operation_dirs = list(journal_root.glob("????????????????????????"))
+    assert json.loads(journal_path.read_text(encoding="utf-8"))["phase"] == "rolled_back"
+    assert operation_dirs == []
+    assert all(target.read_bytes() == b"prior" for target in targets.values())
+
+    monkeypatch.setattr(Path, "replace", original_replace)
+    _install(sources, install_root, journal_root, stop_core=lambda: None)
+    assert bootstrap.is_complete_install(sources, install_root)
+    assert not journal_path.exists()
+
+
+def test_transaction_cleanup_refuses_replaced_expected_file_and_retries(
+    bundle: tuple[dict[str, Path], Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources, install_root, journal_root = bundle
+    install_root.mkdir()
+    targets = bootstrap.canonical_targets(install_root)
+    for target in targets.values():
+        target.write_bytes(b"prior")
+    original_copy = bootstrap._copy_verified
+    original_cleanup = bootstrap._remove_transaction_tree
+    failed_copy = False
+    replaced = False
+
+    def fail_staging_once(source: Path, target: Path, expected, **kwargs: object):
+        nonlocal failed_copy
+        if source == sources["mcp"] and not failed_copy:
+            failed_copy = True
+            raise OSError("staging interrupted")
+        return original_copy(source, target, expected, **kwargs)
+
+    def replace_before_cleanup(
+        journal: bootstrap.BootstrapInstallJournal,
+        **kwargs: object,
+    ) -> None:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            staged = Path(journal.components[0].staged_path)
+            replacement = staged.with_name("same-content-replacement")
+            replacement.write_bytes(staged.read_bytes())
+            replacement.replace(staged)
+        original_cleanup(journal, **kwargs)
+
+    monkeypatch.setattr(bootstrap, "_copy_verified", fail_staging_once)
+    monkeypatch.setattr(bootstrap, "_remove_transaction_tree", replace_before_cleanup)
+    with pytest.raises(bootstrap.BootstrapInstallError, match="retry_required"):
+        _install(sources, install_root, journal_root)
+
+    journal_path = journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME
+    journal = bootstrap.BootstrapInstallJournal.load(journal_path)
+    assert journal.phase is bootstrap.BootstrapPhase.RETRY_REQUIRED
+    assert Path(journal.components[0].staged_path).exists()
+
+    _install(sources, install_root, journal_root, stop_core=lambda: None)
+    assert bootstrap.is_complete_install(sources, install_root)
+    assert not journal_path.exists()
+
+
+def test_journal_cleanup_refuses_replaced_journal_and_retries(
+    bundle: tuple[dict[str, Path], Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources, install_root, journal_root = bundle
+    install_root.mkdir()
+    targets = bootstrap.canonical_targets(install_root)
+    for target in targets.values():
+        target.write_bytes(b"prior")
+    original_copy = bootstrap._copy_verified
+    original_remove_transaction = bootstrap._remove_transaction_tree
+    original_remove_journal = bootstrap._remove_journal
+    failed_copy = False
+    replaced = False
+
+    def fail_staging_once(source: Path, target: Path, expected, **kwargs: object):
+        nonlocal failed_copy
+        if source == sources["mcp"] and not failed_copy:
+            failed_copy = True
+            raise OSError("staging interrupted")
+        return original_copy(source, target, expected, **kwargs)
+
+    def replace_journal_after_cleanup(
+        journal: bootstrap.BootstrapInstallJournal,
+        **kwargs: object,
+    ) -> None:
+        nonlocal replaced
+        original_remove_transaction(journal, **kwargs)
+        if not replaced:
+            replaced = True
+            journal_path = journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME
+            replacement = journal_path.with_name("journal-replacement")
+            replacement.write_bytes(journal_path.read_bytes())
+            replacement.replace(journal_path)
+
+    monkeypatch.setattr(bootstrap, "_copy_verified", fail_staging_once)
+    monkeypatch.setattr(
+        bootstrap,
+        "_remove_transaction_tree",
+        replace_journal_after_cleanup,
+    )
+    with pytest.raises(bootstrap.BootstrapInstallError, match="retry_required"):
+        _install(sources, install_root, journal_root)
+
+    journal_path = journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME
+    assert journal_path.exists()
+    assert list(journal_root.glob("????????????????????????")) == []
+    assert json.loads(journal_path.read_text(encoding="utf-8"))["phase"] == "rolled_back"
+
+    monkeypatch.setattr(bootstrap, "_remove_journal", original_remove_journal)
+    _install(sources, install_root, journal_root, stop_core=lambda: None)
+    assert bootstrap.is_complete_install(sources, install_root)
     assert not journal_path.exists()
 
 
@@ -380,6 +586,39 @@ def test_malformed_journal_is_preserved_and_cannot_redirect_targets(
         target.exists() or target.is_symlink()
         for target in bootstrap.canonical_targets(install_root).values()
     )
+
+
+@pytest.mark.parametrize("field", ["install_root", "transaction_dir"])
+def test_malformed_top_level_journal_paths_are_bounded(
+    bundle: tuple[dict[str, Path], Path, Path],
+    field: str,
+) -> None:
+    _sources, install_root, journal_root = bundle
+    journal_root.mkdir()
+    operation_id = "0123456789abcdef01234567"
+    payload = {
+        "schema_version": 1,
+        "operation_id": operation_id,
+        "install_root": str(install_root),
+        "transaction_dir": str(journal_root / operation_id),
+        "core_was_running": False,
+        "core_stop_complete": False,
+        "phase": "staged",
+        "cutover_index": 0,
+        "core_restart_complete": False,
+        "components": [],
+        "created_at": "2026-09-03T00:00:00+00:00",
+        "updated_at": "2026-09-03T00:00:00+00:00",
+        "last_error_code": None,
+    }
+    payload[field] = 123
+    journal_path = journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME
+    journal_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(bootstrap.BootstrapInstallError, match="journal_invalid"):
+        _install(_sources, install_root, journal_root)
+
+    assert journal_path.exists()
 
 
 def test_reparse_install_root_is_refused_without_touching_external_data(
