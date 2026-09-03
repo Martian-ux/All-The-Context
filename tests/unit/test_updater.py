@@ -636,6 +636,80 @@ def test_same_version_acceptance_success_marks_installed(tmp_path: Path) -> None
     assert recovered.configure(enabled=True, channel="stable")["phase"] == "installed"
 
 
+@pytest.mark.parametrize("action", ["defer", "configure"])
+def test_terminal_evidence_is_retired_before_deferred_or_disabled_state(
+    tmp_path: Path, action: str
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manager.install()
+    _publish_helper_terminal(manager, "installed")
+    manager.state = manager._load_state()
+    manager.state.current_version = manager.config.current_version
+    operation_id = manager.state.operation_id or ""
+    staging_dir = manager.state_path.parent / "staging" / operation_id
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    assert staging_dir.is_dir()
+    assert transaction_dir.is_dir()
+
+    if action == "defer":
+        status = manager.defer()
+        assert status["phase"] == "deferred"
+        assert status["deferred_version"] == "0.2.0"
+    else:
+        status = manager.configure(enabled=False, channel="stable")
+        assert status["phase"] == "disabled"
+        assert status["enabled"] is False
+
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    assert persisted["phase"] == status["phase"]
+    assert persisted["completed_handoff_identity"] is None
+    assert not staging_dir.exists()
+    assert not transaction_dir.exists()
+
+    restarted, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert restarted._state_write_allowed is True
+    assert restarted.public_status()["phase"] == status["phase"]
+
+
+@pytest.mark.parametrize("action", ["defer", "configure"])
+def test_terminal_evidence_cleanup_failure_does_not_persist_nonterminal_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manager.install()
+    _publish_helper_terminal(manager, "installed")
+    manager.state = manager._load_state()
+    manager.state.current_version = manager.config.current_version
+    state_before = manager.state_path.read_bytes()
+    preferences_before = (
+        manager.preferences_path.read_bytes() if manager.preferences_path.exists() else None
+    )
+    monkeypatch.setattr(manager, "_clear_completed_recovery_evidence", lambda: False)
+
+    with pytest.raises(UpdateError, match="cleanup could not be completed safely"):
+        if action == "defer":
+            manager.defer()
+        else:
+            manager.configure(enabled=False, channel="stable")
+
+    assert manager.state_path.read_bytes() == state_before
+    assert (
+        manager.preferences_path.read_bytes() if manager.preferences_path.exists() else None
+    ) == preferences_before
+    persisted = json.loads(state_before)
+    assert persisted["phase"] == "installed"
+    assert persisted["transaction_path"] is None
+    assert persisted["completed_handoff_identity"] is not None
+
+
 def test_accept_exact_candidate_rejects_newer_available_offer(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path, version="0.2.0")
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
@@ -875,7 +949,10 @@ def test_valid_terminal_publication_is_cleaned_before_new_operation(tmp_path: Pa
     _publish_helper_terminal(manager, "installed")
     operation_id = manager.state.operation_id or ""
     transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    staging_dir = manager.state_path.parent / "staging" / operation_id
     assert transaction_dir.is_dir()
+    assert (staging_dir / "artifact.zip").is_file()
+    assert (staging_dir / "manifest.json").is_file()
 
     recovered, _, _ = _manager(
         tmp_path,
@@ -888,6 +965,43 @@ def test_valid_terminal_publication_is_cleaned_before_new_operation(tmp_path: Pa
     assert recovered.public_status()["phase"] == "installed"
     assert recovered.state.completed_handoff_identity is None
     assert not transaction_dir.exists()
+    assert not staging_dir.exists()
+    assert (tmp_path / "core.sqlite3").is_file()
+    assert Path(recovered.state.backup_path or "missing").is_file()
+
+
+def test_successful_terminal_recovery_removes_staging_and_transaction_evidence(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    manager.install()
+    _publish_helper_terminal(manager, "installed", clear_transaction=False)
+    operation_id = manager.state.operation_id or ""
+    staging_dir = manager.state_path.parent / "staging" / operation_id
+    transaction_dir = manager.state_path.parent / "transactions" / operation_id
+    backup = Path(manager.state.backup_path or "missing")
+    assert (staging_dir / "artifact.zip").is_file()
+    assert (staging_dir / "manifest.json").is_file()
+    assert transaction_dir.is_dir()
+
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+
+    assert recovered.recover_after_restart()["phase"] == "installed"
+    assert recovered.state.completed_handoff_identity is None
+    assert not staging_dir.exists()
+    assert not transaction_dir.exists()
+    assert (tmp_path / "core.sqlite3").is_file()
+    assert backup.is_file()
+    assert (tmp_path / "all-the-context-0.2.0-windows-x86_64.zip").is_file()
 
 
 @pytest.mark.parametrize("outcome", ["installed", "rolled_back"])

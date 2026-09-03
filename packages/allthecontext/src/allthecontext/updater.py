@@ -43,6 +43,7 @@ from .release_manifest import (
     verify_manifest,
 )
 from .windows_update_helper import (
+    POST_COMMIT_DEGRADED_ERROR,
     HelperError,
     HelperPhase,
     UpdateJournal,
@@ -198,6 +199,7 @@ _PUBLIC_ERROR_MESSAGES = frozenset(
         "Persisted update recovery metadata was unsafe; recovery evidence was preserved",
         RECOVERY_EVIDENCE_INCOMPLETE_ERROR,
         "Update recovery completed but cleanup could not be completed safely; retry recovery",
+        POST_COMMIT_DEGRADED_ERROR,
         "The new version failed its health check and was rolled back",
         "The new version did not become healthy and automatic rollback failed",
         "Signed update metadata targets a different platform",
@@ -1715,7 +1717,7 @@ class UpdateManager:
             return True
 
     def _clear_completed_recovery_evidence(self) -> bool:
-        """Remove only a journal already proven terminal and fully published."""
+        """Remove only terminal evidence already proven safe to retire."""
 
         identity = self.state.completed_handoff_identity
         operation = self.state.operation_id
@@ -1732,7 +1734,13 @@ class UpdateManager:
         ):
             return False
         transaction_dir = self.config.data_dir / "transactions" / operation
+        operation_dir = self.config.data_dir / "staging" / operation
         try:
+            operation_expected = _plain_directory_stat_if_present(operation_dir)
+            if operation_expected is not None and not _remove_owned_tree(
+                operation_dir, expected=operation_expected
+            ):
+                return False
             expected = _plain_directory_stat_if_present(transaction_dir)
         except (HelperError, OSError, RecursionError):
             return False
@@ -2172,6 +2180,12 @@ class UpdateManager:
         self.state.pending_handoff_identity = None
         self.state.completed_handoff_identity = completed_identity
         self._save()
+        if not self._clear_completed_recovery_evidence():
+            self._state_write_allowed = False
+            self.state.last_error = "Updater staging cleanup could not be completed safely"
+            return self.public_status()
+        self.state.completed_handoff_identity = None
+        self._save()
         return self.public_status()
 
     def recover_after_restart(self) -> dict[str, Any]:
@@ -2455,10 +2469,9 @@ class UpdateManager:
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed(preferences=True)
             channel_changed = channel != self.preferences.channel
-            if channel_changed and self.state.completed_handoff_identity is not None:
+            if self.state.completed_handoff_identity is not None:
                 if not self._clear_completed_recovery_evidence():
                     self._state_write_allowed = False
-                    self.state.phase = UpdatePhase.ERROR
                     self.state.last_error = "Updater staging cleanup could not be completed safely"
                     raise UpdateError("Updater staging cleanup could not be completed safely")
                 self.state.completed_handoff_identity = None
@@ -2502,6 +2515,12 @@ class UpdateManager:
                 raise UpdateError("There is no available update to defer")
             if self.state.mandatory:
                 raise UpdateError("This compatibility or security update cannot be deferred")
+            if self.state.completed_handoff_identity is not None:
+                if not self._clear_completed_recovery_evidence():
+                    self._state_write_allowed = False
+                    self.state.last_error = "Updater staging cleanup could not be completed safely"
+                    raise UpdateError("Updater staging cleanup could not be completed safely")
+                self.state.completed_handoff_identity = None
             next_preferences = UpdatePreferences(
                 self.preferences.enabled, self.preferences.channel, self.state.offered_version
             )

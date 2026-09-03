@@ -502,6 +502,45 @@ def test_independent_helper_commits_after_real_state_and_database_transition(
     assert replayed_state["transaction_path"] is None
 
 
+@pytest.mark.parametrize("failed_step", ["unregister", "launch"])
+def test_post_commit_side_effect_failure_keeps_terminal_install_authoritative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_step: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+
+    def fail_post_commit(_value: object) -> None:
+        raise OSError(failed_step)
+
+    if failed_step == "unregister":
+        monkeypatch.setattr(helper_module, "unregister_recovery", fail_post_commit)
+    else:
+        monkeypatch.setattr(helper_module, "_launch_core", fail_post_commit)
+
+    assert run_transaction(fixture.journal_path) == 0
+
+    journal = UpdateJournal.load(fixture.journal_path)
+    assert journal.phase is HelperPhase.COMMITTED
+    assert journal.last_error_code is None
+    assert fixture.application.read_bytes() == fixture.replacement
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "installed"
+    assert state["transaction_path"] is None
+    assert state["completed_handoff_identity"] == helper_module.journal_handoff_identity(journal)
+    assert state["last_error"] == helper_module.POST_COMMIT_DEGRADED_ERROR
+    if failed_step == "unregister":
+        assert launched == ["0.1.0"]
+    else:
+        assert launched == []
+
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    assert ensure_recovery_before_core() is True
+
+
 @pytest.mark.parametrize("hostile_report_phase", ["apply", "diagnostics", "health"])
 def test_run_transaction_contains_pathological_child_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hostile_report_phase: str

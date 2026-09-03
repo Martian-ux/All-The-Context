@@ -86,6 +86,9 @@ STARTUP_RECOVERY_DIAGNOSTIC_CODES = frozenset(
         "diagnostic_invalid",
     }
 )
+POST_COMMIT_DEGRADED_ERROR = (
+    "The update was committed, but recovery cleanup or Core restart could not complete safely"
+)
 STARTUP_STATE_FIELDS = frozenset(
     {
         "phase",
@@ -1796,6 +1799,48 @@ def _update_state(
     _atomic_json(path, value, boundary_code="application_state_untrusted")
 
 
+def _record_post_commit_degraded_state(journal: UpdateJournal) -> None:
+    """Record a non-authority-changing terminal follow-up failure.
+
+    The terminal journal and pointerless state are already authoritative when
+    this runs.  A failed RunOnce removal or Core launch must therefore remain a
+    degraded terminal result, never an input to the rollback path.  State is a
+    best-effort diagnostic here: if its write fails, the already-published
+    terminal state and journal remain untouched.
+    """
+
+    try:
+        _update_state(
+            journal,
+            phase="installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back",
+            error=POST_COMMIT_DEGRADED_ERROR,
+            clear_transaction=True,
+        )
+    except (OSError, HelperError, sqlite3.Error, ValueError):
+        return
+
+
+def _finish_terminal_handoff(
+    journal: UpdateJournal,
+    *,
+    launch_core: bool,
+) -> None:
+    """Finish terminal helper side effects without reopening the transaction."""
+
+    degraded = False
+    try:
+        unregister_recovery(journal.operation_id)
+    except (OSError, HelperError, ValueError):
+        degraded = True
+    if launch_core:
+        try:
+            _launch_core(journal)
+        except (OSError, HelperError, ValueError):
+            degraded = True
+    if degraded:
+        _record_post_commit_degraded_state(journal)
+
+
 def _launch_core(journal: UpdateJournal) -> None:
     if journal.phase is HelperPhase.COMMITTED:
         digest, size = journal.replacement_sha256, journal.replacement_size
@@ -1823,8 +1868,7 @@ def _commit(journal: UpdateJournal, journal_path: Path) -> None:
     journal.last_error_code = None
     journal.save(journal_path)
     _update_state(journal, phase="installed", error=None, clear_transaction=True)
-    unregister_recovery(journal.operation_id)
-    _launch_core(journal)
+    _finish_terminal_handoff(journal, launch_core=True)
 
 
 def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code: str) -> None:
@@ -1853,9 +1897,10 @@ def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code
         error=message,
         clear_transaction=True,
     )
-    unregister_recovery(journal.operation_id)
-    if not _process_exists(journal.parent_pid):
-        _launch_core(journal)
+    _finish_terminal_handoff(
+        journal,
+        launch_core=not _process_exists(journal.parent_pid),
+    )
 
 
 def _rollback(journal: UpdateJournal, journal_path: Path, error_code: str) -> None:
@@ -1880,8 +1925,7 @@ def _rollback(journal: UpdateJournal, journal_path: Path, error_code: str) -> No
             error=message,
             clear_transaction=True,
         )
-        unregister_recovery(journal.operation_id)
-        _launch_core(journal)
+        _finish_terminal_handoff(journal, launch_core=True)
     except (OSError, HelperError, sqlite3.Error) as exc:
         journal.phase = HelperPhase.ROLLING_BACK
         journal.last_error_code = "rollback_retry_required"
@@ -1934,8 +1978,7 @@ def run_transaction(journal_path: Path) -> int:
                 ),
                 clear_transaction=True,
             )
-            unregister_recovery(journal.operation_id)
-            _launch_core(journal)
+            _finish_terminal_handoff(journal, launch_core=True)
             return 0
         register_recovery(Path(journal.helper_path), resolved, journal.operation_id)
         if journal.phase is HelperPhase.ABORT_REQUESTED:
