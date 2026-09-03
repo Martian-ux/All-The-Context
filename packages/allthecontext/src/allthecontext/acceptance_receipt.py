@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .release_manifest import ManifestError, ReleaseVersion, sha256_file
+from .windows_acceptance import (
+    WINDOWS_ACCEPTANCE_GATES,
+    require_candidate_artifact_bindings,
+    validate_windows_acceptance,
+)
 
 RECEIPT_SCHEMA_VERSION = 1
 RECEIPT_BUNDLE_FILE_NAME = "acceptance-receipt-bundle-v1.json"
@@ -167,6 +172,7 @@ RECEIPT_ALLOWED_KEYS = frozenset(
         "counts",
         "notes",
         "microsoft_reassessment",
+        "windows_acceptance",
     }
 )
 LIMITATION_ALLOWED_KEYS = frozenset({"id", "summary", "severity", "workaround", "follow_up"})
@@ -580,6 +586,33 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         value["microsoft_reassessment"] = _validate_microsoft_reassessment(
             value.get("microsoft_reassessment")
         )
+    if "windows_acceptance" in value:
+        if gate_id not in WINDOWS_ACCEPTANCE_GATES:
+            raise ManifestError(
+                "windows_acceptance is allowed only on BETA-P01 or BETA-S03 receipts"
+            )
+        if evidence_kind != "exact_downloaded_artifact":
+            raise ManifestError("windows_acceptance requires exact_downloaded_artifact evidence")
+        acceptance = value.get("windows_acceptance")
+        if not isinstance(acceptance, Mapping):
+            raise ManifestError("windows_acceptance must be a JSON object")
+        validated_windows_acceptance = validate_windows_acceptance(
+            acceptance,
+            require_pass=status == "pass",
+            expected_source_commit=source_commit,
+        )
+        if status == "pass":
+            digests = value.get("artifact_digests")
+            if not isinstance(digests, Mapping):
+                raise ManifestError(
+                    "Windows clean-machine pass receipts require candidate artifact bindings"
+                )
+            require_candidate_artifact_bindings(validated_windows_acceptance, digests)
+        value["windows_acceptance"] = validated_windows_acceptance
+    elif status == "pass" and gate_id in WINDOWS_ACCEPTANCE_GATES:
+        raise ManifestError(
+            f"gate {gate_id} pass requires candidate-bound Windows clean-machine evidence"
+        )
     notes = value.get("notes")
     if notes is not None:
         if not isinstance(notes, str) or len(notes) > NOTES_MAX_LENGTH:
@@ -781,6 +814,19 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
             raise ManifestError("receipt candidate_sha256 does not match the bundle")
         if receipt.get("status") == "pass" and receipt_digest != candidate_sha256:
             raise ManifestError("pass receipt must bind the exact candidate digest")
+        if receipt.get("gate_id") in WINDOWS_ACCEPTANCE_GATES:
+            acceptance = receipt.get("windows_acceptance")
+            if receipt.get("status") == "pass" and not isinstance(acceptance, Mapping):
+                raise ManifestError(
+                    "Windows clean-machine pass receipt is missing its acceptance evidence"
+                )
+            if isinstance(acceptance, Mapping):
+                validate_windows_acceptance(
+                    acceptance,
+                    require_pass=receipt.get("status") == "pass",
+                    expected_source_commit=source_commit,
+                    expected_version=version if isinstance(version, str) else None,
+                )
         digests = receipt.get("artifact_digests")
         if isinstance(digests, dict):
             for key, digest in digests.items():
@@ -887,6 +933,24 @@ def missing_required_gates(
             if not isinstance(receipt.get("candidate_sha256"), str):
                 continue
             evidence_kind = receipt.get("evidence_kind")
+            if isinstance(gate_id, str) and gate_id in WINDOWS_ACCEPTANCE_GATES:
+                acceptance = receipt.get("windows_acceptance")
+                if not isinstance(acceptance, Mapping):
+                    continue
+                try:
+                    validate_windows_acceptance(
+                        acceptance,
+                        require_pass=True,
+                        expected_source_commit=receipt.get("source_commit")
+                        if isinstance(receipt.get("source_commit"), str)
+                        else None,
+                    )
+                    receipt_digests = receipt.get("artifact_digests")
+                    if not isinstance(receipt_digests, Mapping):
+                        continue
+                    require_candidate_artifact_bindings(acceptance, receipt_digests)
+                except ManifestError:
+                    continue
             if gate_id in EXACT_ARTIFACT_PUBLICATION_GATES:
                 if evidence_kind != "exact_downloaded_artifact":
                     continue
@@ -1006,6 +1070,25 @@ def recompute_receipt_artifact_bindings(
         evidence_kind = receipt.get("evidence_kind")
         gate_id = receipt.get("gate_id")
         exact_gate = isinstance(gate_id, str) and gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+        if isinstance(gate_id, str) and gate_id in WINDOWS_ACCEPTANCE_GATES:
+            acceptance = receipt.get("windows_acceptance")
+            if not isinstance(acceptance, Mapping):
+                raise ManifestError(
+                    f"gate {gate_id} pass requires Windows clean-machine evidence "
+                    "during recomputation"
+                )
+            validate_windows_acceptance(
+                acceptance,
+                require_pass=True,
+                expected_source_commit=receipt.get("source_commit")
+                if isinstance(receipt.get("source_commit"), str)
+                else None,
+            )
+            if not isinstance(digests, Mapping):
+                raise ManifestError(
+                    "Windows clean-machine pass receipts require candidate artifact bindings"
+                )
+            require_candidate_artifact_bindings(acceptance, digests)
         if exact_gate and evidence_kind != "exact_downloaded_artifact":
             raise ManifestError(
                 f"gate {gate_id} pass requires exact_downloaded_artifact evidence "
