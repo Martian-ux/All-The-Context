@@ -61,7 +61,9 @@ STARTUP_RECOVERY_PHASES = frozenset(
         "cancelled",
     }
 )
-STARTUP_RECOVERY_TRANSACTION_PHASES = frozenset({"restart_required", "installed", "rolled_back"})
+STARTUP_RECOVERY_TRANSACTION_PHASES = frozenset(
+    {"restart_required", "installed", "rolled_back", "error"}
+)
 STARTUP_RECOVERY_DIAGNOSTIC_CODES = frozenset(
     {
         "none",
@@ -1067,6 +1069,51 @@ def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[
     raise HelperError("application_state_mismatch")
 
 
+def _validate_terminal_handoff_state(
+    journal: UpdateJournal, journal_path: Path
+) -> dict[str, Any]:
+    """Require the helper's terminal journal and state publication to agree."""
+
+    if journal.phase not in TERMINAL_PHASES:
+        raise HelperError("application_state_mismatch")
+    state_path = Path(journal.state_path)
+    state = _read_json(
+        state_path,
+        MAX_STATE_BYTES,
+        boundary_code="application_state_untrusted",
+    )
+    expected_phase = (
+        "installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back"
+    )
+    expected_version = (
+        journal.target_version if expected_phase == "installed" else journal.current_version
+    )
+    identity = journal_handoff_identity(journal)
+    transaction_path = state.get("transaction_path")
+    if (
+        state.get("operation_id") != journal.operation_id
+        or state.get("phase") != expected_phase
+        or state.get("current_version") != expected_version
+    ):
+        raise HelperError("application_state_mismatch")
+    if transaction_path is None:
+        if (
+            state.get("handoff_identity") is not None
+            or state.get("pending_handoff_identity") is not None
+            or state.get("completed_handoff_identity") != identity
+        ):
+            raise HelperError("application_state_mismatch")
+    elif (
+        not isinstance(transaction_path, str)
+        or not _same_path(Path(transaction_path), _absolute_path(journal_path))
+        or state.get("handoff_identity") != identity
+        or state.get("pending_handoff_identity") is not None
+        or state.get("completed_handoff_identity") is not None
+    ):
+        raise HelperError("application_state_mismatch")
+    return state
+
+
 def _transition_handoff_state(
     journal: UpdateJournal,
     journal_path: Path,
@@ -1143,9 +1190,12 @@ def bind_handoff_state(journal: UpdateJournal, journal_path: Path) -> str:
     return identity
 
 
-def transaction_outcome(path: Path) -> str:
+def transaction_outcome(path: Path, *, validate_storage: bool = True) -> str:
     try:
-        phase = UpdateJournal.load(path).phase
+        journal = UpdateJournal.load(path, validate_storage=validate_storage)
+        phase = journal.phase
+        if phase in TERMINAL_PHASES:
+            _validate_terminal_handoff_state(journal, path)
     except HelperError:
         return "failed"
     if phase is HelperPhase.COMMITTED:
@@ -1951,6 +2001,43 @@ def request_rollback(journal_path: Path) -> None:
     launch_recovery_helper(Path(journal.helper_path), journal_path)
 
 
+def completed_transaction_is_authoritative(
+    state_path: Path,
+    state: dict[str, Any],
+    phase: str,
+    *,
+    validate_storage: bool = True,
+) -> bool:
+    """Accept pointerless evidence only after a complete terminal publication."""
+
+    if phase not in {"installed", "rolled_back"}:
+        return False
+    operation_id = state.get("operation_id")
+    completed_identity = state.get("completed_handoff_identity")
+    if not _valid_operation_id(operation_id) or not _valid_digest(completed_identity):
+        return False
+    expected = state_path.parent / "transactions" / cast(str, operation_id) / "journal.json"
+    try:
+        transactions = state_path.parent / "transactions"
+        if not _plain_directory_chain_if_present(transactions, "startup_state_untrusted"):
+            return False
+        entries = list(transactions.iterdir())
+        if len(entries) != 1 or not _same_path(entries[0], expected.parent):
+            return False
+        journal = UpdateJournal.load(expected, validate_storage=validate_storage)
+        expected_journal_phase = (
+            HelperPhase.COMMITTED if phase == "installed" else HelperPhase.ROLLED_BACK
+        )
+        return (
+            journal.phase is expected_journal_phase
+            and journal_handoff_identity(journal) == completed_identity
+            and transaction_outcome(expected, validate_storage=validate_storage)
+            == ("installed" if phase == "installed" else "rolled_back")
+        )
+    except (HelperError, OSError, RecursionError, TypeError, ValueError):
+        return False
+
+
 def ensure_recovery_before_core() -> bool:
     """Return false after starting recovery when an ordinary Core must stay down."""
 
@@ -2002,6 +2089,28 @@ def ensure_recovery_before_core() -> bool:
         )
         return False
     if transaction is None:
+        try:
+            transaction_evidence = _transaction_evidence_without_state(state_path)
+        except HelperError as error:
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code=error.code,
+                phase=phase,
+            )
+            return False
+        if (
+            transaction_evidence
+            and phase != "installing"
+            and not completed_transaction_is_authoritative(state_path, state, phase)
+        ):
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_missing_with_transaction",
+                phase=phase,
+            )
+            return False
         if phase == "installing":
             identities = (
                 state.get("handoff_identity"),
@@ -2238,6 +2347,14 @@ def ensure_recovery_before_core() -> bool:
         # A power loss can land after the terminal journal save but before the
         # state pointer and RunOnce entry are cleared. Let the idempotent helper
         # finish that cleanup before an ordinary Core creates a new updater.
+        if transaction_outcome(journal_path) == "failed":
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="journal_invalid",
+                phase=phase,
+            )
+            return False
         try:
             launch_recovery_helper(Path(journal.helper_path), journal_path)
         except (HelperError, OSError):

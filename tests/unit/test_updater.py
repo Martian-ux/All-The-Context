@@ -183,6 +183,8 @@ class FakeInstaller:
         state["completed_handoff_identity"] = None
         plan.state_path.write_text(json.dumps(state), encoding="utf-8")
         self.handed_off = True
+        if self.failure == "after-journal":
+            raise UpdateError("Installer process crashed")
 
     def recovery_outcome(self, state: UpdateState) -> str | None:
         del state
@@ -285,6 +287,50 @@ def _manager(
         health_probe=health or FakeHealth(True),
     )
     return manager, transport, active_installer
+
+
+def _publish_helper_terminal(
+    manager: UpdateManager,
+    outcome: str,
+    *,
+    clear_transaction: bool = True,
+) -> None:
+    """Model the helper's state-first terminal publication in an updater fixture."""
+
+    journal_path = Path(manager.state.transaction_path or "")
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    identity = journal_handoff_identity(journal)
+    terminal_phase = HelperPhase.COMMITTED if outcome == "installed" else HelperPhase.ROLLED_BACK
+    state = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "installed" if outcome == "installed" else "rolled_back",
+            "current_version": (
+                journal.target_version if outcome == "installed" else journal.current_version
+            ),
+            "downloaded_path": None,
+            "last_error": (
+                None
+                if outcome == "installed"
+                else "The update did not become healthy; the previous app and vault were restored"
+            ),
+            "handoff_identity": identity,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    manager.state_path.write_text(json.dumps(state), encoding="utf-8")
+    journal.phase = terminal_phase
+    journal.save(journal_path)
+    if clear_transaction:
+        state.update(
+            {
+                "transaction_path": None,
+                "handoff_identity": None,
+                "completed_handoff_identity": identity,
+            }
+        )
+        manager.state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
 def _beta_manager(tmp_path: Path, keyring: Path) -> UpdateManager:
@@ -547,10 +593,11 @@ def test_same_version_acceptance_failed_health_rolls_back_and_preserves_vault(
     manager.accept_exact_candidate()
     manager.download()
     manager.install()
+    _publish_helper_terminal(manager, "rolled_back")
     vault = tmp_path / "core.sqlite3"
     original_digest = hashlib.sha256(vault.read_bytes()).hexdigest()
 
-    recovered, _, recovered_installer = _manager(
+    recovered, _, _ = _manager(
         tmp_path,
         manifest,
         artifact,
@@ -561,8 +608,7 @@ def test_same_version_acceptance_failed_health_rolls_back_and_preserves_vault(
     )
     status = recovered.recover_after_restart()
     assert status["phase"] == "rolled_back"
-    assert recovered_installer.rolled_back
-    assert "rolled back" in (status["last_error"] or "").casefold()
+    assert "previous app and vault were restored" in (status["last_error"] or "").casefold()
     assert hashlib.sha256(vault.read_bytes()).hexdigest() == original_digest
     assert recovered.recover_after_restart()["phase"] == "rolled_back"
 
@@ -575,6 +621,7 @@ def test_same_version_acceptance_success_marks_installed(tmp_path: Path) -> None
     manager.accept_exact_candidate()
     manager.download()
     manager.install()
+    _publish_helper_terminal(manager, "installed")
     recovered, _, _ = _manager(
         tmp_path,
         manifest,
@@ -584,7 +631,9 @@ def test_same_version_acceptance_success_marks_installed(tmp_path: Path) -> None
         installer=installer,
         health=FakeHealth(True),
     )
+    assert recovered.public_status()["phase"] == "installed"
     assert recovered.recover_after_restart()["phase"] == "installed"
+    assert recovered.configure(enabled=True, channel="stable")["phase"] == "installed"
 
 
 def test_accept_exact_candidate_rejects_newer_available_offer(tmp_path: Path) -> None:
@@ -788,8 +837,9 @@ def test_failed_health_check_rolls_back_and_recovery_is_idempotent(tmp_path: Pat
     old.check()
     old.download()
     old.install()
+    _publish_helper_terminal(old, "rolled_back")
 
-    recovered, _, recovered_installer = _manager(
+    recovered, _, _ = _manager(
         tmp_path,
         manifest,
         artifact,
@@ -799,7 +849,6 @@ def test_failed_health_check_rolls_back_and_recovery_is_idempotent(tmp_path: Pat
         health=FakeHealth(False),
     )
     assert recovered.recover_after_restart()["phase"] == "rolled_back"
-    assert recovered_installer.rolled_back
     assert recovered.recover_after_restart()["phase"] == "rolled_back"
 
 
@@ -809,15 +858,16 @@ def test_successful_restart_health_check_completes_and_cleans_staging(tmp_path: 
     manager.check()
     manager.download()
     manager.install()
+    _publish_helper_terminal(manager, "installed")
     recovered, _, _ = _manager(
         tmp_path, manifest, artifact, keyring, current_version="0.2.0", health=FakeHealth(True)
     )
-    assert recovered.recover_after_restart()["phase"] == "installed"
+    assert recovered.public_status()["phase"] == "installed"
     assert recovered.recover_after_restart()["phase"] == "installed"
 
 
-@pytest.mark.parametrize("outcome", ["installed", "rolled_back", None])
-def test_recovery_cleanup_failure_retains_active_authority_for_retry(
+@pytest.mark.parametrize("outcome", ["installed", "rolled_back"])
+def test_unconfirmed_installer_outcome_cannot_complete_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     outcome: str | None,
@@ -834,13 +884,38 @@ def test_recovery_cleanup_failure_retains_active_authority_for_retry(
 
     status = recovered.recover_after_restart()
 
+    assert status["phase"] == "error"
+    assert status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    assert recovered.state.transaction_path == str(journal)
+    persisted = json.loads(recovered.state_path.read_text(encoding="utf-8"))
+    assert persisted["phase"] == "restart_required"
+    assert persisted["transaction_path"] == str(journal)
+    assert journal.is_file()
+
+
+def test_recovery_cleanup_failure_does_not_overwrite_helper_terminal_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    _publish_helper_terminal(manager, "installed", clear_transaction=False)
+
+    recovered, _, _ = _manager(tmp_path, manifest, artifact, keyring, current_version="0.2.0")
+    journal = Path(recovered.state.transaction_path or "")
+    monkeypatch.setattr(recovered, "_clean_operation", lambda: False)
+
+    status = recovered.recover_after_restart()
+
     assert status["phase"] == "restart_required"
     assert status["last_error"] == (
         "Update recovery completed but cleanup could not be completed safely; retry recovery"
     )
-    assert recovered.state.transaction_path == str(journal)
     persisted = json.loads(recovered.state_path.read_text(encoding="utf-8"))
-    assert persisted["phase"] == "restart_required"
+    assert persisted["phase"] == "installed"
     assert persisted["transaction_path"] == str(journal)
     assert journal.is_file()
 
@@ -1310,9 +1385,9 @@ def test_invalid_active_recovery_journal_preserves_authority_across_lifecycle(
     assert recovery_status["last_error"] == updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
     assert state_path.read_bytes() == original_state
     assert journal_path.read_bytes() == invalid_journal
-    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+    with pytest.raises(UpdateError, match=r"recovery helper owns|state cannot be changed safely"):
         recovered.clear_error()
-    with pytest.raises(UpdateError, match="state cannot be changed safely"):
+    with pytest.raises(UpdateError, match=r"recovery helper owns|state cannot be changed safely"):
         recovered.configure(enabled=True, channel="beta")
 
     restarted, _, _ = _manager(
@@ -1355,7 +1430,109 @@ def test_valid_active_recovery_journal_remains_recoverable(tmp_path: Path) -> No
         health=FakeHealth(True),
     )
     assert recovered._state_write_allowed is True
-    assert recovered.recover_after_restart()["phase"] == "installed"
+    assert recovered.recover_after_restart()["phase"] == "restart_required"
+    assert recovered.state.transaction_path == str(journal_path)
+
+
+@pytest.mark.parametrize("terminal_phase", [HelperPhase.COMMITTED, HelperPhase.ROLLED_BACK])
+def test_forged_terminal_phase_during_restart_required_preserves_authority(
+    tmp_path: Path,
+    terminal_phase: HelperPhase,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    state_before = manager.state_path.read_bytes()
+    journal_path = Path(manager.state.transaction_path or "")
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    journal.phase = terminal_phase
+    journal.save(journal_path)
+
+    recovered, _, _ = _manager(tmp_path, manifest, artifact, keyring, current_version="0.2.0")
+
+    assert recovered.public_status()["phase"] == "error"
+    assert recovered.public_status()["last_error"] == (
+        updater_module.RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+    )
+    assert recovered._state_write_allowed is False
+    assert recovered.state_path.read_bytes() == state_before
+    assert journal_path.is_file()
+
+
+def test_handoff_failure_after_journal_persistence_keeps_recovery_authority(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    installer = FakeInstaller(failure="after-journal")
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.download()
+
+    status = manager.install()
+
+    journal_path = Path(manager.state.transaction_path or "")
+    assert status["phase"] == "error"
+    assert manager.state.transaction_path == str(journal_path)
+    persisted = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    assert persisted["handoff_identity"] is not None
+    assert journal_path.is_file()
+
+    restarted, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+        installer=installer,
+    )
+    assert restarted._state_write_allowed is False
+    assert restarted.state.transaction_path == str(journal_path)
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        restarted.clear_error()
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        restarted.configure(enabled=True, channel="beta")
+    assert journal_path.is_file()
+
+
+def test_rollback_failure_keeps_authority_across_error_clear_configure_and_restart(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+    journal_path = Path(manager.state.transaction_path or "")
+    journal = UpdateJournal.load(journal_path, validate_storage=False)
+    journal.phase = HelperPhase.ROLLING_BACK
+    journal.last_error_code = "rollback_retry_required"
+    journal.save(journal_path)
+    manager.state.phase = UpdatePhase.ERROR
+    manager.state.last_error = (
+        "The new version did not become healthy and automatic rollback failed"
+    )
+    manager._save()
+    state_before_restart = manager.state_path.read_bytes()
+
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        manager.clear_error()
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        manager.configure(enabled=True, channel="beta")
+
+    restarted, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.2.0",
+    )
+    assert restarted._state_write_allowed is False
+    assert restarted.state.phase is UpdatePhase.ERROR
+    assert restarted.state.transaction_path == str(journal_path)
+    assert manager.state_path.read_bytes() == state_before_restart
+    assert journal_path.is_file()
 
 
 def test_public_update_errors_do_not_expose_manifest_or_keyring_details(
@@ -1724,7 +1901,7 @@ def test_repeated_checks_preserve_orphan_staging_when_global_budget_is_exceeded(
     assert all((staging / f"orphan-{index:02d}").is_dir() for index in range(40))
 
 
-def test_restart_retains_the_latest_terminal_recovery_journal(tmp_path: Path) -> None:
+def test_restart_preserves_unresolved_recovery_journals_from_pruning(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     operation_id = "c" * 24
     updates = tmp_path / "updates"
@@ -1749,7 +1926,7 @@ def test_restart_retains_the_latest_terminal_recovery_journal(tmp_path: Path) ->
     _manager(tmp_path, manifest, artifact, keyring)
 
     assert retained.is_dir()
-    assert not orphan.exists()
+    assert orphan.is_dir()
 
 
 def test_current_platform_rejects_unknown_and_32_bit_architectures(
@@ -1830,8 +2007,9 @@ def test_windows_adapter_enables_automatic_install_with_independent_helper(
     assert installer.supported is True
 
 
+@pytest.mark.parametrize("failure", [None, "register", "launch"])
 def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path, monkeypatch: Any, failure: str | None
 ) -> None:
     data_dir = tmp_path / "data"
     updates = data_dir / "updates"
@@ -1884,16 +2062,18 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
     registrations: list[tuple[Path, Path, str]] = []
     launches: list[tuple[Path, Path]] = []
-    monkeypatch.setattr(
-        updater_module,
-        "register_recovery",
-        lambda helper, journal, operation: registrations.append((helper, journal, operation)),
-    )
-    monkeypatch.setattr(
-        updater_module,
-        "launch_recovery_helper",
-        lambda helper, journal: launches.append((helper, journal)),
-    )
+    def register(helper: Path, journal: Path, operation: str) -> None:
+        registrations.append((helper, journal, operation))
+        if failure == "register":
+            raise OSError("registration failed")
+
+    def launch(helper: Path, journal: Path) -> None:
+        launches.append((helper, journal))
+        if failure == "launch":
+            raise OSError("launch failed")
+
+    monkeypatch.setattr(updater_module, "register_recovery", register)
+    monkeypatch.setattr(updater_module, "launch_recovery_helper", launch)
     installer = PlatformInstaller(
         system="Windows",
         frozen=True,
@@ -1918,19 +2098,27 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
         artifact_size=artifact.stat().st_size,
     )
 
-    installer.handoff(plan)
+    if failure is None:
+        installer.handoff(plan)
+    else:
+        with pytest.raises(UpdateError, match="transaction"):
+            installer.handoff(plan)
 
     journal = UpdateJournal.load(journal_path)
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert journal.phase is HelperPhase.PREPARED
     assert state["handoff_identity"] == journal_handoff_identity(journal)
+    assert state["transaction_path"] == str(journal_path)
     assert Path(journal.rollback_application_path).read_bytes() == b"old application"
     assert Path(journal.rollback_mcp_path or "").read_bytes() == b"old mcp"
     assert Path(journal.rollback_recovery_path or "").read_bytes() == b"old recovery"
     assert Path(journal.rollback_update_helper_path).read_bytes() == b"old update helper"
     assert Path(journal.replacement_path).read_bytes() == b"new application"
     assert registrations == [(Path(journal.helper_path), journal_path, operation_id)]
-    assert launches == [(Path(journal.helper_path), journal_path)]
+    expected_launches = (
+        [] if failure == "register" else [(Path(journal.helper_path), journal_path)]
+    )
+    assert launches == expected_launches
 
 
 @pytest.mark.parametrize(

@@ -1242,7 +1242,57 @@ def test_core_start_guard_resumes_active_transaction_and_ignores_health_environm
     journal.phase = HelperPhase.COMMITTED
     journal.save(fixture.journal_path)
     assert ensure_recovery_before_core() is False
-    assert len(launched) == 3
+    assert len(launched) == 2
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "journal_invalid"
+
+
+def test_core_start_guard_relaunches_error_transaction_after_rollback_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = UpdateJournal.load(fixture.journal_path)
+    journal.phase = HelperPhase.ROLLING_BACK
+    journal.last_error_code = "rollback_retry_required"
+    journal.save(fixture.journal_path)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["phase"] = "error"
+    state["last_error"] = "The new version did not become healthy and automatic rollback failed"
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    state_before = fixture.state_path.read_bytes()
+    launched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        helper_module,
+        "launch_recovery_helper",
+        lambda helper, journal_path: launched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert launched == [(Path(journal.helper_path), fixture.journal_path)]
+    assert fixture.state_path.read_bytes() == state_before
+
+
+def test_core_start_guard_allows_published_terminal_pointerless_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    assert run_transaction(fixture.journal_path) == 0
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert state["phase"] == "installed"
+    assert state["transaction_path"] is None
+    assert state["completed_handoff_identity"] is not None
+
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is True
 
 
 def test_core_start_guard_recovers_interrupted_unbound_preparation(
@@ -1815,7 +1865,7 @@ def test_core_start_guard_ignores_untrusted_existing_marker_without_escaping(
     diagnostic_path.mkdir()
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
 
-    assert ensure_recovery_before_core() is True
+    assert ensure_recovery_before_core() is False
     assert diagnostic_path.is_dir()
 
 
@@ -1862,7 +1912,13 @@ def test_core_start_guard_contains_marker_probe_race(
     monkeypatch.setattr(helper_module, "_plain_file_stat_if_present", raced_stat)
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
 
-    assert ensure_recovery_before_core() is True
+    assert ensure_recovery_before_core() is False
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_missing_with_transaction"
 
 
 def test_core_start_guard_rejects_reparse_transaction_parent(

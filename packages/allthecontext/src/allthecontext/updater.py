@@ -47,12 +47,12 @@ from .windows_update_helper import (
     HelperPhase,
     UpdateJournal,
     bind_handoff_state,
+    completed_transaction_is_authoritative,
     journal_handoff_identity,
     launch_recovery_helper,
     register_recovery,
     request_rollback,
     transaction_outcome,
-    unregister_recovery,
 )
 from .windows_update_helper import (
     _atomic_json as _helper_atomic_json,
@@ -1359,7 +1359,6 @@ class PlatformInstaller:
             or plan.artifact_size > MAX_ARTIFACT_BYTES
         ):
             raise UpdateError("Verified release archive evidence is missing at handoff")
-        recovery_registered = False
         try:
             _plain_file_stat(
                 plan.artifact,
@@ -1470,12 +1469,8 @@ class PlatformInstaller:
             journal.save(journal_path)
             bind_handoff_state(journal, journal_path)
             register_recovery(copied_helper, journal_path, plan.operation_id)
-            recovery_registered = True
             launch_recovery_helper(copied_helper, journal_path)
         except (HelperError, OSError, zipfile.BadZipFile) as exc:
-            if recovery_registered:
-                with suppress(HelperError, OSError):
-                    unregister_recovery(plan.operation_id)
             raise UpdateError("The Windows recovery transaction could not be prepared") from exc
 
     def rollback(self, state: UpdateState) -> None:
@@ -1562,6 +1557,12 @@ class UpdateManager:
             self.state = self._load_state()
             self.state.current_version = config.current_version
             self._validate_internal_state()
+            if self._state_write_allowed and self._transaction_evidence_requires_preservation():
+                self._state_write_allowed = False
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = (
+                    "Persisted update recovery metadata was unsafe; recovery evidence was preserved"
+                )
             self._normalize_unpublished_channel_state()
             self._recover_interrupted()
             if self._state_write_allowed:
@@ -1646,6 +1647,88 @@ class UpdateManager:
             return any(transactions.iterdir())
         except (HelperError, OSError):
             return True
+
+    def _recovery_authority_present(self) -> bool:
+        return (
+            self.state.transaction_path is not None
+            or self.state.handoff_identity is not None
+            or self.state.pending_handoff_identity is not None
+            or self.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}
+        )
+
+    def _transaction_evidence_requires_preservation(self) -> bool:
+        """Detect transaction evidence that is not covered by a completed handoff."""
+
+        transactions = self.config.data_dir / "transactions"
+        try:
+            if not _helper_plain_directory_chain_if_present(transactions, "metadata_untrusted"):
+                return False
+            entries = list(transactions.iterdir())
+        except (HelperError, OSError):
+            return True
+        if not entries:
+            return False
+
+        allowed: Path | None = None
+        if self.state.transaction_path is not None:
+            allowed = Path(self.state.transaction_path).parent
+        elif completed_transaction_is_authoritative(
+            self.state_path,
+            {
+                **asdict(self.state),
+                "phase": self.state.phase.value,
+            },
+            self.state.phase.value,
+            validate_storage=False,
+        ):
+            operation = self.state.operation_id
+            if operation is not None:
+                allowed = transactions / operation
+        if allowed is None:
+            return True
+        return any(not _same_path(entry, allowed) for entry in entries)
+
+    def _transaction_evidence_persisted(self) -> bool:
+        """Treat an existing transaction file or partial transaction tree as authority."""
+
+        transaction = self.state.transaction_path
+        if transaction is None:
+            return False
+        path = Path(transaction)
+        try:
+            if _helper_plain_file_stat_if_present(path, "metadata_untrusted") is not None:
+                return True
+            if not _helper_plain_directory_chain_if_present(
+                path.parent, "metadata_untrusted"
+            ):
+                return False
+            return any(path.parent.iterdir())
+        except (HelperError, OSError):
+            return True
+
+    def _clear_completed_recovery_evidence(self) -> bool:
+        """Remove only a journal already proven terminal and fully published."""
+
+        identity = self.state.completed_handoff_identity
+        operation = self.state.operation_id
+        if identity is None or operation is None or self.state.transaction_path is not None:
+            return True
+        if not completed_transaction_is_authoritative(
+            self.state_path,
+            {
+                **asdict(self.state),
+                "phase": self.state.phase.value,
+            },
+            self.state.phase.value,
+            validate_storage=False,
+        ):
+            return False
+        transaction_dir = self.config.data_dir / "transactions" / operation
+        try:
+            expected = _plain_directory_stat_if_present(transaction_dir)
+        except (HelperError, OSError, RecursionError):
+            return False
+        return expected is None or _remove_owned_tree(transaction_dir, expected=expected)
 
     def _load_state(self) -> UpdateState:
         try:
@@ -1752,26 +1835,25 @@ class UpdateManager:
             )
 
     def _active_recovery_metadata_complete(self) -> bool:
-        if self.state.phase not in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
+        if not self._recovery_authority_present():
             return True
-        return all(
-            value is not None
-            for value in (
-                self.state.offered_version,
-                self.state.release_notes_url,
-                self.state.downloaded_path,
-                self.state.backup_path,
-                self.state.operation_id,
-                self.state.transaction_path,
-                self.state.manifest_identity,
-            )
-        )
+        required: list[str | None] = [
+            self.state.offered_version,
+            self.state.release_notes_url,
+            self.state.backup_path,
+            self.state.operation_id,
+            self.state.transaction_path,
+            self.state.manifest_identity,
+        ]
+        if self.state.phase not in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK}:
+            required.append(self.state.downloaded_path)
+        return all(value is not None for value in required)
 
     def _active_recovery_evidence_complete(self) -> bool:
         """Require every active recovery reference to resolve to its owned evidence."""
 
-        if self.state.phase not in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
-            return True
+        if not self._recovery_authority_present():
+            return not self._transaction_evidence_requires_preservation()
         operation = self.state.operation_id
         if operation is None:
             return False
@@ -1782,7 +1864,10 @@ class UpdateManager:
             backup_path = Path(self.state.backup_path or "")
             transaction_root = self.config.data_dir / "transactions"
             expected_transaction = transaction_root / operation / "journal.json"
-            if not _same_path(Path(self.state.downloaded_path or ""), expected_artifact):
+            if (
+                self.state.phase not in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK}
+                and not _same_path(Path(self.state.downloaded_path or ""), expected_artifact)
+            ):
                 return False
             if not _same_path(backup_path.parent, backup_root):
                 return False
@@ -1820,8 +1905,30 @@ class UpdateManager:
                 or self.state.handoff_identity not in {None, journal_identity}
                 or self.state.pending_handoff_identity not in {None, journal_identity}
                 or (
-                    self.state.phase is UpdatePhase.INSTALLING
+                    self.state.phase
+                    in {
+                        UpdatePhase.INSTALLING,
+                        UpdatePhase.RESTART_REQUIRED,
+                        UpdatePhase.ERROR,
+                    }
                     and journal.phase in {HelperPhase.COMMITTED, HelperPhase.ROLLED_BACK}
+                )
+                or (
+                    self.state.phase is UpdatePhase.INSTALLED
+                    and journal.phase is not HelperPhase.COMMITTED
+                )
+                or (
+                    self.state.phase is UpdatePhase.ROLLED_BACK
+                    and journal.phase is not HelperPhase.ROLLED_BACK
+                )
+            ):
+                return False
+            if self.state.phase in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK} and (
+                transaction_outcome(expected_transaction, validate_storage=False)
+                != (
+                    "installed"
+                    if self.state.phase is UpdatePhase.INSTALLED
+                    else "rolled_back"
                 )
             ):
                 return False
@@ -1864,6 +1971,8 @@ class UpdateManager:
         if recovery_authority_fields_present and self.state.phase not in {
             UpdatePhase.INSTALLING,
             UpdatePhase.RESTART_REQUIRED,
+            UpdatePhase.INSTALLED,
+            UpdatePhase.ROLLED_BACK,
         }:
             preserve_recovery_authority(
                 "Persisted update recovery metadata was unsafe; recovery evidence was preserved"
@@ -1949,9 +2058,11 @@ class UpdateManager:
             self.state.pending_handoff_identity = None
             invalid = True
         elif self.state.completed_handoff_identity is not None:
-            # A completed binding exists only for the narrow terminal RunOnce
-            # replay interval; an initialized application no longer needs it.
-            self.state.completed_handoff_identity = None
+            if self.state.phase not in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK}:
+                preserve_recovery_authority(
+                    "Persisted update recovery metadata was unsafe; recovery evidence was preserved"
+                )
+                return
         if invalid:
             self.state.phase = UpdatePhase.ERROR
             self.state.last_error = "Persisted update paths were invalid and were reset safely"
@@ -2004,10 +2115,7 @@ class UpdateManager:
             raise UpdateError("Persisted update preferences cannot be changed safely")
 
     def _require_no_active_handoff(self) -> None:
-        if self.state.transaction_path is not None and self.state.phase in {
-            UpdatePhase.INSTALLING,
-            UpdatePhase.RESTART_REQUIRED,
-        }:
+        if self._recovery_authority_present():
             raise UpdateBusyError("The Windows recovery helper owns the active update")
 
     @contextmanager
@@ -2038,6 +2146,27 @@ class UpdateManager:
         self.state.last_error = (
             "Update recovery completed but cleanup could not be completed safely; retry recovery"
         )
+        # The helper may already have published a terminal state. Never write
+        # RESTART_REQUIRED over that publication: the helper owns the terminal
+        # journal/state transition and can safely finish pointer cleanup on a
+        # later replay.
+        return self.public_status()
+
+    def _finish_recovery(self, outcome: str, completed_identity: str) -> dict[str, Any]:
+        if not self._clean_operation():
+            return self._recovery_cleanup_failed()
+        self.state.phase = (
+            UpdatePhase.INSTALLED if outcome == "installed" else UpdatePhase.ROLLED_BACK
+        )
+        self.state.last_error = (
+            None
+            if outcome == "installed"
+            else "The update did not become healthy; the previous app and vault were restored"
+        )
+        self.state.transaction_path = None
+        self.state.handoff_identity = None
+        self.state.pending_handoff_identity = None
+        self.state.completed_handoff_identity = completed_identity
         self._save()
         return self.public_status()
 
@@ -2048,7 +2177,12 @@ class UpdateManager:
             if self.state.phase not in {
                 UpdatePhase.INSTALLING,
                 UpdatePhase.RESTART_REQUIRED,
-            }:
+                UpdatePhase.INSTALLED,
+                UpdatePhase.ROLLED_BACK,
+            } or (
+                self.state.phase in {UpdatePhase.INSTALLED, UpdatePhase.ROLLED_BACK}
+                and self.state.transaction_path is None
+            ):
                 return self.public_status()
             self._require_metadata_writes_allowed()
             if not self._active_recovery_evidence_complete():
@@ -2056,84 +2190,87 @@ class UpdateManager:
                 self.state.phase = UpdatePhase.ERROR
                 self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
                 return self.public_status()
-            recovery_outcome = self.installer.recovery_outcome(self.state)
-            if recovery_outcome == "pending":
-                return self.public_status()
-            if recovery_outcome == "installed":
-                if not self._clean_operation():
-                    return self._recovery_cleanup_failed()
-                self.state.phase = UpdatePhase.INSTALLED
-                self.state.last_error = None
-                self.state.transaction_path = None
-                self.state.handoff_identity = None
-                self.state.pending_handoff_identity = None
-                self.state.completed_handoff_identity = None
-                self._clean_operation()
-                self._save()
-                return self.public_status()
-            if recovery_outcome == "rolled_back":
-                if not self._clean_operation():
-                    return self._recovery_cleanup_failed()
-                self.state.phase = UpdatePhase.ROLLED_BACK
-                self.state.last_error = (
-                    "The update did not become healthy; the previous app and vault were restored"
-                )
-                self.state.transaction_path = None
-                self.state.handoff_identity = None
-                self.state.pending_handoff_identity = None
-                self.state.completed_handoff_identity = None
-                self._clean_operation()
-                self._save()
-                return self.public_status()
-            if recovery_outcome == "failed":
+            transaction = self.state.transaction_path
+            if transaction is None:
+                self._state_write_allowed = False
                 self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = "The Windows update recovery journal was invalid"
-                self._save()
+                self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
                 return self.public_status()
-            offered = self.state.offered_version
+            journal_outcome = transaction_outcome(Path(transaction), validate_storage=False)
             try:
-                version_advanced = offered is not None and (
-                    ReleaseVersion.parse(self.config.current_version)
-                    >= ReleaseVersion.parse(offered)
-                )
-            except ManifestError:
+                reported_outcome = self.installer.recovery_outcome(self.state)
+            except (HelperError, OSError, ValueError):
+                reported_outcome = "failed"
+            if journal_outcome == "failed":
+                self._state_write_allowed = False
                 self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = (
-                    "Persisted update recovery metadata was invalid and was reset safely"
-                )
-                self._save()
+                self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
                 return self.public_status()
-            if version_advanced and self.health_probe.healthy():
-                if not self._clean_operation():
-                    return self._recovery_cleanup_failed()
-                self.state.phase = UpdatePhase.INSTALLED
-                self.state.last_error = None
-                self.state.transaction_path = None
-                self.state.handoff_identity = None
-                self.state.pending_handoff_identity = None
-                self.state.completed_handoff_identity = None
-                self._clean_operation()
-                self._save()
+            if reported_outcome in {"installed", "rolled_back"} and (
+                reported_outcome != journal_outcome
+            ):
+                self._state_write_allowed = False
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
                 return self.public_status()
+            if journal_outcome in {"installed", "rolled_back"}:
+                recovery_outcome = journal_outcome
+            elif reported_outcome == "pending":
+                return self.public_status()
+            elif reported_outcome not in {None, "pending"}:
+                self._state_write_allowed = False
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+                return self.public_status()
+            else:
+                recovery_outcome = None
+            if recovery_outcome is None:
+                offered = self.state.offered_version
+                try:
+                    version_advanced = offered is not None and (
+                        ReleaseVersion.parse(self.config.current_version)
+                        >= ReleaseVersion.parse(offered)
+                    )
+                except ManifestError:
+                    self._state_write_allowed = False
+                    self.state.phase = UpdatePhase.ERROR
+                    self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+                    return self.public_status()
+                if version_advanced and self.health_probe.healthy():
+                    recovery_outcome = transaction_outcome(
+                        Path(transaction), validate_storage=False
+                    )
+                    if recovery_outcome not in {
+                        "installed",
+                        "rolled_back",
+                    }:
+                        return self.public_status()
+                else:
+                    try:
+                        self.installer.rollback(self.state)
+                    except UpdateError:
+                        self.state.phase = UpdatePhase.ERROR
+                        self.state.last_error = (
+                            "The new version did not become healthy and automatic rollback failed"
+                        )
+                        self._save()
+                        return self.public_status()
+                    recovery_outcome = transaction_outcome(
+                        Path(transaction), validate_storage=False
+                    )
+                    if recovery_outcome != "rolled_back":
+                        return self.public_status()
+                if recovery_outcome not in {"installed", "rolled_back"}:
+                    return self.public_status()
             try:
-                self.installer.rollback(self.state)
-                if not self._clean_operation():
-                    return self._recovery_cleanup_failed()
-                self.state.phase = UpdatePhase.ROLLED_BACK
-                self.state.last_error = (
-                    "The new version failed its health check and was rolled back"
-                )
-                self.state.transaction_path = None
-                self.state.handoff_identity = None
-                self.state.pending_handoff_identity = None
-                self.state.completed_handoff_identity = None
-            except UpdateError:
+                journal = UpdateJournal.load(Path(transaction), validate_storage=False)
+                completed_identity = journal_handoff_identity(journal)
+            except (HelperError, OSError, RecursionError, TypeError, ValueError):
+                self._state_write_allowed = False
                 self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = (
-                    "The new version did not become healthy and automatic rollback failed"
-                )
-            self._save()
-            return self.public_status()
+                self.state.last_error = RECOVERY_EVIDENCE_INCOMPLETE_ERROR
+                return self.public_status()
+            return self._finish_recovery(recovery_outcome, completed_identity)
 
     def _operation_directory(self) -> Path:
         operation = self.state.operation_id or "pending"
@@ -2314,6 +2451,15 @@ class UpdateManager:
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed(preferences=True)
             channel_changed = channel != self.preferences.channel
+            if channel_changed and self.state.completed_handoff_identity is not None:
+                if not self._clear_completed_recovery_evidence():
+                    self._state_write_allowed = False
+                    self.state.phase = UpdatePhase.ERROR
+                    self.state.last_error = (
+                        "Updater staging cleanup could not be completed safely"
+                    )
+                    raise UpdateError("Updater staging cleanup could not be completed safely")
+                self.state.completed_handoff_identity = None
             next_preferences = UpdatePreferences(enabled, channel, None)
             cleanup_failed = channel_changed and (
                 not self._clean_operation()
@@ -2391,6 +2537,13 @@ class UpdateManager:
         with self._exclusive():
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed()
+            if self.state.completed_handoff_identity is not None:
+                if not self._clear_completed_recovery_evidence():
+                    self._state_write_allowed = False
+                    self.state.phase = UpdatePhase.ERROR
+                    self.state.last_error = "Updater staging cleanup could not be completed safely"
+                    return self.public_status()
+                self.state.completed_handoff_identity = None
             if not self.preferences.enabled:
                 self.state.phase = UpdatePhase.DISABLED
                 self._save()
@@ -2749,14 +2902,29 @@ class UpdateManager:
                 )
                 return self.public_status()
             except (OSError, ValueError, UpdateError) as exc:
-                self.state.phase = UpdatePhase.ERROR
-                self.state.last_error = _public_error_message(
+                failure_message = _public_error_message(
                     exc, fallback="Update installation failed safely"
                 )
-                self.state.downloaded_path = None
-                self.state.transaction_path = None
-                self.state.handoff_identity = None
-                self.state.pending_handoff_identity = None
-                self.state.completed_handoff_identity = None
+                if self._transaction_evidence_persisted():
+                    transaction_path = self.state.transaction_path
+                    operation_id = self.state.operation_id
+                    reloaded = self._load_state()
+                    if (
+                        reloaded.transaction_path != transaction_path
+                        or reloaded.operation_id != operation_id
+                        or not self._state_write_allowed
+                    ):
+                        self._state_write_allowed = False
+                        return self.public_status()
+                    self.state = reloaded
+                    self.state.current_version = self.config.current_version
+                else:
+                    self.state.downloaded_path = None
+                    self.state.transaction_path = None
+                    self.state.handoff_identity = None
+                    self.state.pending_handoff_identity = None
+                    self.state.completed_handoff_identity = None
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = failure_message
                 self._save()
                 return self.public_status()
