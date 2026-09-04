@@ -881,6 +881,36 @@ class CaptureCapabilityManifest:
         }
 
 
+def capture_executable_capability_error(
+    manifest: CaptureCapabilityManifest,
+) -> str | None:
+    """Return the bounded reason that would prevent an adapter run.
+
+    This is deliberately shared by the runner and all content-free readiness
+    projections. Legacy fetch-only adapters retain their narrow compatibility
+    exception; every current manifest must prove its network/egress posture
+    before it is considered executable.
+    """
+
+    if manifest.availability == "unavailable" or manifest.health == "unavailable":
+        return "capture_adapter_unavailable"
+    if not manifest.legacy_compatibility and (
+        manifest.network_access == "unknown" or manifest.data_egress is None
+    ):
+        return "capture_capability_invalid"
+    if not manifest.legacy_compatibility and manifest.authorization == "unknown":
+        return "capture_capability_invalid"
+    if manifest.authorization == "reauthorization_required":
+        return "capture_reauthorization_required"
+    if manifest.authorization == "unauthorized":
+        return "capture_authorization_unavailable"
+    if not manifest.legacy_compatibility and manifest.connection == "unknown":
+        return "capture_capability_invalid"
+    if manifest.connection == "disconnected":
+        return "capture_disconnected"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class CaptureRunResult:
     run_id: str
@@ -2064,8 +2094,7 @@ class CaptureCoordinator:
             except CaptureError:
                 continue
             if (
-                manifest.availability == "unavailable"
-                or manifest.health == "unavailable"
+                capture_executable_capability_error(manifest) is not None
                 or manifest.authorization != "authorized"
                 or manifest.connection != "connected"
             ):
@@ -2308,25 +2337,11 @@ class CaptureCoordinator:
             manifest = self._adapter_manifest(adapter, source)
         except CaptureError as error:
             return self.ledger.skipped_result(source_id, error.code)
-        if manifest.availability == "unavailable" or manifest.health == "unavailable":
-            self._mark_unavailable(source_id)
-            return self.ledger.skipped_result(source_id, "capture_adapter_unavailable")
-        if not manifest.legacy_compatibility and (
-            manifest.network_access == "unknown" or manifest.data_egress is None
-        ):
-            # Explicit unknown posture is observable for reconciliation, but it
-            # is not executable because its privacy boundary is unproven.
-            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
-        if not manifest.legacy_compatibility and manifest.authorization == "unknown":
-            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
-        if manifest.authorization == "reauthorization_required":
-            return self.ledger.skipped_result(source_id, "capture_reauthorization_required")
-        if manifest.authorization == "unauthorized":
-            return self.ledger.skipped_result(source_id, "capture_authorization_unavailable")
-        if not manifest.legacy_compatibility and manifest.connection == "unknown":
-            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
-        if manifest.connection == "disconnected":
-            return self.ledger.skipped_result(source_id, "capture_disconnected")
+        capability_error = capture_executable_capability_error(manifest)
+        if capability_error is not None:
+            if capability_error == "capture_adapter_unavailable":
+                self._mark_unavailable(source_id)
+            return self.ledger.skipped_result(source_id, capability_error)
         if (
             not manifest.legacy_compatibility
             and source.retry_count >= manifest.retry_policy.max_attempts
@@ -2679,5 +2694,6 @@ __all__ = [
     "DeterministicFakeAdapter",
     "DeterministicFakeSink",
     "IdempotentFakeSink",
+    "capture_executable_capability_error",
     "ensure_capture_schema",
 ]

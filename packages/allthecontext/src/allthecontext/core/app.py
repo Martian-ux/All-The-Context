@@ -938,13 +938,29 @@ def create_app(
             }
         capture = runtime["capture"]
         readiness_state = "ready"
-        if (
-            scheduler["worker_state"] == "failed"
+        scheduler_degraded = (
+            not scheduler["config_valid"]
+            or scheduler["worker_state"] == "failed"
+            or scheduler["worker_failure_code"] is not None
+            or scheduler["last_cycle_reason_code"] is not None
             or (scheduler["dispatch_allowed"] and not scheduler["alive"])
-            or capture["state"] == "unavailable"
+            or (
+                scheduler["dispatch_allowed"]
+                and scheduler["adapter_refresh_state"] == "unavailable"
+            )
+            or (
+                scheduler["durable_enabled"]
+                and not scheduler["process_gate"]
+                and not scheduler["update_health_forced_off"]
+            )
+        )
+        if (
+            scheduler_degraded
+            or capture["state"] != "healthy"
             or not project_projection["available"]
         ):
             readiness_state = "degraded"
+        result["ready"] = readiness_state == "ready"
         result["runtime_readiness"] = {
             "capture": capture,
             "project_projection": project_projection,

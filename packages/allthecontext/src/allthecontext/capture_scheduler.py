@@ -34,6 +34,7 @@ from .capture import (
     CaptureError,
     CaptureRunResult,
     CaptureSource,
+    capture_executable_capability_error,
 )
 from .capture_runtime import (
     read_scheduler_durable_state,
@@ -306,10 +307,7 @@ class CaptureScheduler:
     @staticmethod
     def _manifest_allows_scheduling(manifest: CaptureCapabilityManifest) -> bool:
         return (
-            manifest.availability != "unavailable"
-            and manifest.health != "unavailable"
-            and manifest.authorization
-            not in {"reauthorization_required", "unauthorized", "unknown"}
+            capture_executable_capability_error(manifest) is None
             and manifest.connection == "connected"
         )
 
@@ -492,6 +490,15 @@ class CaptureScheduler:
                     reasons.add("capture_capability_invalid")
                     state = _merge_health(state, "unavailable")
                     continue
+                capability_error = capture_executable_capability_error(manifest)
+                if capability_error is not None:
+                    reasons.add(capability_error)
+                    state = _merge_health(
+                        state,
+                        "unavailable"
+                        if capability_error == "capture_adapter_unavailable"
+                        else "degraded",
+                    )
                 if manifest.authorization == "reauthorization_required":
                     reauth_source_ids.append(source.id)
                     reasons.add("capture_reauthorization_required")
@@ -808,9 +815,10 @@ class CoreCaptureScheduler:
                 reason_code = source.last_error_code
                 try:
                     manifest = self.coordinator.capability_manifest(source.id)
-                    adapter_available = (
-                        manifest.availability != "unavailable" and manifest.health != "unavailable"
-                    )
+                    capability_error = capture_executable_capability_error(manifest)
+                    adapter_available = capability_error is None
+                    if capability_error is not None:
+                        reason_code = capability_error
                     retry_exhausted = source.retry_count >= manifest.retry_policy.max_attempts
                 except CaptureError:
                     reason_code = reason_code or "capture_capability_invalid"
@@ -1071,17 +1079,21 @@ class CoreCaptureScheduler:
                 except sqlite3.OperationalError as error:
                     if not _is_transient_sqlite_contention(error):
                         self._record_worker_failure(error)
-                        raise
+                        return
                     self._record_cycle_reason("capture_failed")
                 except (CaptureError, OSError) as error:
                     self._record_cycle_reason(self._content_free_error_code(error))
                 except BaseException as error:
                     self._record_worker_failure(error)
-                    raise
+                    return
                 if self._try_exit():
                     return
                 self._wakeup.wait(timeout=float(self._scheduler.config.poll_interval_seconds))
                 self._wakeup.clear()
+        except BaseException as error:
+            # Keep failures in the worker boundary even if lifecycle or wait
+            # plumbing itself raises outside the per-cycle containment block.
+            self._record_worker_failure(error)
         finally:
             with self._lifecycle_lock:
                 if self._thread is current:
