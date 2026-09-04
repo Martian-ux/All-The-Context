@@ -66,6 +66,44 @@ def _source_less_store(path: Path) -> tuple[CoreStore, str]:
     return store, record_id
 
 
+def _source_inclusive_store(path: Path) -> tuple[CoreStore, str, str]:
+    store = CoreStore(path)
+    store.initialize_vault()
+    source = store.add_source(
+        b"source-inclusive export body",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="source-inclusive-export-session",
+    )
+    batch = store.submit_batch(
+        str(session["session_id"]),
+        "source-inclusive-export-batch",
+        [
+            CandidateInput(
+                kind="fact",
+                content="Source-inclusive export marker",
+                source_id=source.id,
+                source_reference="message:source-inclusive",
+                source_service="fixture-provider",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=[source.id], complete=True),
+    )
+    record_id = store.get_observation(str(batch["candidate_ids"][0])).record_id
+    assert record_id is not None
+    return store, source.id, record_id
+
+
 def _rewrite_export(
     package: Path,
     destination: Path,
@@ -385,6 +423,189 @@ def test_restore_rejects_barrier_reassigned_to_existing_destination_vault(
     with pytest.raises(ValueError, match="package vault"):
         restore_export(tampered, destination, PASSPHRASE)
     assert destination_store.get_record(sentinel.record_id).content == "destination-only"
+    with destination_store.connect() as connection:
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {SOURCE_LESS_BARRIER_TABLE}").fetchone()[0]
+            == 0
+        )
+
+
+def test_restore_rejects_active_candidate_and_record_reassigned_to_destination_vault(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    source_store, _record_id = _source_less_store(source_database)
+    source_vault_id = source_store.vault_id()
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE)
+
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_vault_id = destination_store.initialize_vault("unrelated destination vault")
+    sentinel = destination_store.add_candidate(
+        CandidateInput(kind="fact", content="destination sentinel", explicit_user_statement=True)
+    )
+
+    def reassign_active_rows(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        for table in ("context_candidates", "context_records"):
+            name = f"tables/{table}.jsonl"
+            rewritten = []
+            for line in members[name].splitlines():
+                row = json.loads(line)
+                if row.get("vault_id") == source_vault_id:
+                    row["vault_id"] = destination_vault_id
+                rewritten.append(
+                    (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode()
+                )
+            members[name] = b"".join(rewritten)
+
+    tampered = _rewrite_export(
+        package,
+        tmp_path / "active-cross-vault.atcexp",
+        reassign_active_rows,
+    )
+    with pytest.raises(ValueError, match="package vault"):
+        restore_export(tampered, destination, PASSPHRASE)
+    assert destination_store.get_record(sentinel.record_id).content == "destination sentinel"
+
+
+def test_restore_rejects_source_reference_to_destination_source(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    _source_store, source_id, _record_id = _source_inclusive_store(source_database)
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE, include_sources=True)
+
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_store.initialize_vault("unrelated destination vault")
+    foreign_source = destination_store.add_source(
+        b"destination-only source",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    sentinel = destination_store.add_candidate(
+        CandidateInput(kind="fact", content="destination sentinel", explicit_user_statement=True)
+    )
+
+    def reassign_source_references(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        for table in ("context_candidates", "context_records"):
+            name = f"tables/{table}.jsonl"
+            rewritten = []
+            for line in members[name].splitlines():
+                row = json.loads(line)
+                if row.get("source_id") == source_id:
+                    row["source_id"] = foreign_source.id
+                rewritten.append(
+                    (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode()
+                )
+            members[name] = b"".join(rewritten)
+
+    tampered = _rewrite_export(
+        package,
+        tmp_path / "source-reference-cross-vault.atcexp",
+        reassign_source_references,
+    )
+    with pytest.raises(ValueError, match="source reference"):
+        restore_export(tampered, destination, PASSPHRASE)
+    assert destination_store.get_record(sentinel.record_id).content == "destination sentinel"
+
+
+def test_restore_rejects_extra_package_vault_with_split_barrier_binding(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    source_store, record_id = _source_less_store(source_database)
+    source_vault_id = source_store.vault_id()
+    source_store.purge(
+        "record",
+        record_id,
+        confirmation=source_store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE)
+    barrier_name = f"tables/{SOURCE_LESS_BARRIER_TABLE}.jsonl"
+    extra_vault_id = "extra-package-vault"
+
+    def split_package_binding(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        vault_name = "tables/vaults.jsonl"
+        vault_row = json.loads(members[vault_name].splitlines()[0])
+        vault_row["id"] = extra_vault_id
+        members[vault_name] += (
+            json.dumps(vault_row, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
+        barrier = json.loads(members[barrier_name].splitlines()[0])
+        barrier["vault_id"] = extra_vault_id
+        members[barrier_name] = (
+            json.dumps(barrier, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
+
+    tampered = _rewrite_export(
+        package,
+        tmp_path / "split-package-binding.atcexp",
+        split_package_binding,
+    )
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_store.initialize_vault("destination vault")
+    sentinel = destination_store.add_candidate(
+        CandidateInput(kind="fact", content="destination sentinel", explicit_user_statement=True)
+    )
+    with pytest.raises(ValueError, match="exactly one package vault"):
+        restore_export(tampered, destination, PASSPHRASE)
+    assert destination_store.get_record(sentinel.record_id).content == "destination sentinel"
+    assert source_vault_id != extra_vault_id
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("format_version", True),
+        ("format_version", 1.0),
+        ("format_version", "1"),
+        ("schema_version", True),
+        ("schema_version", 19.0),
+        ("schema_version", "19"),
+        ("schema_version", -1),
+        ("schema_version", 20),
+    ],
+)
+def test_restore_rejects_noncanonical_manifest_versions_before_destination_mutation(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    source_store, record_id = _source_less_store(source_database)
+    source_store.purge(
+        "record",
+        record_id,
+        confirmation=source_store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE)
+
+    def tamper_manifest(_members: dict[str, bytes], manifest: dict[str, object]) -> None:
+        manifest[field] = value
+
+    tampered = _rewrite_export(
+        package,
+        tmp_path / f"invalid-{field}-{str(value).replace('.', '-')}.atcexp",
+        tamper_manifest,
+    )
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_store.initialize_vault("destination vault")
+    sentinel = destination_store.add_candidate(
+        CandidateInput(kind="fact", content="destination sentinel", explicit_user_statement=True)
+    )
+    message = "unsupported export format" if field == "format_version" else "schema version"
+    with pytest.raises(ValueError, match=message):
+        restore_export(tampered, destination, PASSPHRASE)
+    assert destination_store.get_record(sentinel.record_id).content == "destination sentinel"
     with destination_store.connect() as connection:
         assert (
             connection.execute(f"SELECT COUNT(*) FROM {SOURCE_LESS_BARRIER_TABLE}").fetchone()[0]

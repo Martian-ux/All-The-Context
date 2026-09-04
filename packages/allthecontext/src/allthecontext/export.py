@@ -33,6 +33,10 @@ from .storage import (
 )
 
 MAGIC = b"ATCEXP1\x00"
+EXPORT_FORMAT_VERSION = 1
+# Version 0 is the pre-Core/minimal export shape.  Versions 1 through 19 are
+# the current and retained legacy Core schemas represented by this checkout.
+SUPPORTED_SCHEMA_VERSIONS = frozenset(range(20))
 SALT_SIZE = 16
 NONCE_SIZE = 12
 TAG_SIZE = 16
@@ -276,7 +280,7 @@ def _database_to_zip(
             )
             manifest = {
                 "format": "all-the-context",
-                "format_version": 1,
+                "format_version": EXPORT_FORMAT_VERSION,
                 "schema_version": schema_version,
                 "include_sources": include_sources,
                 "include_audit": include_audit,
@@ -508,6 +512,138 @@ def _portable_vault_ids(
             vault_ids.add(vault_id)
             folded_vault_ids.add(folded_vault_id)
     return vault_ids
+
+
+def _manifest_schema_version(manifest: dict[str, Any]) -> int:
+    """Validate the explicit integer schema versions retained by this format."""
+
+    raw_version = manifest.get("schema_version", 0)
+    if type(raw_version) is not int or raw_version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ValueError("export schema version must be an integer from 0 through 19")
+    return raw_version
+
+
+def _validate_manifest_versions(manifest: dict[str, Any]) -> int:
+    """Validate format and schema versions without coercing JSON values."""
+
+    if (
+        manifest.get("format") != "all-the-context"
+        or type(manifest.get("format_version")) is not int
+        or manifest.get("format_version") != EXPORT_FORMAT_VERSION
+    ):
+        raise ValueError("unsupported export format")
+    return _manifest_schema_version(manifest)
+
+
+def _validate_package_vault_binding(
+    archive: zipfile.ZipFile,
+    manifest_tables: dict[str, Any],
+    *,
+    include_sources: bool,
+) -> set[str]:
+    """Validate one package-wide vault identity before touching the destination.
+
+    A portable Core database is single-vault.  The declaration in ``vaults``
+    is the only package-side identity/remap authority; every serialized
+    authoritative row that carries ``vault_id`` must use that exact identity.
+    Destination rows are deliberately not consulted here, so an existing
+    destination vault cannot authorize a cross-vault import.  Pre-Core minimal
+    exports without a vault table remain valid only when they contain no vault
+    references.
+    """
+
+    package_vault_ids = _portable_vault_ids(archive, manifest_tables)
+    if "vaults" in manifest_tables:
+        if len(package_vault_ids) != 1:
+            raise ValueError("portable export must declare exactly one package vault")
+        package_vault_id = next(iter(package_vault_ids))
+    else:
+        package_vault_id = None
+
+    package_source_ids: set[str] = set()
+    for table in manifest_tables:
+        if table in CAPTURE_RUNTIME_TABLES or table == "vaults":
+            continue
+        with archive.open(f"tables/{table}.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                if "vault_id" in row:
+                    vault_id = row["vault_id"]
+                    if (
+                        type(vault_id) is not str
+                        or not vault_id.strip()
+                        or package_vault_id is None
+                        or vault_id != package_vault_id
+                    ):
+                        raise ValueError(
+                            f"export table {table} row is not bound to the package vault"
+                        )
+                if table == "source_records":
+                    source_id = row.get("id")
+                    if isinstance(source_id, str) and source_id:
+                        package_source_ids.add(source_id)
+
+    if include_sources:
+        # Source-inclusive packages must not turn a source_id into an implicit
+        # lookup into the destination database.  Source-free exports clear
+        # these references during restore, so this check is intentionally
+        # scoped to the format that preserves them.
+        for table in ("context_candidates", "context_records"):
+            if table not in manifest_tables:
+                continue
+            with archive.open(f"tables/{table}.jsonl") as stream:
+                for row in _iter_jsonl(stream):
+                    source_id = row.get("source_id")
+                    if source_id is not None and (
+                        type(source_id) is not str or source_id not in package_source_ids
+                    ):
+                        raise ValueError(
+                            f"export {table} source reference is not bound to a package source"
+                        )
+    if "context_record_versions" in manifest_tables:
+        with archive.open("tables/context_record_versions.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                snapshot_json = row.get("snapshot_json")
+                if not isinstance(snapshot_json, str):
+                    continue
+                try:
+                    snapshot = json.loads(
+                        snapshot_json,
+                        object_pairs_hook=_json_object_from_pairs,
+                    )
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(snapshot, dict):
+                    continue
+                if "vault_id" in snapshot:
+                    vault_id = snapshot["vault_id"]
+                    if (
+                        type(vault_id) is not str
+                        or not vault_id.strip()
+                        or package_vault_id is None
+                        or vault_id != package_vault_id
+                    ):
+                        raise ValueError(
+                            "export record version snapshot is not bound to the package vault"
+                        )
+                if include_sources:
+                    source_id = snapshot.get("source_id")
+                    if source_id is not None and (
+                        type(source_id) is not str or source_id not in package_source_ids
+                    ):
+                        raise ValueError(
+                            "export record version source reference is not bound to a "
+                            "package source"
+                        )
+    if include_sources and "source_deletion_members" in manifest_tables:
+        with archive.open("tables/source_deletion_members.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                source_id = row.get("source_id")
+                if type(source_id) is not str or source_id not in package_source_ids:
+                    raise ValueError(
+                        "export source deletion reference is not bound to a package source"
+                    )
+
+    return package_vault_ids
 
 
 def _source_chunk_descriptors(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1156,16 +1292,22 @@ def restore_export(
             )
             if not isinstance(manifest, dict):
                 raise ValueError("export manifest must be an object")
-            if manifest.get("format") != "all-the-context" or manifest.get("format_version") != 1:
-                raise ValueError("unsupported export format")
+            source_schema_version = _validate_manifest_versions(manifest)
             manifest_tables, source_chunks = _validate_manifest_archive(archive, manifest)
+            include_sources = manifest.get("include_sources", False)
+            if type(include_sources) is not bool:
+                raise ValueError("export include_sources flag is invalid")
+            package_vault_ids = _validate_package_vault_binding(
+                archive,
+                manifest_tables,
+                include_sources=include_sources,
+            )
             if dry_run:
                 return {"valid": True, "dry_run": True, "manifest": manifest}
             connection = sqlite3.connect(database_path)
             connection.row_factory = sqlite3.Row
             try:
                 connection.execute("BEGIN IMMEDIATE")
-                CoreStore._ensure_archive_source_less_purge_barriers_tx(connection)
                 all_tables = {
                     str(row[0])
                     for row in connection.execute(
@@ -1180,12 +1322,6 @@ def restore_export(
                     }
                     for table in existing
                 }
-                package_vault_ids = _portable_vault_ids(archive, manifest_tables)
-                try:
-                    source_schema_version = int(manifest.get("schema_version", 0))
-                except (TypeError, ValueError) as error:
-                    raise ValueError("export schema version is invalid") from error
-                include_sources = bool(manifest.get("include_sources", False))
                 blocked_records: set[str] = set()
                 blocked_sources: set[str] = set()
                 imported_user_mutations: list[dict[str, Any]] = []
@@ -1329,6 +1465,13 @@ def restore_export(
                         for row in _iter_jsonl(stream):
                             if str(row.get("id")) in blocked_sources:
                                 blocked_source_hashes.add(str(row.get("content_hash")))
+                CoreStore._ensure_archive_source_less_purge_barriers_tx(connection)
+                all_tables.add(_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE)
+                existing.add(_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE)
+                columns_by_table.setdefault(
+                    _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE,
+                    {"vault_id", "source_kind", "barrier_digest", "purged_at"},
+                )
                 with connection:
                     for table in manifest_tables:
                         if table in CAPTURE_RUNTIME_TABLES:
