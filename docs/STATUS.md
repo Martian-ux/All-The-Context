@@ -46,15 +46,19 @@ only, not as evidence for this integrated checkout.
 
 This integration starts from clean `db5218c988d1a131a3d4371599e86f7d955e0389`,
 which matched fetched `origin/main` before mutation and had no conflicting open
-pull request. It cherry-picks each clean single-parent worker exactly once, in
-order: automatic verified update staging
-`4ddbc11e0442fba71b7002bae104cdc5de425441`, clean-machine acceptance evidence
-`5efdffc9eb70446d22980d8816a37bee762ccfbe`, and the bounded Windows Defender
-receipt tool `b5eb29adc2e53e90bd4df14392691cf068c7f184`. The first three
-cherry-picks applied without conflicts. The staging-safety remediation
-`ecc79ec7984a974e0a81904ba3010a845b9d62c6`, whose parent is the original
-staging worker, was then independently verified and cherry-picked once after
-the local staging equivalent. It adds the explicit-consent, lifecycle,
+pull request. Its ancestry contains integration commits
+`32c1a827e86cc8804d64ebfe9ba6252532ccc6df`,
+`e01433cacb2ddcf696042eef94ac8d6abb0f1ee1`,
+`67096f6ca2f7741de1d66aba546107f36a7fae51`, and
+`47a0c7b3007fd5e271a07c78be13d74f771df904`, whose stable patch IDs match,
+respectively, the original workers
+`4ddbc11e0442fba71b7002bae104cdc5de425441`,
+`5efdffc9eb70446d22980d8816a37bee762ccfbe`,
+`b5eb29adc2e53e90bd4df14392691cf068c7f184`, and
+`ecc79ec7984a974e0a81904ba3010a845b9d62c6`. The original worker objects are
+not ancestors; the mapping is content provenance only. The first three
+integrated commits applied without conflicts, and the remediation integrated
+after the local staging equivalent. It adds the explicit-consent, lifecycle,
 packaged-Windows, and transfer-deadline safeguards below.
 
 Older users who had only the prior `enabled=true` check preference remain
@@ -79,13 +83,20 @@ The new schemas and source tests are contracts only: they do not claim a real
 Defender scan, ordinary clean-machine execution, artifact release, signing,
 publication, or execution of a downloaded candidate.
 
-The remediation worker evidence is separately bound to `ecc79ec…`: updater
-189 passed with 2 expected symlink skips, Core API 20 passed, and dashboard
-70 passed with TypeScript checking/build. The held pre-remediation integration
-also passed 2,755 tests with 14 expected filesystem-capability skips and 2
-existing Starlette deprecation warnings; its safe source package/build and
-independent manifest checks passed. Final exact-SHA gates, package/build hashes,
-and hosted checks must be recorded against the post-remediation head.
+The remediation worker evidence is separately bound to source worker
+`ecc79ec…` and integrated commit `47a0c7b…`: updater 189 passed with 2
+expected symlink skips, Core API 20 passed, and dashboard 70 passed with
+TypeScript checking/build. The held pre-remediation integration also passed
+2,755 tests with 14 expected filesystem-capability skips and 2 existing
+Starlette deprecation warnings; its safe source package/build and independent
+manifest checks passed. The dashboard cancellation review fix is integrated
+as `309d28d5966f4f072fa82ff98b843f8d1d80d2d0`, content-equivalent by stable
+patch ID to source worker `14f351741c5b4cb2d2343aeea4cba88a27a4380b`. It
+serializes dashboard update actions, keeps unrelated controls disabled during
+an active download, reports bounded cancellation progress, and covers the
+protected cancellation API and failure recovery. Final exact-SHA gates,
+package/build hashes, and hosted checks must be recorded against the final
+head.
 The distribution plan remains unsigned; SmartScreen warnings are accepted,
 but Defender quarantine or deletion is not.
 
