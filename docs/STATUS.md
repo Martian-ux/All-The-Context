@@ -95,8 +95,9 @@ The Ubuntu failure in hosted run `33924062730` was isolated to seven mypy
 it. Non-Windows execution returns before looking up the Windows-only API;
 Windows retains the real thread last-error value and fails closed if its API
 is unavailable. Focused validation passed 70 tests with 4 capability skips.
-Default, Linux, and Windows mypy checks passed; full final-tree validation and
-the post-push hosted result remain pending.
+Default, Linux, and Windows mypy checks passed. Sequential full final-tree
+validation passed 3,072 tests with 19 capability skips and 3 warnings in
+758.09 seconds; the post-push hosted result remains pending.
 
 ### 2026-09-03 — Windows update evidence wave (integration candidate)
 

@@ -52,7 +52,7 @@ dashboard error-recovery coverage.
 
 | Requirement area | Implementation/evidence | Status |
 |---|---|---|
-| Cross-platform native error reporting | `platform_compat.py::_windows_last_error`; `tests/unit/test_platform_compat.py`; repair commit `6c9e90d1bd602b37609ed672564144fb52719a48`; hosted run `33924062730` Ubuntu mypy failure | Implemented at source level. All seven Windows-native callers use one typed helper; non-Windows paths do not inspect the missing ctypes API, Windows preserves the real thread last-error value, and missing Windows capability fails closed. Focused validation passed 70 tests with 4 capability skips; default/Linux/Windows mypy passed. Full final-tree and post-push hosted evidence remain separate gates |
+| Cross-platform native error reporting | `platform_compat.py::_windows_last_error`; `tests/unit/test_platform_compat.py`; repair commit `6c9e90d1bd602b37609ed672564144fb52719a48`; hosted run `33924062730` Ubuntu mypy failure | Implemented at source level. All seven Windows-native callers use one typed helper; non-Windows paths do not inspect the missing ctypes API, Windows preserves the real thread last-error value, and missing Windows capability fails closed. Focused validation passed 70 tests with 4 capability skips; default/Linux/Windows mypy passed. Sequential full final-tree validation passed 3,072 tests with 19 capability skips and 3 warnings in 758.09 seconds. Post-push hosted evidence remains a separate gate |
 
 The repair is source/test evidence only and does not claim native service,
 process, registry, task, artifact, signing, publication, Defender,
