@@ -352,16 +352,6 @@ class WindowsRegistryAdapter:
     def _key_path(parent: str, leaf: str) -> str:
         return f"{parent}\\{leaf}" if parent else leaf
 
-    def _open_parent(self, parent: str) -> Any:
-        if not parent:
-            raise OSError("registry parent path is unavailable")
-        return self._module.OpenKey(
-            self._current_user,
-            parent,
-            0,
-            _KEY_READ | _KEY_SET_VALUE | _KEY_CREATE_SUB_KEY | _DELETE,
-        )
-
     def _set_staged_values(
         self,
         key: Any,
@@ -473,19 +463,36 @@ class WindowsRegistryAdapter:
         except FileNotFoundError:
             return True
         try:
-            if not self._staged_values_match(key, values):
-                return False
-            self._rename_open_key(key, tombstone_leaf)
-            if not self._staged_values_match(key, values):
-                # The key was atomically isolated, but it no longer has the
-                # complete owned shape.  Preserve it under the tombstone.
-                return False
-            self._delete_open_key(key)
-            return True
+            return self._isolate_and_delete_open_key(
+                key,
+                values,
+                tombstone,
+                tombstone_leaf,
+            )
         finally:
             if key is not None:
                 with suppress(OSError):
                     key.Close()
+
+    def _isolate_and_delete_open_key(
+        self,
+        key: Any,
+        values: tuple[tuple[str, int, object], ...],
+        tombstone: str,
+        tombstone_leaf: str,
+    ) -> bool:
+        """Isolate and remove one already-open key without reopening its path."""
+
+        if not self._staged_values_match(key, values):
+            return False
+        self._rename_open_key(key, tombstone_leaf)
+        if not self._staged_values_match(key, values):
+            # The key was atomically isolated, but it no longer has the
+            # complete owned shape.  Preserve it under the tombstone.
+            return False
+        if not self._delete_open_key(key, values):
+            return False
+        return self._key_is_absent(tombstone)
 
     def _delete_isolated_key(
         self,
@@ -517,27 +524,13 @@ class WindowsRegistryAdapter:
         try:
             if not self._staged_values_match(key, values):
                 return False
-            self._delete_open_key(key)
-            return True
+            if not self._delete_open_key(key, values):
+                return False
+            return self._key_is_absent(name)
         finally:
             if key is not None:
                 with suppress(OSError):
                     key.Close()
-
-    def _rename_child(self, parent_key: Any, old_leaf: str, new_leaf: str) -> None:
-        advapi32 = windows_dll("advapi32")
-        rename_key = advapi32.RegRenameKey
-        rename_key.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p)
-        rename_key.restype = ctypes.c_long
-        try:
-            native_parent = ctypes.c_void_p(int(parent_key))
-        except (TypeError, ValueError):
-            native_parent = parent_key
-        result = int(rename_key(native_parent, old_leaf, new_leaf))
-        if result == _ERROR_ALREADY_EXISTS:
-            raise FileExistsError(new_leaf)
-        if result != _ERROR_SUCCESS:
-            _raise_windows_error(result, "unable to rename registry key")
 
     def _rename_open_key(self, key: Any, new_leaf: str) -> None:
         """Atomically rename the exact key represented by ``key``."""
@@ -556,8 +549,20 @@ class WindowsRegistryAdapter:
         if result != _ERROR_SUCCESS:
             _raise_windows_error(result, "unable to isolate registry key")
 
-    def _delete_open_key(self, key: Any) -> None:
-        """Delete one isolated key by native handle, never by its path."""
+    def _delete_open_key(
+        self,
+        key: Any,
+        values: tuple[tuple[str, int, object], ...],
+    ) -> bool:
+        """Delete one isolated key by handle after a final exact check."""
+
+        # The caller validates immediately after isolation.  Revalidate here
+        # while the same native handle is still live, so a mutation between
+        # that validation and the destructive syscall cannot be counted as a
+        # successful cleanup.  The handle also prevents a path replacement
+        # from redirecting the syscall to a different key object.
+        if not self._staged_values_match(key, values):
+            return False
 
         ntdll = windows_dll("ntdll")
         delete_key = getattr(ntdll, "NtDeleteKey", None)
@@ -580,6 +585,18 @@ class WindowsRegistryAdapter:
             result = int(delete_key(key))
         if result != _ERROR_SUCCESS:
             raise OSError(result, "unable to delete isolated registry key")
+        return True
+
+    def _key_is_absent(self, name: str) -> bool:
+        """Prove that the exact private name is absent after native deletion."""
+
+        try:
+            with self._module.OpenKey(self._current_user, name, 0, _KEY_READ):
+                return False
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
 
     def publish_key_if_absent(
         self,
@@ -604,6 +621,7 @@ class WindowsRegistryAdapter:
         stage_name = self._key_path(parent, stage_leaf)
         with _REGISTRY_MUTATION_LOCK:
             stage_key: Any | None = None
+            rename_attempted = False
             try:
                 stage_key, created = self._native_key_handle(stage_name)
                 if created:
@@ -612,37 +630,68 @@ class WindowsRegistryAdapter:
                     raise OSError("registry staging key changed")
                 if not self._staged_values_match(stage_key, values):
                     raise OSError("registry staging key changed")
+                # Keep the validated handle live through publication.  A
+                # parent-plus-stage-name rename would reopen a mutable path
+                # after this check and could publish a vendor replacement.
+                rename_attempted = True
+                self._rename_open_key(stage_key, canonical_leaf)
+                # The exact key was moved, but its contents changed before
+                # publication could be accepted.  Preserve the ambiguous
+                # canonical object and fail closed.
+                return self._staged_values_match(stage_key, values)
+            except FileExistsError:
+                if stage_key is not None:
+                    tombstone = self._key_path(parent, f"{stage_leaf}.atc-tombstone")
+                    try:
+                        try:
+                            with self._module.OpenKey(self._current_user, tombstone, 0, _KEY_READ):
+                                return False
+                        except FileNotFoundError:
+                            pass
+                        self._isolate_and_delete_open_key(
+                            stage_key,
+                            values,
+                            tombstone,
+                            f"{stage_leaf}.atc-tombstone",
+                        )
+                    finally:
+                        stage_key.Close()
+                        stage_key = None
+                # A canonical sibling won the no-clobber barrier.  The stage
+                # handle itself was used for cleanup, so a reused stage path
+                # cannot redirect deletion to another key object.
+                return False
             except BaseException:
                 if stage_key is not None:
-                    stage_key.Close()
-                    stage_key = None
-                    self._delete_exact_key(
-                        stage_name,
-                        values,
-                        tombstone_name=self._key_path(parent, f"{stage_leaf}.atc-tombstone"),
-                        ownership_value=ownership_value,
-                        identity_value=identity_value,
-                    )
+                    # Once the native rename was attempted, its outcome is
+                    # ambiguous.  Never reopen and delete the stage path:
+                    # another owner may already have reused that name.
+                    if not rename_attempted:
+                        try:
+                            tombstone = self._key_path(parent, f"{stage_leaf}.atc-tombstone")
+                            try:
+                                with self._module.OpenKey(
+                                    self._current_user, tombstone, 0, _KEY_READ
+                                ):
+                                    return False
+                            except FileNotFoundError:
+                                pass
+                            self._isolate_and_delete_open_key(
+                                stage_key,
+                                values,
+                                tombstone,
+                                f"{stage_leaf}.atc-tombstone",
+                            )
+                        finally:
+                            stage_key.Close()
+                            stage_key = None
+                    else:
+                        stage_key.Close()
+                        stage_key = None
                 raise
             finally:
                 if stage_key is not None:
                     stage_key.Close()
-            try:
-                with self._open_parent(parent) as parent_key:
-                    self._rename_child(parent_key, stage_leaf, canonical_leaf)
-            except FileExistsError:
-                # A concurrently-created canonical key is never ours.  The
-                # staging key was fully validated and can be reclaimed by the
-                # same operation without touching the canonical sibling.
-                self._delete_exact_key(
-                    stage_name,
-                    values,
-                    tombstone_name=self._key_path(parent, f"{stage_leaf}.atc-tombstone"),
-                    ownership_value=ownership_value,
-                    identity_value=identity_value,
-                )
-                return False
-            return True
 
     def registry_key_matches_generation(
         self,
