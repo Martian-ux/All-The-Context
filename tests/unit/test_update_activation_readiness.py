@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -426,8 +428,15 @@ def test_compat_multipart_drains_before_update_and_fences_new_uploads(
     form_lock = threading.Lock()
     first_form_started = threading.Event()
     second_form_started = threading.Event()
+    child_activity_entered = threading.Event()
     release_first_form = threading.Event()
+    gate_holder: list[CoreActivityGate] = []
+    child_tasks: list[asyncio.Task[Any]] = []
     original_form = core_app.Request.form
+
+    async def child_activity() -> None:
+        async with gate_holder[0].activity_async():
+            child_activity_entered.set()
 
     def tracked_form(request: Any, **kwargs: Any) -> Any:
         nonlocal form_calls
@@ -435,6 +444,7 @@ def test_compat_multipart_drains_before_update_and_fences_new_uploads(
             form_calls += 1
             call_number = form_calls
         if call_number == 1:
+            child_tasks.append(asyncio.create_task(child_activity()))
             first_form_started.set()
             assert release_first_form.wait(timeout=5.0)
         elif call_number == 2:
@@ -445,6 +455,7 @@ def test_compat_multipart_drains_before_update_and_fences_new_uploads(
 
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     app = create_app(config, update_manager=_UpdatesStub())  # type: ignore[arg-type]
+    gate_holder.append(app.state.core.activity_gate)
     payload = b'{"kind":"goal","content":"first compatibility upload"}\n'
     first_response: list[Any] = []
     second_response: list[Any] = []
@@ -491,12 +502,14 @@ def test_compat_multipart_drains_before_update_and_fences_new_uploads(
         assert first_response[0].status_code == 200, first_response[0].text
         assert exclusive_started.wait(timeout=5.0)
         assert not second_form_started.is_set()
+        assert not child_activity_entered.is_set()
 
         release_exclusive.set()
         update.join(timeout=10.0)
         second.join(timeout=10.0)
         assert not update.is_alive()
         assert not second.is_alive()
+        assert child_activity_entered.wait(timeout=5.0)
 
     assert second_response[0].status_code == 200, second_response[0].text
     assert form_calls == 2
@@ -560,6 +573,179 @@ def test_async_activity_cancellation_releases_gate_reader() -> None:
                 return True
 
         assert await asyncio.wait_for(asyncio.to_thread(acquire_exclusive), timeout=5.0)
+
+    asyncio.run(exercise())
+
+
+def test_async_child_task_cannot_bypass_waiting_exclusive_writer() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        child_started = asyncio.Event()
+        child_entered = asyncio.Event()
+        writer_started = threading.Event()
+        release_writer = threading.Event()
+
+        async def child() -> None:
+            child_started.set()
+            async with gate.activity_async():
+                child_entered.set()
+
+        def writer() -> None:
+            with gate.exclusive():
+                writer_started.set()
+                assert release_writer.wait(timeout=5.0)
+
+        async with gate.activity_async():
+            writer_task = asyncio.create_task(asyncio.to_thread(writer))
+            for _ in range(500):
+                if gate._waiting_exclusive:
+                    break
+                await asyncio.sleep(0.001)
+            else:
+                pytest.fail("exclusive writer did not begin waiting")
+
+            child_task = asyncio.create_task(child())
+            await child_started.wait()
+            await asyncio.sleep(0.03)
+            assert not child_entered.is_set()
+            assert gate._active_count == 1
+            assert len(gate._active_by_owner) == 1
+
+        assert await asyncio.to_thread(writer_started.wait, 5.0)
+        assert not child_entered.is_set()
+        assert gate._active_count == 0
+        release_writer.set()
+        await writer_task
+        await child_task
+        assert child_entered.is_set()
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+
+    asyncio.run(exercise())
+
+
+def test_unrelated_async_tasks_have_isolated_activity_owners() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        child_entered = asyncio.Event()
+        release_child = asyncio.Event()
+
+        async def child() -> None:
+            async with gate.activity_async():
+                child_entered.set()
+                await release_child.wait()
+
+        async with gate.activity_async():
+            async with asyncio.TaskGroup() as group:
+                group.create_task(child())
+                await child_entered.wait()
+                assert gate._active_count == 2
+                assert len(gate._active_by_owner) == 2
+                release_child.set()
+            assert gate._active_count == 1
+
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+
+    asyncio.run(exercise())
+
+
+def test_same_task_nested_async_inline_sync_and_thread_sync_are_reentrant() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        def sync_helper() -> None:
+            with gate.activity():
+                assert gate._active_count == 2
+                assert len(gate._active_by_owner) == 1
+
+        async with gate.activity_async():
+            assert gate._active_count == 1
+            with gate.activity():
+                assert gate._active_count == 2
+                assert len(gate._active_by_owner) == 1
+            assert gate._active_count == 1
+
+            async with gate.activity_async():
+                assert gate._active_count == 2
+                assert len(gate._active_by_owner) == 1
+            assert gate._active_count == 1
+
+            await asyncio.to_thread(sync_helper)
+            assert gate._active_count == 1
+
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+
+    asyncio.run(exercise())
+
+
+def test_async_activity_errors_release_ownership_exactly_once() -> None:
+    class SentinelBaseException(BaseException):
+        pass
+
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        async def fail(error: BaseException) -> None:
+            async with gate.activity_async():
+                raise error
+
+        for error in (RuntimeError("activity failed"), SentinelBaseException()):
+            with pytest.raises(type(error)):
+                await fail(error)
+            assert gate._active_count == 0
+            assert not gate._active_by_owner
+
+        def acquire_exclusive() -> bool:
+            with gate.exclusive():
+                return True
+
+        assert await asyncio.wait_for(asyncio.to_thread(acquire_exclusive), timeout=5.0)
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+
+    asyncio.run(exercise())
+
+
+def test_destroyed_async_activity_task_releases_owner_without_context_error() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        entered = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        loop_errors: list[dict[str, Any]] = []
+
+        def exception_handler(_loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+            loop_errors.append(context)
+
+        loop.set_exception_handler(exception_handler)
+        try:
+
+            async def abandoned() -> None:
+                async with gate.activity_async():
+                    entered.set()
+                    await asyncio.Event().wait()
+
+            task = asyncio.create_task(abandoned())
+            task_ref = weakref.ref(task)
+            await entered.wait()
+            del task
+            for _ in range(100):
+                gc.collect()
+                await asyncio.sleep(0)
+                if task_ref() is None:
+                    break
+
+            assert task_ref() is None
+            assert gate._active_count == 0
+            assert not gate._active_by_owner
+        finally:
+            loop.set_exception_handler(None)
+
+        assert not [context for context in loop_errors if context.get("exception") is not None]
 
     asyncio.run(exercise())
 
