@@ -114,6 +114,128 @@ def _source_inclusive_store(path: Path) -> tuple[CoreStore, str, str]:
     return store, source.id, record_id
 
 
+def test_portable_inventory_matches_migrated_schema_and_foreign_keys(tmp_path: Path) -> None:
+    database = tmp_path / "inventory.sqlite3"
+    CoreStore(database).migrate()
+
+    with sqlite3.connect(database) as connection:
+        portable_tables = set(portable_export._table_names(connection)) - set(
+            portable_export.CAPTURE_RUNTIME_TABLES
+        )
+        foreign_keys = {
+            (table, str(row[3]), str(row[2]))
+            for table in portable_tables
+            for row in connection.execute(f'PRAGMA foreign_key_list("{table}")')
+        }
+
+    assert portable_tables == portable_export.PORTABLE_TABLE_INVENTORY
+    assert foreign_keys <= portable_export.PORTABLE_RELATIONAL_REFERENCE_INVENTORY
+
+
+def test_restore_rejects_destination_only_source_blob_reference_before_mutation(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    _source_store, _source_id, _record_id = _source_inclusive_store(source_database)
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE, include_sources=True)
+
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_store.initialize_vault("destination vault")
+    destination_source = destination_store.add_source(
+        b"DESTINATION-ONLY-UNIQUE-SECRET",
+        source_service="destination-only",
+        source_type="private-fixture",
+    )
+    sentinel = destination_store.add_candidate(
+        CandidateInput(kind="fact", content="destination sentinel", explicit_user_statement=True)
+    )
+    before = destination.read_bytes()
+
+    def point_source_record_at_destination_blob(
+        members: dict[str, bytes], manifest: dict[str, object]
+    ) -> None:
+        source_records_name = "tables/source_records.jsonl"
+        rows = []
+        for line in members[source_records_name].splitlines():
+            row = json.loads(line)
+            row["content_hash"] = destination_source.content_hash
+            rows.append((json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode())
+        members[source_records_name] = b"".join(rows)
+
+        source_blobs_name = "tables/source_blobs.jsonl"
+        members.pop(source_blobs_name)
+        tables = manifest["tables"]
+        hashes = manifest["sha256"]
+        assert isinstance(tables, dict)
+        assert isinstance(hashes, dict)
+        tables.pop("source_blobs")
+        hashes.pop(source_blobs_name)
+
+    tampered = _rewrite_export(
+        package,
+        tmp_path / "destination-only-blob.atcexp",
+        point_source_record_at_destination_blob,
+    )
+    with pytest.raises(ValueError, match="does not resolve inside the package"):
+        restore_export(tampered, destination, PASSPHRASE)
+
+    assert destination.read_bytes() == before
+    assert destination_store.get_record(sentinel.record_id).content == "destination sentinel"
+    with destination_store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM source_records").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT content FROM source_blobs WHERE content_hash=?",
+                (destination_source.content_hash,),
+            ).fetchone()[0]
+            == b"DESTINATION-ONLY-UNIQUE-SECRET"
+        )
+
+
+def test_restore_rejects_indirect_destination_only_source_reference_before_mutation(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    _source_store, _source_id, _record_id = _source_inclusive_store(source_database)
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE, include_sources=True)
+
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_store.initialize_vault("destination vault")
+    destination_source = destination_store.add_source(
+        b"indirect destination-only source",
+        source_service="destination-only",
+        source_type="private-fixture",
+    )
+    before = destination.read_bytes()
+
+    def point_session_at_destination_source(
+        members: dict[str, bytes], _manifest: dict[str, object]
+    ) -> None:
+        session_name = "tables/ingestion_sessions.jsonl"
+        rows = []
+        for line in members[session_name].splitlines():
+            row = json.loads(line)
+            row["accessible_sources_json"] = json.dumps([destination_source.id])
+            rows.append((json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode())
+        members[session_name] = b"".join(rows)
+
+    tampered = _rewrite_export(
+        package,
+        tmp_path / "indirect-destination-source.atcexp",
+        point_session_at_destination_source,
+    )
+    with pytest.raises(ValueError, match="unresolved package ID"):
+        restore_export(tampered, destination, PASSPHRASE)
+
+    assert destination.read_bytes() == before
+    with destination_store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM source_records").fetchone()[0] == 1
+
+
 def _rewrite_export(
     package: Path,
     destination: Path,
