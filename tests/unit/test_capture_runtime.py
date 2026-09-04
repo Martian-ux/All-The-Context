@@ -1845,8 +1845,8 @@ def test_windows_extended_local_drive_prefix_is_accepted_and_unc_remains_rejecte
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows path identity normalization")
 def test_windows_onedrive_root_identity_is_case_normalized() -> None:
-    upper = Path(r"C:\Users\Noah\OneDrive - ATC\Workspace")
-    lower = Path(r"c:\users\noah\onedrive - atc\workspace")
+    upper = Path(r"C:\Fixtures\OneDrive - ATC\Workspace")
+    lower = Path(r"c:\fixtures\onedrive - atc\workspace")
     assert _root_token(upper) == _root_token(lower)
 
 
