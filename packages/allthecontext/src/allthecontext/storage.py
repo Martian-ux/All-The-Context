@@ -4709,23 +4709,67 @@ class CoreStore:
             else None
         )
         if archive_identity is not None:
-            rows = connection.execute(
+            slot_rows = connection.execute(
                 "SELECT r.* FROM context_record_archive_identities i "
                 "JOIN context_records r ON r.id=i.record_id "
                 "WHERE i.vault_id=? AND i.archive_identity=? "
                 "AND r.approval_status='approved' AND r.deleted_at IS NULL "
+                "AND r.source_id IS ? AND lower(r.kind)=lower(?) "
+                "AND r.entity_key IS ? AND r.attribute_key IS ? "
                 "ORDER BY r.observed_at DESC,r.updated_at DESC,r.id LIMIT ?",
                 (
                     observation["vault_id"],
                     archive_identity,
+                    observation["source_id"],
+                    observation["kind"],
+                    observation["entity_key"],
+                    observation["attribute_key"],
                     _MAX_OBSERVATION_CANDIDATES + 1,
                 ),
             ).fetchall()
-            if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            if len(slot_rows) > _MAX_OBSERVATION_CANDIDATES:
                 raise _ObservationLookupOverflow("archive-identity target set exceeds safety bound")
-            for record in rows:
+            for record in slot_rows:
                 if self._record_is_allowed(record, principal):
                     return cast(sqlite3.Row, record)
+            # A provider may repair the slot metadata for an unchanged source
+            # item between archive batches. Permit that intentional identity
+            # migration only when the full archive identity is unique; if the
+            # same claim exists in multiple slots, the tuple above remains the
+            # only legal target and this path creates/retains a new record.
+            if not slot_rows:
+                rows = connection.execute(
+                    "SELECT r.* FROM context_record_archive_identities i "
+                    "JOIN context_records r ON r.id=i.record_id "
+                    "WHERE i.vault_id=? AND i.archive_identity=? "
+                    "AND r.approval_status='approved' AND r.deleted_at IS NULL "
+                    "AND r.source_id IS ? AND lower(r.kind)=lower(?) "
+                    "ORDER BY r.observed_at DESC,r.updated_at DESC,r.id LIMIT ?",
+                    (
+                        observation["vault_id"],
+                        archive_identity,
+                        observation["source_id"],
+                        observation["kind"],
+                        _MAX_OBSERVATION_CANDIDATES + 1,
+                    ),
+                ).fetchall()
+                if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+                    raise _ObservationLookupOverflow(
+                        "archive-identity migration set exceeds safety bound"
+                    )
+                allowed = [record for record in rows if self._record_is_allowed(record, principal)]
+                if len(allowed) == 1:
+                    candidate_session = connection.execute(
+                        "SELECT session_id FROM context_candidates WHERE id=?",
+                        (allowed[0]["candidate_id"],),
+                    ).fetchone()
+                    same_message = (
+                        candidate_session is not None
+                        and observation["session_id"] is not None
+                        and candidate_session[0] == observation["session_id"]
+                    )
+                    if not same_message:
+                        return cast(sqlite3.Row, allowed[0])
         entity_key = cast(str | None, observation["entity_key"])
         attribute_key = cast(str | None, observation["attribute_key"])
         if entity_key is not None and attribute_key is not None:
@@ -4781,6 +4825,11 @@ class CoreStore:
                     if observation_at == record_at:
                         return None
                 return keyed_target
+        # An explicitly keyed archive observation must not fall through to
+        # the subject-only lineage used for unkeyed statements. The source
+        # identity and the complete entity/attribute tuple are its target.
+        if entity_key is not None or attribute_key is not None:
+            return None
         # Unkeyed archive statements share a lineage only when they have the
         # same extracted subject. Kind-only collapse is not a slot: unrelated
         # goals, preferences, and projects remain independent current records.
@@ -5047,6 +5096,7 @@ class CoreStore:
             "JOIN source_records s ON s.id=t.deletion_source_id "
             "JOIN ingestion_sessions rs ON rs.id=t.rebuild_session_id "
             "WHERE r.vault_id=? AND i.archive_identity=? AND r.deleted_at IS NOT NULL "
+            "AND r.entity_key IS ? AND r.attribute_key IS ? "
             "AND r.source_id=? AND r.observation_origin=? "
             "AND t.deletion_origin='source_rebuild' AND t.deletion_source_id=? "
             "AND t.rebuild_session_id=? AND rs.id=? "
@@ -5056,6 +5106,8 @@ class CoreStore:
             (
                 observation["vault_id"],
                 archive_identity,
+                observation["entity_key"],
+                observation["attribute_key"],
                 observation_source_id,
                 ObservationOrigin.ARCHIVE_IMPORT.value,
                 observation_source_id,
@@ -5066,6 +5118,51 @@ class CoreStore:
                 _MAX_OBSERVATION_CANDIDATES + 1,
             ),
         ).fetchall()
+        if not prior_rows:
+            # Slot metadata can be corrected for one otherwise unchanged
+            # source item between rebuild batches. Reuse that record only
+            # when the identity has exactly one deleted rebuild candidate;
+            # two slots with the same claim remain intentionally ambiguous.
+            prior_rows = connection.execute(
+                "SELECT r.*,t.deleted_version,t.reason AS tombstone_reason,"
+                "t.content_hash AS tombstone_hash,t.deleted_at AS tombstone_deleted_at,"
+                "t.deletion_origin,t.deletion_source_id,t.rebuild_session_id,"
+                "t.rebuild_generation,t.rebuild_source_marker,"
+                "s.content_hash AS source_content_hash,s.metadata_json AS source_metadata_json,"
+                "s.deleted_at AS source_deleted_at,s.import_status AS source_import_status,"
+                "rs.mode AS rebuild_mode,rs.status AS rebuild_status,"
+                "rs.client_id AS rebuild_client_id,"
+                "rs.accessible_sources_json AS rebuild_accessible_sources_json,"
+                "rs.unavailable_sources_json AS rebuild_unavailable_sources_json "
+                "FROM context_records r "
+                "JOIN context_record_archive_identities i ON i.record_id=r.id "
+                "AND i.vault_id=r.vault_id JOIN deletion_tombstones t ON t.record_id=r.id "
+                "JOIN source_records s ON s.id=t.deletion_source_id "
+                "JOIN ingestion_sessions rs ON rs.id=t.rebuild_session_id "
+                "WHERE r.vault_id=? AND i.archive_identity=? AND r.deleted_at IS NOT NULL "
+                "AND r.source_id=? AND r.observation_origin=? "
+                "AND t.deletion_origin='source_rebuild' AND t.deletion_source_id=? "
+                "AND t.rebuild_session_id=? AND rs.id=? "
+                "AND r.candidate_id IS NOT NULL AND r.candidate_id<>? "
+                "AND t.reason IN (?, 'source_rebuild') "
+                "ORDER BY r.version DESC,r.id LIMIT ?",
+                (
+                    observation["vault_id"],
+                    archive_identity,
+                    observation_source_id,
+                    ObservationOrigin.ARCHIVE_IMPORT.value,
+                    observation_source_id,
+                    observation_session_id,
+                    observation_session_id,
+                    observation["id"],
+                    SOURCE_REBUILD_REASON,
+                    _MAX_OBSERVATION_CANDIDATES + 1,
+                ),
+            ).fetchall()
+            if len(prior_rows) > _MAX_OBSERVATION_CANDIDATES:
+                raise _ObservationLookupOverflow("rebuild migration set exceeds safety bound")
+            if len(prior_rows) != 1:
+                prior_rows = []
         if len(prior_rows) > _MAX_OBSERVATION_CANDIDATES:
             raise _ObservationLookupOverflow("rebuild candidate set exceeds safety bound")
         prior = prior_rows[0] if len(prior_rows) == 1 else None
@@ -5217,26 +5314,73 @@ class CoreStore:
         archive_identity = _archive_identity_from_row(observation)
         if archive_identity is None or source_id is None:
             return None
-        rows = connection.execute(
+        slot_rows = connection.execute(
             "SELECT r.*,t.reason FROM context_record_archive_identities i "
             "JOIN context_records r ON r.id=i.record_id "
             "JOIN deletion_tombstones t ON t.record_id=r.id "
             "WHERE i.vault_id=? AND i.archive_identity=? AND r.source_id=? "
+            "AND lower(r.kind)=lower(?) AND r.entity_key IS ? AND r.attribute_key IS ? "
             "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
             "ORDER BY t.deleted_at DESC,r.id LIMIT ?",
             (
                 observation["vault_id"],
                 archive_identity,
                 source_id,
+                observation["kind"],
+                observation["entity_key"],
+                observation["attribute_key"],
+                _MAX_OBSERVATION_CANDIDATES + 1,
+            ),
+        ).fetchall()
+        if len(slot_rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("deletion candidate set exceeds safety bound")
+        observation_fingerprint = _value_fingerprint(observation)
+        for row in slot_rows:
+            if _value_fingerprint(row) == observation_fingerprint:
+                return cast(sqlite3.Row, row)
+        if slot_rows:
+            return None
+        # A deleted record may have had its slot metadata corrected before the
+        # deletion. Follow that intentional migration only when no active
+        # record carries the same identity; an active sibling proves that the
+        # identity is legitimately present in multiple slots.
+        if (
+            connection.execute(
+                "SELECT 1 FROM context_record_archive_identities i "
+                "JOIN context_records r ON r.id=i.record_id "
+                "WHERE i.vault_id=? AND i.archive_identity=? AND r.source_id=? "
+                "AND lower(r.kind)=lower(?) AND r.approval_status='approved' "
+                "AND r.deleted_at IS NULL LIMIT 1",
+                (
+                    observation["vault_id"],
+                    archive_identity,
+                    source_id,
+                    observation["kind"],
+                ),
+            ).fetchone()
+            is not None
+        ):
+            return None
+        rows = connection.execute(
+            "SELECT r.*,t.reason FROM context_record_archive_identities i "
+            "JOIN context_records r ON r.id=i.record_id "
+            "JOIN deletion_tombstones t ON t.record_id=r.id "
+            "WHERE i.vault_id=? AND i.archive_identity=? AND r.source_id=? "
+            "AND lower(r.kind)=lower(?) "
+            "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
+            "ORDER BY t.deleted_at DESC,r.id LIMIT ?",
+            (
+                observation["vault_id"],
+                archive_identity,
+                source_id,
+                observation["kind"],
                 _MAX_OBSERVATION_CANDIDATES + 1,
             ),
         ).fetchall()
         if len(rows) > _MAX_OBSERVATION_CANDIDATES:
-            raise _ObservationLookupOverflow("deletion candidate set exceeds safety bound")
-        observation_fingerprint = _value_fingerprint(observation)
-        for row in rows:
-            if _value_fingerprint(row) == observation_fingerprint:
-                return cast(sqlite3.Row, row)
+            raise _ObservationLookupOverflow("deletion migration set exceeds safety bound")
+        if len(rows) == 1 and _value_fingerprint(rows[0]) == observation_fingerprint:
+            return cast(sqlite3.Row, rows[0])
         return None
 
     @staticmethod
@@ -5287,10 +5431,16 @@ class CoreStore:
             "JOIN context_records r ON r.id=i.record_id "
             "WHERE i.vault_id=? AND i.archive_identity=? "
             "AND r.approval_status='approved' AND r.deleted_at IS NULL "
+            "AND r.source_id=? AND lower(r.kind)=lower(?) "
+            "AND r.entity_key IS ? AND r.attribute_key IS ? "
             "ORDER BY r.updated_at DESC,r.id LIMIT ?",
             (
                 observation["vault_id"],
                 archive_identity,
+                source_id,
+                observation["kind"],
+                observation["entity_key"],
+                observation["attribute_key"],
                 _MAX_OBSERVATION_CANDIDATES + 1,
             ),
         )

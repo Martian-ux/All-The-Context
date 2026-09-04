@@ -94,11 +94,7 @@ def registered_source_reference(source_id: str, provider_item_id: str) -> str:
     """Return the opaque projection reference for one capture item."""
 
     digest = sha256(
-        json.dumps(
-            ["registered-source-reference-v1", source_id, provider_item_id],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        f"registered-source-reference-v1\0{source_id}\0{provider_item_id}".encode()
     ).hexdigest()
     return REGISTERED_SOURCE_REFERENCE_PREFIX + digest
 
@@ -388,7 +384,9 @@ _ARCHIVE_INERT_COMMAND = re.compile(
     flags=re.IGNORECASE,
 )
 _ARCHIVE_DURABLE_PREFERENCE_SIGNAL = re.compile(
-    r"(?:^\s*(?:preference|preferences)\s*:\s*|"
+    r"(?:^\s*(?:preference|preferences)\s*:\s*(?:"
+    r"(?:i|we)\b|prefer\b|(?:please\s+)?(?:always|never)\b|"
+    r"(?:please\s+)?(?:do not|don't|avoid|use|keep|include|mention)\b)|"
     r"^\s*(?:i|we)\s+(?:(?:always|never|usually|generally|normally|typically)\s+)?"
     r"(?:prefer|like|love|hate|dislike)\b|"
     r"^\s*(?:i|we)\s+(?:(?:always|never|usually|generally|normally|typically)\s+)?"
@@ -418,11 +416,6 @@ _ARCHIVE_VAGUE_PREFERENCE_VALUES = frozenset(
         "short",
         "long",
     }
-)
-_ARCHIVE_VAGUE_NON_PREFERENCE = re.compile(
-    r"^(?:[A-Za-z0-9]+\s+){0,6}(?:is|was|seems|looks|feels|sounds)\s+"
-    r"(?:nice|good|great|bad|fine|okay|ok|cool|interesting|useful|helpful)\.?$",
-    flags=re.IGNORECASE,
 )
 _ARCHIVE_CONTRACTION_REPLACEMENTS = (
     (re.compile(r"\bi['\u2019]m\b", flags=re.IGNORECASE), "i am"),
@@ -685,14 +678,11 @@ def is_self_contained_archive_statement(kind: str, content: str) -> bool:
         "editor_preference",
     }:
         if not recognizable_preference:
-            # Some trusted, older extractors typed concrete archive facts as
-            # ``preference``. Preserve that bounded shape without treating a
-            # type label as proof: an unresolved/vague fragment is refused,
-            # while a concrete noun phrase or sentence remains admissible.
-            if _ARCHIVE_VAGUE_NON_PREFERENCE.fullmatch(normalized):
-                return False
-            value_tokens = re.findall(r"[A-Za-z0-9]+", normalized)
-            return len(value_tokens) >= 2
+            # A type label from an archive extractor is not evidence of a
+            # preference. Legacy staged rows are handled by the explicit
+            # ``LEGACY_MIGRATION`` origin, which is intentionally outside this
+            # provider-archive admission gate.
+            return False
         framed = normalized
         framing = _KIND_FRAMING.get("interaction_preference")
         if framing is not None:

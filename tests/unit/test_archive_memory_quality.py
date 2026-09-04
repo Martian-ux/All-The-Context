@@ -116,15 +116,16 @@ def test_archive_admission_requires_a_durable_self_contained_claim(tmp_path: Pat
 def test_pretyped_vague_archive_prose_does_not_bypass_admission(tmp_path: Path) -> None:
     store = _store(tmp_path)
 
-    refused = _archive_observation(
-        store,
-        content="This is nice.",
-        batch_key="vague-pretyped-preference",
-    )
+    for index, content in enumerate(("This is nice.", "The weather is sunny.")):
+        refused = _archive_observation(
+            store,
+            content=content,
+            batch_key=f"vague-pretyped-preference-{index}",
+        )
 
-    assert not is_self_contained_archive_statement("preference", "This is nice.")
-    assert refused.disposition == ObservationDisposition.TENTATIVE
-    assert refused.record_id is None
+        assert not is_self_contained_archive_statement("preference", content)
+        assert refused.disposition == ObservationDisposition.TENTATIVE
+        assert refused.record_id is None
 
 
 def test_archive_identity_is_collision_free_for_delimiters_controls_and_unicode() -> None:
@@ -370,6 +371,118 @@ def test_one_archive_message_preserves_distinct_values_for_one_slot(tmp_path: Pa
     record_ids = {str(item.record_id) for item in observations}
     assert len(record_ids) == 2
     assert store.status()["counts"]["active_records"] == 2
+
+
+def test_identical_archive_claims_in_two_slots_keep_delete_barriers_isolated(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"identical claim in two slots",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="same-claim-two-slots",
+    )
+    candidates = store.submit_batch(
+        str(session["session_id"]),
+        "same-claim-two-slots-batch",
+        [
+            CandidateInput(
+                kind="interaction_preference",
+                content="I prefer concise answers.",
+                entity_key="user",
+                attribute_key=attribute,
+                source_id=source.id,
+                source_reference="message:same-claim",
+                source_service="synthetic",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+            for attribute in ("style", "format")
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=[source.id], complete=True),
+    )
+    first, second = [
+        store.get_candidate(str(candidate_id)) for candidate_id in candidates["candidate_ids"]
+    ]
+    assert first.record_id is not None and second.record_id is not None
+    assert first.record_id != second.record_id
+    assert store.status()["counts"]["active_records"] == 2
+
+    store.delete_record(str(first.record_id), reason="delete one archive slot")
+
+    style_session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="same-claim-style-reimport",
+    )
+    style_batch = store.submit_batch(
+        str(style_session["session_id"]),
+        "same-claim-style-reimport-batch",
+        [
+            CandidateInput(
+                kind="interaction_preference",
+                content="I prefer concise answers.",
+                entity_key="user",
+                attribute_key="style",
+                source_id=source.id,
+                source_reference="message:same-claim",
+                source_service="synthetic",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    store.finish_ingestion(
+        str(style_session["session_id"]),
+        CoverageReport(available=[source.id], complete=True),
+    )
+    blocked = store.get_candidate(str(style_batch["candidate_ids"][0]))
+    assert blocked.disposition == ObservationDisposition.IGNORED
+    assert blocked.record_id == first.record_id
+
+    format_session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="same-claim-format-reimport",
+    )
+    format_batch = store.submit_batch(
+        str(format_session["session_id"]),
+        "same-claim-format-reimport-batch",
+        [
+            CandidateInput(
+                kind="interaction_preference",
+                content="I prefer concise answers.",
+                entity_key="user",
+                attribute_key="format",
+                source_id=source.id,
+                source_reference="message:same-claim",
+                source_service="synthetic",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    store.finish_ingestion(
+        str(format_session["session_id"]),
+        CoverageReport(available=[source.id], complete=True),
+    )
+    unaffected = store.get_candidate(str(format_batch["candidate_ids"][0]))
+    assert unaffected.disposition in {
+        ObservationDisposition.APPLIED,
+        ObservationDisposition.REINFORCED,
+    }
+    assert unaffected.record_id == second.record_id
 
 
 def test_archive_targeting_is_bounded_and_fails_closed_on_crowded_kind(tmp_path: Path) -> None:

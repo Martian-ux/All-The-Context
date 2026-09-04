@@ -56,7 +56,7 @@ def _archive_observation(
         f"batch-{session_key}",
         [
             CandidateInput(
-                kind="preference",
+                kind="fact",
                 content=content,
                 source_id=source_id,
                 source_reference=source_reference,
@@ -96,7 +96,7 @@ def _publish_rebuild(
         f"batch-{session_key}",
         [
             CandidateInput(
-                kind="preference",
+                kind="fact",
                 content=content,
                 source_id=source_id,
                 source_reference=source_reference,
@@ -297,7 +297,7 @@ def test_valid_publish_binds_rebuild_tombstone_to_session_generation_and_marker(
         "valid-rebuild-batch",
         [
             CandidateInput(
-                kind="preference",
+                kind="fact",
                 content="I prefer concise answers.",
                 source_id=source.id,
                 source_reference="message:1",
