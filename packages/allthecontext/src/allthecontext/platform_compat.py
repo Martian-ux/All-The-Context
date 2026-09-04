@@ -212,13 +212,14 @@ def replace_file_durably(source: Path, destination: Path) -> None:
 
 
 class WindowsRegistryAdapter:
-    """Standard ``winreg`` compatibility plus path-bound registration primitives.
+    """Standard ``winreg`` compatibility plus bounded registry primitives.
 
-    The transaction only uses the lower-case mutation methods below.  They
-    open the requested HKCU path inside this adapter, compare the requested
-    preimage, and mutate that same path without returning a key handle to the
-    caller.  The public winreg-shaped methods remain delegated for read-only
-    consumers elsewhere in the desktop bootstrap.
+    The lower-case mutation methods below are used only when the wrapped
+    provider supplies the matching native compare operations.  They open the
+    requested HKCU path inside this adapter, compare the requested preimage,
+    and mutate that same path without returning a key handle to the caller.
+    The public winreg-shaped methods remain delegated for ordinary forward
+    writes and read-only consumers elsewhere in the desktop bootstrap.
     """
 
     def __init__(self, module: Any) -> None:
@@ -240,9 +241,10 @@ class WindowsRegistryAdapter:
 
         The stdlib ``winreg`` module has no conditional value or key mutation
         primitive.  A process-local lock cannot close that inter-process race,
-        so the production adapter must refuse registration unless a native
-        host supplies all three explicitly atomic operations.  Focused fakes
-        may provide these methods to model the contract.
+        so destructive cleanup remains disabled unless a native host supplies
+        all three explicitly atomic operations.  Forward registration can
+        still use standard ``SetValueEx`` after the native key-creation
+        disposition proves exclusive creation of the fixed key.
         """
 
         return all(

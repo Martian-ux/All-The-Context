@@ -660,6 +660,15 @@ def _registry_atomic_mutations_available(winreg: Any) -> bool:
     capability = getattr(winreg, "atomic_mutations_available", None)
     if isinstance(capability, bool):
         return capability
+    if all(
+        callable(getattr(winreg, name, None))
+        for name in (
+            "set_value_if_unchanged",
+            "delete_value_if_unchanged",
+            "delete_key_if_unchanged",
+        )
+    ):
+        return True
     return all(
         callable(getattr(winreg, name, None))
         for name in ("SetValueIfUnchanged", "DeleteValueIfUnchanged", "DeleteKeyIfUnchanged")
@@ -946,6 +955,8 @@ def _delete_registry_value_if_unchanged(
 ) -> None:
     """Delete only an exact value, using an adapter CAS when available."""
 
+    if not _registry_atomic_mutations_available(winreg):
+        raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
     conditional = getattr(winreg, "delete_value_if_unchanged", None)
     if callable(conditional):
         if key_name is None:
@@ -978,7 +989,7 @@ def _delete_registry_value_if_unchanged(
     raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
 
 
-def _set_registry_value_if_unchanged(
+def _set_registry_value_forward_only(
     winreg: Any,
     key: Any,
     expected: WindowsRegistryValueSnapshot,
@@ -987,7 +998,62 @@ def _set_registry_value_if_unchanged(
     *,
     key_name: str | None = None,
 ) -> None:
-    """Set only an exact value, using an adapter CAS when available."""
+    """Add one previously absent value through the stock ``winreg`` API.
+
+    ``winreg.SetValueEx`` has no compare-and-set form.  This fallback is only
+    for the forward install path, where the transaction has observed an
+    absent value; all reverse/destructive paths remain compare-and-set-only.
+    It deliberately does not claim value-level atomicity; the caller must
+    establish fixed-key ownership separately and retain the journal until a
+    later verified cleanup is possible.
+    """
+
+    if not key_name:
+        raise WindowsRegistrationError("registration_key_path_invalid")
+    if expected.present:
+        raise WindowsRegistrationError("registration_target_changed")
+    _validate_registry_key_handle(winreg, key, key_name)
+    current = _registry_value_snapshot(winreg, key, expected.name)
+    if not _registry_snapshot_equal(current, expected):
+        raise WindowsRegistrationError("registration_target_changed")
+    setter = getattr(winreg, "SetValueEx", None)
+    if not callable(setter):
+        raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
+    try:
+        setter(key, expected.name, 0, value_type, _registry_data_for_set(data))
+    except FileNotFoundError:
+        raise WindowsRegistrationError("registration_target_changed") from None
+
+
+def _set_registry_value_if_unchanged(
+    winreg: Any,
+    key: Any,
+    expected: WindowsRegistryValueSnapshot,
+    value_type: int,
+    data: RegistryData,
+    *,
+    key_name: str | None = None,
+    allow_forward_only_absent: bool = False,
+) -> None:
+    """Set only an exact value, using an adapter CAS when available.
+
+    The optional forward-only fallback is intentionally not a CAS.  It is
+    admitted only for a previously absent value during forward registration;
+    callers must never use it to restore or uninstall state.
+    """
+
+    if not _registry_atomic_mutations_available(winreg):
+        if allow_forward_only_absent and not expected.present:
+            _set_registry_value_forward_only(
+                winreg,
+                key,
+                expected,
+                value_type,
+                data,
+                key_name=key_name,
+            )
+            return
+        raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
 
     conditional = getattr(winreg, "set_value_if_unchanged", None)
     if callable(conditional):
@@ -1021,9 +1087,9 @@ def _set_registry_value_if_unchanged(
         if not isinstance(result, bool) or not result:
             raise WindowsRegistrationError("registration_target_changed")
         return
-    # A second read cannot make a plain SetValueEx compare-and-set.  Leaving
-    # the journal for an adapter that can perform the atomic operation is the
-    # only safe behavior when the platform API cannot provide one.
+    # A second read cannot make a plain SetValueEx compare-and-set.  The
+    # capability check above should make this branch unreachable for a
+    # mutation-capable provider, but keep the fail-closed behavior explicit.
     del key, value_type, data
     raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
 
@@ -1068,6 +1134,8 @@ def _delete_registry_key_if_unchanged(
 ) -> None:
     """Delete a key only through an adapter compare-delete primitive."""
 
+    if not _registry_atomic_mutations_available(winreg):
+        raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
     high_level = getattr(winreg, "delete_key_if_unchanged", None)
     if callable(high_level):
         try:
@@ -1636,11 +1704,6 @@ class WindowsApplicationRegistrationTransaction:
         if executable_metadata is None:
             raise WindowsRegistrationError("registration_executable_missing")
         winreg = self._registry if self._registry is not None else windows_registry()
-        if not _registry_atomic_mutations_available(winreg):
-            # The stdlib winreg surface has no compare-and-set operation.  Do
-            # not begin a partially reversible registration when the provider
-            # cannot prove value/key ownership against another process.
-            raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
         return winreg
 
     def _shortcut_plans(self) -> tuple[_ShortcutPlan, ...]:
@@ -2426,7 +2489,10 @@ class WindowsApplicationRegistrationTransaction:
                         value_type,
                         data,
                         key_name=self._uninstall_key,
+                        allow_forward_only_absent=self._key_created,
                     )
+                except WindowsRegistrationError:
+                    raise
                 except OSError as exc:
                     raise WindowsRegistrationError("registration_value_write_failed") from exc
                 after = _registry_value_snapshot(winreg, key, name)
@@ -2646,8 +2712,13 @@ class WindowsApplicationRegistrationTransaction:
                 winreg, self._uninstall_key, self._REGISTRY_NAMES
             )
             if not key_present:
-                key, _created = _create_registry_key_if_absent(winreg, self._uninstall_key)
-                self._key_created = False
+                key, created = _create_registry_key_if_absent(winreg, self._uninstall_key)
+                self._key_created = created is True and not (
+                    self._journal is not None and self._journal.snapshot.uninstall_key_present
+                )
+                if self._journal is not None and self._key_created:
+                    self._journal.registry_key_created = True
+                    self._persist_journal("applying", self._journal.active)
             if key is None:
                 try:
                     key = winreg.OpenKey(
@@ -2673,6 +2744,7 @@ class WindowsApplicationRegistrationTransaction:
                     value_type,
                     data,
                     key_name=self._uninstall_key,
+                    allow_forward_only_absent=self._key_created,
                 )
                 after = _registry_value_snapshot(winreg, key, name)
                 if not _registry_snapshot_equal(after, desired):
@@ -2696,7 +2768,9 @@ class WindowsApplicationRegistrationTransaction:
         self._journal = journal
         self._snapshot = journal.snapshot
         self._journal_identity_trusted = True
-        self._key_created = False
+        self._key_created = journal.registry_key_created and not (
+            journal.snapshot.uninstall_key_present
+        )
         self._mutations = []
         if journal.phase != "applying":
             raise WindowsRegistrationError("registration_journal_invalid")

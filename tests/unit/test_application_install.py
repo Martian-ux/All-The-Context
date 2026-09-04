@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import ctypes
 import json
 import os
 import stat
@@ -209,6 +210,85 @@ class _FakeRegistry:
                 return False
         del self.keys[name]
         return True
+
+
+class _StockWinreg:
+    """The stdlib winreg surface, intentionally without ATC CAS helpers."""
+
+    HKEY_CURRENT_USER = 1
+    REG_SZ = _FakeRegistry.REG_SZ
+    REG_EXPAND_SZ = _FakeRegistry.REG_EXPAND_SZ
+    REG_BINARY = _FakeRegistry.REG_BINARY
+    REG_DWORD = _FakeRegistry.REG_DWORD
+    REG_MULTI_SZ = _FakeRegistry.REG_MULTI_SZ
+    REG_QWORD = _FakeRegistry.REG_QWORD
+    KEY_READ = _FakeRegistry.KEY_READ
+    KEY_QUERY_VALUE = _FakeRegistry.KEY_QUERY_VALUE
+    KEY_SET_VALUE = _FakeRegistry.KEY_SET_VALUE
+    KEY_ALL_ACCESS = _FakeRegistry.KEY_ALL_ACCESS
+
+    def __init__(self) -> None:
+        self.state = _FakeRegistry()
+        self.set_calls = 0
+
+    @property
+    def keys(self) -> dict[str, dict[str, tuple[int, object]]]:
+        return self.state.keys
+
+    def OpenKey(self, root: object, name: str, *args: object) -> _FakeKey:
+        return self.state.OpenKey(root, name, *args)
+
+    def CreateKey(self, root: object, name: str) -> _FakeKey:
+        return self.state.CreateKey(root, name)
+
+    def QueryValueEx(self, key: _FakeKey, name: str) -> tuple[object, int]:
+        return self.state.QueryValueEx(key, name)
+
+    def SetValueEx(
+        self,
+        key: _FakeKey,
+        name: str,
+        reserved: int,
+        value_type: int,
+        data: object,
+    ) -> None:
+        self.set_calls += 1
+        self.state.SetValueEx(key, name, reserved, value_type, data)
+
+    def DeleteValue(self, key: _FakeKey, name: str) -> None:
+        self.state.DeleteValue(key, name)
+
+    def QueryInfoKey(self, key: _FakeKey) -> tuple[int, int, int]:
+        return self.state.QueryInfoKey(key)
+
+    def DeleteKey(self, root: object, name: str) -> None:
+        self.state.DeleteKey(root, name)
+
+
+class _FakeAdvapi:
+    """Only the native key-creation ABI needed by WindowsRegistryAdapter."""
+
+    def __init__(self, module: _StockWinreg) -> None:
+        self.module = module
+
+        def create_key(
+            _root: object,
+            name: str,
+            _reserved: int,
+            _class_name: object,
+            _options: int,
+            _access: int,
+            _security: object,
+            result_handle: object,
+            disposition: object,
+        ) -> int:
+            self.module.keys.setdefault(name, {})
+            ctypes.cast(disposition, ctypes.POINTER(ctypes.c_uint32)).contents.value = 1
+            ctypes.cast(result_handle, ctypes.POINTER(ctypes.c_void_p)).contents.value = 1
+            return 0
+
+        self.RegCreateKeyExW = create_key
+        self.RegCloseKey = lambda _handle: 0
 
 
 def _patch_shortcut_writer(
@@ -1581,6 +1661,171 @@ def test_registry_adapter_fails_closed_without_native_compare_primitives() -> No
     with pytest.raises(OSError, match="compare-and-delete unavailable"):
         adapter.delete_value_if_unchanged("Software\\Vendor", expected)
     assert calls == []
+
+
+def test_stock_winreg_forward_install_uses_native_new_key_disposition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: native if name == "advapi32" else original_windows_dll(name),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter
+    )
+
+    result = transaction.apply(transaction.snapshot())
+
+    assert result.changed_entries
+    assert adapter.atomic_mutations_available is False
+    assert stock.set_calls == len(transaction._REGISTRY_NAMES)
+    assert set(stock.keys[application_install.WINDOWS_UNINSTALL_KEY]) == set(
+        transaction._REGISTRY_NAMES
+    )
+    assert transaction._journal is not None and transaction._journal.phase == "installed"
+
+
+def test_stock_winreg_existing_key_blocks_write_at_observation_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    key_name = application_install.WINDOWS_UNINSTALL_KEY
+    stock.keys[key_name] = {}
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=stock, desktop=False
+    )
+    original_set = application_install._set_registry_value_if_unchanged
+    inserted = False
+
+    def insert_between_observe_and_write(
+        winreg: object,
+        key: object,
+        expected: application_install.WindowsRegistryValueSnapshot,
+        value_type: int,
+        data: object,
+        **kwargs: object,
+    ) -> None:
+        nonlocal inserted
+        if not inserted:
+            assert isinstance(key, _FakeKey)
+            stock.keys[key.name][expected.name] = (stock.REG_SZ, "vendor-value")
+            inserted = True
+        original_set(
+            winreg,
+            key,
+            expected,
+            value_type,
+            data,  # type: ignore[arg-type]
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        application_install,
+        "_set_registry_value_if_unchanged",
+        insert_between_observe_and_write,
+    )
+
+    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
+        transaction.apply(transaction.snapshot())
+
+    assert raised.value.status is not None
+    assert "registration_restore_target_changed" in raised.value.status.errors
+    assert inserted is True
+    assert stock.set_calls == 0
+    assert stock.keys[key_name] == {"DisplayName": (stock.REG_SZ, "vendor-value")}
+
+
+def test_stock_winreg_failed_rollback_converges_after_native_capability_returns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: native if name == "advapi32" else original_windows_dll(name),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    stock.state.fail_before.add("DisplayVersion")
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter, desktop=False
+    )
+
+    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
+        transaction.apply(transaction.snapshot())
+
+    assert raised.value.status is not None
+    assert raised.value.status.complete is False
+    assert "registration_restore_atomicity_unavailable" in raised.value.status.errors
+    assert transaction._journal_path.exists()
+
+    stock.state.fail_before.clear()
+    resumed = application_install.WindowsApplicationRegistrationTransaction(
+        transaction._executable,
+        start_menu=transaction._start_menu,
+        desktop=transaction._desktop,
+        registry=stock.state,
+        install_root=tmp_path,
+    )
+    journal = resumed._load_journal()
+    assert journal is not None and journal.phase == "restoring"
+
+    status = resumed._recover_journal(journal)
+
+    assert status.complete is True
+    assert application_install.WINDOWS_UNINSTALL_KEY not in stock.keys
+    assert not resumed._journal_path.exists()
+
+
+def test_stock_winreg_uninstall_residual_converges_after_restart_with_atomic_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: native if name == "advapi32" else original_windows_dll(name),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter, desktop=False
+    )
+    transaction.apply(transaction.snapshot())
+
+    status = transaction.uninstall()
+
+    assert status.complete is False
+    assert "registration_restore_atomicity_unavailable" in status.errors
+    assert transaction._journal_path.exists()
+    assert stock.keys[application_install.WINDOWS_UNINSTALL_KEY]
+
+    resumed = application_install.WindowsApplicationRegistrationTransaction(
+        transaction._executable,
+        start_menu=transaction._start_menu,
+        desktop=transaction._desktop,
+        registry=stock.state,
+        install_root=tmp_path,
+    )
+    journal = resumed._load_journal()
+    assert journal is not None and journal.phase == "uninstalling"
+
+    recovered = resumed._recover_journal(journal)
+
+    assert recovered.complete is True
+    assert stock.keys[application_install.WINDOWS_UNINSTALL_KEY] == {}
+    assert not resumed._journal_path.exists()
 
 
 def test_windows_registry_factory_returns_mutation_capable_adapter(
