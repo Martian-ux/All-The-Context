@@ -57,7 +57,10 @@ from ..capture_runtime import (
     refresh_local_workspace_adapter,
     reject_reserved_workspace_provider,
 )
-from ..capture_scheduler import scheduler_update_health_forced_off
+from ..capture_scheduler import (
+    RUNTIME_READINESS_ERROR_CODE,
+    scheduler_update_health_forced_off,
+)
 from ..claude_code_config import (
     ClaudeCodeConfigResult,
     claude_code_is_detected,
@@ -914,60 +917,104 @@ def create_app(
     @app.get("/v1/context/status")
     def context_status(principal: Principal) -> dict[str, Any]:
         require(principal, "context:status")
-        result = core.store.status()
-        runtime = core.capture_scheduler.readiness()
-        scheduler = dict(runtime["scheduler"])
-        scheduler["alive"] = scheduler["running"]
         try:
-            build_project_runtime(
-                core.store,
-                character_budget=RUNTIME_MAX_CAPSULE_CHARS,
-                item_budget=RUNTIME_MAX_CAPSULE_ITEMS,
-                principal=principal,
+            result = core.store.status()
+            runtime = core.capture_scheduler.readiness()
+            scheduler = dict(runtime["scheduler"])
+            scheduler["alive"] = scheduler["running"]
+            try:
+                build_project_runtime(
+                    core.store,
+                    character_budget=RUNTIME_MAX_CAPSULE_CHARS,
+                    item_budget=RUNTIME_MAX_CAPSULE_ITEMS,
+                    principal=principal,
+                )
+                project_projection = {
+                    "available": True,
+                    "reason_code": None,
+                    "state": "available",
+                }
+            except ProjectRuntimeError:
+                project_projection = {
+                    "available": False,
+                    "reason_code": "project_projection_unavailable",
+                    "state": "unavailable",
+                }
+            capture = runtime["capture"]
+            readiness_state = "ready"
+            scheduler_degraded = (
+                scheduler["reason_code"] == RUNTIME_READINESS_ERROR_CODE
+                or not scheduler["config_valid"]
+                or scheduler["worker_state"] == "failed"
+                or scheduler["worker_failure_code"] is not None
+                or scheduler["last_cycle_reason_code"] is not None
+                or (scheduler["dispatch_allowed"] and scheduler["worker_state"] != "running")
+                or (scheduler["dispatch_allowed"] and not scheduler["alive"])
+                or (
+                    scheduler["dispatch_allowed"]
+                    and scheduler["adapter_refresh_state"] == "unavailable"
+                )
+                or (
+                    scheduler["durable_enabled"]
+                    and not scheduler["process_gate"]
+                    and not scheduler["update_health_forced_off"]
+                )
             )
-            project_projection = {
-                "available": True,
-                "reason_code": None,
-                "state": "available",
+            if (
+                scheduler_degraded
+                or capture["state"] != "healthy"
+                or not project_projection["available"]
+            ):
+                readiness_state = "degraded"
+            result["ready"] = readiness_state == "ready"
+            result["runtime_readiness"] = {
+                "capture": capture,
+                "project_projection": project_projection,
+                "scheduler": scheduler,
+                "state": readiness_state,
             }
-        except ProjectRuntimeError:
-            project_projection = {
-                "available": False,
-                "reason_code": "project_projection_unavailable",
-                "state": "unavailable",
+            return result
+        except Exception:
+            # This route is authenticated, but every readiness dependency is
+            # still untrusted runtime state. Keep failures content-free and
+            # deterministic; liveness remains the separate /health contract.
+            return {
+                "ready": False,
+                "runtime_readiness": {
+                    "capture": {
+                        "inspected_source_count": 0,
+                        "reason_codes": [RUNTIME_READINESS_ERROR_CODE],
+                        "source_total": None,
+                        "sources": [],
+                        "state": "unavailable",
+                        "truncated": False,
+                    },
+                    "project_projection": {
+                        "available": False,
+                        "reason_code": RUNTIME_READINESS_ERROR_CODE,
+                        "state": "unavailable",
+                    },
+                    "scheduler": {
+                        "config_valid": False,
+                        "dispatch_allowed": False,
+                        "durable_enabled": False,
+                        "enabled": False,
+                        "max_workers": 1,
+                        "process_gate": False,
+                        "reason_code": RUNTIME_READINESS_ERROR_CODE,
+                        "running": False,
+                        "update_health_forced_off": False,
+                        "worker_failure_code": None,
+                        "worker_failure_generation": None,
+                        "worker_generation": 0,
+                        "worker_restart_count": 0,
+                        "worker_restartable": False,
+                        "worker_state": "failed",
+                    },
+                    "reason_code": RUNTIME_READINESS_ERROR_CODE,
+                    "state": "degraded",
+                },
             }
-        capture = runtime["capture"]
-        readiness_state = "ready"
-        scheduler_degraded = (
-            not scheduler["config_valid"]
-            or scheduler["worker_state"] == "failed"
-            or scheduler["worker_failure_code"] is not None
-            or scheduler["last_cycle_reason_code"] is not None
-            or (scheduler["dispatch_allowed"] and not scheduler["alive"])
-            or (
-                scheduler["dispatch_allowed"]
-                and scheduler["adapter_refresh_state"] == "unavailable"
-            )
-            or (
-                scheduler["durable_enabled"]
-                and not scheduler["process_gate"]
-                and not scheduler["update_health_forced_off"]
-            )
-        )
-        if (
-            scheduler_degraded
-            or capture["state"] != "healthy"
-            or not project_projection["available"]
-        ):
-            readiness_state = "degraded"
-        result["ready"] = readiness_state == "ready"
-        result["runtime_readiness"] = {
-            "capture": capture,
-            "project_projection": project_projection,
-            "scheduler": scheduler,
-            "state": readiness_state,
-        }
-        return result
 
     @app.get("/v1/context/coverage")
     def context_truth_coverage(principal: Principal) -> dict[str, Any]:

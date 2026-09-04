@@ -34,6 +34,7 @@ from allthecontext.capture_runtime import (
 )
 from allthecontext.capture_scheduler import (
     CAPTURE_SCHEDULER_ENABLED_ENV,
+    RUNTIME_READINESS_ERROR_CODE,
     UPDATE_HEALTH_OPERATION_ENV,
     CoreCaptureScheduler,
     SchedulerConfig,
@@ -578,6 +579,7 @@ def test_worker_failure_is_content_free_and_restartable(
         scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
         scheduler._wakeup.set()
         _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
+        _wait_until(lambda: scheduler.status()["running"] is False)
         failed = scheduler.status()
         assert failed["running"] is False
         assert failed["worker_failure_code"] == "worker_failed"
@@ -588,10 +590,199 @@ def test_worker_failure_is_content_free_and_restartable(
         monkeypatch.setattr(scheduler, "dispatch_allowed", lambda: True)
         scheduler.start()
         _wait_until(lambda: scheduler.status()["worker_state"] == "running")
-        assert scheduler.status()["worker_restart_count"] == 2
+        recovered = scheduler.status()
+        assert recovered["worker_restart_count"] == 2
+        assert recovered["worker_generation"] == 2
+        assert recovered["worker_failure_code"] is None
+        assert recovered["worker_failure_generation"] is None
     finally:
         scheduler.shutdown()
         store.close()
+
+
+def test_worker_failure_stays_bound_until_current_generation_is_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(coordinator, config, scheduler_config=SchedulerConfig())
+    write_scheduler_enabled(config.data_dir, enabled=True)
+    entered_start = threading.Event()
+    release_start = threading.Event()
+
+    def boom() -> bool:
+        raise TypeError(r"C:\private\scheduler-internal.py")
+
+    try:
+        scheduler.start()
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
+        failed = scheduler.status()
+        assert failed["worker_generation"] == 1
+        assert failed["worker_failure_generation"] == 1
+
+        original_mark = scheduler._mark_worker_running
+
+        def delayed_mark(generation: int, current: threading.Thread) -> bool:
+            entered_start.set()
+            assert release_start.wait(timeout=5)
+            return original_mark(generation, current)
+
+        monkeypatch.setattr(scheduler, "_mark_worker_running", delayed_mark)
+        monkeypatch.setattr(scheduler, "dispatch_allowed", lambda: True)
+        scheduler.start()
+        assert entered_start.wait(timeout=5)
+        starting = scheduler.status()
+        assert starting["worker_state"] == "starting"
+        assert starting["worker_generation"] == 2
+        assert starting["worker_failure_code"] == "worker_failed"
+        assert starting["worker_failure_generation"] == 1
+
+        scheduler.start()
+        assert scheduler.status()["worker_restart_count"] == 2
+        release_start.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "running")
+        recovered = scheduler.status()
+        assert recovered["worker_failure_code"] is None
+        assert recovered["worker_failure_generation"] is None
+        assert recovered["worker_generation"] == 2
+
+        with scheduler._lifecycle_lock:
+            scheduler._record_worker_failure_locked(
+                TypeError(r"C:\private\stale-worker.py"),
+                generation=1,
+                current=None,
+            )
+        current = scheduler.status()
+        assert current["worker_state"] == "running"
+        assert current["worker_failure_code"] is None
+    finally:
+        release_start.set()
+        scheduler.shutdown()
+        store.close()
+
+
+def test_restart_failure_remains_current_until_a_later_restart_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(coordinator, config, scheduler_config=SchedulerConfig())
+    write_scheduler_enabled(config.data_dir, enabled=True)
+
+    def boom() -> bool:
+        raise TypeError(r"C:\private\restart-failure.py")
+
+    try:
+        scheduler.start()
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        monkeypatch.setattr(scheduler, "dispatch_allowed", lambda: True)
+        original_run_cycle = scheduler.run_cycle
+
+        def cycle_boom() -> Any:
+            raise TypeError(r"C:\private\restart-cycle.py")
+
+        monkeypatch.setattr(scheduler, "run_cycle", cycle_boom)
+        scheduler.start()
+        _wait_until(
+            lambda: (
+                scheduler.status()["worker_state"] == "failed"
+                and scheduler.status()["worker_generation"] == 2
+            )
+        )
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        failed_again = scheduler.status()
+        assert failed_again["worker_restart_count"] == 2
+        assert failed_again["worker_failure_code"] == "worker_failed"
+        assert failed_again["worker_failure_generation"] == 2
+
+        monkeypatch.setattr(scheduler, "run_cycle", original_run_cycle)
+        scheduler.start()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "running")
+        assert scheduler.status()["worker_failure_code"] is None
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+
+def test_readiness_contains_unexpected_source_access_failure_without_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(coordinator, config)
+    private_path = r"C:\private\readiness-state.sqlite3"
+
+    def boom(*, full_scan: bool = False) -> Any:
+        del full_scan
+        raise TypeError(private_path)
+
+    monkeypatch.setattr(scheduler._scheduler, "_sources", boom)
+    try:
+        readiness = scheduler.readiness()
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+    assert readiness["capture"] == {
+        "inspected_source_count": 0,
+        "reason_codes": [RUNTIME_READINESS_ERROR_CODE],
+        "source_total": None,
+        "sources": [],
+        "state": "unavailable",
+        "truncated": False,
+    }
+    assert private_path not in json.dumps(readiness)
+
+
+def test_authenticated_context_status_contains_scheduler_readiness_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    private_path = r"C:\private\context-status.sqlite3"
+    with CoreService(config) as service:
+        _principal, token = service.store.create_client(
+            ClientCreate(name="readiness-failure-reader", scopes=["context:status"])
+        )
+
+        def boom() -> dict[str, Any]:
+            raise TypeError(private_path)
+
+        monkeypatch.setattr(service.capture_scheduler, "readiness", boom)
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            response = client.get(
+                "/v1/context/status",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            health = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready"] is False
+    assert body["runtime_readiness"]["state"] == "degraded"
+    assert body["runtime_readiness"]["reason_code"] == RUNTIME_READINESS_ERROR_CODE
+    assert private_path not in response.text
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok", "component": "core"}
 
 
 def test_invalid_scheduler_config_fail_closes_without_killing_core(tmp_path: Path) -> None:
