@@ -70,6 +70,8 @@ def _rewrite_export(
     package: Path,
     destination: Path,
     mutate: Callable[[dict[str, bytes], dict[str, object]], None],
+    *,
+    refresh_hashes: bool = True,
 ) -> Path:
     with TemporaryDirectory(prefix="atc-test-export-rewrite-") as temporary:
         payload = Path(temporary) / "payload.zip"
@@ -78,15 +80,39 @@ def _rewrite_export(
             members = {info.filename: incoming.read(info.filename) for info in incoming.infolist()}
         manifest = json.loads(members["manifest.json"])
         mutate(members, manifest)
-        for name in manifest["sha256"]:
-            if name not in members:
-                raise AssertionError(f"rewritten export lost manifest member {name}")
-            manifest["sha256"][name] = hashlib.sha256(members[name]).hexdigest()
+        if refresh_hashes:
+            for name in manifest["sha256"]:
+                if name in members:
+                    manifest["sha256"][name] = hashlib.sha256(members[name]).hexdigest()
         members["manifest.json"] = json.dumps(manifest, sort_keys=True, indent=2).encode()
         rewritten_payload = Path(temporary) / "rewritten.zip"
         with zipfile.ZipFile(rewritten_payload, "w", compression=zipfile.ZIP_DEFLATED) as output:
             for name, content in members.items():
                 output.writestr(name, content)
+        portable_export._encrypt_file(rewritten_payload, destination, PASSPHRASE)
+    return destination
+
+
+def _rewrite_export_with_duplicate_entry(package: Path, destination: Path, name: str) -> Path:
+    with TemporaryDirectory(prefix="atc-test-export-duplicate-") as temporary:
+        payload = Path(temporary) / "payload.zip"
+        portable_export._decrypt_file(package, payload, PASSPHRASE)
+        with zipfile.ZipFile(payload) as incoming:
+            entries = [
+                (info.filename, incoming.read(info.filename)) for info in incoming.infolist()
+            ]
+        manifest = json.loads(dict(entries)["manifest.json"])
+        entries.append((name, dict(entries)[name]))
+        manifest["sha256"][name] = hashlib.sha256(dict(entries)[name]).hexdigest()
+        manifest_bytes = json.dumps(manifest, sort_keys=True, indent=2).encode()
+        entries = [
+            (entry_name, manifest_bytes if entry_name == "manifest.json" else content)
+            for entry_name, content in entries
+        ]
+        rewritten_payload = Path(temporary) / "rewritten.zip"
+        with zipfile.ZipFile(rewritten_payload, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            for entry_name, content in entries:
+                output.writestr(entry_name, content)
         portable_export._encrypt_file(rewritten_payload, destination, PASSPHRASE)
     return destination
 
@@ -194,6 +220,254 @@ def test_default_export_carries_source_less_barriers_without_content(
     assert set(rows[0]) == {"vault_id", "source_kind", "barrier_digest", "purged_at"}
     assert "concise" not in json.dumps(rows)
     assert "source_less" not in json.dumps(rows)
+
+
+@pytest.mark.parametrize("tamper", ["missing-hash", "hash-only", "extra", "shadow"])
+def test_restore_requires_exact_manifest_member_and_hash_coverage(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    database = tmp_path / "source-less.sqlite3"
+    store, record_id = _source_less_store(database)
+    store.purge(
+        "record",
+        record_id,
+        confirmation=store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    package = tmp_path / "source-less.atcexp"
+    create_export(database, package, PASSPHRASE)
+    barrier_name = f"tables/{SOURCE_LESS_BARRIER_TABLE}.jsonl"
+
+    def tamper_export(members: dict[str, bytes], manifest: dict[str, object]) -> None:
+        hashes = manifest["sha256"]
+        assert isinstance(hashes, dict)
+        if tamper == "missing-hash":
+            hashes.pop(barrier_name)
+        elif tamper == "hash-only":
+            hashes["tables/hash-only.jsonl"] = "0" * 64
+        elif tamper == "extra":
+            members["tables/extra.jsonl"] = b"{}\n"
+        else:
+            members[f"tables/{SOURCE_LESS_BARRIER_TABLE.upper()}.jsonl"] = members[barrier_name]
+
+    tampered = _rewrite_export(package, tmp_path / f"{tamper}.atcexp", tamper_export)
+    destination = tmp_path / f"destination-{tamper}.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_store.initialize_vault()
+    sentinel = destination_store.add_candidate(
+        CandidateInput(kind="fact", content="destination sentinel", explicit_user_statement=True)
+    )
+
+    with pytest.raises(ValueError, match=r"coverage|members|shadowed"):
+        restore_export(tampered, destination, PASSPHRASE)
+    assert destination_store.get_record(sentinel.record_id).content == "destination sentinel"
+    with destination_store.connect() as connection:
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {SOURCE_LESS_BARRIER_TABLE}").fetchone()[0]
+            == 0
+        )
+
+
+def test_restore_rejects_changed_member_digest_before_destination_mutation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "source-less.sqlite3"
+    store, record_id = _source_less_store(database)
+    store.purge(
+        "record",
+        record_id,
+        confirmation=store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    package = tmp_path / "source-less.atcexp"
+    create_export(database, package, PASSPHRASE)
+    barrier_name = f"tables/{SOURCE_LESS_BARRIER_TABLE}.jsonl"
+
+    def change_digest(_members: dict[str, bytes], manifest: dict[str, object]) -> None:
+        hashes = manifest["sha256"]
+        assert isinstance(hashes, dict)
+        hashes[barrier_name] = "0" * 64
+
+    tampered = _rewrite_export(
+        package,
+        tmp_path / "changed-digest.atcexp",
+        change_digest,
+        refresh_hashes=False,
+    )
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_store.initialize_vault()
+    with pytest.raises(ValueError, match="integrity check failed"):
+        restore_export(tampered, destination, PASSPHRASE)
+    with destination_store.connect() as connection:
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {SOURCE_LESS_BARRIER_TABLE}").fetchone()[0]
+            == 0
+        )
+
+
+def test_restore_rejects_duplicate_archive_entries_and_duplicate_json_keys(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "source-less.sqlite3"
+    store, record_id = _source_less_store(database)
+    store.purge(
+        "record",
+        record_id,
+        confirmation=store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    package = tmp_path / "source-less.atcexp"
+    create_export(database, package, PASSPHRASE)
+    barrier_name = f"tables/{SOURCE_LESS_BARRIER_TABLE}.jsonl"
+
+    duplicate_archive = _rewrite_export_with_duplicate_entry(
+        package, tmp_path / "duplicate-archive.atcexp", barrier_name
+    )
+    duplicate_destination = tmp_path / "duplicate-archive.sqlite3"
+    CoreStore(duplicate_destination).migrate()
+    with pytest.raises(ValueError, match="duplicate"):
+        restore_export(duplicate_archive, duplicate_destination, PASSPHRASE)
+
+    def duplicate_json_key(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        row = json.loads(members[barrier_name].splitlines()[0])
+        members[barrier_name] = (
+            "{"
+            f'"vault_id":{json.dumps(row["vault_id"])},'
+            f'"vault_id":{json.dumps(row["vault_id"])},'
+            f'"source_kind":{json.dumps(row["source_kind"])},'
+            f'"barrier_digest":{json.dumps(row["barrier_digest"])},'
+            f'"purged_at":{json.dumps(row["purged_at"])}'
+            "}\n"
+        ).encode()
+
+    duplicate_json = _rewrite_export(
+        package, tmp_path / "duplicate-json.atcexp", duplicate_json_key
+    )
+    json_destination = tmp_path / "duplicate-json.sqlite3"
+    CoreStore(json_destination).migrate()
+    with pytest.raises(ValueError, match="duplicate"):
+        restore_export(duplicate_json, json_destination, PASSPHRASE)
+
+
+def test_restore_rejects_barrier_reassigned_to_existing_destination_vault(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "source-less.sqlite3"
+    store, record_id = _source_less_store(database)
+    source_vault_id = store.vault_id()
+    store.purge(
+        "record",
+        record_id,
+        confirmation=store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    package = tmp_path / "source-less.atcexp"
+    create_export(database, package, PASSPHRASE)
+    barrier_name = f"tables/{SOURCE_LESS_BARRIER_TABLE}.jsonl"
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_vault_id = destination_store.initialize_vault("unrelated destination vault")
+    assert destination_vault_id != source_vault_id
+    sentinel = destination_store.add_candidate(
+        CandidateInput(kind="fact", content="destination-only", explicit_user_statement=True)
+    )
+
+    def inject_into_destination(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        row = json.loads(members[barrier_name].splitlines()[0])
+        row["vault_id"] = destination_vault_id
+        members[barrier_name] = (
+            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
+
+    tampered = _rewrite_export(package, tmp_path / "cross-vault.atcexp", inject_into_destination)
+    with pytest.raises(ValueError, match="package vault"):
+        restore_export(tampered, destination, PASSPHRASE)
+    assert destination_store.get_record(sentinel.record_id).content == "destination-only"
+    with destination_store.connect() as connection:
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {SOURCE_LESS_BARRIER_TABLE}").fetchone()[0]
+            == 0
+        )
+
+
+def test_restore_accepts_explicit_package_wide_vault_remap(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "source-less.sqlite3"
+    store, record_id = _source_less_store(database)
+    source_vault_id = store.vault_id()
+    store.purge(
+        "record",
+        record_id,
+        confirmation=store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    package = tmp_path / "source-less.atcexp"
+    create_export(database, package, PASSPHRASE)
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_vault_id = destination_store.initialize_vault("remapped destination vault")
+    assert destination_vault_id != source_vault_id
+
+    def remap_package(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        for name in list(members):
+            if not name.startswith("tables/"):
+                continue
+            rows: list[bytes] = []
+            for line in members[name].splitlines():
+                row = json.loads(line)
+                if name == "tables/vaults.jsonl" and row.get("id") == source_vault_id:
+                    row["id"] = destination_vault_id
+                if row.get("vault_id") == source_vault_id:
+                    row["vault_id"] = destination_vault_id
+                rows.append(
+                    (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode()
+                )
+            members[name] = b"".join(rows)
+
+    remapped = _rewrite_export(package, tmp_path / "remapped.atcexp", remap_package)
+    restore_export(remapped, destination, PASSPHRASE)
+    with destination_store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM vaults").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                f"SELECT COUNT(*) FROM {SOURCE_LESS_BARRIER_TABLE} WHERE vault_id=?",
+                (destination_vault_id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_restore_rejects_ambiguous_package_vault_identity(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "source-less.sqlite3"
+    store, record_id = _source_less_store(database)
+    source_vault_id = store.vault_id()
+    store.purge(
+        "record",
+        record_id,
+        confirmation=store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    package = tmp_path / "source-less.atcexp"
+    create_export(database, package, PASSPHRASE)
+
+    def add_casefold_collision(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        vault_name = "tables/vaults.jsonl"
+        row = json.loads(members[vault_name].splitlines()[0])
+        row["id"] = source_vault_id.upper()
+        members[vault_name] += (
+            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
+
+    tampered = _rewrite_export(package, tmp_path / "ambiguous-vault.atcexp", add_casefold_collision)
+    destination = tmp_path / "destination.sqlite3"
+    CoreStore(destination).migrate()
+    with pytest.raises(ValueError, match="ambiguous"):
+        restore_export(tampered, destination, PASSPHRASE)
 
 
 def test_restore_rejects_malformed_or_ambiguous_source_less_barrier_entries(

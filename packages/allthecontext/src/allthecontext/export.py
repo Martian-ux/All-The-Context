@@ -364,11 +364,22 @@ def _decode_value(value: Any) -> Any:
     return value
 
 
+def _json_object_from_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Decode JSON objects without silently shadowing a repeated key."""
+
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("portable JSON object contains duplicate keys")
+        value[key] = item
+    return value
+
+
 def _iter_jsonl(stream: IO[bytes]) -> Iterable[dict[str, Any]]:
     for line in stream:
         if not line.strip():
             continue
-        value = json.loads(line)
+        value = json.loads(line, object_pairs_hook=_json_object_from_pairs)
         if not isinstance(value, dict):
             raise ValueError("portable table row must be a JSON object")
         yield {key: _decode_value(item) for key, item in value.items()}
@@ -472,11 +483,18 @@ def _portable_vault_ids(
     archive: zipfile.ZipFile,
     manifest_tables: dict[str, Any],
 ) -> set[str]:
-    """Return the package's vault identities without importing vault metadata."""
+    """Return the package-authenticated vault identities.
+
+    These identities are the only package-to-destination mapping available to
+    the format.  A destination row is not a mapping declaration: allowing one
+    to extend this set would let an imported barrier be reassigned to an
+    unrelated preexisting vault.
+    """
 
     if "vaults" not in manifest_tables:
         return set()
     vault_ids: set[str] = set()
+    folded_vault_ids: set[str] = set()
     with archive.open("tables/vaults.jsonl") as stream:
         for row in _iter_jsonl(stream):
             vault_id = row.get("id")
@@ -484,7 +502,11 @@ def _portable_vault_ids(
                 raise ValueError("export vault row has an invalid id")
             if vault_id in vault_ids:
                 raise ValueError("export vault rows are duplicated")
+            folded_vault_id = vault_id.casefold()
+            if folded_vault_id in folded_vault_ids:
+                raise ValueError("export vault rows have ambiguous identities")
             vault_ids.add(vault_id)
+            folded_vault_ids.add(folded_vault_id)
     return vault_ids
 
 
@@ -538,6 +560,111 @@ def _source_chunk_descriptors(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         if sum(size for _index, size in ordered) > MAX_IMPORT_BYTES:
             raise ValueError("export source exceeds the supported size limit")
     return descriptors
+
+
+def _manifest_table_members(manifest_tables: dict[str, Any]) -> set[str]:
+    """Return the canonical archive member for every serialized table."""
+
+    members: set[str] = set()
+    folded_members: set[str] = set()
+    for table, count in manifest_tables.items():
+        if (
+            not isinstance(table, str)
+            or not table
+            or table != table.strip()
+            or table != table.casefold()
+            or "/" in table
+            or "\\" in table
+            or ":" in table
+            or table in {".", ".."}
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 0
+        ):
+            raise ValueError("export manifest table entry is invalid")
+        member = f"tables/{table}.jsonl"
+        folded_member = member.casefold()
+        if folded_member in folded_members:
+            raise ValueError("export manifest table members are ambiguous")
+        members.add(member)
+        folded_members.add(folded_member)
+    return members
+
+
+def _validate_manifest_archive(
+    archive: zipfile.ZipFile,
+    manifest: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Validate archive topology and all member hashes before destination access."""
+
+    manifest_tables = manifest.get("tables")
+    if not isinstance(manifest_tables, dict):
+        raise ValueError("export manifest tables must be an object")
+    table_members = _manifest_table_members(manifest_tables)
+    source_chunks = _source_chunk_descriptors(manifest)
+    include_sources = manifest.get("include_sources", False)
+    if not isinstance(include_sources, bool):
+        raise ValueError("export include_sources flag is invalid")
+    if source_chunks and not include_sources:
+        raise ValueError("source chunks require a source-inclusive export")
+
+    expected_members = table_members | {str(item["path"]) for item in source_chunks}
+    if len(expected_members) != len(table_members) + len(source_chunks):
+        raise ValueError("export members have duplicate or shadowed paths")
+
+    infos = archive.infolist()
+    archive_names = [info.filename for info in infos]
+    if len(archive_names) != len(set(archive_names)):
+        raise ValueError("export archive contains duplicate entries")
+    folded_archive_names: dict[str, str] = {}
+    for name in archive_names:
+        if (
+            not name
+            or "\\" in name
+            or name.startswith("/")
+            or any(part in {"", ".", ".."} for part in name.split("/"))
+        ):
+            raise ValueError("unsafe or non-canonical export entry")
+        folded_name = name.casefold()
+        previous = folded_archive_names.setdefault(folded_name, name)
+        if previous != name:
+            raise ValueError("export archive contains shadowed paths")
+    if "manifest.json" not in archive_names:
+        raise ValueError("export manifest is missing")
+    expected_archive_names = {"manifest.json"} | expected_members
+    actual_archive_names = set(archive_names)
+    if actual_archive_names != expected_archive_names:
+        missing = sorted(expected_archive_names - actual_archive_names)
+        extra = sorted(actual_archive_names - expected_archive_names)
+        raise ValueError(
+            f"export archive members do not match manifest (missing={missing!r}, extra={extra!r})"
+        )
+
+    hashes_by_file = manifest.get("sha256")
+    if not isinstance(hashes_by_file, dict) or any(
+        not isinstance(name, str) or not isinstance(expected, str)
+        for name, expected in hashes_by_file.items()
+    ):
+        raise ValueError("export sha256 manifest must be a string mapping")
+    hash_names = set(hashes_by_file)
+    if hash_names != expected_members:
+        missing = sorted(expected_members - hash_names)
+        extra = sorted(hash_names - expected_members)
+        raise ValueError(
+            "export sha256 manifest does not exactly cover archive members"
+            f" (missing={missing!r}, extra={extra!r})"
+        )
+    for name, expected in hashes_by_file.items():
+        if (
+            len(expected) != 64
+            or expected != expected.casefold()
+            or any(character not in "0123456789abcdef" for character in expected)
+        ):
+            raise ValueError(f"export digest is not canonical for {name}")
+        actual = hashlib.sha256(archive.read(name)).hexdigest()
+        if actual != expected:
+            raise ValueError(f"integrity check failed for {name}")
+    return manifest_tables, source_chunks
 
 
 def _restore_source_chunks(
@@ -1017,36 +1144,27 @@ def restore_export(
         _decrypt_file(source, archive_path, passphrase)
         with zipfile.ZipFile(archive_path) as archive:
             infos = archive.infolist()
-            if any(
-                info.file_size > MAX_RESTORE_ENTRY_BYTES
-                or Path(info.filename).is_absolute()
-                or ".." in Path(info.filename).parts
-                for info in infos
-            ):
+            if any(info.file_size > MAX_RESTORE_ENTRY_BYTES for info in infos):
                 raise ValueError("unsafe or oversized export entry")
-            manifest = json.loads(archive.read("manifest.json"))
+            archive_names = [info.filename for info in infos]
+            if len(archive_names) != len(set(archive_names)):
+                raise ValueError("export archive contains duplicate entries")
+            if "manifest.json" not in archive_names:
+                raise ValueError("export manifest is missing")
+            manifest = json.loads(
+                archive.read("manifest.json"), object_pairs_hook=_json_object_from_pairs
+            )
+            if not isinstance(manifest, dict):
+                raise ValueError("export manifest must be an object")
             if manifest.get("format") != "all-the-context" or manifest.get("format_version") != 1:
                 raise ValueError("unsupported export format")
-            source_chunks = _source_chunk_descriptors(manifest)
-            if source_chunks and not bool(manifest.get("include_sources", False)):
-                raise ValueError("source chunks require a source-inclusive export")
-            hashes_by_file = manifest.get("sha256")
-            if not isinstance(hashes_by_file, dict) or any(
-                not isinstance(name, str) or not isinstance(expected, str)
-                for name, expected in hashes_by_file.items()
-            ):
-                raise ValueError("export sha256 manifest must be a string mapping")
-            if any(descriptor["path"] not in hashes_by_file for descriptor in source_chunks):
-                raise ValueError("export source chunk is missing an integrity digest")
-            for name, expected in hashes_by_file.items():
-                actual = hashlib.sha256(archive.read(name)).hexdigest()
-                if actual != expected:
-                    raise ValueError(f"integrity check failed for {name}")
+            manifest_tables, source_chunks = _validate_manifest_archive(archive, manifest)
             if dry_run:
                 return {"valid": True, "dry_run": True, "manifest": manifest}
             connection = sqlite3.connect(database_path)
             connection.row_factory = sqlite3.Row
             try:
+                connection.execute("BEGIN IMMEDIATE")
                 CoreStore._ensure_archive_source_less_purge_barriers_tx(connection)
                 all_tables = {
                     str(row[0])
@@ -1062,16 +1180,7 @@ def restore_export(
                     }
                     for table in existing
                 }
-                manifest_tables = manifest.get("tables", {})
-                if not isinstance(manifest_tables, dict):
-                    raise ValueError("export manifest tables must be an object")
                 package_vault_ids = _portable_vault_ids(archive, manifest_tables)
-                destination_vault_ids = (
-                    {str(row[0]) for row in connection.execute("SELECT id FROM vaults").fetchall()}
-                    if "vaults" in all_tables
-                    else set()
-                )
-                portable_vault_ids = package_vault_ids | destination_vault_ids
                 try:
                     source_schema_version = int(manifest.get("schema_version", 0))
                 except (TypeError, ValueError) as error:
@@ -1090,10 +1199,6 @@ def restore_export(
                         f"FROM {_ARCHIVE_PURGE_BARRIER_TABLE}"
                     ):
                         key = _archive_purge_barrier_key(barrier)
-                        if key[0] not in portable_vault_ids:
-                            raise ValueError(
-                                "destination archive purge barrier has an unknown vault"
-                            )
                         archive_purge_barriers.add(key)
                 if _ARCHIVE_PURGE_BARRIER_TABLE in manifest_tables:
                     if _ARCHIVE_PURGE_BARRIER_TABLE not in existing:
@@ -1101,9 +1206,9 @@ def restore_export(
                     with archive.open(f"tables/{_ARCHIVE_PURGE_BARRIER_TABLE}.jsonl") as stream:
                         for row in _iter_jsonl(stream):
                             key = _archive_purge_barrier_key(row)
-                            if key[0] not in portable_vault_ids:
+                            if key[0] not in package_vault_ids:
                                 raise ValueError(
-                                    "export archive purge barrier has an unknown vault"
+                                    "export archive purge barrier is not bound to a package vault"
                                 )
                             if key in incoming_archive_purge_barriers:
                                 raise ValueError("export archive purge barriers are duplicated")
@@ -1117,10 +1222,6 @@ def restore_export(
                         f"FROM {_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}"
                     ):
                         source_less_key = _archive_source_less_purge_barrier_key(barrier)
-                        if source_less_key[0] not in portable_vault_ids:
-                            raise ValueError(
-                                "destination source-less archive purge barrier has an unknown vault"
-                            )
                         archive_source_less_purge_barriers.add(source_less_key)
                 if _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE in manifest_tables:
                     with archive.open(
@@ -1128,9 +1229,10 @@ def restore_export(
                     ) as stream:
                         for row in _iter_jsonl(stream):
                             source_less_key = _archive_source_less_purge_barrier_key(row)
-                            if source_less_key[0] not in portable_vault_ids:
+                            if source_less_key[0] not in package_vault_ids:
                                 raise ValueError(
-                                    "export source-less archive purge barrier has an unknown vault"
+                                    "export source-less archive purge barrier is not bound to a "
+                                    "package vault"
                                 )
                             if source_less_key in incoming_archive_source_less_purge_barriers:
                                 raise ValueError(
@@ -1398,6 +1500,9 @@ def restore_export(
                         raise ValueError(
                             "restored export contains unresolved foreign-key references"
                         )
+            except BaseException:
+                connection.rollback()
+                raise
             finally:
                 connection.close()
     _repair_secret_boundary(database_path)
