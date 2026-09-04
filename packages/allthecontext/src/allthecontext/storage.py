@@ -1047,6 +1047,51 @@ class CoreStore:
             "(vault_id,source_kind,barrier_digest)"
         )
 
+    @staticmethod
+    def _ensure_purge_tombstone_identity_tx(connection: sqlite3.Connection) -> None:
+        """Repair the purge ledger key for legacy or interrupted upgrades."""
+
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='purge_tombstones'"
+        ).fetchone()
+        if table is None:
+            return
+        primary_key = [
+            str(row[1])
+            for row in sorted(
+                (
+                    row
+                    for row in connection.execute('PRAGMA table_info("purge_tombstones")')
+                    if int(row[5]) > 0
+                ),
+                key=lambda row: int(row[5]),
+            )
+        ]
+        expected_key = ["vault_id", "target_type", "stable_id"]
+        if primary_key != expected_key:
+            connection.execute(
+                "CREATE TABLE purge_tombstones_scoped ("
+                "stable_id TEXT NOT NULL,"
+                "vault_id TEXT NOT NULL REFERENCES vaults(id),"
+                "target_type TEXT NOT NULL CHECK(target_type IN ('record', 'source')),"
+                "purged_at TEXT NOT NULL,"
+                "replication_sequence INTEGER,"
+                "replication_event_id TEXT,"
+                "PRIMARY KEY(vault_id,target_type,stable_id))"
+            )
+            connection.execute(
+                "INSERT INTO purge_tombstones_scoped"
+                "(stable_id,vault_id,target_type,purged_at,replication_sequence,"
+                "replication_event_id) SELECT stable_id,vault_id,target_type,purged_at,"
+                "replication_sequence,replication_event_id FROM purge_tombstones"
+            )
+            connection.execute("DROP TABLE purge_tombstones")
+            connection.execute("ALTER TABLE purge_tombstones_scoped RENAME TO purge_tombstones")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_purge_tombstones_vault "
+            "ON purge_tombstones(vault_id,purged_at)"
+        )
+
     def migrate(self) -> int:
         migration_dir = Path(__file__).parent / "migrations" / "core"
         migrations = sorted(migration_dir.glob("[0-9][0-9][0-9]_*.sql"))
@@ -1114,6 +1159,7 @@ class CoreStore:
 
                 ensure_capture_schema(connection)
                 self._ensure_archive_identity_index_tx(connection)
+                self._ensure_purge_tombstone_identity_tx(connection)
                 self._ensure_archive_purge_barriers_tx(connection)
                 self._ensure_archive_source_less_purge_barriers_tx(connection)
                 self._recompute_record_keys_tx(connection)
@@ -1167,7 +1213,7 @@ class CoreStore:
         repaired_candidates = 0
         repaired_records = 0
         with self.transaction() as connection:
-            affected_record_ids: list[str] = []
+            affected_record_ids: list[tuple[str, str]] = []
             for record in connection.execute(
                 "SELECT r.*,"
                 "(SELECT json_group_array(v.snapshot_json) "
@@ -1182,7 +1228,7 @@ class CoreStore:
                     "history": _loads(record["history_material"], []),
                 }
                 if contains_secret_like_value(record_material):
-                    affected_record_ids.append(str(record["id"]))
+                    affected_record_ids.append((str(record["id"]), str(record["vault_id"])))
 
             rows = connection.execute(
                 "SELECT c.*,s.mode AS ingestion_mode,"
@@ -1217,16 +1263,18 @@ class CoreStore:
                 if contains_secret_like_value(material):
                     affected_ids.append(str(row["id"]))
 
-            for record_id in affected_record_ids:
+            for record_id, record_vault_id in affected_record_ids:
                 if (
                     connection.execute(
-                        "SELECT 1 FROM context_records WHERE id=?", (record_id,)
+                        "SELECT 1 FROM context_records WHERE vault_id=? AND id=?",
+                        (record_vault_id, record_id),
                     ).fetchone()
                     is not None
                 ):
                     self._purge_record_tx(
                         connection,
                         record_id,
+                        vault_id=record_vault_id,
                         purge_scope="secret_boundary_repair",
                         purged_at=utc_now(),
                     )
@@ -1249,15 +1297,14 @@ class CoreStore:
                     ).fetchall()
                 )
                 for record_id in sorted(record_ids):
-                    if (
-                        connection.execute(
-                            "SELECT 1 FROM context_records WHERE id=?", (record_id,)
-                        ).fetchone()
-                        is not None
-                    ):
+                    record = connection.execute(
+                        "SELECT vault_id FROM context_records WHERE id=?", (record_id,)
+                    ).fetchone()
+                    if record is not None:
                         self._purge_record_tx(
                             connection,
                             record_id,
+                            vault_id=str(record["vault_id"]),
                             purge_scope="secret_boundary_repair",
                             purged_at=utc_now(),
                         )
@@ -6111,8 +6158,9 @@ class CoreStore:
 
         if (
             connection.execute(
-                "SELECT 1 FROM purge_tombstones WHERE stable_id=? AND target_type='record'",
-                (canonical_record_id,),
+                "SELECT 1 FROM purge_tombstones WHERE vault_id=? AND target_type='record' "
+                "AND stable_id=?",
+                (self._vault_id_tx(connection), canonical_record_id),
             ).fetchone()
             is not None
         ):
@@ -8025,10 +8073,19 @@ class CoreStore:
                 now = utc_now()
                 if target_type == "record":
                     self._purge_record_tx(
-                        connection, target_id, purge_scope="record", purged_at=now
+                        connection,
+                        target_id,
+                        vault_id=vault_id,
+                        purge_scope="record",
+                        purged_at=now,
                     )
                 else:
-                    self._purge_source_tx(connection, target_id, purged_at=now)
+                    self._purge_source_tx(
+                        connection,
+                        target_id,
+                        vault_id=vault_id,
+                        purged_at=now,
+                    )
                 connection.execute(
                     "INSERT INTO purge_jobs"
                     "(id,vault_id,target_type,target_id,phase,created_at,updated_at) "
@@ -8053,16 +8110,20 @@ class CoreStore:
         connection: sqlite3.Connection,
         record_id: str,
         *,
+        vault_id: str,
         purge_scope: str,
         purged_at: str,
     ) -> None:
         existing = connection.execute(
-            "SELECT * FROM purge_tombstones WHERE stable_id=?", (record_id,)
+            "SELECT * FROM purge_tombstones WHERE vault_id=? AND target_type='record' "
+            "AND stable_id=?",
+            (vault_id, record_id),
         ).fetchone()
         if existing is not None:
             return
         record = connection.execute(
-            "SELECT * FROM context_records WHERE id=?", (record_id,)
+            "SELECT * FROM context_records WHERE vault_id=? AND id=?",
+            (vault_id, record_id),
         ).fetchone()
         if record is None:
             raise NotFoundError("purge target not found")
@@ -8182,13 +8243,14 @@ class CoreStore:
             )
         if source_id is not None and purge_scope == "record":
             dependent = connection.execute(
-                "SELECT 1 FROM context_records WHERE source_id=? UNION ALL "
-                "SELECT 1 FROM context_candidates WHERE source_id=? LIMIT 1",
-                (source_id, source_id),
+                "SELECT 1 FROM context_records WHERE vault_id=? AND source_id=? UNION ALL "
+                "SELECT 1 FROM context_candidates WHERE vault_id=? AND source_id=? LIMIT 1",
+                (vault_id, source_id, vault_id, source_id),
             ).fetchone()
             if dependent is None:
                 source = connection.execute(
-                    "SELECT vault_id FROM source_records WHERE id=?", (source_id,)
+                    "SELECT vault_id FROM source_records WHERE vault_id=? AND id=?",
+                    (vault_id, source_id),
                 ).fetchone()
                 self._delete_source_material_tx(connection, source_id)
                 if source is not None:
@@ -8200,32 +8262,48 @@ class CoreStore:
         self._recompute_integrity(connection)
 
     def _purge_source_tx(
-        self, connection: sqlite3.Connection, source_id: str, *, purged_at: str
+        self,
+        connection: sqlite3.Connection,
+        source_id: str,
+        *,
+        vault_id: str,
+        purged_at: str,
     ) -> None:
         if (
             connection.execute(
-                "SELECT 1 FROM purge_tombstones WHERE stable_id=?", (source_id,)
+                "SELECT 1 FROM purge_tombstones WHERE vault_id=? AND target_type='source' "
+                "AND stable_id=?",
+                (vault_id, source_id),
             ).fetchone()
             is not None
         ):
             return
         source = connection.execute(
-            "SELECT * FROM source_records WHERE id=?", (source_id,)
+            "SELECT * FROM source_records WHERE vault_id=? AND id=?",
+            (vault_id, source_id),
         ).fetchone()
         if source is None:
             raise NotFoundError("purge target not found")
         record_ids = [
             str(row["id"])
             for row in connection.execute(
-                "SELECT id FROM context_records WHERE source_id=? ORDER BY id", (source_id,)
+                "SELECT id FROM context_records WHERE vault_id=? AND source_id=? ORDER BY id",
+                (vault_id, source_id),
             ).fetchall()
         ]
         for record_id in record_ids:
-            self._purge_record_tx(connection, record_id, purge_scope="source", purged_at=purged_at)
+            self._purge_record_tx(
+                connection,
+                record_id,
+                vault_id=vault_id,
+                purge_scope="source",
+                purged_at=purged_at,
+            )
         candidate_ids = [
             str(row["id"])
             for row in connection.execute(
-                "SELECT id FROM context_candidates WHERE source_id=?", (source_id,)
+                "SELECT id FROM context_candidates WHERE vault_id=? AND source_id=?",
+                (vault_id, source_id),
             ).fetchall()
         ]
         for candidate_id in candidate_ids:
@@ -8238,7 +8316,10 @@ class CoreStore:
                 "DELETE FROM context_observation_links WHERE observation_id=?",
                 (candidate_id,),
             )
-        connection.execute("DELETE FROM context_candidates WHERE source_id=?", (source_id,))
+        connection.execute(
+            "DELETE FROM context_candidates WHERE vault_id=? AND source_id=?",
+            (vault_id, source_id),
+        )
         self._delete_source_material_tx(connection, source_id)
         self._remove_related_audits(connection, source_id)
         connection.execute(
@@ -8286,8 +8367,12 @@ class CoreStore:
                 connection.execute("DELETE FROM audit_events WHERE id=?", (row["id"],))
 
     def get_purge_job(self, job_id: str) -> dict[str, Any]:
+        vault_id = self.vault_id()
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM purge_jobs WHERE id=?", (job_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM purge_jobs WHERE vault_id=? AND id=?",
+                (vault_id, job_id),
+            ).fetchone()
         if row is None:
             raise NotFoundError("purge job not found")
         return {
@@ -8302,19 +8387,21 @@ class CoreStore:
         }
 
     def list_purge_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        vault_id = self.vault_id()
         with self.connect() as connection:
             ids = [
                 str(row["id"])
                 for row in connection.execute(
-                    "SELECT id FROM purge_jobs ORDER BY updated_at DESC LIMIT ?",
-                    (min(max(limit, 1), 500),),
+                    "SELECT id FROM purge_jobs WHERE vault_id=? ORDER BY updated_at DESC LIMIT ?",
+                    (vault_id, min(max(limit, 1), 500)),
                 ).fetchall()
             ]
         return [self.get_purge_job(job_id) for job_id in ids]
 
     def resume_purge_jobs(self, *, job_id: str | None = None, limit: int = 10) -> int:
-        conditions = ["phase='compaction_pending'"]
-        parameters: list[Any] = []
+        vault_id = self.vault_id()
+        conditions = ["vault_id=?", "phase='compaction_pending'"]
+        parameters: list[Any] = [vault_id]
         if job_id is not None:
             conditions.append("id=?")
             parameters.append(job_id)
@@ -8345,8 +8432,9 @@ class CoreStore:
                     connection.execute("VACUUM")
                     connection.execute(
                         "UPDATE purge_jobs SET phase='completed',last_error_code=NULL,"
-                        "updated_at=?,completed_at=? WHERE id=? AND phase='compaction_pending'",
-                        (utc_now(), utc_now(), pending_id),
+                        "updated_at=?,completed_at=? WHERE vault_id=? AND id=? "
+                        "AND phase='compaction_pending'",
+                        (utc_now(), utc_now(), vault_id, pending_id),
                     )
                     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 completed += 1
@@ -8356,14 +8444,15 @@ class CoreStore:
         return completed
 
     def _mark_purge_compaction_error(self, job_id: str, code: str) -> None:
+        vault_id = self.vault_id()
         try:
             with self._write_lock, self.connect() as connection:
                 connection.execute("PRAGMA busy_timeout = 250")
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
                     "UPDATE purge_jobs SET last_error_code=?,updated_at=? "
-                    "WHERE id=? AND phase='compaction_pending'",
-                    (code, utc_now(), job_id),
+                    "WHERE vault_id=? AND id=? AND phase='compaction_pending'",
+                    (code, utc_now(), vault_id, job_id),
                 )
                 connection.commit()
         except sqlite3.OperationalError:
@@ -9228,7 +9317,9 @@ class CoreStore:
                 ),
                 "pending_purge_jobs": int(
                     connection.execute(
-                        "SELECT COUNT(*) FROM purge_jobs WHERE phase='compaction_pending'"
+                        "SELECT COUNT(*) FROM purge_jobs WHERE vault_id=? "
+                        "AND phase='compaction_pending'",
+                        (vault["id"],),
                     ).fetchone()[0]
                 ),
             }

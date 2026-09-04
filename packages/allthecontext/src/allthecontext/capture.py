@@ -1619,10 +1619,12 @@ class CaptureLedger:
                 and str(stored["order_key"]) == event.order_key
             )
             payload_matches = str(stored["payload_hash"]) == event.normalized()[1]
+            vault_id = CoreStore._vault_id_tx(connection)
             purged = (
                 connection.execute(
-                    "SELECT 1 FROM purge_tombstones WHERE stable_id=? AND target_type='record'",
-                    (canonical_record_id,),
+                    "SELECT 1 FROM purge_tombstones WHERE vault_id=? AND target_type='record' "
+                    "AND stable_id=?",
+                    (vault_id, canonical_record_id),
                 ).fetchone()
                 is not None
             )

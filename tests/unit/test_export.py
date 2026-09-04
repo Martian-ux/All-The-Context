@@ -806,6 +806,78 @@ def test_restore_rejects_barrier_reassigned_to_existing_destination_vault(
         )
 
 
+def test_restore_rejects_purge_tombstone_targeting_destination_only_record(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    source_store, purged_record_id = _source_less_store(source_database)
+    source_store.purge(
+        "record",
+        purged_record_id,
+        confirmation=source_store.purge_confirmation_phrase("record", purged_record_id),
+        compact=False,
+    )
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE)
+
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_store.initialize_vault("destination vault")
+    destination_record = destination_store.add_candidate(
+        CandidateInput(kind="fact", content="destination-only", explicit_user_statement=True)
+    )
+    tombstone_name = "tables/purge_tombstones.jsonl"
+
+    def retarget_tombstone(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        row = json.loads(members[tombstone_name].splitlines()[0])
+        row["stable_id"] = destination_record.record_id
+        members[tombstone_name] = (
+            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
+
+    tampered = _rewrite_export(package, tmp_path / "retargeted.atcexp", retarget_tombstone)
+    with pytest.raises(
+        ValueError,
+        match=r"portable purge (job|record purge tombstone identity)",
+    ):
+        restore_export(tampered, destination, PASSPHRASE)
+
+    with destination_store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM purge_tombstones").fetchone()[0] == 0
+    destination_store.purge(
+        "record",
+        destination_record.record_id,
+        confirmation=destination_store.purge_confirmation_phrase(
+            "record", destination_record.record_id
+        ),
+        compact=False,
+    )
+
+
+def test_destination_purge_rows_do_not_block_foreign_package_identity(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    source_store, record_id = _source_less_store(source_database)
+    source_vault_id = source_store.vault_id()
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE)
+
+    destination = tmp_path / "destination.sqlite3"
+    destination_store = CoreStore(destination)
+    destination_vault_id = destination_store.initialize_vault("destination vault")
+    assert destination_vault_id != source_vault_id
+    with destination_store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO purge_tombstones(stable_id,vault_id,target_type,purged_at) "
+            "VALUES(?,?,?,?)",
+            (record_id, destination_vault_id, "record", "2026-09-04T00:00:00Z"),
+        )
+
+    restore_export(package, destination, PASSPHRASE)
+    assert destination_store.get_record(record_id).content == "I prefer concise answers."
+
+
 def test_restore_rejects_active_candidate_and_record_reassigned_to_destination_vault(
     tmp_path: Path,
 ) -> None:
@@ -945,7 +1017,7 @@ def test_restore_rejects_extra_package_vault_with_split_barrier_binding(
         ("schema_version", 19.0),
         ("schema_version", "19"),
         ("schema_version", -1),
-        ("schema_version", 20),
+        ("schema_version", 21),
     ],
 )
 def test_restore_rejects_noncanonical_manifest_versions_before_destination_mutation(

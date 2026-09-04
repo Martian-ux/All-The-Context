@@ -120,7 +120,7 @@ def test_registered_source_reference_preserves_installed_v1_material_after_resta
     assert item["source_reference"] == expected
 
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 19
+    assert restarted.migrate() == 20
     with restarted.connect() as connection:
         retained = connection.execute(
             "SELECT source_reference FROM context_records WHERE source_reference=?",
@@ -1131,7 +1131,7 @@ def test_registered_source_event_id_uniqueness_and_restart_retain_capture_state(
             ).fetchone()
         ) == (4, 4)
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 19
+    assert restarted.migrate() == 20
     with restarted.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 4
         assert (

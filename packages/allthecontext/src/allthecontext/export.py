@@ -34,9 +34,9 @@ from .storage import (
 
 MAGIC = b"ATCEXP1\x00"
 EXPORT_FORMAT_VERSION = 1
-# Version 0 is the pre-Core/minimal export shape.  Versions 1 through 19 are
+# Version 0 is the pre-Core/minimal export shape.  Versions 1 through 20 are
 # the current and retained legacy Core schemas represented by this checkout.
-SUPPORTED_SCHEMA_VERSIONS = frozenset(range(20))
+SUPPORTED_SCHEMA_VERSIONS = frozenset(range(21))
 SALT_SIZE = 16
 NONCE_SIZE = 12
 TAG_SIZE = 16
@@ -763,7 +763,7 @@ def _manifest_schema_version(manifest: dict[str, Any]) -> int:
 
     raw_version = manifest.get("schema_version", 0)
     if type(raw_version) is not int or raw_version not in SUPPORTED_SCHEMA_VERSIONS:
-        raise ValueError("export schema version must be an integer from 0 through 19")
+        raise ValueError("export schema version must be an integer from 0 through 20")
     return raw_version
 
 
@@ -1500,6 +1500,139 @@ def _validate_portable_graph(
             raise ValueError("portable source chunks are not package-contained")
     elif source_chunks:
         raise ValueError("source chunks require source-inclusive package material")
+def _validate_package_purge_identity(
+    archive: zipfile.ZipFile,
+    manifest_tables: dict[str, Any],
+    package_vault_ids: set[str],
+) -> None:
+    """Require every portable purge row to name a package-owned target."""
+
+    tombstones: dict[tuple[str, str, str], dict[str, Any]] = {}
+    if "purge_tombstones" in manifest_tables:
+        with archive.open("tables/purge_tombstones.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                required = {"stable_id", "vault_id", "target_type", "purged_at"}
+                allowed = required | {"replication_sequence", "replication_event_id"}
+                if set(row) - allowed or not required.issubset(row):
+                    raise ValueError("portable purge tombstone row is invalid")
+                stable_id = row["stable_id"]
+                vault_id = row["vault_id"]
+                target_type = row["target_type"]
+                purged_at = row["purged_at"]
+                if (
+                    not isinstance(stable_id, str)
+                    or not stable_id.strip()
+                    or not isinstance(vault_id, str)
+                    or vault_id not in package_vault_ids
+                    or not isinstance(target_type, str)
+                    or target_type not in {"record", "source"}
+                    or not isinstance(purged_at, str)
+                    or not purged_at.strip()
+                ):
+                    raise ValueError("portable purge tombstone row is invalid")
+                sequence = row.get("replication_sequence")
+                event_id = row.get("replication_event_id")
+                if sequence is not None and (
+                    isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0
+                ):
+                    raise ValueError("portable purge tombstone sequence is invalid")
+                if event_id is not None and (not isinstance(event_id, str) or not event_id.strip()):
+                    raise ValueError("portable purge tombstone event identity is invalid")
+                key = (vault_id, target_type, stable_id)
+                if key in tombstones:
+                    raise ValueError("portable purge tombstones are duplicated")
+                tombstones[key] = row
+
+    purge_jobs: dict[tuple[str, str, str], dict[str, Any]] = {}
+    if "purge_jobs" in manifest_tables:
+        with archive.open("tables/purge_jobs.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                required = {"vault_id", "target_type", "target_id", "phase"}
+                if not required.issubset(row):
+                    raise ValueError("portable purge job row is invalid")
+                vault_id = row["vault_id"]
+                target_type = row["target_type"]
+                target_id = row["target_id"]
+                phase = row["phase"]
+                if (
+                    not isinstance(vault_id, str)
+                    or vault_id not in package_vault_ids
+                    or not isinstance(target_type, str)
+                    or target_type not in {"record", "source"}
+                    or not isinstance(target_id, str)
+                    or not target_id.strip()
+                    or phase not in {"compaction_pending", "completed"}
+                ):
+                    raise ValueError("portable purge job row is invalid")
+                key = (vault_id, target_type, target_id)
+                if key in purge_jobs:
+                    raise ValueError("portable purge jobs are duplicated")
+                purge_jobs[key] = row
+
+    for key in purge_jobs:
+        if key not in tombstones:
+            raise ValueError("portable purge job has no matching purge tombstone")
+
+    purged_events: dict[str, tuple[str, str, int, dict[str, Any]]] = {}
+    if "replication_events" in manifest_tables:
+        with archive.open("tables/replication_events.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                if row.get("event_type") != "record_purged":
+                    continue
+                event_id = row.get("id")
+                vault_id = row.get("vault_id")
+                record_id = row.get("record_id")
+                sequence = row.get("sequence")
+                payload_json = row.get("payload_json")
+                if (
+                    not isinstance(event_id, str)
+                    or not event_id.strip()
+                    or not isinstance(vault_id, str)
+                    or vault_id not in package_vault_ids
+                    or not isinstance(record_id, str)
+                    or not record_id.strip()
+                    or isinstance(sequence, bool)
+                    or not isinstance(sequence, int)
+                    or sequence < 0
+                    or not isinstance(payload_json, str)
+                ):
+                    raise ValueError("portable purge event row is invalid")
+                try:
+                    payload = json.loads(
+                        payload_json,
+                        object_pairs_hook=_json_object_from_pairs,
+                    )
+                except (TypeError, ValueError) as error:
+                    raise ValueError("portable purge event payload is invalid") from error
+                if (
+                    not isinstance(payload, dict)
+                    or set(payload) != {"record_id", "purged_at", "purge_scope", "irreversible"}
+                    or payload.get("record_id") != record_id
+                    or payload.get("purge_scope") not in {"record", "source"}
+                    or payload.get("irreversible") is not True
+                    or not isinstance(payload.get("purged_at"), str)
+                    or not payload["purged_at"].strip()
+                ):
+                    raise ValueError("portable purge event payload is invalid")
+                if event_id in purged_events:
+                    raise ValueError("portable purge events are duplicated")
+                purged_events[event_id] = (vault_id, record_id, sequence, payload)
+
+    for (vault_id, target_type, stable_id), row in tombstones.items():
+        event_id = row.get("replication_event_id")
+        sequence = row.get("replication_sequence")
+        if target_type == "record" and event_id is not None:
+            event = purged_events.get(event_id)
+            if (
+                event is None
+                or event[0] != vault_id
+                or event[1] != stable_id
+                or event[2] != sequence
+                or event[3]["purged_at"] != row["purged_at"]
+            ):
+                raise ValueError("portable record purge tombstone identity is invalid")
+        elif (vault_id, target_type, stable_id) not in purge_jobs:
+            raise ValueError("portable purge tombstone targets an unowned object")
 
 
 def _source_chunk_descriptors(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2165,6 +2298,7 @@ def restore_export(
                 include_sources=include_sources,
                 package_vault_ids=package_vault_ids,
             )
+            _validate_package_purge_identity(archive, manifest_tables, package_vault_ids)
             if dry_run:
                 return {"valid": True, "dry_run": True, "manifest": manifest}
             connection = sqlite3.connect(database_path)
@@ -2185,6 +2319,7 @@ def restore_export(
                     }
                     for table in existing
                 }
+                package_vault_id = next(iter(package_vault_ids), None)
                 blocked_records: set[str] = set()
                 blocked_sources: set[str] = set()
                 imported_user_mutations: list[dict[str, Any]] = []
@@ -2241,7 +2376,8 @@ def restore_export(
                             archive_source_less_purge_barriers.add(source_less_key)
                 if "purge_tombstones" in existing:
                     for stable_id, target_type in connection.execute(
-                        "SELECT stable_id,target_type FROM purge_tombstones"
+                        "SELECT stable_id,target_type FROM purge_tombstones WHERE vault_id=?",
+                        (package_vault_id,),
                     ):
                         (blocked_records if target_type == "record" else blocked_sources).add(
                             str(stable_id)
@@ -2249,6 +2385,10 @@ def restore_export(
                 if "purge_tombstones" in manifest_tables:
                     with archive.open("tables/purge_tombstones.jsonl") as stream:
                         for row in _iter_jsonl(stream):
+                            if row["vault_id"] != package_vault_id:
+                                raise ValueError(
+                                    "export purge tombstone is not bound to the package vault"
+                                )
                             target = (
                                 blocked_records
                                 if row.get("target_type") == "record"

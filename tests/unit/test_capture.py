@@ -190,7 +190,7 @@ def test_pending_capture_migration_repairs_missing_applied_prerequisite(
         ensure_capture_schema(connection, through_version=through_version)
 
     monkeypatch.setattr("allthecontext.capture.ensure_capture_schema", record_repair)
-    assert store.migrate() == 19
+    assert store.migrate() == 20
     assert repair_versions == [16, None]
 
     with store.connect() as connection:
@@ -208,7 +208,7 @@ def test_normal_v16_to_v17_capture_upgrade_is_clean(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _rewind_capture_page_migration(store)
 
-    assert store.migrate() == 19
+    assert store.migrate() == 20
     with store.connect() as connection:
         columns = {
             str(row["name"]) for row in connection.execute("PRAGMA table_info(capture_checkpoints)")
@@ -232,7 +232,7 @@ def test_marker_present_missing_capture_page_columns_are_repaired(tmp_path: Path
             is not None
         )
 
-    assert store.migrate() == 19
+    assert store.migrate() == 20
     with store.connect() as connection:
         columns = {
             str(row["name"]) for row in connection.execute("PRAGMA table_info(capture_checkpoints)")
@@ -246,7 +246,7 @@ def test_capture_migration_repair_is_restart_idempotent(tmp_path: Path) -> None:
     with store.transaction() as connection:
         connection.execute("DROP TABLE capture_checkpoints")
 
-    assert store.migrate() == 19
+    assert store.migrate() == 20
     with store.connect() as connection:
         first_snapshot = _capture_schema_snapshot(connection)
         first_markers = tuple(
@@ -256,7 +256,7 @@ def test_capture_migration_repair_is_restart_idempotent(tmp_path: Path) -> None:
             ).fetchall()
         )
 
-    assert store.migrate() == 19
+    assert store.migrate() == 20
     with store.connect() as connection:
         assert _capture_schema_snapshot(connection) == first_snapshot
         assert (
@@ -301,7 +301,7 @@ def test_capture_migration_repair_rolls_back_with_pending_migration(tmp_path: Pa
 
     with store.transaction() as connection:
         connection.execute("DROP TRIGGER fail_capture_page_recovery")
-    assert store.migrate() == 19
+    assert store.migrate() == 20
 
 
 def test_capture_migrations_repair_matches_canonical_schema_and_rejects_malformed_rows(
@@ -328,9 +328,9 @@ def test_capture_migrations_repair_matches_canonical_schema_and_rejects_malforme
             kind = "INDEX" if object_name.startswith(("ix_", "uq_")) else "TABLE"
             connection.execute(f'DROP {kind} IF EXISTS "{object_name}"')
             assert (
-                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 19
+                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 20
             )
-        assert candidate.migrate() == 19
+        assert candidate.migrate() == 20
         with candidate.connect() as connection:
             assert _capture_schema_snapshot(connection) == expected
 
@@ -339,7 +339,7 @@ def test_capture_migrations_repair_matches_canonical_schema_and_rejects_malforme
         expected = _capture_schema_snapshot(connection)
     with repaired.transaction() as connection:
         connection.execute("ALTER TABLE capture_checkpoints DROP COLUMN pending_event_ids_json")
-    assert repaired.migrate() == 19
+    assert repaired.migrate() == 20
     with repaired.connect() as connection:
         assert _capture_schema_snapshot(connection) == expected
 
@@ -642,7 +642,7 @@ def test_lease_expiry_during_sink_replays_same_idempotency_key(tmp_path: Path) -
 def test_capture_migration_restart_and_partial_damage_repair(tmp_path: Path) -> None:
     store = _store(tmp_path)
     with store.connect() as connection:
-        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 19
+        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 20
         for table in (
             "capture_sources",
             "capture_checkpoints",
@@ -658,7 +658,7 @@ def test_capture_migration_restart_and_partial_damage_repair(tmp_path: Path) -> 
             )
     with store.transaction() as connection:
         connection.execute("DROP TABLE capture_items")
-    assert store.migrate() == 19
+    assert store.migrate() == 20
     with store.connect() as connection:
         assert (
             connection.execute(
@@ -667,7 +667,7 @@ def test_capture_migration_restart_and_partial_damage_repair(tmp_path: Path) -> 
             is not None
         )
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 19
+    assert restarted.migrate() == 20
 
 
 def test_default_disabled_local_only_lifecycle_and_invalid_transitions(tmp_path: Path) -> None:
@@ -1156,7 +1156,7 @@ def test_pending_page_survives_restart_and_migration_repair(tmp_path: Path) -> N
     first_store.close()
 
     restarted_store = CoreStore(database_path)
-    assert restarted_store.migrate() == 19
+    assert restarted_store.migrate() == 20
     restarted = CaptureCoordinator(restarted_store, sink=IdempotentFakeSink())
     restarted.resume(source_id)
     restarted.register_adapter("fake", DeterministicFakeAdapter([CapturePage(generation=2)]))
