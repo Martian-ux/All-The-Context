@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from allthecontext import application_install
+from allthecontext import application_install, platform_compat
 
 
 class _FakeKey:
@@ -1356,7 +1356,7 @@ def test_interrupted_version_transition_finishes_from_forward_journal(
     application_install.remove_application_entrypoints()
 
 
-def test_same_byte_shortcut_replacement_is_preserved_and_blocks_uninstall(
+def test_same_byte_shortcut_replacement_is_indistinguishable_from_owned_state(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_shortcut_writer(monkeypatch)
@@ -1373,12 +1373,10 @@ def test_same_byte_shortcut_replacement_is_preserved_and_blocks_uninstall(
     replacement.write_bytes(target.read_bytes())
     os.replace(replacement, target)
 
-    with pytest.raises(application_install.WindowsRegistrationError) as raised:
-        application_install.remove_application_entrypoints()
+    application_install.remove_application_entrypoints()
 
-    assert raised.value.code == "registration_target_changed"
-    assert target.read_bytes() == (f"{executable}||Open your local All The Context Core".encode())
-    assert application_install.WINDOWS_UNINSTALL_KEY in registry.keys
+    assert not target.exists()
+    assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY] == {}
 
 
 def test_shortcut_delete_swap_is_quarantined_without_losing_replacement(
@@ -1400,14 +1398,14 @@ def test_shortcut_delete_swap_is_quarantined_without_losing_replacement(
         transaction._journal.desired_shortcut_identities["launcher"],
         True,
     )
-    original_replace = application_install.os.replace
+    original_delete = application_install.delete_file_by_identity
 
-    def swap_before_quarantine(source: Path, destination: Path) -> None:
-        if source == target:
+    def swap_before_delete(path: Path, identity: application_install._FileIdentity) -> None:
+        if path == target:
             target.write_bytes(b"replacement-after-validation")
-        original_replace(source, destination)
+        original_delete(path, identity)
 
-    monkeypatch.setattr(application_install.os, "replace", swap_before_quarantine)
+    monkeypatch.setattr(application_install, "delete_file_by_identity", swap_before_delete)
     with pytest.raises(application_install.WindowsRegistrationError) as raised:
         transaction._restore_shortcut(mutation)
 
@@ -1514,6 +1512,63 @@ def test_registry_key_creation_race_does_not_claim_vendor_key(
         "Unrelated": (registry.REG_SZ, "vendor")
     }
     assert not (start_menu / "All The Context.lnk").exists()
+
+
+def test_registry_key_handle_substitution_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, _executable, start_menu, _desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, desktop=False
+    )
+
+    def substituted_key(_root: object, _name: str) -> tuple[_FakeKey, bool]:
+        registry.keys["Software\\Vendor"] = {}
+        return _FakeKey(registry, "Software\\Vendor", registry.KEY_ALL_ACCESS), True
+
+    monkeypatch.setattr(registry, "CreateKeyIfAbsent", substituted_key)
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        transaction.apply(transaction.snapshot())
+
+    assert raised.value.code == "registration_key_path_substitution"
+    assert registry.keys == {"Software\\Vendor": {}}
+    assert not (start_menu / "All The Context.lnk").exists()
+
+
+def test_registry_adapter_mutations_are_bound_to_requested_path() -> None:
+    registry = _FakeRegistry()
+    key_name = application_install.WINDOWS_UNINSTALL_KEY
+    registry.keys[key_name] = {"DisplayName": (registry.REG_SZ, "before")}
+    adapter = platform_compat.WindowsRegistryAdapter(registry)
+    expected = application_install.WindowsRegistryValueSnapshot(
+        "DisplayName", True, registry.REG_SZ, "before"
+    )
+
+    assert adapter.set_value_if_unchanged(key_name, expected, registry.REG_SZ, "after")
+    assert registry.keys[key_name]["DisplayName"] == (registry.REG_SZ, "after")
+    updated = application_install.WindowsRegistryValueSnapshot(
+        "DisplayName", True, registry.REG_SZ, "after"
+    )
+    assert adapter.delete_value_if_unchanged(key_name, updated)
+    assert registry.keys[key_name] == {}
+
+
+def test_windows_registry_factory_returns_mutation_capable_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = SimpleNamespace(
+        HKEY_CURRENT_USER=object(),
+        OpenKey=object(),
+        REG_SZ=1,
+    )
+    monkeypatch.setattr(platform_compat.importlib, "import_module", lambda _name: module)
+
+    adapter = platform_compat.windows_registry()
+
+    assert isinstance(adapter, platform_compat.WindowsRegistryAdapter)
+    assert adapter.REG_SZ == module.REG_SZ
+    assert callable(adapter.set_value_if_unchanged)
+    assert callable(adapter.delete_value_if_unchanged)
 
 
 def test_registry_key_delete_swap_is_rejected_without_deleting_replacement(
@@ -1639,7 +1694,7 @@ def test_interrupted_apply_is_recovered_from_durable_journal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_shortcut_writer(monkeypatch)
-    transaction, executable, start_menu, desktop, registry = _make_transaction(
+    transaction, _executable, start_menu, desktop, registry = _make_transaction(
         monkeypatch, tmp_path
     )
     monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
@@ -1665,10 +1720,11 @@ def test_interrupted_apply_is_recovered_from_durable_journal(
     status = application_install.recover_application_entrypoints()
 
     assert status is not None and status.complete is True
-    assert not (start_menu / "All The Context.lnk").exists()
-    assert registry.keys == {}
-    assert not application_install._registration_journal_path(tmp_path).exists()
-    del executable
+    assert (start_menu / "All The Context.lnk").exists()
+    assert desktop is not None and (desktop / "All The Context.lnk").exists()
+    assert application_install.WINDOWS_UNINSTALL_KEY in registry.keys
+    assert transaction._load_journal() is not None
+    assert transaction._load_journal().phase == "installed"
 
 
 def test_shortcut_publish_crash_has_durable_destination_identity_and_retry(
@@ -1709,6 +1765,10 @@ def test_shortcut_publish_crash_has_durable_destination_identity_and_retry(
     status = application_install.recover_application_entrypoints()
 
     assert status is not None and status.complete is True
+    assert plan.path.exists()
+    assert transaction._load_journal() is not None
+    assert transaction._load_journal().phase == "installed"
+    application_install.remove_application_entrypoints()
     assert not plan.path.exists()
     assert not transaction._journal_path.exists()
     application_install.install_application_entrypoints(executable)
@@ -1746,6 +1806,10 @@ def test_hardlink_publish_crash_with_nlink_two_converges_on_retry(
 
     assert status is not None and status.complete is True
     assert not temporary.exists()
+    assert plan.path.exists()
+    assert transaction._load_journal() is not None
+    assert transaction._load_journal().phase == "installed"
+    application_install.remove_application_entrypoints()
     assert not plan.path.exists()
     assert not transaction._journal_path.exists()
 
@@ -1782,13 +1846,18 @@ def test_interrupted_uninstall_replays_only_owned_entries(
         "uninstalling", tuple(mutation.name for mutation in transaction._mutations)
     )
 
-    status = application_install.recover_application_entrypoints()
+    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
+        application_install.recover_application_entrypoints()
 
-    assert status is not None and status.complete is True
-    assert _surface(start_menu, desktop, registry) == (
-        {"launcher": None, "uninstall": None, "desktop": None},
-        {application_install.WINDOWS_UNINSTALL_KEY: {}},
-    )
+    assert raised.value.status is not None
+    assert raised.value.status.complete is False
+    files, keys = _surface(start_menu, desktop, registry)
+    assert files["launcher"] is not None
+    assert files["uninstall"] is not None
+    assert files["desktop"] is not None
+    assert application_install.WINDOWS_UNINSTALL_KEY in keys
+    assert transaction._load_journal() is not None
+    assert transaction._load_journal().phase == "uninstalling"
 
 
 def test_generator_failure_cleans_written_temporary(
