@@ -9,6 +9,7 @@ user-authored statements and dedicated memory/profile fields for Core policy.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
@@ -1440,7 +1441,7 @@ def _classify_statement(
     if re.search(r"\bmy time ?zone is\b", lowered):
         return ("personal_detail", 0.92, "user", "timezone")
     if re.search(
-        r"\b(?:i prefer|i like|i don't like|i do not like|i dislike|i hate|i love|"
+        r"\b(?:i prefer|i like|i don['\u2019]t like|i do not like|i dislike|i hate|i love|"
         r"i (?:always|usually|generally|normally|typically)\s+"
         r"(?:want|prefer|like|love|hate|dislike)|"
         r"my preference is|"
@@ -1730,30 +1731,69 @@ def _deduplicate_candidates(items: Iterable[CandidateInput]) -> list[CandidateIn
     return result
 
 
-_MERGED_SOURCE_REFERENCE_PREFIX = "archive-provenance-v1:"
+_MERGED_SOURCE_REFERENCE_PREFIX = "archive-provenance-v2:"
+_LEGACY_SOURCE_REFERENCE_PREFIX = "archive-provenance-v1:"
+_MAX_MERGED_SOURCE_REFERENCE_CHARS = 2_000
+
+
+def _source_reference_details(value: str | None) -> tuple[set[str], int]:
+    if not value:
+        return set(), 0
+    for prefix in (_MERGED_SOURCE_REFERENCE_PREFIX, _LEGACY_SOURCE_REFERENCE_PREFIX):
+        if not value.startswith(prefix):
+            continue
+        payload = value[len(prefix) :]
+        try:
+            decoded = json.loads(payload)
+        except (TypeError, ValueError):
+            decoded = None
+        if isinstance(decoded, dict) and decoded.get("format") == "archive-provenance-v2":
+            references = decoded.get("references")
+            overflow = decoded.get("overflow_count", 0)
+            if (
+                isinstance(references, list)
+                and all(isinstance(reference, str) and reference for reference in references)
+                and type(overflow) is int
+                and overflow >= 0
+            ):
+                return set(references), overflow
+        if prefix == _LEGACY_SOURCE_REFERENCE_PREFIX:
+            return {part for part in payload.split("|") if part}, 0
+    return {value}, 0
 
 
 def _source_reference_parts(value: str | None) -> set[str]:
-    if not value:
-        return set()
-    if value.startswith(_MERGED_SOURCE_REFERENCE_PREFIX):
-        return {part for part in value[len(_MERGED_SOURCE_REFERENCE_PREFIX) :].split("|") if part}
-    return {value}
+    return _source_reference_details(value)[0]
 
 
 def _merge_source_references(first: str | None, second: str | None) -> str | None:
-    references = sorted(_source_reference_parts(first) | _source_reference_parts(second))
-    if not references:
+    first_references, first_overflow = _source_reference_details(first)
+    second_references, second_overflow = _source_reference_details(second)
+    references = sorted(first_references | second_references)
+    overflow_count = first_overflow + second_overflow
+    if not references and overflow_count == 0:
         return None
-    if len(references) == 1:
+    if len(references) == 1 and overflow_count == 0:
         return references[0]
-    prefix = _MERGED_SOURCE_REFERENCE_PREFIX
-    selected: list[str] = []
-    current_length = len(prefix)
-    for reference in references:
-        separator = 1 if selected else 0
-        if current_length + separator + len(reference) > 2_000:
-            break
-        selected.append(reference)
-        current_length += separator + len(reference)
-    return prefix + "|".join(selected)
+    selected = list(references)
+    total = len(references) + overflow_count
+    while True:
+        payload = {
+            "format": "archive-provenance-v2",
+            "references": selected,
+            "overflow_count": total - len(selected),
+        }
+        encoded = _MERGED_SOURCE_REFERENCE_PREFIX + json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if len(encoded) <= _MAX_MERGED_SOURCE_REFERENCE_CHARS:
+            return encoded
+        if not selected:
+            # The fixed-size envelope fits even when every raw reference is
+            # over the remaining bound. The count is explicit, so no address
+            # silently disappears at the 2,000-character boundary.
+            return encoded
+        selected.pop()

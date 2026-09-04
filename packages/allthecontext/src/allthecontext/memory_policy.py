@@ -7,6 +7,7 @@ turns the resulting decision into current context.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -271,13 +272,13 @@ _KIND_FRAMING = {
         flags=re.IGNORECASE,
     ),
     "interaction_preference": re.compile(
-        r"^(?:i (?:prefer|like|love|hate|dislike)|i do not like|i don't like|"
+        r"^(?:i (?:prefer|like|love|hate|dislike)|i do not like|i don['\u2019]t like|"
         r"my preference is|please always|please never|"
         r"when you (?:answer|respond)|prefer)\s+",
         flags=re.IGNORECASE,
     ),
     "preference": re.compile(
-        r"^(?:i (?:prefer|like|love|hate|dislike)|i do not like|i don't like|"
+        r"^(?:i (?:prefer|like|love|hate|dislike)|i do not like|i don['\u2019]t like|"
         r"my preference is|please always|please never|prefer)\s+",
         flags=re.IGNORECASE,
     ),
@@ -386,6 +387,8 @@ _ARCHIVE_DURABLE_PREFERENCE_SIGNAL = re.compile(
     r"(?:^\s*(?:preference|preferences)\s*:\s*|"
     r"^\s*(?:i|we)\s+(?:(?:always|never|usually|generally|normally|typically)\s+)?"
     r"(?:prefer|like|love|hate|dislike)\b|"
+    r"^\s*(?:i|we)\s+(?:(?:always|never|usually|generally|normally|typically)\s+)?"
+    r"(?:do not|don['\u2019]t)\s+like\b|"
     r"^\s*prefer\b|"
     r"^\s*(?:i|we)\s+(?:always|never|usually|generally|normally|typically)\s+want\b|"
     r"^\s*my\s+preference\s+is\b|"
@@ -455,6 +458,124 @@ def normalize_imported_text(value: str) -> str:
     return " ".join(normalized.split())
 
 
+_ARCHIVE_PROVENANCE_V1_PREFIX = "archive-provenance-v1:"
+_ARCHIVE_PROVENANCE_V2_PREFIX = "archive-provenance-v2:"
+
+
+def _canonical_import_reference_atom(value: str) -> str:
+    """Normalize reference presentation without deleting identity punctuation."""
+
+    normalized = normalize_imported_text(value)
+    if "#" not in normalized:
+        return normalized
+    base, fragment = normalized.split("#", 1)
+    parts = fragment.split("&")
+    pairs: list[tuple[str, str]] = []
+    remainder: list[str] = []
+    for part in parts:
+        if "=" not in part:
+            remainder.append(normalize_imported_text(part))
+            continue
+        key, item = part.split("=", 1)
+        pairs.append((normalize_imported_text(key), normalize_imported_text(item)))
+    if not pairs or remainder:
+        return normalized
+    pairs.sort()
+    return base.strip() + "#" + "&".join(f"{key}={item}" for key, item in pairs)
+
+
+def _structured_import_references(value: str) -> tuple[set[str], int] | None:
+    """Read both structured provenance and the original pipe format."""
+
+    prefix: str | None = None
+    for candidate in (_ARCHIVE_PROVENANCE_V2_PREFIX, _ARCHIVE_PROVENANCE_V1_PREFIX):
+        if value.startswith(candidate):
+            prefix = candidate
+            break
+    if prefix is None:
+        return None
+    payload = value[len(prefix) :]
+    try:
+        decoded = json.loads(payload)
+    except (TypeError, ValueError):
+        decoded = None
+    if isinstance(decoded, dict) and decoded.get("format") == "archive-provenance-v2":
+        references = decoded.get("references")
+        overflow = decoded.get("overflow_count", 0)
+        if (
+            isinstance(references, list)
+            and all(isinstance(reference, str) and reference for reference in references)
+            and type(overflow) is int
+            and overflow >= 0
+        ):
+            return {
+                _canonical_import_reference_atom(reference) for reference in references
+            }, overflow
+    if prefix == _ARCHIVE_PROVENANCE_V1_PREFIX:
+        return {
+            _canonical_import_reference_atom(reference)
+            for reference in payload.split("|")
+            if reference
+        }, 0
+    return None
+
+
+def normalized_import_source_reference(value: str) -> str:
+    """Return a delimiter-safe, formatting-stable source-reference identity."""
+
+    normalized = normalize_imported_text(value)
+    parsed = _structured_import_references(normalized)
+    if parsed is None:
+        return _canonical_import_reference_atom(normalized)
+    references, overflow = parsed
+    return json.dumps(
+        {
+            "format": "archive-provenance-v2",
+            "references": sorted(references),
+            "overflow_count": overflow,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def normalized_import_identity_reference(value: str) -> str:
+    """Select the stable primary address from a possibly merged provenance value."""
+
+    normalized = normalize_imported_text(value)
+    parsed = _structured_import_references(normalized)
+    if parsed is None:
+        return _canonical_import_reference_atom(normalized)
+    references, _overflow = parsed
+    if references:
+        return sorted(references)[0]
+    return normalized_import_source_reference(normalized)
+
+
+def archive_import_identity(
+    source_id: str | None,
+    source_reference: str | None,
+    kind: str,
+    content: str,
+) -> str | None:
+    """Derive a stable source-item identity without mutable slots."""
+
+    if source_id is None or source_reference is None:
+        return None
+    normalized_kind, value_identity = normalized_import_candidate_key(kind, content)
+    material = "\0".join(
+        (
+            "archive-import-identity-v1",
+            unicodedata.normalize("NFKC", source_id).strip(),
+            normalized_import_identity_reference(source_reference),
+            normalized_kind,
+            value_identity,
+        )
+    )
+    return sha256(material.encode("utf-8")).hexdigest()
+
+
 def _archive_statement_has_resolved_naming_object(value: str) -> bool:
     """Allow the established ``naming it <name>`` construction only."""
 
@@ -481,27 +602,44 @@ def is_self_contained_archive_statement(kind: str, content: str) -> bool:
         return False
     if _ARCHIVE_INERT_COMMAND.search(normalized) or _ARCHIVE_TRANSIENT_OR_TASK.search(normalized):
         return False
+    normalized_kind = kind.strip().casefold()
+    recognizable_preference = (
+        normalized_kind
+        in {
+            "preference",
+            "preferences",
+            "interaction_preference",
+            "editor_preference",
+        }
+        and _ARCHIVE_DURABLE_PREFERENCE_SIGNAL.search(normalized) is not None
+    )
     if _ARCHIVE_UNRESOLVED_REFERENCE.search(normalized):
-        normalized_kind = kind.strip().casefold()
         resolved_exception = (
-            normalized_kind == "project_decision"
-            and _archive_statement_has_resolved_naming_object(normalized)
-        ) or (
-            normalized_kind == "constraint"
-            and re.search(r"\bthis\s+[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?", normalized) is not None
+            (
+                normalized_kind == "project_decision"
+                and _archive_statement_has_resolved_naming_object(normalized)
+            )
+            or (
+                normalized_kind == "constraint"
+                and re.search(r"\bthis\s+[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?", normalized) is not None
+            )
+            or (normalized_kind in {"preference", "preferences"} and not recognizable_preference)
         )
         if not resolved_exception:
             return False
 
-    normalized_kind = kind.strip().casefold()
     if normalized_kind in {
         "preference",
         "preferences",
         "interaction_preference",
         "editor_preference",
     }:
-        if _ARCHIVE_DURABLE_PREFERENCE_SIGNAL.search(normalized) is None:
-            return False
+        # Older Core callers can submit an already-typed ``preference`` row
+        # whose text is not a natural-language preference sentence. Preserve
+        # that compatibility shape, while applying the stricter admission
+        # check to recognizable preference wording (including negatives).
+        if not recognizable_preference:
+            return True
         framed = normalized
         framing = _KIND_FRAMING.get("interaction_preference")
         if framing is not None:
@@ -568,11 +706,11 @@ def normalized_import_candidate_key(kind: str, content: str) -> tuple[str, str]:
     framing = _KIND_FRAMING.get(kind.strip().casefold())
     if framing is not None:
         normalized = framing.sub("", normalized, count=1).strip()
-    # Punctuation is presentation noise for candidate identity. The stored
-    # first candidate remains unchanged and merged source references retain
-    # all bounded provenance addresses.
-    words = " ".join(re.findall(r"[a-z0-9]+", normalized))
-    return kind.strip().casefold(), words
+    # Keep Unicode letters, digits, symbols, and meaningful punctuation. Only
+    # sentence-final punctuation is presentation noise; removing punctuation
+    # everywhere would merge materially distinct values such as ``C`` and
+    # ``C++``. The stored first candidate remains unchanged.
+    return kind.strip().casefold(), _import_fingerprint(normalized, strip_sentence_end=True)
 
 
 def normalized_import_slot_key(value: str | None) -> str | None:
@@ -580,8 +718,28 @@ def normalized_import_slot_key(value: str | None) -> str | None:
 
     if value is None:
         return None
-    words = " ".join(re.findall(r"[a-z0-9]+", normalize_imported_text(value).casefold()))
-    return words or None
+    normalized = _import_fingerprint(normalize_imported_text(value), strip_sentence_end=True)
+    return normalized or None
+
+
+def _import_fingerprint(value: str, *, strip_sentence_end: bool = False) -> str:
+    """Build a deterministic Unicode-aware identity fingerprint.
+
+    NFKC and casefold remove equivalent presentation forms, and whitespace is
+    canonicalized. Internal punctuation and all non-ASCII characters remain
+    part of the identity. Only explicit sentence terminators at the end are
+    omitted when requested so ``C`` and ``C++`` cannot collide.
+    """
+
+    normalized = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+    if strip_sentence_end:
+        while normalized and (
+            normalized[-1] in ".!?"
+            or ord(normalized[-1]) in {0x3002, 0xFF01, 0xFF1F, 0xFF61, 0x2026}
+        ):
+            normalized = normalized[:-1]
+        normalized = normalized.rstrip()
+    return normalized
 
 
 def _claim_value(value: str) -> str:

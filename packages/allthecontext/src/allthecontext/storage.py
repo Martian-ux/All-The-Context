@@ -28,9 +28,13 @@ from .memory_policy import (
     LiveUserClaim,
     MemoryPolicy,
     ObservationOrigin,
+    archive_import_identity,
     archive_lineage_key,
     classify_sensitivity,
     normalize_imported_text,
+    normalized_import_candidate_key,
+    normalized_import_slot_key,
+    normalized_import_source_reference,
     normalized_observation_text,
     registered_source_reference,
 )
@@ -100,6 +104,7 @@ class InvalidStateError(StorageError):
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
 SOURCE_BLOB_CHUNK_BYTES = 8 * 1024 * 1024
 SOURCE_REBUILD_REASON = "replaced by source rebuild"
+_ARCHIVE_SOURCE_TYPES = frozenset({"archive", "provider_archive", "provider_memory"})
 UserMutationKind = Literal[
     "restore",
     "correction",
@@ -151,6 +156,26 @@ def _json(value: Any) -> str:
 
 def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _archive_identity_from_row(row: Mapping[str, Any] | sqlite3.Row) -> str | None:
+    """Compute an archive source-item identity from immutable import lineage."""
+
+    source_type = str(row["source_type"] or "").casefold()
+    origin = str(row["observation_origin"] or "").casefold()
+    if source_type not in _ARCHIVE_SOURCE_TYPES and (
+        origin != ObservationOrigin.ARCHIVE_IMPORT.value
+    ):
+        return None
+    content = cast(str | None, row["content"])
+    if content is None:
+        return None
+    return archive_import_identity(
+        cast(str | None, row["source_id"]),
+        cast(str | None, row["source_reference"]),
+        str(row["kind"]),
+        content,
+    )
 
 
 _CANONICAL_ACTORS = {
@@ -309,7 +334,7 @@ def _json_string_list(value: str | None) -> list[str] | None:
 def _normalized_slot_key(value: str | None) -> str | None:
     if value is None:
         return None
-    normalized = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+    normalized = normalized_import_slot_key(value)
     if not normalized:
         raise InvalidStateError("memory slot keys must not normalize to an empty value")
     return normalized
@@ -352,14 +377,14 @@ def _stable_record_key_from_values(
     if structured_value is not None:
         value_material = "structured:" + _json(structured_value)
     else:
-        normalized = unicodedata.normalize("NFKC", content).casefold()
-        value_material = "content:" + " ".join(re.findall(r"\w+", normalized))
+        _kind, fingerprint = normalized_import_candidate_key(kind, content)
+        value_material = "content:" + fingerprint
     return _hash_text(
         _json(
             [
-                "source-reference-v1",
+                "source-reference-v2",
                 source_id,
-                source_reference,
+                normalized_import_source_reference(source_reference),
                 kind.casefold(),
                 _normalized_slot_key(entity_key),
                 _normalized_slot_key(attribute_key),
@@ -393,8 +418,8 @@ def _value_fingerprint(row: sqlite3.Row) -> str:
     if structured is not None:
         material = "structured:" + _json(structured)
     else:
-        content = unicodedata.normalize("NFKC", str(row["content"])).casefold()
-        material = "content:" + " ".join(re.findall(r"\w+", content))
+        _kind, fingerprint = normalized_import_candidate_key(str(row["kind"]), str(row["content"]))
+        material = "content:" + fingerprint
     return _hash_text(material)
 
 
@@ -824,6 +849,20 @@ class CoreStore:
             "WHERE user_action_key IS NOT NULL"
         )
 
+    @staticmethod
+    def _recompute_record_keys_tx(connection: sqlite3.Connection) -> None:
+        """Migrate legacy keys to the Unicode- and provenance-safe algorithm."""
+
+        for table in ("context_candidates", "context_records"):
+            rows = connection.execute(f'SELECT * FROM "{table}"').fetchall()
+            for row in rows:
+                record_key = _stable_record_key_from_row(row)
+                if record_key != row["record_key"]:
+                    connection.execute(
+                        f'UPDATE "{table}" SET record_key=? WHERE id=?',
+                        (record_key, row["id"]),
+                    )
+
     def migrate(self) -> int:
         migration_dir = Path(__file__).parent / "migrations" / "core"
         migrations = sorted(migration_dir.glob("[0-9][0-9][0-9]_*.sql"))
@@ -890,6 +929,7 @@ class CoreStore:
                 from .capture import ensure_capture_schema
 
                 ensure_capture_schema(connection)
+                self._recompute_record_keys_tx(connection)
             except BaseException:
                 connection.rollback()
                 raise
@@ -4190,7 +4230,7 @@ class CoreStore:
             "valid_from,expires_at,supersedes,explicit_user_statement,idempotency_key,approval_status,"
             "content_hash,schema_version,created_at,observed_at,disposition,record_key,"
             "capture_source_id,capture_event_id,capture_binding_hash) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES(" + ",".join("?" * 36) + ")",
             (
                 candidate_id,
                 self.vault_id(),
@@ -4544,10 +4584,20 @@ class CoreStore:
                     (observation["vault_id"], entity_key, attribute_key),
                 ).fetchall(),
             )
-            return next(
+            keyed_target = next(
                 (record for record in rows if self._record_is_allowed(record, principal)),
                 None,
             )
+            if keyed_target is not None:
+                return keyed_target
+        if origin == ObservationOrigin.ARCHIVE_IMPORT:
+            archive_identity = _archive_identity_from_row(observation)
+            if archive_identity is not None:
+                for record in self._active_records_tx(connection, str(observation["vault_id"])):
+                    if _archive_identity_from_row(
+                        record
+                    ) == archive_identity and self._record_is_allowed(record, principal):
+                        return record
         # Unkeyed archive statements share a lineage only when they have the
         # same extracted subject. Kind-only collapse is not a slot: unrelated
         # goals, preferences, and projects remain independent current records.
@@ -4752,14 +4802,14 @@ class CoreStore:
         stable without allowing parser output to overwrite a user's work.
         """
 
-        record_key = cast(str | None, observation["record_key"])
         observation_source_id = cast(str | None, observation["source_id"])
         observation_session_id = cast(str | None, observation["session_id"])
+        archive_identity = _archive_identity_from_row(observation)
         if (
             origin != ObservationOrigin.ARCHIVE_IMPORT
-            or record_key is None
             or observation_source_id is None
             or observation_session_id is None
+            or archive_identity is None
         ):
             return None
         prior = connection.execute(
@@ -4776,7 +4826,7 @@ class CoreStore:
             "FROM context_records r JOIN deletion_tombstones t ON t.record_id=r.id "
             "JOIN source_records s ON s.id=t.deletion_source_id "
             "JOIN ingestion_sessions rs ON rs.id=t.rebuild_session_id "
-            "WHERE r.vault_id=? AND r.record_key=? AND r.deleted_at IS NOT NULL "
+            "WHERE r.vault_id=? AND r.deleted_at IS NOT NULL "
             "AND r.source_id=? AND r.observation_origin=? "
             "AND t.deletion_origin='source_rebuild' AND t.deletion_source_id=? "
             "AND t.rebuild_session_id=? AND rs.id=? "
@@ -4784,7 +4834,6 @@ class CoreStore:
             "AND t.reason IN (?, 'source_rebuild') ORDER BY r.version DESC,r.id LIMIT 1",
             (
                 observation["vault_id"],
-                record_key,
                 observation_source_id,
                 ObservationOrigin.ARCHIVE_IMPORT.value,
                 observation_source_id,
@@ -4825,14 +4874,12 @@ class CoreStore:
         if (
             prior is None
             or self._record_has_user_edit_tx(connection, str(prior["id"]))
-            or str(prior["record_key"]) != record_key
             or int(prior["deleted_version"]) != int(prior["version"])
             or _hash_text(
                 f"{prior['id']}:{prior['deleted_version']}:{prior['tombstone_deleted_at']}"
             )
             != str(prior["tombstone_hash"])
-            or _stable_record_key_from_row(prior) != record_key
-            or _stable_record_key_from_row(observation) != record_key
+            or archive_identity not in self._archive_identities_for_record_tx(connection, prior)
             or str(prior["deletion_source_id"]) != observation_source_id
             or str(prior["rebuild_session_id"]) != observation_session_id
             or prior["rebuild_generation"] is None
@@ -4909,7 +4956,7 @@ class CoreStore:
         )
         connection.execute(
             "UPDATE context_records SET record_key=? WHERE id=?",
-            (record_key, record_id),
+            (observation["record_key"], record_id),
         )
         connection.execute("DELETE FROM deletion_tombstones WHERE record_id=?", (record_id,))
         restored = connection.execute(
@@ -4940,20 +4987,65 @@ class CoreStore:
     ) -> sqlite3.Row | None:
         """Find an explicit deletion that blocks automatic resurrection."""
 
-        record_key = cast(str | None, observation["record_key"])
         source_id = cast(str | None, observation["source_id"])
-        if record_key is None or source_id is None:
+        archive_identity = _archive_identity_from_row(observation)
+        if archive_identity is None or source_id is None:
             return None
-        return cast(
-            sqlite3.Row,
+        rows = connection.execute(
+            "SELECT r.*,t.reason FROM context_records r "
+            "JOIN deletion_tombstones t ON t.record_id=r.id "
+            "WHERE r.vault_id=? AND r.deleted_at IS NOT NULL "
+            "AND t.deletion_origin='ordinary' ORDER BY t.deleted_at DESC,r.id",
+            (observation["vault_id"],),
+        ).fetchall()
+        observation_fingerprint = _value_fingerprint(observation)
+        for row in rows:
+            record_identities = CoreStore._archive_identities_for_record_tx(connection, row)
+            if (
+                archive_identity in record_identities
+                and _value_fingerprint(row) == observation_fingerprint
+            ):
+                return cast(sqlite3.Row, row)
+        return None
+
+    @staticmethod
+    def _archive_identities_for_record_tx(
+        connection: sqlite3.Connection, record: sqlite3.Row
+    ) -> set[str]:
+        """Return current and historical source-item identities for one record."""
+
+        identities: set[str] = set()
+        current = _archive_identity_from_row(record)
+        if current is not None:
+            identities.add(current)
+        history = connection.execute(
+            "SELECT snapshot_json FROM context_record_versions WHERE record_id=?",
+            (record["id"],),
+        ).fetchall()
+        for row in history:
+            snapshot = _json_object(cast(str | None, row["snapshot_json"]))
+            if snapshot is None:
+                continue
+            historical = _archive_identity_from_row(snapshot)
+            if historical is not None:
+                identities.add(historical)
+        return identities
+
+    @staticmethod
+    def _record_has_archive_supersession_mutation_tx(
+        connection: sqlite3.Connection, record_id: str
+    ) -> bool:
+        """Return whether a local edit changed the meaning of an archive item."""
+
+        return (
             connection.execute(
-                "SELECT r.id,t.reason FROM context_records r "
-                "JOIN deletion_tombstones t ON t.record_id=r.id "
-                "WHERE r.vault_id=? AND r.record_key=? AND r.source_id=? "
-                "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
-                "ORDER BY t.deleted_at DESC,r.id LIMIT 1",
-                (observation["vault_id"], record_key, source_id),
-            ).fetchone(),
+                "SELECT 1 FROM context_user_mutations "
+                "WHERE record_id=? AND mutation_kind IN "
+                "('correction','restore','availability_change','source_delete',"
+                "'legacy_user_edit') LIMIT 1",
+                (record_id,),
+            ).fetchone()
+            is not None
         )
 
     def _archive_supersession_barrier_tx(
@@ -4964,36 +5056,30 @@ class CoreStore:
         """Find current corrected truth that must block old archive evidence."""
 
         source_id = cast(str | None, observation["source_id"])
-        source_reference = cast(str | None, observation["source_reference"])
-        if source_id is None or source_reference is None:
+        archive_identity = _archive_identity_from_row(observation)
+        if source_id is None or archive_identity is None:
             return None
         rows = cast(
             list[sqlite3.Row],
             connection.execute(
-                "SELECT * FROM context_records WHERE vault_id=? AND source_id=? "
-                "AND source_reference=? AND approval_status='approved' "
-                "AND lower(kind)=? AND entity_key IS ? AND attribute_key IS ? "
-                "AND deleted_at IS NULL ORDER BY updated_at DESC,id",
-                (
-                    observation["vault_id"],
-                    source_id,
-                    source_reference,
-                    str(observation["kind"]).casefold(),
-                    observation["entity_key"],
-                    observation["attribute_key"],
-                ),
+                "SELECT * FROM context_records WHERE vault_id=? AND approval_status='approved' "
+                "ORDER BY updated_at DESC,id",
+                (observation["vault_id"],),
             ).fetchall(),
         )
         observation_fingerprint = _value_fingerprint(observation)
         for record in rows:
-            if _value_fingerprint(record) == observation_fingerprint:
+            record_identities = self._archive_identities_for_record_tx(connection, record)
+            if archive_identity not in record_identities:
                 continue
             if str(
                 record["observation_origin"] or ""
-            ) != ObservationOrigin.ARCHIVE_IMPORT.value or self._record_has_user_edit_tx(
-                connection, str(record["id"])
+            ) != ObservationOrigin.ARCHIVE_IMPORT.value or (
+                self._record_has_archive_supersession_mutation_tx(connection, str(record["id"]))
             ):
                 return record
+            if _value_fingerprint(record) == observation_fingerprint:
+                continue
         return None
 
     def _registered_source_influence_barrier_tx(
