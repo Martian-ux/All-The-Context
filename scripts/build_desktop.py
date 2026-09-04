@@ -312,9 +312,7 @@ def _write_build_identity(
     return path, identity
 
 
-def _windows_version_file(
-    *, build_root: Path, identity: BuildIdentity, component: str
-) -> Path:
+def _windows_version_file(*, build_root: Path, identity: BuildIdentity, component: str) -> Path:
     parsed = ReleaseVersion.parse(identity.version)
     version_tuple = (parsed.major, parsed.minor, parsed.patch, parsed.prerelease)
     digest = identity.sha256

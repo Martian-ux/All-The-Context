@@ -1274,7 +1274,13 @@ class UpdateJournal:
     schema_version: int = JOURNAL_SCHEMA_VERSION
 
     @classmethod
-    def load(cls, path: Path, *, validate_storage: bool = True) -> UpdateJournal:
+    def load(
+        cls,
+        path: Path,
+        *,
+        validate_storage: bool = True,
+        terminal_replay: bool = False,
+    ) -> UpdateJournal:
         _plain_directory_chain(path.parent, "journal_untrusted")
         _plain_file_stat(path, "journal_untrusted")
         value = _read_json(path, MAX_JOURNAL_BYTES, boundary_code="journal_untrusted")
@@ -1315,7 +1321,11 @@ class UpdateJournal:
         except (TypeError, ValueError) as exc:
             raise HelperError("journal_value_invalid") from exc
         try:
-            journal.validate(path, validate_storage=validate_storage)
+            journal.validate(
+                path,
+                validate_storage=validate_storage,
+                terminal_replay=terminal_replay,
+            )
         except HelperError:
             raise
         except (OSError, TypeError, ValueError) as exc:
@@ -1334,6 +1344,7 @@ class UpdateJournal:
         *,
         boundary_code: str = "journal_path_untrusted",
         validate_storage: bool = True,
+        terminal_replay: bool = False,
     ) -> None:
         if not isinstance(self.phase, HelperPhase):
             raise HelperError("journal_value_invalid")
@@ -1372,7 +1383,13 @@ class UpdateJournal:
         if packaged_runtime:
             if packaged_source_commit is None or any(value is None for value in source_commits):
                 raise HelperError("journal_identity_invalid")
-            if self.phase is HelperPhase.COMMITTED:
+            if terminal_replay:
+                if (
+                    self.phase is not HelperPhase.COMMITTED
+                    or self.current_source_commit != packaged_source_commit
+                ):
+                    raise HelperError("journal_identity_invalid")
+            elif self.phase is HelperPhase.COMMITTED:
                 # Cutover publishes the new state before the terminal journal.
                 # A restarted target helper must therefore validate the target
                 # identity, while the MAC still binds the complete old/new
@@ -1807,8 +1824,17 @@ def _reclaim_prebinding_transaction(
         return False
 
 
-def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
-    journal.validate(journal_path, boundary_code="application_state_untrusted")
+def _validate_handoff_state(
+    journal: UpdateJournal,
+    journal_path: Path,
+    *,
+    terminal_replay: bool = False,
+) -> dict[str, Any]:
+    journal.validate(
+        journal_path,
+        boundary_code="application_state_untrusted",
+        terminal_replay=terminal_replay,
+    )
     validate_recovery_authority(
         journal,
         journal_path,
@@ -2127,16 +2153,7 @@ def _creation_flags() -> int:
     )
 
 
-def launch_recovery_helper(helper: Path, journal: Path) -> None:
-    loaded = UpdateJournal.load(journal)
-    _validate_handoff_state(loaded, journal)
-    expected_helper = journal.parent / "AllTheContextUpdater.exe"
-    if not _same_path(helper, expected_helper) or not _verified(
-        helper,
-        loaded.recovery_helper_sha256,
-        loaded.recovery_helper_size,
-    ):
-        raise HelperError("recovery_helper_untrusted")
+def _spawn_recovery_helper(helper: Path, journal: Path) -> None:
     environment = os.environ.copy()
     environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     subprocess.Popen(
@@ -2149,6 +2166,55 @@ def launch_recovery_helper(helper: Path, journal: Path) -> None:
         creationflags=_creation_flags(),
         cwd=helper.parent,
     )
+
+
+def _recovery_launch_binding(
+    helper: Path,
+    journal: UpdateJournal,
+) -> tuple[Path, str, int]:
+    transaction_helper = journal.helper_path
+    if journal.phase is HelperPhase.COMMITTED and _packaged_helper_runtime():
+        target_helper = Path(journal.stable_update_helper_path)
+        if not _same_path(helper, Path(transaction_helper)) and not _same_path(
+            helper, target_helper
+        ):
+            raise HelperError("recovery_identity_invalid")
+        target_digest, target_size = _validate_component_manifest(journal)
+        return target_helper, target_digest, target_size
+    expected_helper = Path(transaction_helper)
+    if not _same_path(helper, expected_helper):
+        raise HelperError("recovery_identity_invalid")
+    return expected_helper, journal.recovery_helper_sha256, journal.recovery_helper_size
+
+
+def launch_recovery_helper(helper: Path, journal: Path) -> None:
+    loaded = UpdateJournal.load(journal)
+    _validate_handoff_state(loaded, journal)
+    selected_helper, expected_digest, expected_size = _recovery_launch_binding(helper, loaded)
+    if not _verified(selected_helper, expected_digest, expected_size):
+        raise HelperError("recovery_helper_untrusted")
+    _spawn_recovery_helper(selected_helper, journal)
+
+
+def _dispatch_terminal_replay(journal_path: Path) -> int:
+    """Move a committed replay from the old packaged helper to the target."""
+
+    journal = UpdateJournal.load(journal_path, terminal_replay=True)
+    if journal.phase is not HelperPhase.COMMITTED:
+        raise HelperError("journal_identity_invalid")
+    if not _same_path(Path(sys.executable), Path(journal.helper_path)) or not _verified(
+        Path(journal.helper_path),
+        journal.recovery_helper_sha256,
+        journal.recovery_helper_size,
+    ):
+        raise HelperError("recovery_helper_untrusted")
+    _validate_handoff_state(journal, journal_path, terminal_replay=True)
+    target_digest, target_size = _validate_component_manifest(journal)
+    target_helper = Path(journal.stable_update_helper_path)
+    if not _verified(target_helper, target_digest, target_size):
+        raise HelperError("recovery_helper_untrusted")
+    _spawn_recovery_helper(target_helper, journal_path)
+    return 0
 
 
 def _process_exists(pid: int) -> bool:
@@ -2262,7 +2328,7 @@ def _read_stable_bytes(
     return raw
 
 
-def _validate_component_manifest(journal: UpdateJournal) -> None:
+def _validate_component_manifest(journal: UpdateJournal) -> tuple[str, int]:
     """Independently bind all four installed target binaries to the archive manifest."""
 
     fields = (
@@ -2321,6 +2387,7 @@ def _validate_component_manifest(journal: UpdateJournal) -> None:
         digest, size = bindings[role]
         if not _verified(path, digest, size):
             raise HelperError("component_manifest_invalid")
+    return bindings["updater"]
 
 
 def _validate_child_build_identity(
@@ -3059,9 +3126,16 @@ def run_transaction(journal_path: Path) -> int:
     except Timeout:
         return 0
     try:
-        journal = UpdateJournal.load(resolved)
+        try:
+            journal = UpdateJournal.load(resolved)
+        except HelperError as error:
+            if error.code != "journal_identity_invalid" or not _packaged_helper_runtime():
+                raise
+            return _dispatch_terminal_replay(resolved)
         if journal.phase in TERMINAL_PHASES:
             validate_recovery_authority(journal, resolved, require_terminal=True)
+            if journal.phase is HelperPhase.COMMITTED and _packaged_helper_runtime():
+                _validate_component_manifest(journal)
             _finish_terminal_handoff(
                 journal,
                 launch_core=True,

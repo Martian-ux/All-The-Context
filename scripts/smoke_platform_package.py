@@ -342,7 +342,7 @@ def verify_package(
     if report_fields != expected_keys and report_fields != expected_keys | optional_keys:
         raise RuntimeError("package report has an unexpected schema")
     if (
-        isinstance(report["schema_version"], bool)
+        type(report["schema_version"]) is not int
         or report["schema_version"] != 1
         or report["platform"] != platform_name
     ):

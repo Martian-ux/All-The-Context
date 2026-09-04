@@ -345,7 +345,7 @@ def validate_payload(value: Mapping[str, Any]) -> dict[str, Any]:
     schema_version = value.get("schema_version")
     if (
         set(value) != required
-        or isinstance(schema_version, bool)
+        or type(schema_version) is not int
         or schema_version != SCHEMA_VERSION
     ):
         _failure("native build provenance fields or schema are invalid")

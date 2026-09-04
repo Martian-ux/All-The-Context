@@ -285,8 +285,7 @@ def build_platform_package(
             }
         )
     report.write_text(
-        json.dumps(report_payload, indent=2, sort_keys=True)
-        + "\n",
+        json.dumps(report_payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
         newline="\n",
     )

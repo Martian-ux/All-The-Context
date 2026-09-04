@@ -913,6 +913,112 @@ def test_terminal_replay_rebinds_to_new_packaged_identity_after_cutover(
     assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.COMMITTED
 
 
+def test_packaged_terminal_replay_dispatches_old_helper_to_target_and_rejects_bad_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    old_source = TEST_SOURCE_COMMIT
+    new_source = "b" * 40
+    journal = UpdateJournal.load(fixture.journal_path)
+    component = json.loads(fixture.component_manifest.read_text(encoding="utf-8"))
+    component["source_commit"] = new_source
+    component_raw = canonical_json(component)
+    fixture.component_manifest.write_bytes(component_raw)
+    fixture.component_manifest.with_name(CHECKSUM_FILE_NAME).write_bytes(
+        f"{hashlib.sha256(component_raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    )
+    journal.target_source_commit = new_source
+    journal.component_manifest_sha256 = hashlib.sha256(component_raw).hexdigest()
+    journal.component_manifest_size = len(component_raw)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "offered_source_commit": new_source,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    journal.save(fixture.journal_path)
+    helper_module.bind_recovery_authority(journal, fixture.journal_path)
+    helper_module.bind_handoff_state(journal, fixture.journal_path)
+
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: False)
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    original_update_state = helper_module._update_state
+    crashed = False
+
+    def crash_after_terminal_journal(
+        current: UpdateJournal,
+        *,
+        phase: str,
+        error: str | None,
+        clear_transaction: bool,
+    ) -> None:
+        nonlocal crashed
+        if clear_transaction and current.phase is HelperPhase.COMMITTED and not crashed:
+            crashed = True
+            raise SystemExit(86)
+        original_update_state(
+            current,
+            phase=phase,
+            error=error,
+            clear_transaction=clear_transaction,
+        )
+
+    monkeypatch.setattr(helper_module, "_update_state", crash_after_terminal_journal)
+    with pytest.raises(SystemExit, match="86"):
+        run_transaction(fixture.journal_path)
+    assert crashed is True
+    assert fixture.application.read_bytes() == fixture.replacement
+    target_helper = Path(journal.stable_update_helper_path)
+    old_helper = Path(journal.helper_path)
+
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: True)
+    dispatched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal_path: dispatched.append((helper, journal_path)),
+    )
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: new_source)
+    helper_module.launch_recovery_helper(old_helper, fixture.journal_path)
+    assert dispatched == [(target_helper, fixture.journal_path)]
+    dispatched.clear()
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    monkeypatch.setattr(helper_module.sys, "executable", str(old_helper))
+    assert run_transaction(fixture.journal_path) == 0
+    assert dispatched == [(target_helper, fixture.journal_path)]
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: new_source)
+    assert run_transaction(fixture.journal_path) == 0
+    assert json.loads(fixture.state_path.read_text(encoding="utf-8"))["transaction_path"] is None
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    monkeypatch.setattr(helper_module.sys, "executable", str(tmp_path / "unrelated.exe"))
+    with pytest.raises(HelperError, match="recovery_helper_untrusted"):
+        run_transaction(fixture.journal_path)
+
+    monkeypatch.setattr(helper_module.sys, "executable", str(old_helper))
+    old_helper_bytes = old_helper.read_bytes()
+    old_helper.write_bytes(b"tampered old helper")
+    with pytest.raises(HelperError, match="journal_digest_invalid"):
+        run_transaction(fixture.journal_path)
+    old_helper.write_bytes(old_helper_bytes)
+
+    target_helper_bytes = target_helper.read_bytes()
+    target_helper.write_bytes(b"stale target helper")
+    with pytest.raises(HelperError, match="component_manifest_invalid"):
+        run_transaction(fixture.journal_path)
+    target_helper.write_bytes(target_helper_bytes)
+
+
 @pytest.mark.parametrize("hostile_report_phase", ["apply", "diagnostics", "health"])
 def test_run_transaction_contains_pathological_child_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hostile_report_phase: str
