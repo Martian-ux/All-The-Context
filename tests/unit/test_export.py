@@ -11,8 +11,12 @@ from tempfile import TemporaryDirectory
 import pytest
 from allthecontext import export as portable_export
 from allthecontext.config import MAX_IMPORT_BYTES
-from allthecontext.export import create_export, restore_export
-from allthecontext.models import CandidateInput, CoverageReport, IngestionMode
+from allthecontext.export import (
+    NON_PORTABLE_SECURITY_TABLES,
+    create_export,
+    restore_export,
+)
+from allthecontext.models import CandidateInput, ClientCreate, CoverageReport, IngestionMode
 from allthecontext.storage import SOURCE_BLOB_CHUNK_BYTES, CoreStore
 from cryptography.exceptions import InvalidTag
 
@@ -33,6 +37,12 @@ def _database(path: Path, value: str | None = None) -> None:
         connection.commit()
     finally:
         connection.close()
+
+
+def _initialized_store(path: Path) -> CoreStore:
+    store = CoreStore(path)
+    store.initialize_vault()
+    return store
 
 
 def _source_less_store(path: Path) -> tuple[CoreStore, str]:
@@ -179,6 +189,250 @@ def test_encrypted_export_round_trip_and_duplicate_restore(tmp_path: Path) -> No
         ]
     finally:
         connection.close()
+
+
+def test_machine_local_security_state_is_not_exported_or_restored(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "source-security.sqlite3"
+    source = _initialized_store(source_database)
+    source_approved = source.approve_remote_edge_client(
+        "edge:source-approved",
+        name="Source approved Edge",
+        scopes=("context:read", "context:status"),
+        context_scopes=("project:source",),
+    )
+    source.approve_remote_edge_client(
+        "edge:source-revoked",
+        name="Source revoked Edge",
+        scopes=("context:read", "context:status"),
+        context_scopes=("project:revoked",),
+    )
+    source.revoke_remote_edge_client("edge:source-revoked")
+    source_client, source_token = source.create_client(
+        ClientCreate(name="Source credential", scopes=["context:propose"])
+    )
+    session = source.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[],
+        unavailable_sources=[],
+        client_id=source_client.id,
+        idempotency_key="source-security-session",
+    )
+    batch = source.submit_batch(
+        str(session["session_id"]),
+        "source-security-batch",
+        [CandidateInput(kind="fact", content="Portable context remains intact")],
+        client=source_client,
+    )
+    candidate_id = str(batch["candidate_ids"][0])
+    source_remote_rows = source.remote_edge_clients()
+    source_vault_id = source.vault_id()
+    with source.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM permission_grants").fetchone()[0] == 1
+
+    package = tmp_path / "security-free.atcexp"
+    manifest = create_export(source_database, package, PASSPHRASE, include_audit=True)
+    assert NON_PORTABLE_SECURITY_TABLES.isdisjoint(manifest["tables"])
+    assert source.remote_edge_principal(source_approved.id) == source_approved
+    assert source.remote_edge_context_scopes(source_approved.id) == frozenset({"project:source"})
+    assert source.remote_edge_clients() == source_remote_rows
+
+    with TemporaryDirectory(prefix="atc-test-export-inspect-security-") as temporary:
+        payload = Path(temporary) / "payload.zip"
+        portable_export._decrypt_file(package, payload, PASSPHRASE)
+        with zipfile.ZipFile(payload) as archive:
+            serialized = b"\n".join(archive.read(name) for name in archive.namelist())
+    assert source_token.encode() not in serialized
+    assert b"token_hash" not in serialized
+    assert b"edge:source-approved" not in serialized
+    assert b"project:source" not in serialized
+
+    destination_database = tmp_path / "destination-security.sqlite3"
+    destination = _initialized_store(destination_database)
+    destination_vault_id = destination.vault_id()
+    assert destination_vault_id != source_vault_id
+    destination.approve_remote_edge_client(
+        "edge:source-approved",
+        name="Destination approval",
+        scopes=("context:read",),
+        context_scopes=("project:destination",),
+    )
+    destination_remote_rows = destination.remote_edge_clients()
+    sentinel = destination.add_candidate(
+        CandidateInput(kind="fact", content="Destination sentinel", explicit_user_statement=True)
+    )
+
+    first_restore = restore_export(package, destination_database, PASSPHRASE)
+    second_restore = restore_export(package, destination_database, PASSPHRASE)
+    assert source_token not in repr(first_restore)
+    assert source_token not in repr(second_restore)
+    assert destination.remote_edge_clients() == destination_remote_rows
+    assert destination.remote_edge_principal("edge:source-revoked") is None
+    assert destination.get_observation(candidate_id).session_id is None
+    with destination.connect() as connection:
+        restored_candidate = connection.execute(
+            "SELECT session_id,submitted_by_client_id,content FROM context_candidates WHERE id=?",
+            (candidate_id,),
+        ).fetchone()
+        assert restored_candidate is not None
+        assert tuple(restored_candidate) == (None, None, "Portable context remains intact")
+        assert connection.execute("SELECT COUNT(*) FROM client_registrations").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM permission_grants").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM ingestion_sessions").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM ingestion_batches").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM import_operations").fetchone()[0] == 0
+    assert destination.get_observation(sentinel.id).content == "Destination sentinel"
+
+
+def test_export_table_policy_keeps_machine_local_security_tables_excluded() -> None:
+    assert NON_PORTABLE_SECURITY_TABLES <= portable_export.EXCLUDED_TABLES
+    assert {
+        "client_registrations",
+        "permission_grants",
+        "remote_edge_clients",
+        "ingestion_sessions",
+        "ingestion_batches",
+        "import_operations",
+        "secret_refusal_receipts",
+    } == NON_PORTABLE_SECURITY_TABLES
+
+
+def test_legacy_machine_local_security_rows_are_ignored_without_authority_mutation(
+    tmp_path: Path,
+) -> None:
+    source_database = tmp_path / "legacy-security-source.sqlite3"
+    source = _initialized_store(source_database)
+    source_candidate = source.add_candidate(
+        CandidateInput(kind="fact", content="Legacy package context marker")
+    )
+    source_vault_id = source.vault_id()
+    package = tmp_path / "legacy-security.atcexp"
+    create_export(source_database, package, PASSPHRASE)
+
+    legacy_rows: dict[str, list[dict[str, object]]] = {
+        "client_registrations": [
+            {
+                "id": "legacy-principal",
+                "vault_id": source_vault_id,
+                "name": "Legacy principal",
+                "token_hash": "legacy-credential-marker",
+                "scopes_json": '["admin"]',
+                "auto_approve": 1,
+                "revoked_at": None,
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_used_at": None,
+            }
+        ],
+        "permission_grants": [
+            {
+                "id": "legacy-grant",
+                "client_id": "legacy-principal",
+                "scope": "admin",
+                "granted_at": "2026-01-01T00:00:00Z",
+                "revoked_at": None,
+            }
+        ],
+        "remote_edge_clients": [
+            {
+                "id": "edge:legacy-same-id",
+                "name": "Legacy approval",
+                "scopes_json": '["context:read", "context:status"]',
+                "context_scopes_json": '["project:legacy"]',
+                "approved_at": "2026-01-01T00:00:00Z",
+                "revoked_at": None,
+            }
+        ],
+        "ingestion_sessions": [
+            {
+                "id": "legacy-session",
+                "vault_id": source_vault_id,
+                "client_id": "legacy-principal",
+                "status": "open",
+                "credential_marker": "legacy-session-marker",
+            }
+        ],
+        "ingestion_batches": [
+            {
+                "id": "legacy-batch",
+                "session_id": "legacy-session",
+                "credential_marker": "legacy-batch-marker",
+            }
+        ],
+        "import_operations": [
+            {
+                "id": "legacy-operation",
+                "vault_id": source_vault_id,
+                "status": "complete",
+                "credential_marker": "legacy-operation-marker",
+            }
+        ],
+        "secret_refusal_receipts": [
+            {
+                "id": "legacy-refusal",
+                "vault_id": source_vault_id,
+                "principal_key": "legacy-principal",
+                "operation_id": "legacy-operation",
+            }
+        ],
+    }
+
+    def add_legacy_security_rows(members: dict[str, bytes], manifest: dict[str, object]) -> None:
+        tables = manifest["tables"]
+        hashes = manifest["sha256"]
+        assert isinstance(tables, dict)
+        assert isinstance(hashes, dict)
+        for table, rows in legacy_rows.items():
+            name = f"tables/{table}.jsonl"
+            members[name] = b"".join(
+                (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode()
+                for row in rows
+            )
+            tables[table] = len(rows)
+            hashes[name] = hashlib.sha256(members[name]).hexdigest()
+
+    legacy_package = _rewrite_export(
+        package,
+        tmp_path / "legacy-security-with-rows.atcexp",
+        add_legacy_security_rows,
+    )
+    destination_database = tmp_path / "legacy-security-destination.sqlite3"
+    destination = _initialized_store(destination_database)
+    destination.approve_remote_edge_client(
+        "edge:legacy-same-id",
+        name="Destination approval",
+        scopes=("context:read",),
+        context_scopes=("project:destination",),
+    )
+    destination_remote_rows = destination.remote_edge_clients()
+    sentinel = destination.add_candidate(
+        CandidateInput(kind="fact", content="Destination remains authoritative")
+    )
+
+    for _ in range(2):
+        result = restore_export(legacy_package, destination_database, PASSPHRASE)
+        assert "legacy-credential-marker" not in repr(result)
+
+    assert destination.remote_edge_clients() == destination_remote_rows
+    assert destination.get_observation(sentinel.id).content == "Destination remains authoritative"
+    with destination.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM client_registrations WHERE id='legacy-principal'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert connection.execute("SELECT COUNT(*) FROM permission_grants").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM ingestion_sessions").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM ingestion_batches").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM import_operations").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM secret_refusal_receipts").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_candidates WHERE id=?", (source_candidate.id,)
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_wrong_export_passphrase_fails_authentication(tmp_path: Path) -> None:

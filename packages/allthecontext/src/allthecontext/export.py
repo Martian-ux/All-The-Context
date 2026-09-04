@@ -42,6 +42,21 @@ NONCE_SIZE = 12
 TAG_SIZE = 16
 CHUNK_SIZE = 1024 * 1024
 MAX_RESTORE_ENTRY_BYTES = 512 * 1024 * 1024
+# These tables contain machine-local principals, credentials, grants, or
+# in-flight session state.  No existing product decision makes that security
+# state portable; keep this list explicit so a new table cannot silently join
+# the ordinary data export policy.
+NON_PORTABLE_SECURITY_TABLES = frozenset(
+    {
+        "client_registrations",
+        "permission_grants",
+        "remote_edge_clients",
+        "ingestion_sessions",
+        "ingestion_batches",
+        "import_operations",
+        "secret_refusal_receipts",
+    }
+)
 EXCLUDED_TABLES = {
     "schema_migrations",
     "context_fts",
@@ -55,7 +70,7 @@ EXCLUDED_TABLES = {
     # Rebuilt from current and historical record lineage on each destination;
     # never treat this derived lookup as portable authority.
     "context_record_archive_identities",
-}
+} | NON_PORTABLE_SECURITY_TABLES
 CAPTURE_RUNTIME_TABLES = frozenset(
     {
         "capture_sources",
@@ -164,13 +179,21 @@ def _without_source_reference(
     return document
 
 
-def _without_capture_runtime_reference(document: dict[str, Any]) -> dict[str, Any]:
-    """Keep admitted facts portable without dangling machine-local FKs."""
+def _without_machine_local_references(table: str, document: dict[str, Any]) -> dict[str, Any]:
+    """Keep ordinary facts portable without dangling machine-local FKs."""
 
     if "capture_source_id" in document:
         document["capture_source_id"] = None
     if "capture_event_id" in document:
         document["capture_event_id"] = None
+    if table == "context_candidates":
+        # Client registrations and ingestion sessions are deliberately not
+        # portable.  Preserve the candidate itself while removing references
+        # that could bind it to a destination's unrelated security state.
+        if "session_id" in document:
+            document["session_id"] = None
+        if "submitted_by_client_id" in document:
+            document["submitted_by_client_id"] = None
     return document
 
 
@@ -243,6 +266,8 @@ def _database_to_zip(
             for table in _table_names(connection):
                 if table in CAPTURE_RUNTIME_TABLES:
                     continue
+                if table in NON_PORTABLE_SECURITY_TABLES:
+                    continue
                 lowered = table.casefold()
                 if (
                     not include_sources
@@ -266,7 +291,7 @@ def _database_to_zip(
                             _archive_source_less_purge_barrier_key(document)
                         if not include_sources:
                             document = _without_source_reference(table, document)
-                        document = _without_capture_runtime_reference(document)
+                        document = _without_machine_local_references(table, document)
                         encoded = (
                             json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
                         ).encode("utf-8")
@@ -562,7 +587,11 @@ def _validate_package_vault_binding(
 
     package_source_ids: set[str] = set()
     for table in manifest_tables:
-        if table in CAPTURE_RUNTIME_TABLES or table == "vaults":
+        if (
+            table in CAPTURE_RUNTIME_TABLES
+            or table in NON_PORTABLE_SECURITY_TABLES
+            or table == "vaults"
+        ):
             continue
         with archive.open(f"tables/{table}.jsonl") as stream:
             for row in _iter_jsonl(stream):
@@ -1474,10 +1503,10 @@ def restore_export(
                 )
                 with connection:
                     for table in manifest_tables:
-                        if table in CAPTURE_RUNTIME_TABLES:
+                        if table in CAPTURE_RUNTIME_TABLES or table in NON_PORTABLE_SECURITY_TABLES:
                             # Portable archives never rehydrate machine-local
-                            # capture state, including legacy archives that
-                            # predate this explicit exclusion.
+                            # capture/security state, including legacy archives
+                            # that predate this explicit exclusion.
                             continue
                         if table not in existing:
                             continue
@@ -1549,7 +1578,7 @@ def restore_export(
                                     row["request_hash"] = secrets.token_hex(16)
                                 if not include_sources:
                                     row = _without_source_reference(table, row)
-                                row = _without_capture_runtime_reference(row)
+                                row = _without_machine_local_references(table, row)
                                 if table == "deletion_tombstones":
                                     _normalize_deletion_tombstone_row(row)
                                 if table == "context_candidates":
