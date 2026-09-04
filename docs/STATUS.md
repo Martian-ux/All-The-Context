@@ -21,7 +21,10 @@ Ruff, format, mypy, docs, Actions pins, collection parity, runner architecture,
 and committed-tree/history security scans are green. Native artifact creation
 is intentionally unavailable on this host because the reproducibility gate
 requires Python 3.12.10 and uv 0.11.32; the host has Python 3.14.3 and uv
-0.12.9. Hosted checks and the draft PR remain pending.
+0.12.9. Draft PR [#114](https://github.com/Martian-ux/All-The-Context/pull/114)
+is open and remains intentionally draft. Its initial hosted snapshot has
+CI/CodeQL jobs queued or in progress; no hosted result is being treated as a
+release or artifact claim.
 
 As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory

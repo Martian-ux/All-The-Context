@@ -139,5 +139,20 @@ No native artifact was built: reproducibility requires Python 3.12.10 and uv
 6.21.0 is present, but the pinned Python/uv gate is not satisfied. Therefore
 there are no artifact hashes or exact-artifact results. No artifact was
 executed, installed, updated, signed, published, scanned by Defender, or used
-for clean-machine acceptance by this integration worker. Hosted-check snapshot
-and the single draft PR URL will be appended after the named branch is pushed.
+for clean-machine acceptance by this integration worker.
+
+The named branch was pushed and exactly one draft PR was created:
+[#114 — Windows GA hardening convergence](https://github.com/Martian-ux/All-The-Context/pull/114).
+The initial hosted snapshot below is bound to head
+`55af6fcce79ac0c4e4d5a0ac02dce58fc781e99e` and base
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`:
+
+| Hosted field | Snapshot |
+|---|---|
+| PR state | `OPEN`, draft |
+| CI | Windows/Ubuntu Python jobs queued; repository security queued; dashboard Node 20/22, dashboard parity, and Ubuntu/Windows desktop artifact jobs in progress |
+| CodeQL | Actions and JavaScript/TypeScript analyses queued; Python analysis in progress |
+| Release/signing/artifact acceptance | Not performed by this worker |
+
+This is a point-in-time hosted snapshot; no unchanged-check polling, merge,
+ready-for-review transition, release, signing, or publication action was taken.

@@ -61,11 +61,11 @@ downloaded-candidate evidence.
 
 | Requirement area | Integrated scope | Status |
 |---|---|---|
-| Windows bootstrap and recovery | Transactional install, retry-bounded cleanup, and failure recovery | Source-integrated; local source gates green at `5c79ada`; hosted/exact-artifact gates pending |
-| Core lifecycle and runtime readiness | Quiescence, activity admission, shutdown/cancellation, dogfood recovery, and readiness containment | Source-integrated; local source gates green at `5c79ada`; hosted/exact-artifact gates pending |
-| Windows registration and registry publication | Reversible registration, ownership/recovery boundaries, atomic publication, and cleanup | Source-integrated; local source gates green at `5c79ada`; hosted/exact-artifact gates pending |
-| Packaged update identity and terminal replay | Immutable build identity, provenance binding, updater replay, and startup dispatch | Source-integrated; local source gates green at `5c79ada`; hosted/exact-artifact gates pending |
-| Portable memory/export safety | Archive identity, restore graph containment, purge barriers, vault/target binding, machine-local security exclusion, and portable ACL detachment | Source-integrated; local source gates green at `5c79ada`; hosted/exact-artifact gates pending |
+| Windows bootstrap and recovery | Transactional install, retry-bounded cleanup, and failure recovery | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
+| Core lifecycle and runtime readiness | Quiescence, activity admission, shutdown/cancellation, dogfood recovery, and readiness containment | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
+| Windows registration and registry publication | Reversible registration, ownership/recovery boundaries, atomic publication, and cleanup | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
+| Packaged update identity and terminal replay | Immutable build identity, provenance binding, updater replay, and startup dispatch | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
+| Portable memory/export safety | Archive identity, restore graph containment, purge barriers, vault/target binding, machine-local security exclusion, and portable ACL detachment | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
 
 ### 2026-09-03 Windows update evidence wave
 
