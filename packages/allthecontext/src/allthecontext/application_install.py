@@ -48,6 +48,7 @@ _REGISTRATION_JOURNAL_NAME = "registration-v1.json"
 _REGISTRATION_JOURNAL_DIRECTORY = ".atc-registration"
 _MAX_REGISTRATION_JOURNAL_BYTES = 8 * 1024 * 1024
 _REGISTRY_OWNERSHIP_VALUE = "ATCRegistrationGeneration"
+_REGISTRY_IDENTITY_VALUE = "ATCRegistrationJournal"
 _REGISTRATION_PUBLICATION_LEGACY = "legacy"
 _REGISTRATION_PUBLICATION_NATIVE_STAGED = "native_staged"
 
@@ -152,6 +153,7 @@ class _RegistrationJournal:
     legacy: bool = field(default=False, repr=False)
     registry_key_created: bool = field(default=False, repr=False)
     registry_generation: str | None = field(default=None, repr=False)
+    registry_identity: str | None = field(default=None, repr=False)
     registry_publication: str = field(default=_REGISTRATION_PUBLICATION_LEGACY, repr=False)
 
 
@@ -1254,6 +1256,7 @@ def _encode_journal(journal: _RegistrationJournal, *, phase: str, active: tuple[
         "active": list(active),
         "registry_key_created": journal.registry_key_created,
         "registry_generation": journal.registry_generation,
+        "registry_identity": journal.registry_identity,
         "registry_publication": journal.registry_publication,
         "snapshot": _encode_snapshot(journal.snapshot),
         "desired_shortcuts": {
@@ -1358,7 +1361,7 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         "registry_before",
         "registry_key_created",
     }
-    optional = {"registry_generation", "registry_publication"}
+    optional = {"registry_generation", "registry_identity", "registry_publication"}
     if (
         not required.issubset(set(decoded))
         or set(decoded) - required - optional
@@ -1381,6 +1384,7 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
     registry_before_raw = decoded.get("registry_before")
     registry_key_created = decoded.get("registry_key_created")
     registry_generation = decoded.get("registry_generation")
+    registry_identity = decoded.get("registry_identity")
     registry_publication = decoded.get("registry_publication", _REGISTRATION_PUBLICATION_LEGACY)
     if (
         not isinstance(phase, str)
@@ -1393,6 +1397,14 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
                 not isinstance(registry_generation, str)
                 or len(registry_generation) != 32
                 or any(char not in "0123456789abcdef" for char in registry_generation)
+            )
+        )
+        or (
+            registry_identity is not None
+            and (
+                not isinstance(registry_identity, str)
+                or len(registry_identity) != 32
+                or any(char not in "0123456789abcdef" for char in registry_identity)
             )
         )
         or registry_publication
@@ -1462,6 +1474,7 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         False,
         registry_key_created,
         registry_generation,
+        registry_identity,
         registry_publication,
     )
 
@@ -1651,6 +1664,7 @@ class WindowsApplicationRegistrationTransaction:
         self._mutations: list[_ShortcutMutation | _RegistryMutation] = []
         self._key_created = False
         self._registry_generation = secrets.token_hex(16)
+        self._registry_identity = secrets.token_hex(16)
         self._registry_native_residual = False
         self._applied = False
         self._canonical_shortcut_cache: dict[ShortcutName, bytes] = {}
@@ -1774,9 +1788,13 @@ class WindowsApplicationRegistrationTransaction:
             or any(char not in "0123456789abcdef" for char in journal.registry_generation)
         ):
             raise WindowsRegistrationError("registration_journal_invalid")
-        if (
-            journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
-            and journal.registry_generation is None
+        if journal.registry_identity is not None and (
+            len(journal.registry_identity) != 32
+            or any(char not in "0123456789abcdef" for char in journal.registry_identity)
+        ):
+            raise WindowsRegistrationError("registration_journal_invalid")
+        if journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED and (
+            journal.registry_generation is None or journal.registry_identity is None
         ):
             raise WindowsRegistrationError("registration_journal_invalid")
         owned = self._owned_names()
@@ -1856,8 +1874,16 @@ class WindowsApplicationRegistrationTransaction:
                 journal = self._upgrade_legacy_journal(journal)
             if journal.registry_generation is not None:
                 self._registry_generation = journal.registry_generation
+            if journal.registry_identity is not None:
+                self._registry_identity = journal.registry_identity
             self._validate_journal(journal)
             self._journal = journal
+            try:
+                self._registry_native_residual = self._native_registry_residual_exists(journal)
+            except BaseException:
+                # Inability to inspect a journal-bound native residual is
+                # itself ambiguity; startup must retain the journal.
+                self._registry_native_residual = True
             # An authenticated journal carries the post-publication identity
             # of every generated shortcut.  Recovery must use it as an
             # ownership binding; otherwise a same-byte replacement is
@@ -1918,6 +1944,7 @@ class WindowsApplicationRegistrationTransaction:
             (),
         )
         journal.registry_generation = self._registry_generation
+        journal.registry_identity = self._registry_identity
         _write_registration_journal(self._journal_path, journal, phase="applying", active=())
         self._journal = journal
         self._journal_identity_trusted = True
@@ -2082,21 +2109,31 @@ class WindowsApplicationRegistrationTransaction:
         self, generation: str | None = None
     ) -> tuple[tuple[str, int, RegistryData], ...]:
         selected = self._registry_generation if generation is None else generation
-        if not selected:
+        identity = self._registry_identity
+        if self._journal is not None and generation == self._journal.registry_generation:
+            if self._journal.registry_identity is None:
+                raise WindowsRegistrationError("registration_journal_invalid", transaction=self)
+            identity = self._journal.registry_identity
+        if not selected or not identity:
             raise WindowsRegistrationError("registration_journal_invalid", transaction=self)
-        return (*self._desired_registry(), (_REGISTRY_OWNERSHIP_VALUE, 1, selected))
+        return (
+            *self._desired_registry(),
+            (_REGISTRY_OWNERSHIP_VALUE, 1, selected),
+            (_REGISTRY_IDENTITY_VALUE, 1, identity),
+        )
 
     def _native_registry_matches_generation(self, journal: _RegistrationJournal) -> bool:
         if (
             journal.registry_publication != _REGISTRATION_PUBLICATION_NATIVE_STAGED
             or not journal.registry_key_created
             or journal.registry_generation is None
+            or journal.registry_identity is None
         ):
             return False
         return self._native_registry_matches_values(journal)
 
     def _native_registry_matches_values(self, journal: _RegistrationJournal) -> bool:
-        if journal.registry_generation is None:
+        if journal.registry_generation is None or journal.registry_identity is None:
             return False
         winreg = self._registry if self._registry is not None else windows_registry()
         matcher = getattr(winreg, "registry_key_matches_generation", None)
@@ -2117,6 +2154,14 @@ class WindowsApplicationRegistrationTransaction:
         if journal.registry_generation is None:
             return False
         winreg = self._registry if self._registry is not None else windows_registry()
+        residual_exists = getattr(winreg, "registry_residual_exists", None)
+        try:
+            if callable(residual_exists) and residual_exists(
+                self._uninstall_key, journal.registry_generation
+            ):
+                return True
+        except OSError:
+            return True
         stage_exists = getattr(winreg, "staging_key_exists", None)
         try:
             if callable(stage_exists) and stage_exists(
@@ -2126,6 +2171,27 @@ class WindowsApplicationRegistrationTransaction:
         except OSError:
             return True
         return self._native_registry_matches_values(journal)
+
+    def _cleanup_native_registry_residual(self, journal: _RegistrationJournal) -> bool:
+        """Retry an exact staged residual without adopting canonical state."""
+
+        if journal.registry_generation is None or journal.registry_identity is None:
+            raise WindowsRegistrationError("registration_journal_invalid", transaction=self)
+        winreg = self._registry if self._registry is not None else windows_registry()
+        cleaner = getattr(winreg, "delete_staging_if_owned", None)
+        if not callable(cleaner):
+            return False
+        try:
+            result = cleaner(
+                self._uninstall_key,
+                self._native_registry_values(journal.registry_generation),
+                journal.registry_generation,
+            )
+        except FileNotFoundError:
+            return True
+        if not isinstance(result, bool):
+            raise WindowsRegistrationError("registration_restore_unverified", transaction=self)
+        return result
 
     @staticmethod
     def _is_valid_display_version(value: WindowsRegistryValueSnapshot) -> bool:
@@ -2484,7 +2550,11 @@ class WindowsApplicationRegistrationTransaction:
         winreg = self._registry if self._registry is not None else windows_registry()
         publisher = getattr(winreg, "publish_key_if_absent", None)
         if not expected.uninstall_key_present and callable(publisher):
-            if self._journal is None or self._journal.registry_generation is None:
+            if (
+                self._journal is None
+                or self._journal.registry_generation is None
+                or self._journal.registry_identity is None
+            ):
                 raise WindowsRegistrationError("registration_journal_invalid", transaction=self)
             generation = self._journal.registry_generation
             native_values = self._native_registry_values(generation)
@@ -2518,6 +2588,9 @@ class WindowsApplicationRegistrationTransaction:
                 )
                 raise
             if not isinstance(published, bool) or not published:
+                self._registry_native_residual = self._native_registry_residual_exists(
+                    self._journal
+                )
                 raise WindowsRegistrationError("registration_target_changed")
             self._key_created = True
             self._journal.registry_key_created = True
@@ -2810,7 +2883,11 @@ class WindowsApplicationRegistrationTransaction:
             "publish_key_if_absent",
             None,
         )
-        if not callable(publisher) or journal.registry_generation is None:
+        if (
+            not callable(publisher)
+            or journal.registry_generation is None
+            or journal.registry_identity is None
+        ):
             raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
         if journal.registry_key_created:
             if not self._native_registry_matches_generation(journal):
@@ -2995,7 +3072,7 @@ class WindowsApplicationRegistrationTransaction:
             self._journal is not None
             and self._journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
         ):
-            if self._journal.registry_generation is None:
+            if self._journal.registry_generation is None or self._journal.registry_identity is None:
                 raise WindowsRegistrationError("registration_journal_invalid")
             winreg = self._registry if self._registry is not None else windows_registry()
             deleter = getattr(winreg, "delete_key_if_generation", None)
@@ -3241,8 +3318,27 @@ class WindowsApplicationRegistrationTransaction:
                 self._restore_created_key()
             except BaseException as exc:
                 errors.append(_safe_error_code(exc))
+        if self._journal is not None and not self._registry_native_residual:
+            try:
+                self._registry_native_residual = self._native_registry_residual_exists(
+                    self._journal
+                )
+            except BaseException as exc:
+                self._registry_native_residual = True
+                errors.append(_safe_error_code(exc))
         if self._registry_native_residual and self._journal is not None:
-            self._registry_native_residual = self._native_registry_residual_exists(self._journal)
+            try:
+                self._cleanup_native_registry_residual(self._journal)
+            except BaseException as exc:
+                errors.append(_safe_error_code(exc))
+        if self._registry_native_residual and self._journal is not None:
+            try:
+                self._registry_native_residual = self._native_registry_residual_exists(
+                    self._journal
+                )
+            except BaseException as exc:
+                self._registry_native_residual = True
+                errors.append(_safe_error_code(exc))
         pending: list[str] = []
         for mutation in self._mutations:
             if mutation.name not in pending:
