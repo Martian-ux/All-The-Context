@@ -4,8 +4,12 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
 from allthecontext.importers import parse_json
 from allthecontext.memory_policy import (
+    ObservationOrigin,
+    archive_import_identity,
+    is_self_contained_archive_statement,
     normalized_import_candidate_key,
     normalized_import_slot_key,
 )
@@ -20,7 +24,7 @@ from allthecontext.models import (
 )
 from allthecontext.provider_ingestion import _merge_source_references
 from allthecontext.retrieval import RetrievalEngine
-from allthecontext.storage import CoreStore, source_rebuild_marker
+from allthecontext.storage import CoreStore, InvalidStateError, source_rebuild_marker
 
 
 def _store(tmp_path: Path) -> CoreStore:
@@ -107,6 +111,38 @@ def test_archive_admission_requires_a_durable_self_contained_claim(tmp_path: Pat
     assert tentative.disposition == ObservationDisposition.TENTATIVE
     assert tentative.record_id is None
     assert store.list_observations(disposition=ObservationDisposition.APPLIED)[1] == 0
+
+
+def test_pretyped_vague_archive_prose_does_not_bypass_admission(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    refused = _archive_observation(
+        store,
+        content="This is nice.",
+        batch_key="vague-pretyped-preference",
+    )
+
+    assert not is_self_contained_archive_statement("preference", "This is nice.")
+    assert refused.disposition == ObservationDisposition.TENTATIVE
+    assert refused.record_id is None
+
+
+def test_archive_identity_is_collision_free_for_delimiters_controls_and_unicode() -> None:
+    tuples = (
+        ("source\x00part", "reference", "fact", "日本語"),
+        ("source", "part\x00reference", "fact", "日本語"),
+        ("source\npart", "reference", "fact", "中文"),
+        ("source", "reference\npart", "fact", "中文"),
+        ("source", "reference", "fact", "C"),
+        ("source", "reference", "fact", "C++"),
+    )
+
+    identities = {
+        archive_import_identity(source_id, source_reference, kind, content)
+        for source_id, source_reference, kind, content in tuples
+    }
+
+    assert len(identities) == len(tuples)
 
 
 def test_archive_parser_normalizes_wrappers_and_merges_semantic_duplicates() -> None:
@@ -260,6 +296,172 @@ def test_archive_provenance_merge_is_structured_bounded_and_legacy_compatible() 
     bounded_payload = json.loads(bounded.removeprefix("archive-provenance-v2:"))
     assert len(bounded) <= 2_000
     assert bounded_payload["overflow_count"] > 0
+    assert _merge_source_references(bounded, bounded) == bounded
+
+    empty = _merge_source_references("archive-provenance-v1:|", "")
+    assert empty is not None
+    empty_payload = json.loads(empty.removeprefix("archive-provenance-v2:"))
+    assert empty_payload["references"] == []
+    assert empty_payload["empty_count"] == 3
+    assert _merge_source_references(empty, empty) == empty
+
+    malformed = _merge_source_references(
+        "archive-provenance-v2:{not-json}",
+        'archive-provenance-v2:{"format":"wrong"}',
+    )
+    assert malformed is not None
+    malformed_payload = json.loads(malformed.removeprefix("archive-provenance-v2:"))
+    assert malformed_payload["malformed_count"] == 2
+    assert len(malformed) <= 2_000
+    assert _merge_source_references(malformed, malformed) == malformed
+
+
+def test_one_archive_message_preserves_distinct_values_for_one_slot(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    payload = b"one message with two preference values"
+    source = store.add_source(
+        payload,
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="same-message-values",
+    )
+    candidates = store.submit_batch(
+        str(session["session_id"]),
+        "same-message-values-batch",
+        [
+            CandidateInput(
+                kind="interaction_preference",
+                content="I prefer C for language examples.",
+                entity_key="user",
+                attribute_key="language",
+                source_id=source.id,
+                source_reference="message:same-message",
+                source_service="synthetic",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            ),
+            CandidateInput(
+                kind="interaction_preference",
+                content="I prefer C++ for language examples.",
+                entity_key="user",
+                attribute_key="language",
+                source_id=source.id,
+                source_reference="message:same-message",
+                source_service="synthetic",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            ),
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=[source.id], complete=True),
+    )
+
+    observations = [
+        store.get_candidate(str(candidate_id)) for candidate_id in candidates["candidate_ids"]
+    ]
+    assert all(item.disposition == ObservationDisposition.APPLIED for item in observations)
+    record_ids = {str(item.record_id) for item in observations}
+    assert len(record_ids) == 2
+    assert store.status()["counts"]["active_records"] == 2
+
+
+def test_archive_targeting_is_bounded_and_fails_closed_on_crowded_kind(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"archive scale fixture",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="bounded-targeting-scale",
+    )
+    store.submit_batch(
+        str(session["session_id"]),
+        "bounded-targeting-scale-batch",
+        [
+            CandidateInput(
+                kind="preference",
+                content=f"I prefer value {index} for project {index}.",
+                source_id=source.id,
+                source_reference=f"message:scale-{index}",
+                source_service="synthetic",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+            for index in range(258)
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=[source.id], complete=True),
+    )
+    # The 258th candidate sees 257 possible kind-level targets and is
+    # retained as tentative instead of guessing which slot to replace.
+    assert store.status()["counts"]["active_records"] == 257
+
+    crowded_session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="bounded-targeting-crowded-probe",
+    )
+    submitted = store.submit_batch(
+        str(crowded_session["session_id"]),
+        "bounded-targeting-crowded-probe-batch",
+        [
+            CandidateInput(
+                kind="preference",
+                content="I prefer a new value for a new project.",
+                source_id=source.id,
+                source_reference="message:scale-probe",
+                source_service="synthetic",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+        ],
+    )
+
+    statements: list[str] = []
+    with store.connect() as connection:
+        connection.set_trace_callback(statements.append)
+        observation = connection.execute(
+            "SELECT * FROM context_candidates WHERE id=?",
+            (str(submitted["candidate_ids"][0]),),
+        ).fetchone()
+        assert observation is not None
+        with pytest.raises(InvalidStateError, match="safety bound"):
+            store._target_record_tx(
+                connection,
+                observation,
+                origin=ObservationOrigin.ARCHIVE_IMPORT,
+            )
+        connection.set_trace_callback(None)
+
+    target_queries = [
+        statement
+        for statement in statements
+        if "FROM context_records" in statement and "lower(kind)" in statement
+    ]
+    assert len(target_queries) == 1
+    assert "LIMIT 257" in target_queries[0]
+
+    store.finish_ingestion(
+        str(crowded_session["session_id"]),
+        CoverageReport(available=[source.id], complete=True),
+    )
+    probe = store.get_candidate(str(submitted["candidate_ids"][0]))
+    assert probe.disposition == ObservationDisposition.TENTATIVE
+    assert probe.record_id is None
 
 
 def test_archive_barriers_survive_reference_format_and_slot_changes(tmp_path: Path) -> None:

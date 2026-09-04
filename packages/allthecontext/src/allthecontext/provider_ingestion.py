@@ -1734,11 +1734,32 @@ def _deduplicate_candidates(items: Iterable[CandidateInput]) -> list[CandidateIn
 _MERGED_SOURCE_REFERENCE_PREFIX = "archive-provenance-v2:"
 _LEGACY_SOURCE_REFERENCE_PREFIX = "archive-provenance-v1:"
 _MAX_MERGED_SOURCE_REFERENCE_CHARS = 2_000
+_MAX_PROVENANCE_COUNT = 1_000_000_000_000
 
 
-def _source_reference_details(value: str | None) -> tuple[set[str], int]:
+@dataclass(frozen=True, slots=True)
+class _SourceReferenceDetails:
+    references: frozenset[str] = frozenset()
+    overflow_count: int = 0
+    empty_count: int = 0
+    malformed_count: int = 0
+
+
+def _bounded_provenance_count(value: object) -> int | None:
+    if type(value) is not int or value < 0 or value > _MAX_PROVENANCE_COUNT:
+        return None
+    return value
+
+
+def _add_provenance_counts(first: int, second: int) -> int:
+    return min(_MAX_PROVENANCE_COUNT, first + second)
+
+
+def _source_reference_details(value: str | None) -> _SourceReferenceDetails:
+    if value is None:
+        return _SourceReferenceDetails()
     if not value:
-        return set(), 0
+        return _SourceReferenceDetails(empty_count=1)
     for prefix in (_MERGED_SOURCE_REFERENCE_PREFIX, _LEGACY_SOURCE_REFERENCE_PREFIX):
         if not value.startswith(prefix):
             continue
@@ -1749,39 +1770,84 @@ def _source_reference_details(value: str | None) -> tuple[set[str], int]:
             decoded = None
         if isinstance(decoded, dict) and decoded.get("format") == "archive-provenance-v2":
             references = decoded.get("references")
-            overflow = decoded.get("overflow_count", 0)
+            overflow = _bounded_provenance_count(decoded.get("overflow_count", 0))
+            empty_count = _bounded_provenance_count(decoded.get("empty_count", 0))
+            malformed_count = _bounded_provenance_count(decoded.get("malformed_count", 0))
             if (
                 isinstance(references, list)
-                and all(isinstance(reference, str) and reference for reference in references)
-                and type(overflow) is int
-                and overflow >= 0
+                and all(isinstance(reference, str) for reference in references)
+                and overflow is not None
+                and empty_count is not None
+                and malformed_count is not None
             ):
-                return set(references), overflow
+                nonempty = [reference for reference in references if reference]
+                return _SourceReferenceDetails(
+                    references=frozenset(
+                        normalize_imported_text(reference) for reference in nonempty
+                    ),
+                    overflow_count=overflow,
+                    empty_count=_add_provenance_counts(
+                        empty_count,
+                        len(references) - len(nonempty),
+                    ),
+                    malformed_count=malformed_count,
+                )
         if prefix == _LEGACY_SOURCE_REFERENCE_PREFIX:
-            return {part for part in payload.split("|") if part}, 0
-    return {value}, 0
+            parts = payload.split("|")
+            return _SourceReferenceDetails(
+                references=frozenset(normalize_imported_text(part) for part in parts if part),
+                empty_count=sum(not bool(part) for part in parts),
+            )
+        return _SourceReferenceDetails(
+            references=frozenset({normalize_imported_text(value)}),
+            malformed_count=1,
+        )
+    return _SourceReferenceDetails(references=frozenset({normalize_imported_text(value)}))
 
 
 def _source_reference_parts(value: str | None) -> set[str]:
-    return _source_reference_details(value)[0]
+    return set(_source_reference_details(value).references)
 
 
 def _merge_source_references(first: str | None, second: str | None) -> str | None:
-    first_references, first_overflow = _source_reference_details(first)
-    second_references, second_overflow = _source_reference_details(second)
-    references = sorted(first_references | second_references)
-    overflow_count = first_overflow + second_overflow
-    if not references and overflow_count == 0:
+    first_details = _source_reference_details(first)
+    second_details = _source_reference_details(second)
+    references = sorted(first_details.references | second_details.references)
+    same_details = first_details == second_details
+    overflow_count = (
+        max(first_details.overflow_count, second_details.overflow_count)
+        if same_details
+        else _add_provenance_counts(
+            first_details.overflow_count,
+            second_details.overflow_count,
+        )
+    )
+    empty_count = (
+        max(first_details.empty_count, second_details.empty_count)
+        if same_details
+        else _add_provenance_counts(first_details.empty_count, second_details.empty_count)
+    )
+    malformed_count = (
+        max(first_details.malformed_count, second_details.malformed_count)
+        if same_details
+        else _add_provenance_counts(
+            first_details.malformed_count,
+            second_details.malformed_count,
+        )
+    )
+    if not references and overflow_count == 0 and empty_count == 0 and malformed_count == 0:
         return None
-    if len(references) == 1 and overflow_count == 0:
+    if len(references) == 1 and overflow_count == 0 and empty_count == 0 and malformed_count == 0:
         return references[0]
     selected = list(references)
-    total = len(references) + overflow_count
+    total = _add_provenance_counts(len(references), overflow_count)
     while True:
         payload = {
             "format": "archive-provenance-v2",
             "references": selected,
             "overflow_count": total - len(selected),
+            "empty_count": empty_count,
+            "malformed_count": malformed_count,
         }
         encoded = _MERGED_SOURCE_REFERENCE_PREFIX + json.dumps(
             payload,

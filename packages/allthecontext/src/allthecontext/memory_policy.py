@@ -94,7 +94,11 @@ def registered_source_reference(source_id: str, provider_item_id: str) -> str:
     """Return the opaque projection reference for one capture item."""
 
     digest = sha256(
-        f"registered-source-reference-v1\0{source_id}\0{provider_item_id}".encode()
+        json.dumps(
+            ["registered-source-reference-v1", source_id, provider_item_id],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
     ).hexdigest()
     return REGISTERED_SOURCE_REFERENCE_PREFIX + digest
 
@@ -415,6 +419,11 @@ _ARCHIVE_VAGUE_PREFERENCE_VALUES = frozenset(
         "long",
     }
 )
+_ARCHIVE_VAGUE_NON_PREFERENCE = re.compile(
+    r"^(?:[A-Za-z0-9]+\s+){0,6}(?:is|was|seems|looks|feels|sounds)\s+"
+    r"(?:nice|good|great|bad|fine|okay|ok|cool|interesting|useful|helpful)\.?$",
+    flags=re.IGNORECASE,
+)
 _ARCHIVE_CONTRACTION_REPLACEMENTS = (
     (re.compile(r"\bi['\u2019]m\b", flags=re.IGNORECASE), "i am"),
     (re.compile(r"\bwe['\u2019]re\b", flags=re.IGNORECASE), "we are"),
@@ -484,7 +493,24 @@ def _canonical_import_reference_atom(value: str) -> str:
     return base.strip() + "#" + "&".join(f"{key}={item}" for key, item in pairs)
 
 
-def _structured_import_references(value: str) -> tuple[set[str], int] | None:
+_MAX_PROVENANCE_COUNT = 1_000_000_000_000
+
+
+def _provenance_count(value: object, default: int = 0) -> int | None:
+    if value is None:
+        return default
+    if type(value) is not int or value < 0 or value > _MAX_PROVENANCE_COUNT:
+        return None
+    return value
+
+
+def _add_provenance_count(first: int, second: int) -> int:
+    return min(_MAX_PROVENANCE_COUNT, first + second)
+
+
+def _structured_import_references(
+    value: str,
+) -> tuple[set[str], int, int, int] | None:
     """Read both structured provenance and the original pipe format."""
 
     prefix: str | None = None
@@ -501,22 +527,31 @@ def _structured_import_references(value: str) -> tuple[set[str], int] | None:
         decoded = None
     if isinstance(decoded, dict) and decoded.get("format") == "archive-provenance-v2":
         references = decoded.get("references")
-        overflow = decoded.get("overflow_count", 0)
+        overflow = _provenance_count(decoded.get("overflow_count"))
+        empty_count = _provenance_count(decoded.get("empty_count"))
+        malformed_count = _provenance_count(decoded.get("malformed_count"))
         if (
             isinstance(references, list)
-            and all(isinstance(reference, str) and reference for reference in references)
-            and type(overflow) is int
-            and overflow >= 0
+            and overflow is not None
+            and empty_count is not None
+            and malformed_count is not None
+            and all(isinstance(reference, str) for reference in references)
         ):
-            return {
-                _canonical_import_reference_atom(reference) for reference in references
-            }, overflow
+            nonempty = [reference for reference in references if reference]
+            return (
+                {_canonical_import_reference_atom(reference) for reference in nonempty},
+                overflow,
+                _add_provenance_count(empty_count, len(references) - len(nonempty)),
+                malformed_count,
+            )
     if prefix == _ARCHIVE_PROVENANCE_V1_PREFIX:
-        return {
-            _canonical_import_reference_atom(reference)
-            for reference in payload.split("|")
-            if reference
-        }, 0
+        parts = payload.split("|")
+        return (
+            {_canonical_import_reference_atom(reference) for reference in parts if reference},
+            0,
+            sum(not bool(reference) for reference in parts),
+            0,
+        )
     return None
 
 
@@ -527,12 +562,14 @@ def normalized_import_source_reference(value: str) -> str:
     parsed = _structured_import_references(normalized)
     if parsed is None:
         return _canonical_import_reference_atom(normalized)
-    references, overflow = parsed
+    references, overflow, empty_count, malformed_count = parsed
     return json.dumps(
         {
             "format": "archive-provenance-v2",
             "references": sorted(references),
             "overflow_count": overflow,
+            "empty_count": empty_count,
+            "malformed_count": malformed_count,
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -547,7 +584,7 @@ def normalized_import_identity_reference(value: str) -> str:
     parsed = _structured_import_references(normalized)
     if parsed is None:
         return _canonical_import_reference_atom(normalized)
-    references, _overflow = parsed
+    references, _overflow, _empty_count, _malformed_count = parsed
     if references:
         return sorted(references)[0]
     return normalized_import_source_reference(normalized)
@@ -564,14 +601,16 @@ def archive_import_identity(
     if source_id is None or source_reference is None:
         return None
     normalized_kind, value_identity = normalized_import_candidate_key(kind, content)
-    material = "\0".join(
-        (
-            "archive-import-identity-v1",
+    material = json.dumps(
+        [
+            "archive-import-identity-v2",
             unicodedata.normalize("NFKC", source_id).strip(),
             normalized_import_identity_reference(source_reference),
             normalized_kind,
             value_identity,
-        )
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
     return sha256(material.encode("utf-8")).hexdigest()
 
@@ -623,7 +662,18 @@ def is_self_contained_archive_statement(kind: str, content: str) -> bool:
                 normalized_kind == "constraint"
                 and re.search(r"\bthis\s+[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?", normalized) is not None
             )
-            or (normalized_kind in {"preference", "preferences"} and not recognizable_preference)
+            or (
+                normalized_kind
+                in {"preference", "preferences", "interaction_preference", "editor_preference"}
+                and not recognizable_preference
+                and re.search(
+                    r"\b(?:this|that|it)\s+(?!is\b|was\b|seems?\b|looks?\b|"
+                    r"feels?\b|sounds?\b)[A-Za-z0-9]+",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+                is not None
+            )
         )
         if not resolved_exception:
             return False
@@ -634,12 +684,15 @@ def is_self_contained_archive_statement(kind: str, content: str) -> bool:
         "interaction_preference",
         "editor_preference",
     }:
-        # Older Core callers can submit an already-typed ``preference`` row
-        # whose text is not a natural-language preference sentence. Preserve
-        # that compatibility shape, while applying the stricter admission
-        # check to recognizable preference wording (including negatives).
         if not recognizable_preference:
-            return True
+            # Some trusted, older extractors typed concrete archive facts as
+            # ``preference``. Preserve that bounded shape without treating a
+            # type label as proof: an unresolved/vague fragment is refused,
+            # while a concrete noun phrase or sentence remains admissible.
+            if _ARCHIVE_VAGUE_NON_PREFERENCE.fullmatch(normalized):
+                return False
+            value_tokens = re.findall(r"[A-Za-z0-9]+", normalized)
+            return len(value_tokens) >= 2
         framed = normalized
         framing = _KIND_FRAMING.get("interaction_preference")
         if framing is not None:

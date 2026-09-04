@@ -33,6 +33,7 @@ from .memory_policy import (
     classify_sensitivity,
     normalize_imported_text,
     normalized_import_candidate_key,
+    normalized_import_identity_reference,
     normalized_import_slot_key,
     normalized_import_source_reference,
     normalized_observation_text,
@@ -101,6 +102,10 @@ class InvalidStateError(StorageError):
     pass
 
 
+class _ObservationLookupOverflow(InvalidStateError):
+    """A bounded observation lookup refused to inspect an ambiguous set."""
+
+
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
 SOURCE_BLOB_CHUNK_BYTES = 8 * 1024 * 1024
 SOURCE_REBUILD_REASON = "replaced by source rebuild"
@@ -125,6 +130,7 @@ MutationEvidenceKind = Literal[
 LIVENESS_BUSY_TIMEOUT_MS = 250
 LIVENESS_CONNECT_TIMEOUT_SECONDS = 0.25
 MAX_ACTIVITY_SNAPSHOT_ITEMS = 500
+_MAX_OBSERVATION_CANDIDATES = 256
 
 
 @dataclass(frozen=True)
@@ -863,6 +869,83 @@ class CoreStore:
                         (record_key, row["id"]),
                     )
 
+    @staticmethod
+    def _index_archive_identity_tx(
+        connection: sqlite3.Connection,
+        row: Mapping[str, Any] | sqlite3.Row,
+        *,
+        record_id: str | None = None,
+        vault_id: str | None = None,
+    ) -> None:
+        identity = _archive_identity_from_row(row)
+        if identity is None:
+            return
+        resolved_record_id = record_id or str(row["id"])
+        resolved_vault_id = vault_id or str(row["vault_id"])
+        connection.execute(
+            "INSERT OR IGNORE INTO context_record_archive_identities"
+            "(vault_id,record_id,archive_identity) VALUES(?,?,?)",
+            (resolved_vault_id, resolved_record_id, identity),
+        )
+
+    @classmethod
+    def _ensure_archive_identity_index_tx(cls, connection: sqlite3.Connection) -> None:
+        """Create and repair the bounded lookup for current and historical lineage."""
+
+        record_columns = {
+            str(row[1]) for row in connection.execute('PRAGMA table_info("context_records")')
+        }
+        if not {
+            "id",
+            "vault_id",
+            "source_id",
+            "source_reference",
+            "kind",
+            "content",
+            "source_type",
+            "observation_origin",
+        }.issubset(record_columns):
+            # Portable export tests and pre-Core databases may contain a
+            # minimal content table. The derived archive index only applies
+            # after the authoritative Core schema is present.
+            return
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS context_record_archive_identities ("
+            "vault_id TEXT NOT NULL REFERENCES vaults(id),"
+            "record_id TEXT NOT NULL REFERENCES context_records(id) ON DELETE CASCADE,"
+            "archive_identity TEXT NOT NULL,"
+            "PRIMARY KEY(record_id,archive_identity))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_archive_identity_lookup "
+            "ON context_record_archive_identities(vault_id,archive_identity,record_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_records_archive_kind_lookup "
+            "ON context_records(vault_id,lower(kind),approval_status,deleted_at,"
+            "observation_origin,observed_at,updated_at,id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_records_supersedes_state "
+            "ON context_records(supersedes,approval_status,deleted_at)"
+        )
+        for row in connection.execute("SELECT * FROM context_records"):
+            cls._index_archive_identity_tx(connection, row)
+        for row in connection.execute(
+            "SELECT v.record_id,r.vault_id,v.snapshot_json "
+            "FROM context_record_versions v JOIN context_records r ON r.id=v.record_id"
+        ):
+            snapshot = _json_object(cast(str | None, row["snapshot_json"]))
+            if snapshot is None:
+                continue
+            snapshot["vault_id"] = row["vault_id"]
+            cls._index_archive_identity_tx(
+                connection,
+                snapshot,
+                record_id=str(row["record_id"]),
+                vault_id=str(row["vault_id"]),
+            )
+
     def migrate(self) -> int:
         migration_dir = Path(__file__).parent / "migrations" / "core"
         migrations = sorted(migration_dir.glob("[0-9][0-9][0-9]_*.sql"))
@@ -929,6 +1012,7 @@ class CoreStore:
                 from .capture import ensure_capture_schema
 
                 ensure_capture_schema(connection)
+                self._ensure_archive_identity_index_tx(connection)
                 self._recompute_record_keys_tx(connection)
             except BaseException:
                 connection.rollback()
@@ -4523,35 +4607,82 @@ class CoreStore:
             policy_version=str(row["policy_version"]),
         )
 
-    @staticmethod
-    def _active_records_tx(connection: sqlite3.Connection, vault_id: str) -> list[sqlite3.Row]:
-        return list(
-            connection.execute(
-                "SELECT r.* FROM context_records r "
-                "WHERE r.vault_id=? AND r.approval_status='approved' AND r.deleted_at IS NULL "
-                "AND NOT EXISTS (SELECT 1 FROM context_records newer "
-                "WHERE newer.supersedes=r.id AND newer.approval_status='approved' "
-                "AND newer.deleted_at IS NULL)",
-                (vault_id,),
-            ).fetchall()
-        )
-
     def _exact_record_tx(
         self,
         connection: sqlite3.Connection,
         observation: sqlite3.Row,
         principal: ClientPrincipal | None = None,
     ) -> sqlite3.Row | None:
+        active = (
+            "r.approval_status='approved' AND r.deleted_at IS NULL AND NOT EXISTS ("
+            "SELECT 1 FROM context_records newer WHERE newer.supersedes=r.id "
+            "AND newer.approval_status='approved' AND newer.deleted_at IS NULL)"
+        )
+        record_key = cast(str | None, observation["record_key"])
+        if record_key is not None:
+            rows = connection.execute(
+                f"SELECT r.* FROM context_records r WHERE r.vault_id=? "
+                f"AND r.record_key=? AND {active} ORDER BY r.id LIMIT ?",
+                (observation["vault_id"], record_key, _MAX_OBSERVATION_CANDIDATES + 1),
+            ).fetchall()
+            if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+                raise _ObservationLookupOverflow("record-key candidate set exceeds safety bound")
+            fingerprint = _value_fingerprint(observation)
+            for record in rows:
+                if _value_fingerprint(record) == fingerprint and self._record_is_allowed(
+                    record, principal
+                ):
+                    return cast(sqlite3.Row, record)
+
+        archive_identity = _archive_identity_from_row(observation)
+        if archive_identity is not None:
+            rows = connection.execute(
+                "SELECT r.* FROM context_record_archive_identities i "
+                "JOIN context_records r ON r.id=i.record_id "
+                f"WHERE i.vault_id=? AND i.archive_identity=? AND {active} "
+                "AND r.entity_key IS ? AND r.attribute_key IS ? ORDER BY r.id LIMIT ?",
+                (
+                    observation["vault_id"],
+                    archive_identity,
+                    observation["entity_key"],
+                    observation["attribute_key"],
+                    _MAX_OBSERVATION_CANDIDATES + 1,
+                ),
+            ).fetchall()
+            if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+                raise _ObservationLookupOverflow(
+                    "archive-identity candidate set exceeds safety bound"
+                )
+            fingerprint = _value_fingerprint(observation)
+            for record in rows:
+                if _value_fingerprint(record) == fingerprint and self._record_is_allowed(
+                    record, principal
+                ):
+                    return cast(sqlite3.Row, record)
+
+        # Direct observations do not have a source identity. Keep this lookup
+        # indexed by its declared slot and fail closed when a slot is too
+        # crowded to inspect within the per-observation bound.
+        rows = connection.execute(
+            "SELECT r.* FROM context_records r WHERE r.vault_id=? "
+            "AND r.kind=? AND r.entity_key IS ? AND r.attribute_key IS ? "
+            f"AND {active} ORDER BY r.id LIMIT ?",
+            (
+                observation["vault_id"],
+                observation["kind"],
+                observation["entity_key"],
+                observation["attribute_key"],
+                _MAX_OBSERVATION_CANDIDATES + 1,
+            ),
+        ).fetchall()
+        if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("slot candidate set exceeds safety bound")
         fingerprint = _value_fingerprint(observation)
-        for record in self._active_records_tx(connection, str(observation["vault_id"])):
-            if (
-                str(record["kind"]) == str(observation["kind"])
-                and record["entity_key"] == observation["entity_key"]
-                and record["attribute_key"] == observation["attribute_key"]
-                and _value_fingerprint(record) == fingerprint
-                and self._record_is_allowed(record, principal)
+        for record in rows:
+            if _value_fingerprint(record) == fingerprint and self._record_is_allowed(
+                record, principal
             ):
-                return record
+                return cast(sqlite3.Row, record)
         return None
 
     def _target_record_tx(
@@ -4572,32 +4703,84 @@ class CoreStore:
                 ).fetchone(),
             )
             return record if record is None or self._record_is_allowed(record, principal) else None
+        archive_identity = (
+            _archive_identity_from_row(observation)
+            if origin == ObservationOrigin.ARCHIVE_IMPORT
+            else None
+        )
+        if archive_identity is not None:
+            rows = connection.execute(
+                "SELECT r.* FROM context_record_archive_identities i "
+                "JOIN context_records r ON r.id=i.record_id "
+                "WHERE i.vault_id=? AND i.archive_identity=? "
+                "AND r.approval_status='approved' AND r.deleted_at IS NULL "
+                "ORDER BY r.observed_at DESC,r.updated_at DESC,r.id LIMIT ?",
+                (
+                    observation["vault_id"],
+                    archive_identity,
+                    _MAX_OBSERVATION_CANDIDATES + 1,
+                ),
+            ).fetchall()
+            if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+                raise _ObservationLookupOverflow("archive-identity target set exceeds safety bound")
+            for record in rows:
+                if self._record_is_allowed(record, principal):
+                    return cast(sqlite3.Row, record)
         entity_key = cast(str | None, observation["entity_key"])
         attribute_key = cast(str | None, observation["attribute_key"])
         if entity_key is not None and attribute_key is not None:
-            rows = cast(
-                list[sqlite3.Row],
-                connection.execute(
-                    "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
-                    "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
-                    "ORDER BY observed_at DESC,updated_at DESC,id",
-                    (observation["vault_id"], entity_key, attribute_key),
-                ).fetchall(),
+            cursor = connection.execute(
+                "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+                "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+                "ORDER BY observed_at DESC,updated_at DESC,id LIMIT ?",
+                (
+                    observation["vault_id"],
+                    entity_key,
+                    attribute_key,
+                    _MAX_OBSERVATION_CANDIDATES + 1,
+                ),
             )
-            keyed_target = next(
-                (record for record in rows if self._record_is_allowed(record, principal)),
-                None,
+            rows = cursor.fetchall()
+            if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+                raise _ObservationLookupOverflow("keyed target set exceeds safety bound")
+            keyed_target = cast(
+                sqlite3.Row | None,
+                next(
+                    (record for record in rows if self._record_is_allowed(record, principal)),
+                    None,
+                ),
             )
             if keyed_target is not None:
+                if archive_identity is not None and _value_fingerprint(
+                    keyed_target
+                ) != _value_fingerprint(observation):
+                    record_session_id = connection.execute(
+                        "SELECT session_id FROM context_candidates WHERE id=?",
+                        (keyed_target["candidate_id"],),
+                    ).fetchone()
+                    if (
+                        record_session_id is not None
+                        and observation["session_id"] is not None
+                        and record_session_id[0] == observation["session_id"]
+                    ):
+                        observation_reference = cast(str | None, observation["source_reference"])
+                        record_reference = cast(str | None, keyed_target["source_reference"])
+                        if (
+                            observation_reference is not None
+                            and record_reference is not None
+                            and normalized_import_identity_reference(observation_reference)
+                            == normalized_import_identity_reference(record_reference)
+                        ):
+                            # A single provider message can contain several
+                            # distinct claims for one slot. A later
+                            # ingestion session is still allowed to express
+                            # an intentional chronological revision.
+                            return None
+                    observation_at = str(observation["observed_at"] or observation["created_at"])
+                    record_at = str(keyed_target["observed_at"] or keyed_target["created_at"])
+                    if observation_at == record_at:
+                        return None
                 return keyed_target
-        if origin == ObservationOrigin.ARCHIVE_IMPORT:
-            archive_identity = _archive_identity_from_row(observation)
-            if archive_identity is not None:
-                for record in self._active_records_tx(connection, str(observation["vault_id"])):
-                    if _archive_identity_from_row(
-                        record
-                    ) == archive_identity and self._record_is_allowed(record, principal):
-                        return record
         # Unkeyed archive statements share a lineage only when they have the
         # same extracted subject. Kind-only collapse is not a slot: unrelated
         # goals, preferences, and projects remain independent current records.
@@ -4610,25 +4793,56 @@ class CoreStore:
         slot = archive_lineage_key(kind, str(observation["content"]))
         if slot is None:
             return None
-        rows = cast(
-            list[sqlite3.Row],
-            connection.execute(
-                "SELECT * FROM context_records WHERE vault_id=? AND lower(kind)=? "
-                "AND approval_status='approved' AND deleted_at IS NULL "
-                "AND observation_origin=? "
-                "ORDER BY observed_at DESC,updated_at DESC,id",
-                (observation["vault_id"], kind, ObservationOrigin.ARCHIVE_IMPORT.value),
-            ).fetchall(),
-        )
-        return next(
+        cursor = connection.execute(
+            "SELECT * FROM context_records WHERE vault_id=? AND lower(kind)=? "
+            "AND approval_status='approved' AND deleted_at IS NULL "
+            "AND observation_origin=? "
+            "ORDER BY observed_at DESC,updated_at DESC,id LIMIT ?",
             (
-                record
-                for record in rows
-                if self._record_is_allowed(record, principal)
-                and archive_lineage_key(str(record["kind"]), str(record["content"])) == slot
+                observation["vault_id"],
+                kind,
+                ObservationOrigin.ARCHIVE_IMPORT.value,
+                _MAX_OBSERVATION_CANDIDATES + 1,
             ),
-            None,
         )
+        rows = cursor.fetchall()
+        if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("lineage target set exceeds safety bound")
+        observation_fingerprint = _value_fingerprint(observation)
+        for record in rows:
+            if not self._record_is_allowed(record, principal):
+                continue
+            if archive_lineage_key(str(record["kind"]), str(record["content"])) != slot:
+                continue
+            if _value_fingerprint(record) == observation_fingerprint:
+                return cast(sqlite3.Row, record)
+            record_session_id = connection.execute(
+                "SELECT session_id FROM context_candidates WHERE id=?",
+                (record["candidate_id"],),
+            ).fetchone()
+            if (
+                record_session_id is not None
+                and observation["session_id"] is not None
+                and record_session_id[0] == observation["session_id"]
+            ):
+                observation_reference = cast(str | None, observation["source_reference"])
+                record_reference = cast(str | None, record["source_reference"])
+                if (
+                    observation_reference is not None
+                    and record_reference is not None
+                    and normalized_import_identity_reference(observation_reference)
+                    == normalized_import_identity_reference(record_reference)
+                ):
+                    # Preserve materially distinct values from one provider
+                    # message even when their derived lineage slot is equal.
+                    return None
+            observation_at = str(observation["observed_at"] or observation["created_at"])
+            record_at = str(record["observed_at"] or record["created_at"])
+            if observation_at == record_at:
+                # Equal timestamps do not establish an intentional revision.
+                return None
+            return cast(sqlite3.Row, record)
+        return None
 
     def _principal_for_client_id_tx(
         self,
@@ -4771,17 +4985,21 @@ class CoreStore:
     ) -> list[sqlite3.Row]:
         rows = connection.execute(
             "SELECT * FROM context_candidates WHERE vault_id=? AND kind=? "
-            "AND disposition='tentative' AND id<>? ORDER BY created_at,id",
-            (observation["vault_id"], observation["kind"], observation["id"]),
+            "AND entity_key IS ? AND attribute_key IS ? "
+            "AND disposition='tentative' AND id<>? ORDER BY created_at,id LIMIT ?",
+            (
+                observation["vault_id"],
+                observation["kind"],
+                observation["entity_key"],
+                observation["attribute_key"],
+                observation["id"],
+                _MAX_OBSERVATION_CANDIDATES + 1,
+            ),
         ).fetchall()
+        if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("tentative candidate set exceeds safety bound")
         target = normalized_observation_text(str(observation["content"]))
-        return [
-            row
-            for row in rows
-            if row["entity_key"] == observation["entity_key"]
-            and row["attribute_key"] == observation["attribute_key"]
-            and normalized_observation_text(str(row["content"])) == target
-        ]
+        return [row for row in rows if normalized_observation_text(str(row["content"])) == target]
 
     def _reapply_deleted_record_from_observation_tx(
         self,
@@ -4812,7 +5030,7 @@ class CoreStore:
             or archive_identity is None
         ):
             return None
-        prior = connection.execute(
+        prior_rows = connection.execute(
             "SELECT r.*,t.deleted_version,t.reason AS tombstone_reason,"
             "t.content_hash AS tombstone_hash,t.deleted_at AS tombstone_deleted_at,"
             "t.deletion_origin,t.deletion_source_id,t.rebuild_session_id,"
@@ -4823,17 +5041,21 @@ class CoreStore:
             "rs.client_id AS rebuild_client_id,"
             "rs.accessible_sources_json AS rebuild_accessible_sources_json,"
             "rs.unavailable_sources_json AS rebuild_unavailable_sources_json "
-            "FROM context_records r JOIN deletion_tombstones t ON t.record_id=r.id "
+            "FROM context_records r "
+            "JOIN context_record_archive_identities i ON i.record_id=r.id "
+            "AND i.vault_id=r.vault_id JOIN deletion_tombstones t ON t.record_id=r.id "
             "JOIN source_records s ON s.id=t.deletion_source_id "
             "JOIN ingestion_sessions rs ON rs.id=t.rebuild_session_id "
-            "WHERE r.vault_id=? AND r.deleted_at IS NOT NULL "
+            "WHERE r.vault_id=? AND i.archive_identity=? AND r.deleted_at IS NOT NULL "
             "AND r.source_id=? AND r.observation_origin=? "
             "AND t.deletion_origin='source_rebuild' AND t.deletion_source_id=? "
             "AND t.rebuild_session_id=? AND rs.id=? "
             "AND r.candidate_id IS NOT NULL AND r.candidate_id<>? "
-            "AND t.reason IN (?, 'source_rebuild') ORDER BY r.version DESC,r.id LIMIT 1",
+            "AND t.reason IN (?, 'source_rebuild') "
+            "ORDER BY r.version DESC,r.id LIMIT ?",
             (
                 observation["vault_id"],
+                archive_identity,
                 observation_source_id,
                 ObservationOrigin.ARCHIVE_IMPORT.value,
                 observation_source_id,
@@ -4841,8 +5063,12 @@ class CoreStore:
                 observation_session_id,
                 observation["id"],
                 SOURCE_REBUILD_REASON,
+                _MAX_OBSERVATION_CANDIDATES + 1,
             ),
-        ).fetchone()
+        ).fetchall()
+        if len(prior_rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("rebuild candidate set exceeds safety bound")
+        prior = prior_rows[0] if len(prior_rows) == 1 else None
         source_metadata = (
             _json_object(cast(str | None, prior["source_metadata_json"]))
             if prior is not None
@@ -4992,19 +5218,24 @@ class CoreStore:
         if archive_identity is None or source_id is None:
             return None
         rows = connection.execute(
-            "SELECT r.*,t.reason FROM context_records r "
+            "SELECT r.*,t.reason FROM context_record_archive_identities i "
+            "JOIN context_records r ON r.id=i.record_id "
             "JOIN deletion_tombstones t ON t.record_id=r.id "
-            "WHERE r.vault_id=? AND r.deleted_at IS NOT NULL "
-            "AND t.deletion_origin='ordinary' ORDER BY t.deleted_at DESC,r.id",
-            (observation["vault_id"],),
+            "WHERE i.vault_id=? AND i.archive_identity=? AND r.source_id=? "
+            "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
+            "ORDER BY t.deleted_at DESC,r.id LIMIT ?",
+            (
+                observation["vault_id"],
+                archive_identity,
+                source_id,
+                _MAX_OBSERVATION_CANDIDATES + 1,
+            ),
         ).fetchall()
+        if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("deletion candidate set exceeds safety bound")
         observation_fingerprint = _value_fingerprint(observation)
         for row in rows:
-            record_identities = CoreStore._archive_identities_for_record_tx(connection, row)
-            if (
-                archive_identity in record_identities
-                and _value_fingerprint(row) == observation_fingerprint
-            ):
+            if _value_fingerprint(row) == observation_fingerprint:
                 return cast(sqlite3.Row, row)
         return None
 
@@ -5014,22 +5245,14 @@ class CoreStore:
     ) -> set[str]:
         """Return current and historical source-item identities for one record."""
 
-        identities: set[str] = set()
-        current = _archive_identity_from_row(record)
-        if current is not None:
-            identities.add(current)
-        history = connection.execute(
-            "SELECT snapshot_json FROM context_record_versions WHERE record_id=?",
-            (record["id"],),
+        rows = connection.execute(
+            "SELECT archive_identity FROM context_record_archive_identities "
+            "WHERE vault_id=? AND record_id=? LIMIT ?",
+            (record["vault_id"], record["id"], _MAX_OBSERVATION_CANDIDATES + 1),
         ).fetchall()
-        for row in history:
-            snapshot = _json_object(cast(str | None, row["snapshot_json"]))
-            if snapshot is None:
-                continue
-            historical = _archive_identity_from_row(snapshot)
-            if historical is not None:
-                identities.add(historical)
-        return identities
+        if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("archive history set exceeds safety bound")
+        return {str(row["archive_identity"]) for row in rows}
 
     @staticmethod
     def _record_has_archive_supersession_mutation_tx(
@@ -5059,25 +5282,29 @@ class CoreStore:
         archive_identity = _archive_identity_from_row(observation)
         if source_id is None or archive_identity is None:
             return None
-        rows = cast(
-            list[sqlite3.Row],
-            connection.execute(
-                "SELECT * FROM context_records WHERE vault_id=? AND approval_status='approved' "
-                "ORDER BY updated_at DESC,id",
-                (observation["vault_id"],),
-            ).fetchall(),
+        cursor = connection.execute(
+            "SELECT r.* FROM context_record_archive_identities i "
+            "JOIN context_records r ON r.id=i.record_id "
+            "WHERE i.vault_id=? AND i.archive_identity=? "
+            "AND r.approval_status='approved' AND r.deleted_at IS NULL "
+            "ORDER BY r.updated_at DESC,r.id LIMIT ?",
+            (
+                observation["vault_id"],
+                archive_identity,
+                _MAX_OBSERVATION_CANDIDATES + 1,
+            ),
         )
+        rows = cursor.fetchall()
+        if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("supersession candidate set exceeds safety bound")
         observation_fingerprint = _value_fingerprint(observation)
         for record in rows:
-            record_identities = self._archive_identities_for_record_tx(connection, record)
-            if archive_identity not in record_identities:
-                continue
             if str(
                 record["observation_origin"] or ""
             ) != ObservationOrigin.ARCHIVE_IMPORT.value or (
                 self._record_has_archive_supersession_mutation_tx(connection, str(record["id"]))
             ):
-                return record
+                return cast(sqlite3.Row, record)
             if _value_fingerprint(record) == observation_fingerprint:
                 continue
         return None
@@ -5638,6 +5865,50 @@ class CoreStore:
         return cast(sqlite3.Row, updated)
 
     def _evaluate_observation_tx(
+        self,
+        connection: sqlite3.Connection,
+        observation_id: str,
+        *,
+        origin: ObservationOrigin,
+        actor: str,
+        principal: ClientPrincipal | None = None,
+        canonical_record_id: str | None = None,
+        deferred_integrity_recompute: list[bool] | None = None,
+    ) -> CandidateOut:
+        try:
+            return self._evaluate_observation_core_tx(
+                connection,
+                observation_id,
+                origin=origin,
+                actor=actor,
+                principal=principal,
+                canonical_record_id=canonical_record_id,
+                deferred_integrity_recompute=deferred_integrity_recompute,
+            )
+        except _ObservationLookupOverflow as error:
+            # Ambiguous candidate sets must never fall through to record
+            # creation or slot replacement. Retain the observation as local
+            # evidence so a bounded/manual review can resolve it later.
+            policy = self._memory_policy_tx(connection)
+            self._set_observation_decision_tx(
+                connection,
+                observation_id,
+                disposition=ObservationDisposition.TENTATIVE,
+                reason=f"observation lookup exceeded safety bound: {error}",
+                policy_version=policy.policy_version,
+                origin=origin,
+                actor=actor,
+            )
+            self._audit(connection, actor, "observation_tentative", [])
+            if deferred_integrity_recompute is not None:
+                deferred_integrity_recompute[0] = True
+            updated = connection.execute(
+                "SELECT * FROM context_candidates WHERE id=?", (observation_id,)
+            ).fetchone()
+            assert updated is not None
+            return self._candidate_out(updated)
+
+    def _evaluate_observation_core_tx(
         self,
         connection: sqlite3.Connection,
         observation_id: str,
@@ -7812,6 +8083,7 @@ class CoreStore:
                 user_action_key,
             ),
         )
+        self._index_archive_identity_tx(connection, row)
 
     def _replace_fts(self, connection: sqlite3.Connection, row: sqlite3.Row) -> None:
         connection.execute("DELETE FROM context_fts WHERE record_id=?", (row["id"],))

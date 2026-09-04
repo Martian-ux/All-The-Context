@@ -43,6 +43,9 @@ EXCLUDED_TABLES = {
     "integrity_groups",
     "integrity_group_members",
     "source_blob_chunks",
+    # Rebuilt from current and historical record lineage on each destination;
+    # never treat this derived lookup as portable authority.
+    "context_record_archive_identities",
 }
 CAPTURE_RUNTIME_TABLES = frozenset(
     {
@@ -1114,6 +1117,12 @@ def restore_export(
                         all_tables,
                     )
                     _post_restore_upgrade(connection, all_tables, columns_by_table)
+                    # The archive identity ledger is derived state and is
+                    # intentionally excluded from the package. Rebuild it
+                    # after records and versions have been restored so
+                    # deletion/rebuild barriers work immediately, before the
+                    # destination's next startup.
+                    CoreStore._ensure_archive_identity_index_tx(connection)
                     if "context_user_mutations" in all_tables:
                         # The post-restore legacy inference may have created
                         # rows.  Repair evidence and canonical actor fields
