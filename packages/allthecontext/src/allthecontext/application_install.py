@@ -126,7 +126,7 @@ class WindowsRegistrationApplyResult:
 
 @dataclass(slots=True)
 class _RegistrationJournal:
-    """Durable ownership and recovery evidence for one registration plan."""
+    """Durable registration evidence and recovery state for one plan."""
 
     install_root: str
     executable: str
@@ -141,6 +141,7 @@ class _RegistrationJournal:
     phase: str
     active: tuple[RegistrationName, ...]
     legacy: bool = field(default=False, repr=False)
+    registry_key_created: bool = field(default=False, repr=False)
 
 
 class WindowsRegistrationError(OSError):
@@ -499,8 +500,18 @@ def _decode_snapshot(value: object) -> WindowsApplicationRegistrationSnapshot:
             name = item.get("name")
             present = item.get("present")
             data_raw = item.get("data")
-            if name not in {"launcher", "desktop", "uninstall"} or not isinstance(present, bool):
+            if (
+                not isinstance(name, str)
+                or name
+                not in {
+                    "launcher",
+                    "desktop",
+                    "uninstall",
+                }
+                or not isinstance(present, bool)
+            ):
                 raise ValueError
+            shortcut_name = cast(ShortcutName, name)
             if data_raw is None:
                 data = None
             elif isinstance(data_raw, str):
@@ -512,7 +523,7 @@ def _decode_snapshot(value: object) -> WindowsApplicationRegistrationSnapshot:
             identity = _decode_identity(item.get("identity"))
             if present != (data is not None) or (present and identity is None):
                 raise ValueError
-            shortcuts.append(WindowsShortcutSnapshot(name, present, data, identity))
+            shortcuts.append(WindowsShortcutSnapshot(shortcut_name, present, data, identity))
         registry_values: list[WindowsRegistryValueSnapshot] = []
         for item in registry_raw:
             if not isinstance(item, dict):
@@ -532,7 +543,7 @@ def _decode_snapshot(value: object) -> WindowsApplicationRegistrationSnapshot:
             registry_values.append(
                 WindowsRegistryValueSnapshot(name, present, value_type, registry_data)
             )
-    except (ValueError, UnicodeError, WindowsRegistrationError):
+    except (TypeError, RecursionError, ValueError, UnicodeError, WindowsRegistrationError):
         raise WindowsRegistrationError("registration_journal_invalid") from None
     return WindowsApplicationRegistrationSnapshot(
         plan_token,
@@ -625,6 +636,18 @@ def _file_identity(metadata: os.stat_result) -> _FileIdentity:
     )
 
 
+def _same_file_identity(left: _FileIdentity, right: _FileIdentity) -> bool:
+    """Compare an object identity without treating hard-link count as identity."""
+
+    return (
+        left.device == right.device
+        and left.inode == right.inode
+        and left.size == right.size
+        and left.modified_ns == right.modified_ns
+        and left.attributes == right.attributes
+    )
+
+
 def _safe_lstat(path: Path) -> os.stat_result | None:
     try:
         return path.lstat()
@@ -687,6 +710,102 @@ def _read_bounded_bytes(path: Path, metadata: os.stat_result, maximum: int) -> b
 
 def _read_bounded_file(path: Path, metadata: os.stat_result) -> bytes:
     return _read_bounded_bytes(path, metadata, _MAX_SHORTCUT_BYTES)
+
+
+def _shortcut_quarantine_path(path: Path) -> Path:
+    """Return the one fixed sibling used to remove a known shortcut safely."""
+
+    return path.with_name(f".{path.name}.atc-quarantine")
+
+
+def _restore_quarantined_shortcut(
+    quarantine: Path,
+    original: Path,
+    expected_identity: _FileIdentity,
+    expected_data: bytes,
+) -> None:
+    """Put a quarantined file back without replacing a concurrent target."""
+
+    quarantine_metadata = _safe_lstat(quarantine)
+    if quarantine_metadata is None or _is_reparse_or_link(quarantine_metadata):
+        raise WindowsRegistrationError("registration_restore_cleanup_ambiguous")
+    if not _same_file_identity(_file_identity(quarantine_metadata), expected_identity):
+        raise WindowsRegistrationError("registration_restore_cleanup_ambiguous")
+    if _read_bounded_file(quarantine, quarantine_metadata) != expected_data:
+        raise WindowsRegistrationError("registration_restore_cleanup_ambiguous")
+    if _safe_lstat(original) is not None:
+        raise WindowsRegistrationError("registration_restore_target_changed")
+    try:
+        os.link(quarantine, original, follow_symlinks=False)
+    except FileExistsError as exc:
+        raise WindowsRegistrationError("registration_restore_target_changed") from exc
+    except OSError as exc:
+        raise WindowsRegistrationError("registration_restore_failed") from exc
+    restored_metadata = _safe_lstat(original)
+    if (
+        restored_metadata is None
+        or not _same_file_identity(_file_identity(restored_metadata), expected_identity)
+        or _read_bounded_file(original, restored_metadata) != expected_data
+    ):
+        raise WindowsRegistrationError("registration_restore_unverified")
+    try:
+        quarantine.unlink()
+    except OSError as exc:
+        raise WindowsRegistrationError("registration_restore_cleanup_failed") from exc
+
+
+def _quarantine_and_remove_shortcut(
+    path: Path,
+    expected_identity: _FileIdentity,
+    expected_data: bytes,
+) -> None:
+    """Remove one expected shortcut while preserving a swapped path entry.
+
+    The target is first moved to a fixed, collision-checked sibling.  If the
+    object moved was not the independently verified expected object, it is
+    returned with a no-clobber hard-link publication and no data is deleted.
+    The final unlink is performed only on the quarantined, verified object, so
+    a concurrent replacement at the canonical target cannot be deleted.
+    """
+
+    metadata = _safe_lstat(path)
+    if metadata is None:
+        return
+    if _is_reparse_or_link(metadata) or not stat.S_ISREG(metadata.st_mode):
+        raise WindowsRegistrationError("registration_restore_target_changed")
+    observed_identity = _file_identity(metadata)
+    if not _same_file_identity(observed_identity, expected_identity):
+        raise WindowsRegistrationError("registration_restore_target_changed")
+    observed_data = _read_bounded_file(path, metadata)
+    if observed_data != expected_data:
+        raise WindowsRegistrationError("registration_restore_target_changed")
+
+    quarantine = _shortcut_quarantine_path(path)
+    if _safe_lstat(quarantine) is not None:
+        raise WindowsRegistrationError("registration_restore_cleanup_ambiguous")
+    try:
+        os.replace(path, quarantine)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise WindowsRegistrationError("registration_restore_delete_failed") from exc
+
+    moved_metadata = _safe_lstat(quarantine)
+    if moved_metadata is None or _is_reparse_or_link(moved_metadata):
+        raise WindowsRegistrationError("registration_restore_cleanup_ambiguous")
+    moved_identity = _file_identity(moved_metadata)
+    moved_data = _read_bounded_file(quarantine, moved_metadata)
+    if not _same_file_identity(moved_identity, expected_identity) or moved_data != expected_data:
+        _restore_quarantined_shortcut(quarantine, path, moved_identity, moved_data)
+        raise WindowsRegistrationError("registration_restore_target_changed")
+    try:
+        quarantine.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise WindowsRegistrationError("registration_restore_delete_failed") from exc
+    if _safe_lstat(quarantine) is not None:
+        raise WindowsRegistrationError("registration_restore_unverified")
 
 
 def _shortcut_state(name: ShortcutName, path: Path) -> WindowsShortcutSnapshot:
@@ -781,6 +900,104 @@ def _registry_snapshot_equal(
     )
 
 
+def _delete_registry_value_if_unchanged(
+    winreg: Any,
+    key: Any,
+    expected: WindowsRegistryValueSnapshot,
+) -> None:
+    """Delete only an exact value, using an adapter CAS when available."""
+
+    confirmed = _registry_value_snapshot(winreg, key, expected.name)
+    if not _registry_snapshot_equal(confirmed, expected):
+        raise WindowsRegistrationError("registration_restore_target_changed")
+    conditional = getattr(winreg, "DeleteValueIfUnchanged", None)
+    if callable(conditional):
+        try:
+            result = conditional(key, expected.name, expected)
+        except FileNotFoundError:
+            return
+        if not isinstance(result, bool) or not result:
+            raise WindowsRegistrationError("registration_restore_target_changed")
+        return
+    # The stdlib winreg API has no compare-and-delete primitive.  Leaving the
+    # value and the journal for retry is the only safe portable behavior when
+    # the platform adapter cannot supply one.
+    raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
+
+
+def _set_registry_value_if_unchanged(
+    winreg: Any,
+    key: Any,
+    expected: WindowsRegistryValueSnapshot,
+    value_type: int,
+    data: RegistryData,
+) -> None:
+    """Set only an exact value, using an adapter CAS when available."""
+
+    confirmed = _registry_value_snapshot(winreg, key, expected.name)
+    if not _registry_snapshot_equal(confirmed, expected):
+        raise WindowsRegistrationError("registration_target_changed")
+    conditional = getattr(winreg, "SetValueIfUnchanged", None)
+    if callable(conditional):
+        try:
+            result = conditional(
+                key,
+                expected.name,
+                expected,
+                value_type,
+                _registry_data_for_set(data),
+            )
+        except FileNotFoundError:
+            raise WindowsRegistrationError("registration_target_changed") from None
+        if not isinstance(result, bool) or not result:
+            raise WindowsRegistrationError("registration_target_changed")
+        return
+    # A second read cannot make a plain SetValueEx compare-and-set.  Leaving
+    # the journal for an adapter that can perform the atomic operation is the
+    # only safe behavior when the platform API cannot provide one.
+    del key, value_type, data
+    raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
+
+
+def _create_registry_key_if_absent(winreg: Any, name: str) -> tuple[Any, bool | None]:
+    """Create a key and return ownership only from an atomic adapter result."""
+
+    conditional = getattr(winreg, "CreateKeyIfAbsent", None)
+    if callable(conditional):
+        try:
+            result = conditional(winreg.HKEY_CURRENT_USER, name)
+        except FileNotFoundError:
+            raise WindowsRegistrationError("registration_key_create_failed") from None
+        if not isinstance(result, tuple) or len(result) != 2 or not isinstance(result[1], bool):
+            raise WindowsRegistrationError("registration_key_creation_unverified")
+        return result[0], result[1]
+    # winreg.CreateKey does not expose RegCreateKeyEx's disposition.  It can
+    # still create the key for forward progress, but None cannot prove
+    # exclusive ownership for a later destructive cleanup.
+    try:
+        return winreg.CreateKey(winreg.HKEY_CURRENT_USER, name), None
+    except FileNotFoundError:
+        raise WindowsRegistrationError("registration_key_create_failed") from None
+
+
+def _delete_registry_key_if_unchanged(
+    winreg: Any,
+    name: str,
+    expected: tuple[WindowsRegistryValueSnapshot, ...],
+) -> None:
+    """Delete a key only through an adapter compare-delete primitive."""
+
+    conditional = getattr(winreg, "DeleteKeyIfUnchanged", None)
+    if not callable(conditional):
+        raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
+    try:
+        result = conditional(winreg.HKEY_CURRENT_USER, name, expected)
+    except FileNotFoundError:
+        return
+    if not isinstance(result, bool) or not result:
+        raise WindowsRegistrationError("registration_restore_target_changed")
+
+
 def _plan_token(
     executable: Path,
     start_menu: Path,
@@ -863,7 +1080,8 @@ def _decode_legacy_journal(decoded: object) -> _RegistrationJournal:
     desired_shortcuts_raw = decoded.get("desired_shortcuts")
     desired_registry_raw = decoded.get("desired_registry")
     if (
-        phase not in {"applying", "installed", "restoring", "uninstalling"}
+        not isinstance(phase, str)
+        or phase not in {"applying", "installed", "restoring", "uninstalling"}
         or not isinstance(active_raw, list)
         or len(active_raw) > _MAX_STATUS_ITEMS
         or any(not isinstance(name, str) for name in active_raw)
@@ -894,7 +1112,7 @@ def _decode_legacy_journal(decoded: object) -> _RegistrationJournal:
                 raise ValueError
             desired_registry[name] = (int(value_type), _decode_registry_data(item.get("data")))
         snapshot = _decode_snapshot(decoded["snapshot"])
-    except (ValueError, UnicodeError, RecursionError, WindowsRegistrationError):
+    except (TypeError, ValueError, UnicodeError, RecursionError, WindowsRegistrationError):
         raise WindowsRegistrationError("registration_journal_invalid") from None
     return _RegistrationJournal(
         decoded["install_root"],
@@ -923,6 +1141,7 @@ def _encode_journal(journal: _RegistrationJournal, *, phase: str, active: tuple[
         "uninstall_key": journal.uninstall_key,
         "phase": phase,
         "active": list(active),
+        "registry_key_created": journal.registry_key_created,
         "snapshot": _encode_snapshot(journal.snapshot),
         "desired_shortcuts": {
             name: base64.b64encode(data).decode("ascii")
@@ -1024,6 +1243,7 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         "desired_shortcut_identities",
         "desired_registry",
         "registry_before",
+        "registry_key_created",
     }
     if set(decoded) != required or decoded.get("schema") != _REGISTRATION_JOURNAL_SCHEMA:
         raise WindowsRegistrationError("registration_journal_invalid")
@@ -1041,9 +1261,12 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
     desired_shortcut_identities_raw = decoded.get("desired_shortcut_identities")
     desired_registry_raw = decoded.get("desired_registry")
     registry_before_raw = decoded.get("registry_before")
+    registry_key_created = decoded.get("registry_key_created")
     if (
-        phase not in {"applying", "migrating", "installed", "restoring", "uninstalling"}
+        not isinstance(phase, str)
+        or phase not in {"applying", "migrating", "installed", "restoring", "uninstalling"}
         or not isinstance(active_raw, list)
+        or not isinstance(registry_key_created, bool)
         or len(active_raw) > _MAX_STATUS_ITEMS
         or any(not isinstance(name, str) for name in active_raw)
         or len(set(active_raw)) != len(active_raw)
@@ -1091,7 +1314,7 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
                 raise ValueError
             registry_before[name] = registry_snapshot
         snapshot = _decode_snapshot(decoded["snapshot"])
-    except (ValueError, UnicodeError, WindowsRegistrationError):
+    except (TypeError, ValueError, UnicodeError, RecursionError, WindowsRegistrationError):
         raise WindowsRegistrationError("registration_journal_invalid") from None
     return _RegistrationJournal(
         decoded["install_root"],
@@ -1106,6 +1329,8 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         registry_before,
         phase,
         tuple(active_raw),
+        False,
+        registry_key_created,
     )
 
 
@@ -1376,6 +1601,8 @@ class WindowsApplicationRegistrationTransaction:
             raise WindowsRegistrationError("registration_journal_mismatch")
         if journal.snapshot.plan_token != self._plan_token():
             raise WindowsRegistrationError("registration_journal_mismatch")
+        if journal.registry_key_created and journal.snapshot.uninstall_key_present:
+            raise WindowsRegistrationError("registration_journal_invalid")
         owned = self._owned_names()
         if set(journal.active) - set(owned) or len(set(journal.active)) != len(journal.active):
             raise WindowsRegistrationError("registration_journal_invalid")
@@ -1455,192 +1682,19 @@ class WindowsApplicationRegistrationTransaction:
             self._journal = journal
         return journal
 
-    def _validate_legacy_journal(self, journal: _RegistrationJournal) -> None:
-        if not journal.legacy or journal.phase not in {
-            "applying",
-            "installed",
-            "restoring",
-            "uninstalling",
-        }:
-            raise WindowsRegistrationError("registration_journal_invalid")
-        if not _same_path(Path(journal.install_root), self._install_root):
-            raise WindowsRegistrationError("registration_journal_mismatch")
-        if not _same_path(Path(journal.executable), self._executable):
-            raise WindowsRegistrationError("registration_journal_mismatch")
-        if not _same_path(Path(journal.start_menu), self._start_menu):
-            raise WindowsRegistrationError("registration_journal_mismatch")
-        if (journal.desktop is None) != (self._desktop is None) or (
-            journal.desktop is not None
-            and self._desktop is not None
-            and not _same_path(Path(journal.desktop), self._desktop)
-        ):
-            raise WindowsRegistrationError("registration_journal_mismatch")
-        if journal.uninstall_key != self._uninstall_key:
-            raise WindowsRegistrationError("registration_journal_mismatch")
-        if journal.snapshot.plan_token != self._plan_token():
-            raise WindowsRegistrationError("registration_journal_mismatch")
-        owned = set(self._owned_names())
-        if set(journal.active) - owned or len(set(journal.active)) != len(journal.active):
-            raise WindowsRegistrationError("registration_journal_invalid")
-        shortcut_names = tuple(plan.name for plan in self._shortcut_plans())
-        if tuple(item.name for item in journal.snapshot.shortcuts) != shortcut_names:
-            raise WindowsRegistrationError("registration_journal_invalid")
-        if tuple(item.name for item in journal.snapshot.registry_values) != self._REGISTRY_NAMES:
-            raise WindowsRegistrationError("registration_journal_invalid")
-        if set(journal.desired_shortcuts) - set(shortcut_names):
-            raise WindowsRegistrationError("registration_journal_invalid")
-        if set(journal.desired_registry) != set(self._REGISTRY_NAMES):
-            raise WindowsRegistrationError("registration_journal_invalid")
-        active_shortcuts = set(journal.active) & set(shortcut_names)
-        if active_shortcuts - set(journal.desired_shortcuts):
-            raise WindowsRegistrationError("registration_journal_invalid")
-        if journal.phase == "installed" and set(journal.desired_shortcuts) != set(shortcut_names):
-            raise WindowsRegistrationError("registration_journal_invalid")
-
     def _upgrade_legacy_journal(self, journal: _RegistrationJournal) -> _RegistrationJournal:
-        """Upgrade schema 1 only after a live, canonical-surface proof."""
+        """Reject schema 1 because it contains no authenticated ownership proof.
 
-        self._validate_legacy_journal(journal)
-        current = self._current_snapshot()
-        canonical_shortcuts = self._canonical_shortcuts()
-        canonical_registry = self._canonical_registry()
-        legacy_registry = {
-            name: WindowsRegistryValueSnapshot(name, True, value_type, data)
-            for name, (value_type, data) in journal.desired_registry.items()
-        }
-        for name, expected in legacy_registry.items():
-            if name != "DisplayVersion" and not _registry_snapshot_equal(
-                expected, canonical_registry[name]
-            ):
-                raise WindowsRegistrationError("registration_journal_mismatch")
-            if name == "DisplayVersion" and not self._is_valid_display_version(expected):
-                raise WindowsRegistrationError("registration_journal_invalid")
-        for name, data in journal.desired_shortcuts.items():
-            if data != canonical_shortcuts[name]:
-                raise WindowsRegistrationError("registration_journal_mismatch")
+        Schema 1 was plaintext and did not persist the post-publication shortcut
+        identities or an independently verifiable key-creation proof.  A
+        same-user rewrite can therefore make a live canonical-looking surface
+        appear owned, including an empty pre-existing uninstall key.  Keeping
+        the journal in place gives the operator a recoverable artifact without
+        authorizing any cleanup.
+        """
 
-        current_registry = self._registry_values_by_name(current)
-        current_shortcuts = {item.name: item for item in current.shortcuts}
-        if journal.phase == "installed":
-            if not current.uninstall_key_present:
-                raise WindowsRegistrationError("registration_target_changed")
-            for name, registry_expected in canonical_registry.items():
-                current_registry_value = current_registry[name]
-                if name == "DisplayVersion":
-                    registry_expected = legacy_registry[name]
-                if not _registry_snapshot_equal(current_registry_value, registry_expected):
-                    raise WindowsRegistrationError("registration_target_changed")
-            for name, shortcut_expected in canonical_shortcuts.items():
-                current_shortcut = current_shortcuts[name]
-                if (
-                    not current_shortcut.present
-                    or current_shortcut.data != shortcut_expected
-                    or current_shortcut.identity is None
-                ):
-                    raise WindowsRegistrationError("registration_target_changed")
-            current_shortcut_identities: dict[ShortcutName, _FileIdentity] = {}
-            for name in canonical_shortcuts:
-                identity = current_shortcuts[name].identity
-                if identity is None:
-                    raise WindowsRegistrationError("registration_target_changed")
-                current_shortcut_identities[name] = identity
-            upgraded = _RegistrationJournal(
-                str(self._install_root),
-                str(self._executable),
-                str(self._start_menu),
-                str(self._desktop) if self._desktop is not None else None,
-                self._uninstall_key,
-                journal.snapshot,
-                dict(canonical_shortcuts),
-                current_shortcut_identities,
-                {
-                    name: (value.value_type or 0, value.data)
-                    for name, value in canonical_registry.items()
-                },
-                {},
-                "installed",
-                self._owned_names(),
-            )
-            if current_registry["DisplayVersion"] != canonical_registry["DisplayVersion"]:
-                upgraded.phase = "migrating"
-                upgraded.active = ("DisplayVersion",)
-                upgraded.registry_before = {"DisplayVersion": current_registry["DisplayVersion"]}
-                self._journal = upgraded
-                self._validate_journal(upgraded)
-                _write_registration_journal(
-                    self._journal_path, upgraded, phase="migrating", active=("DisplayVersion",)
-                )
-                self._complete_version_migration(upgraded)
-                return upgraded
-            upgraded.legacy = False
-            self._validate_journal(upgraded)
-            _write_registration_journal(
-                self._journal_path, upgraded, phase="installed", active=self._owned_names()
-            )
-            return upgraded
-
-        legacy_active = set(journal.active)
-        upgraded_active: list[RegistrationName] = []
-        upgraded_shortcuts: dict[ShortcutName, bytes] = {}
-        upgraded_identities: dict[ShortcutName, _FileIdentity] = {}
-        for plan in self._shortcut_plans():
-            current_shortcut = current_shortcuts[plan.name]
-            shortcut_before = next(
-                item for item in journal.snapshot.shortcuts if item.name == plan.name
-            )
-            if current_shortcut == shortcut_before:
-                continue
-            if (
-                plan.name not in legacy_active
-                or not current_shortcut.present
-                or current_shortcut.data != canonical_shortcuts[plan.name]
-                or current_shortcut.identity is None
-            ):
-                raise WindowsRegistrationError("registration_target_changed")
-            upgraded_active.append(plan.name)
-            upgraded_shortcuts[plan.name] = canonical_shortcuts[plan.name]
-            upgraded_identities[plan.name] = current_shortcut.identity
-
-        upgraded_registry_before: dict[str, WindowsRegistryValueSnapshot] = {}
-        for name in self._REGISTRY_NAMES:
-            current_registry_value = current_registry[name]
-            registry_before = next(
-                item for item in journal.snapshot.registry_values if item.name == name
-            )
-            expected = legacy_registry[name]
-            if _registry_snapshot_equal(current_registry_value, registry_before):
-                continue
-            if name not in legacy_active or not _registry_snapshot_equal(
-                current_registry_value, expected
-            ):
-                raise WindowsRegistrationError("registration_target_changed")
-            upgraded_active.append(name)
-            if name == "DisplayVersion":
-                upgraded_registry_before[name] = registry_before
-
-        upgraded = _RegistrationJournal(
-            journal.install_root,
-            journal.executable,
-            journal.start_menu,
-            journal.desktop,
-            journal.uninstall_key,
-            journal.snapshot,
-            upgraded_shortcuts,
-            upgraded_identities,
-            {
-                name: (value.value_type or 0, value.data)
-                for name, value in canonical_registry.items()
-            },
-            upgraded_registry_before,
-            journal.phase,
-            tuple(dict.fromkeys(upgraded_active)),
-        )
-        upgraded.legacy = False
-        self._validate_journal(upgraded)
-        _write_registration_journal(
-            self._journal_path, upgraded, phase=upgraded.phase, active=upgraded.active
-        )
-        return upgraded
+        del journal
+        raise WindowsRegistrationError("registration_journal_invalid")
 
     def _persist_journal(
         self,
@@ -1812,7 +1866,10 @@ class WindowsApplicationRegistrationTransaction:
         cached = self._canonical_shortcut_cache.get(plan.name)
         if cached is not None:
             return cached
-        temporary = self._temporary_path(plan.path)
+        # Recovery may be inspecting the publication temporary itself.  Keep
+        # canonical generation on a distinct fixed sibling so that validation
+        # never has to guess which temporary object is authoritative.
+        temporary = self._canonical_temporary_path(plan.path)
         generated: bytes | None = None
         try:
             generated = self._desired_shortcut_data(plan, temporary)
@@ -1984,13 +2041,16 @@ class WindowsApplicationRegistrationTransaction:
                 current_value = _registry_value_snapshot(winreg, key, "DisplayVersion")
                 if not _registry_snapshot_equal(current_value, current_version):
                     raise WindowsRegistrationError("registration_target_changed", transaction=self)
+                confirmed_value = _registry_value_snapshot(winreg, key, "DisplayVersion")
+                if not _registry_snapshot_equal(confirmed_value, current_version):
+                    raise WindowsRegistrationError("registration_target_changed", transaction=self)
                 try:
-                    winreg.SetValueEx(
+                    _set_registry_value_if_unchanged(
+                        winreg,
                         key,
-                        "DisplayVersion",
-                        0,
+                        current_value,
                         value_type,
-                        _registry_data_for_set(data),
+                        data,
                     )
                 except OSError as exc:
                     raise WindowsRegistrationError(
@@ -2055,7 +2115,13 @@ class WindowsApplicationRegistrationTransaction:
 
     @staticmethod
     def _temporary_path(path: Path) -> Path:
-        return path.with_name(f".{path.name}.{os.urandom(8).hex()}.atc-new")
+        # A fixed sibling is recoverable after a process crash and is not an
+        # attacker-selected path read from the journal.
+        return path.with_name(f".{path.name}.atc-new")
+
+    @staticmethod
+    def _canonical_temporary_path(path: Path) -> Path:
+        return path.with_name(f".{path.name}.atc-canonical")
 
     @staticmethod
     def _cleanup_temporary(path: Path, data: bytes | None) -> None:
@@ -2064,36 +2130,44 @@ class WindowsApplicationRegistrationTransaction:
             return
         if _is_reparse_or_link(metadata) or not stat.S_ISREG(metadata.st_mode):
             raise WindowsRegistrationError("registration_temporary_unsafe")
-        if int(metadata.st_nlink) != 1:
+        observed_data = _read_bounded_file(path, metadata)
+        if data is not None and observed_data != data:
             raise WindowsRegistrationError("registration_temporary_changed")
-        if data is not None and _read_bounded_file(path, metadata) != data:
-            raise WindowsRegistrationError("registration_temporary_changed")
-        try:
-            path.unlink()
-        except OSError as exc:
-            raise WindowsRegistrationError("registration_temporary_cleanup_failed") from exc
+        _quarantine_and_remove_shortcut(path, _file_identity(metadata), observed_data)
 
     @staticmethod
-    def _publish_new_shortcut(temporary: Path, target: Path) -> None:
+    def _publish_new_shortcut(temporary: Path, target: Path, data: bytes | None = None) -> None:
+        temporary_metadata = _validate_file_path(temporary, allow_missing=False)
+        if temporary_metadata is None:
+            raise WindowsRegistrationError("registration_temporary_changed")
+        temporary_identity = _file_identity(temporary_metadata)
+        temporary_data = _read_bounded_file(temporary, temporary_metadata)
+        if data is not None and data != temporary_data:
+            raise WindowsRegistrationError("registration_temporary_changed")
         try:
             os.link(temporary, target, follow_symlinks=False)
-            temporary.unlink()
         except FileExistsError as exc:
             raise WindowsRegistrationError("registration_target_changed") from exc
         except OSError as exc:
             raise WindowsRegistrationError("registration_shortcut_publish_failed") from exc
+        try:
+            _quarantine_and_remove_shortcut(temporary, temporary_identity, temporary_data)
+        except WindowsRegistrationError:
+            # The target link is intentionally left in place.  The durable
+            # journal records its identity and recovery can converge the
+            # target/temporary nlink==2 state without guessing a path.
+            raise
 
     @staticmethod
     def _publish_existing_shortcut(
         temporary: Path, target: Path, before: WindowsShortcutSnapshot
     ) -> None:
-        current = _shortcut_state(before.name, target)
-        if current != before:
-            raise WindowsRegistrationError("registration_target_changed")
-        try:
-            os.replace(temporary, target)
-        except OSError as exc:
-            raise WindowsRegistrationError("registration_shortcut_publish_failed") from exc
+        del temporary, target, before
+        # There is no cross-platform compare-and-replace primitive for a
+        # directory entry.  Refusing this branch is the no-clobber transition;
+        # a recoverable journal remains preferable to overwriting a swapped
+        # user/vendor shortcut.
+        raise WindowsRegistrationError("registration_shortcut_replace_unsupported")
 
     def _apply_shortcut(
         self,
@@ -2144,7 +2218,7 @@ class WindowsApplicationRegistrationTransaction:
             if before.present:
                 self._publish_existing_shortcut(temporary, plan.path, before)
             else:
-                self._publish_new_shortcut(temporary, plan.path)
+                self._publish_new_shortcut(temporary, plan.path, generated)
             after = _shortcut_state(plan.name, plan.path)
             if not after.present or after.data != generated or after.identity != temporary_identity:
                 raise WindowsRegistrationError("registration_shortcut_publish_unverified")
@@ -2171,11 +2245,18 @@ class WindowsApplicationRegistrationTransaction:
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._uninstall_key, 0, key_read_set)
         except FileNotFoundError:
-            self._key_created = not expected.uninstall_key_present
             try:
-                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, self._uninstall_key)
+                key, created = _create_registry_key_if_absent(winreg, self._uninstall_key)
+            except WindowsRegistrationError:
+                raise
             except OSError as exc:
                 raise WindowsRegistrationError("registration_key_create_failed") from exc
+            if created is False or (created is None and expected.uninstall_key_present):
+                raise WindowsRegistrationError("registration_target_changed") from None
+            self._key_created = created is True
+            if self._key_created and self._journal is not None:
+                self._journal.registry_key_created = True
+                self._persist_journal("applying", self._journal.active)
         except OSError as exc:
             raise WindowsRegistrationError("registration_key_open_failed") from exc
 
@@ -2187,6 +2268,9 @@ class WindowsApplicationRegistrationTransaction:
                 current = _registry_value_snapshot(winreg, key, name)
                 if not _registry_snapshot_equal(current, before):
                     raise WindowsRegistrationError("registration_target_changed")
+                confirmed = _registry_value_snapshot(winreg, key, name)
+                if not _registry_snapshot_equal(confirmed, before):
+                    raise WindowsRegistrationError("registration_target_changed")
                 desired_value = WindowsRegistryValueSnapshot(name, True, value_type, data)
                 if _registry_snapshot_equal(current, desired_value):
                     continue
@@ -2197,7 +2281,13 @@ class WindowsApplicationRegistrationTransaction:
                 self._persist_journal("applying", self._active_with(cast(RegistrationName, name)))
                 self._mutations.append(mutation)
                 try:
-                    winreg.SetValueEx(key, name, 0, value_type, _registry_data_for_set(data))
+                    _set_registry_value_if_unchanged(
+                        winreg,
+                        key,
+                        before,
+                        value_type,
+                        data,
+                    )
                 except OSError as exc:
                     raise WindowsRegistrationError("registration_value_write_failed") from exc
                 after = _registry_value_snapshot(winreg, key, name)
@@ -2302,30 +2392,77 @@ class WindowsApplicationRegistrationTransaction:
         return True
 
     def _restore_shortcut(self, mutation: _ShortcutMutation) -> None:
-        current = _shortcut_state(mutation.name, mutation.path)
         before = mutation.before
+        if mutation.remove and before.present:
+            raise WindowsRegistrationError("registration_restore_target_changed")
+        expected_identity = mutation.after_identity
+        if expected_identity is None:
+            raise WindowsRegistrationError("registration_restore_identity_unavailable")
+        canonical = self._canonical_shortcut_for_name(mutation.name)
+        if mutation.after_data != canonical:
+            raise WindowsRegistrationError("registration_restore_target_changed")
+
+        temporary = self._temporary_path(mutation.path)
+        temporary_metadata = _safe_lstat(temporary)
+        target_metadata = _safe_lstat(mutation.path)
+        if temporary_metadata is not None:
+            if _is_reparse_or_link(temporary_metadata) or not stat.S_ISREG(
+                temporary_metadata.st_mode
+            ):
+                raise WindowsRegistrationError("registration_restore_target_changed")
+            temporary_identity = _file_identity(temporary_metadata)
+            temporary_data = _read_bounded_file(temporary, temporary_metadata)
+            if (
+                target_metadata is not None
+                and int(target_metadata.st_nlink) == 2
+                and int(temporary_metadata.st_nlink) == 2
+                and not _is_reparse_or_link(target_metadata)
+                and stat.S_ISREG(target_metadata.st_mode)
+                and _same_file_identity(_file_identity(target_metadata), temporary_identity)
+                and _same_file_identity(temporary_identity, expected_identity)
+                and temporary_data == canonical
+                and _read_bounded_file(mutation.path, target_metadata) == canonical
+            ):
+                # This is the exact crash window after os.link and before the
+                # temporary hardlink cleanup.  Removing the fixed temporary
+                # entry leaves the canonical target at nlink==1.
+                _quarantine_and_remove_shortcut(temporary, expected_identity, temporary_data)
+            elif _same_file_identity(temporary_identity, expected_identity) and (
+                temporary_data == canonical
+            ):
+                _quarantine_and_remove_shortcut(temporary, expected_identity, temporary_data)
+            else:
+                raise WindowsRegistrationError("registration_restore_target_changed")
+
+        # A failed quarantine cleanup is itself recoverable.  Revisit the
+        # deterministic artifact before touching the canonical target.
+        target_quarantine = _shortcut_quarantine_path(mutation.path)
+        target_quarantine_metadata = _safe_lstat(target_quarantine)
+        if target_quarantine_metadata is not None:
+            if _is_reparse_or_link(target_quarantine_metadata) or not stat.S_ISREG(
+                target_quarantine_metadata.st_mode
+            ):
+                raise WindowsRegistrationError("registration_restore_target_changed")
+            _quarantine_and_remove_shortcut(
+                target_quarantine,
+                expected_identity,
+                _read_bounded_file(target_quarantine, target_quarantine_metadata),
+            )
+
+        current = _shortcut_state(mutation.name, mutation.path)
         if not mutation.remove and before.present and current == before:
             return
         if not current.present:
             if not before.present:
                 return
             raise WindowsRegistrationError("registration_restore_identity_unavailable")
-        canonical = self._canonical_shortcut_for_name(mutation.name)
         if (
-            mutation.after_data != canonical
-            or current.data != canonical
-            or mutation.after_identity is None
-            or current.identity != mutation.after_identity
+            current.data != canonical
+            or current.identity is None
+            or not _same_file_identity(current.identity, expected_identity)
         ):
             raise WindowsRegistrationError("registration_restore_target_changed")
-        try:
-            mutation.path.unlink()
-        except FileNotFoundError:
-            return
-        except OSError as exc:
-            raise WindowsRegistrationError("registration_restore_delete_failed") from exc
-        if _safe_lstat(mutation.path) is not None:
-            raise WindowsRegistrationError("registration_restore_unverified")
+        _quarantine_and_remove_shortcut(mutation.path, expected_identity, canonical)
 
     def _restore_registry(self, mutation: _RegistryMutation) -> None:
         winreg = self._registry if self._registry is not None else windows_registry()
@@ -2344,10 +2481,7 @@ class WindowsApplicationRegistrationTransaction:
                 canonical = self._canonical_registry().get(mutation.name)
                 if canonical is None or not _registry_snapshot_equal(current, canonical):
                     raise WindowsRegistrationError("registration_restore_target_changed")
-                try:
-                    winreg.DeleteValue(key, mutation.name)
-                except FileNotFoundError:
-                    return
+                _delete_registry_value_if_unchanged(winreg, key, canonical)
                 restored = _registry_value_snapshot(winreg, key, mutation.name)
                 if restored.present:
                     raise WindowsRegistrationError("registration_restore_unverified")
@@ -2360,31 +2494,51 @@ class WindowsApplicationRegistrationTransaction:
         except OSError as exc:
             raise WindowsRegistrationError("registration_restore_value_failed") from exc
 
-    def _restore_created_key(self) -> None:
+    def _delete_created_registry_key(self) -> bool:
+        """Delete an exclusively ATC-created key only when its whole surface is exact."""
+
         if not self._key_created:
-            return
+            return False
         winreg = self._registry if self._registry is not None else windows_registry()
         key_read = int(getattr(winreg, "KEY_READ", 0x20019))
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._uninstall_key, 0, key_read) as key:
                 subkeys, values, _ = winreg.QueryInfoKey(key)
+                if int(subkeys) != 0:
+                    return False
+                canonical = self._canonical_registry()
+                observed = tuple(
+                    _registry_value_snapshot(winreg, key, name) for name in self._REGISTRY_NAMES
+                )
+                if any(
+                    value.present and not _registry_snapshot_equal(value, canonical[value.name])
+                    for value in observed
+                ):
+                    return False
+                if int(values) != sum(value.present for value in observed):
+                    return False
         except FileNotFoundError:
             self._key_created = False
-            return
+            return True
+        except WindowsRegistrationError:
+            raise
         except OSError as exc:
             raise WindowsRegistrationError("registration_restore_key_unreadable") from exc
-        if int(subkeys) != 0 or int(values) != 0:
-            # A concurrent or unrelated value owns the key now; preserve it.
-            self._key_created = False
-            return
+        _delete_registry_key_if_unchanged(winreg, self._uninstall_key, observed)
         try:
-            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, self._uninstall_key)
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._uninstall_key, 0, key_read):
+                pass
         except FileNotFoundError:
             self._key_created = False
+            return True
         except OSError as exc:
-            raise WindowsRegistrationError("registration_restore_key_delete_failed") from exc
-        else:
-            self._key_created = False
+            raise WindowsRegistrationError("registration_restore_key_unverified") from exc
+        raise WindowsRegistrationError("registration_restore_key_unverified")
+
+    def _restore_created_key(self) -> None:
+        if not self._key_created:
+            return
+        self._delete_created_registry_key()
 
     def _recover_journal(self, journal: _RegistrationJournal) -> WindowsRegistrationRestoreStatus:
         if journal.phase == "migrating":
@@ -2392,7 +2546,11 @@ class WindowsApplicationRegistrationTransaction:
             return WindowsRegistrationRestoreStatus(True, False, 0)
         self._snapshot = journal.snapshot
         self._journal = journal
-        self._key_created = not journal.snapshot.uninstall_key_present
+        # The journal records whether CreateKey reported a new key, but that
+        # same-user-readable record is not sufficient to authorize a later
+        # path-based DeleteKey.  Only the live transaction may delete a key it
+        # created; recovery removes owned values and preserves the key.
+        self._key_created = False
         self._mutations = self._journal_mutations(journal, journal.active)
         return self.restore(journal.snapshot)
 
@@ -2415,7 +2573,10 @@ class WindowsApplicationRegistrationTransaction:
         if not self._registration_is_desired_checked(current, verify_canonical_shortcuts=True):
             raise WindowsRegistrationError("registration_target_changed", transaction=self)
         self._snapshot = journal.snapshot
-        self._key_created = not journal.snapshot.uninstall_key_present
+        # Do not turn same-user-rewritable journal metadata into a destructive
+        # DeleteKey authorization.  This transaction did not create the key;
+        # value cleanup can proceed while the key itself remains recoverable.
+        self._key_created = False
         owned = self._owned_names()
         self._mutations = self._journal_mutations(journal, owned, remove=True)
         self._persist_journal("uninstalling", owned)
@@ -2442,6 +2603,23 @@ class WindowsApplicationRegistrationTransaction:
         if self._journal is not None and active_before:
             try:
                 self._persist_journal("restoring", active_before)
+            except BaseException as exc:
+                errors.append(_safe_error_code(exc))
+        if self._key_created:
+            try:
+                if self._delete_created_registry_key():
+                    registry_mutations = {
+                        mutation.name
+                        for mutation in self._mutations
+                        if isinstance(mutation, _RegistryMutation)
+                    }
+                    removed = len(registry_mutations)
+                    self._mutations = [
+                        mutation
+                        for mutation in self._mutations
+                        if not isinstance(mutation, _RegistryMutation)
+                    ]
+                    restored_count += removed
             except BaseException as exc:
                 errors.append(_safe_error_code(exc))
         for mutation in tuple(reversed(self._mutations)):
