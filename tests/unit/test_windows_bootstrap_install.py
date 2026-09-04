@@ -192,6 +192,38 @@ def test_initial_journal_write_failure_reclaims_transaction_and_retries(
     assert bootstrap.is_complete_install(sources, install_root)
 
 
+@pytest.mark.parametrize("child", ["transaction", "staged", "backups"])
+def test_transaction_directory_creation_failure_reclaims_partial_tree_and_retries(
+    bundle: tuple[dict[str, Path], Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    child: str,
+) -> None:
+    sources, install_root, journal_root = bundle
+    install_root.mkdir()
+    journal_root.mkdir()
+    original_mkdir = Path.mkdir
+    failed = False
+
+    def fail_child_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal failed
+        is_transaction = child == "transaction" and path.parent == journal_root
+        is_child = child in {"staged", "backups"} and path.name == child
+        if (is_transaction or is_child) and not failed:
+            failed = True
+            raise OSError("disk full")
+        original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_child_mkdir)
+    with pytest.raises(bootstrap.BootstrapInstallError, match="journal_untrusted"):
+        _install(sources, install_root, journal_root)
+
+    assert list(journal_root.glob("????????????????????????")) == []
+
+    monkeypatch.setattr(Path, "mkdir", original_mkdir)
+    _install(sources, install_root, journal_root)
+    assert bootstrap.is_complete_install(sources, install_root)
+
+
 def test_existing_install_rollback_restores_all_four_components(
     bundle: tuple[dict[str, Path], Path, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -299,6 +331,146 @@ def test_committed_set_retries_cleanup_without_rolling_back(
 
     _install(sources, install_root, journal_root)
     assert not journal_path.exists()
+
+
+@pytest.mark.parametrize("child", ["staged", "backups"])
+def test_partial_terminal_cleanup_accepts_only_owned_removed_child(
+    bundle: tuple[dict[str, Path], Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    child: str,
+) -> None:
+    sources, install_root, journal_root = bundle
+    install_root.mkdir()
+    targets = bootstrap.canonical_targets(install_root)
+    for target in targets.values():
+        target.write_bytes(b"prior")
+    original_remove_empty = bootstrap._remove_empty_owned_directory
+    original_cleanup = bootstrap._remove_transaction_tree
+    captured: dict[str, object] = {}
+    removed = False
+
+    def remove_child_then_interrupt(
+        path: Path,
+        **kwargs: object,
+    ) -> None:
+        nonlocal removed
+        if path.name == child and not removed:
+            removed = True
+            original_remove_empty(path, **kwargs)
+            raise OSError("cleanup interrupted")
+        original_remove_empty(path, **kwargs)
+
+    def capture_cleanup(
+        journal: bootstrap.BootstrapInstallJournal,
+        **kwargs: object,
+    ) -> None:
+        captured["expected_transaction"] = kwargs["expected_transaction"]
+        captured["expected_entries"] = kwargs["expected_entries"]
+        original_cleanup(journal, **kwargs)
+
+    monkeypatch.setattr(
+        bootstrap,
+        "_remove_empty_owned_directory",
+        remove_child_then_interrupt,
+    )
+    monkeypatch.setattr(bootstrap, "_remove_transaction_tree", capture_cleanup)
+    with pytest.raises(bootstrap.BootstrapInstallError, match="retry_required"):
+        _install(sources, install_root, journal_root, stop_core=lambda: None)
+
+    journal_path = journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME
+    journal = bootstrap.BootstrapInstallJournal.load(journal_path)
+    assert journal.phase is bootstrap.BootstrapPhase.COMMITTED
+    removed_child = Path(journal.components[0].staged_path).parent
+    if child == "backups":
+        backup_path = journal.components[0].backup_path
+        assert backup_path is not None
+        removed_child = Path(backup_path).parent
+    assert not removed_child.exists()
+    assert "expected_entries" in captured
+
+    expected_entries = bootstrap._validate_transaction_tree(journal)
+    assert removed_child not in expected_entries
+    with pytest.raises(bootstrap.BootstrapInstallAmbiguity):
+        journal.phase = bootstrap.BootstrapPhase.STAGED
+        bootstrap._remove_transaction_tree(
+            journal,
+            expected_transaction=captured["expected_transaction"],  # type: ignore[arg-type]
+            expected_entries=captured["expected_entries"],  # type: ignore[arg-type]
+        )
+
+    journal.phase = bootstrap.BootstrapPhase.COMMITTED
+    bootstrap._remove_transaction_tree(
+        journal,
+        expected_transaction=captured["expected_transaction"],  # type: ignore[arg-type]
+        expected_entries=captured["expected_entries"],  # type: ignore[arg-type]
+    )
+    assert not Path(journal.transaction_dir).exists()
+
+    monkeypatch.setattr(bootstrap, "_remove_empty_owned_directory", original_remove_empty)
+    monkeypatch.setattr(bootstrap, "_remove_transaction_tree", original_cleanup)
+    _install(sources, install_root, journal_root)
+    assert not journal_path.exists()
+
+
+def test_rolled_back_recovery_refreshes_journal_binding_after_restart(
+    bundle: tuple[dict[str, Path], Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources, install_root, journal_root = bundle
+    install_root.mkdir()
+    targets = bootstrap.canonical_targets(install_root)
+    for target in targets.values():
+        target.write_bytes(b"prior")
+    original_replace = Path.replace
+    original_save = bootstrap.BootstrapInstallJournal.save
+    interrupted = False
+    events: list[str] = []
+
+    def fail_cutover(path: Path, destination: Path) -> Path:
+        if path.parent.name == "staged" and destination == targets["main"]:
+            raise OSError("cutover interrupted")
+        return original_replace(path, destination)
+
+    def interrupt_after_terminal_save(
+        journal: bootstrap.BootstrapInstallJournal,
+        path: Path,
+    ) -> None:
+        nonlocal interrupted
+        original_save(journal, path)
+        if journal.phase is bootstrap.BootstrapPhase.ROLLED_BACK and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "replace", fail_cutover)
+    monkeypatch.setattr(
+        bootstrap.BootstrapInstallJournal,
+        "save",
+        interrupt_after_terminal_save,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        _install(
+            sources,
+            install_root,
+            journal_root,
+            core_was_running=True,
+            stop_core=lambda: None,
+            restart_core=lambda: events.append("restart"),
+        )
+
+    monkeypatch.setattr(Path, "replace", original_replace)
+    monkeypatch.setattr(bootstrap.BootstrapInstallJournal, "save", original_save)
+    _install(
+        sources,
+        install_root,
+        journal_root,
+        core_was_running=True,
+        stop_core=lambda: None,
+        restart_core=lambda: events.append("restart"),
+    )
+
+    assert events == ["restart"]
+    assert bootstrap.is_complete_install(sources, install_root)
+    assert not (journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME).exists()
 
 
 def test_rollback_cleanup_preserves_terminal_journal_when_journal_remove_fails(

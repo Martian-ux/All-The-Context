@@ -89,6 +89,12 @@ _ACTIVE_PHASES = frozenset(
         BootstrapPhase.RETRY_REQUIRED,
     }
 )
+_CLEANUP_PHASES = frozenset(
+    {
+        BootstrapPhase.COMMITTED,
+        BootstrapPhase.ROLLED_BACK,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -808,6 +814,16 @@ def _expected_transaction_entries(journal: BootstrapInstallJournal) -> set[str]:
     return expected
 
 
+def _expected_transaction_paths(journal: BootstrapInstallJournal) -> set[Path]:
+    transaction = _absolute(Path(journal.transaction_dir))
+    expected = {transaction, transaction / "staged", transaction / "backups"}
+    for component in journal.components:
+        expected.add(_absolute(Path(component.staged_path)))
+        if component.backup_path is not None:
+            expected.add(_absolute(Path(component.backup_path)))
+    return expected
+
+
 def _relative_name(path: Path, root: Path) -> str:
     try:
         relative = _absolute(path).relative_to(_absolute(root))
@@ -970,11 +986,27 @@ def _remove_transaction_tree(
     ):
         raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
     current_bindings = _validate_transaction_tree(journal)
-    if set(current_bindings) != set(bindings) or any(
-        not _same_stat(expected, current_bindings[path])
-        if stat.S_ISREG(expected.st_mode)
-        else not _same_directory_stat(expected, current_bindings[path])
-        for path, expected in bindings.items()
+    expected_paths = _expected_transaction_paths(journal)
+    missing = set(bindings) - set(current_bindings)
+    if expected_entries is None:
+        missing = expected_paths - set(current_bindings)
+    missing_children: set[Path] = set()
+    for name in ("staged", "backups"):
+        child = _absolute(transaction / name)
+        if child not in current_bindings:
+            missing_children.add(child)
+    if missing - expected_paths or set(current_bindings) - expected_paths:
+        raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
+    if missing and journal.phase not in _CLEANUP_PHASES:
+        raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
+    if any(
+        path not in bindings
+        or (
+            not _same_stat(bindings[path], current_bindings[path])
+            if stat.S_ISREG(bindings[path].st_mode)
+            else not _same_directory_stat(bindings[path], current_bindings[path])
+        )
+        for path in current_bindings
     ):
         raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
     # The tree is bounded and has already been checked against the journal;
@@ -985,8 +1017,12 @@ def _remove_transaction_tree(
                 continue
             path = Path(value)
             absolute = _absolute(path)
+            if _absolute(path.parent) in missing_children:
+                continue
             expected = bindings.get(absolute)
             current = _plain_file_stat_if_present(path, "bootstrap_cleanup_untrusted")
+            if current is None and absolute in missing:
+                continue
             if expected is None:
                 if current is not None:
                     raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
@@ -1006,6 +1042,8 @@ def _remove_transaction_tree(
                 raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
     for name in ("staged", "backups"):
         path = transaction / name
+        if _absolute(path) in missing_children:
+            continue
         expected = bindings.get(_absolute(path))
         if expected is None:
             raise BootstrapInstallAmbiguity("bootstrap_cleanup_untrusted")
@@ -1082,24 +1120,26 @@ def _remove_unjournaled_transaction(
     transaction: Path,
     *,
     transaction_expected: os.stat_result,
-    staged_expected: os.stat_result,
-    backups_expected: os.stat_result,
+    staged_expected: os.stat_result | None,
+    backups_expected: os.stat_result | None,
     parent_expected: os.stat_result,
 ) -> None:
     """Remove only the empty tree created before initial journal authority."""
 
-    _remove_empty_owned_directory(
-        transaction / "staged",
-        expected_stat=staged_expected,
-        parent_expected=transaction_expected,
-        code="bootstrap_journal_untrusted",
-    )
-    _remove_empty_owned_directory(
-        transaction / "backups",
-        expected_stat=backups_expected,
-        parent_expected=transaction_expected,
-        code="bootstrap_journal_untrusted",
-    )
+    for path, expected in (
+        (transaction / "staged", staged_expected),
+        (transaction / "backups", backups_expected),
+    ):
+        if expected is None:
+            if _plain_directory_chain_if_present(path, "bootstrap_journal_untrusted"):
+                raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted")
+            continue
+        _remove_empty_owned_directory(
+            path,
+            expected_stat=expected,
+            parent_expected=transaction_expected,
+            code="bootstrap_journal_untrusted",
+        )
     _remove_empty_owned_directory(
         transaction,
         expected_stat=transaction_expected,
@@ -1358,6 +1398,7 @@ def _recover_existing(
                 restart_core()
                 journal.core_restart_complete = True
                 journal.save(journal_path)
+                journal_parent, journal_file = _capture_journal_binding(journal_path)
             if transaction_expected is not None:
                 _remove_transaction_tree(
                     journal,
@@ -1472,23 +1513,46 @@ def install_windows_components(
         operation_id = secrets.token_hex(12)
         transaction = evidence_root / operation_id
         evidence_stat = _plain_directory_stat(evidence_root, "bootstrap_journal_untrusted")
-        transaction_stat = _create_owned_directory(
-            transaction,
-            parent_expected=evidence_stat,
-            code="bootstrap_journal_untrusted",
-        )
+        transaction_stat: os.stat_result | None = None
+        staged_stat: os.stat_result | None = None
+        backups_stat: os.stat_result | None = None
         staged_root = transaction / "staged"
         backups_root = transaction / "backups"
-        staged_stat = _create_owned_directory(
-            staged_root,
-            parent_expected=transaction_stat,
-            code="bootstrap_journal_untrusted",
-        )
-        backups_stat = _create_owned_directory(
-            backups_root,
-            parent_expected=transaction_stat,
-            code="bootstrap_journal_untrusted",
-        )
+        try:
+            transaction_stat = _create_owned_directory(
+                transaction,
+                parent_expected=evidence_stat,
+                code="bootstrap_journal_untrusted",
+            )
+            staged_stat = _create_owned_directory(
+                staged_root,
+                parent_expected=transaction_stat,
+                code="bootstrap_journal_untrusted",
+            )
+            backups_stat = _create_owned_directory(
+                backups_root,
+                parent_expected=transaction_stat,
+                code="bootstrap_journal_untrusted",
+            )
+        except BaseException as exc:
+            if transaction_stat is not None:
+                try:
+                    _remove_unjournaled_transaction(
+                        transaction,
+                        transaction_expected=transaction_stat,
+                        staged_expected=staged_stat,
+                        backups_expected=backups_stat,
+                        parent_expected=evidence_stat,
+                    )
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except BaseException as cleanup_exc:
+                    raise BootstrapInstallError("bootstrap_journal_untrusted") from cleanup_exc
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            if isinstance(exc, BootstrapInstallError):
+                raise
+            raise BootstrapInstallError("bootstrap_journal_untrusted") from exc
         now = _utc_now()
         components = [
             BootstrapComponent(
