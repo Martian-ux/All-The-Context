@@ -27,13 +27,10 @@ import uvicorn
 from fastapi import (
     Depends,
     FastAPI,
-    File,
-    Form,
     Header,
     HTTPException,
     Query,
     Request,
-    UploadFile,
 )
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -43,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .. import __version__
@@ -1113,54 +1111,76 @@ def create_app(
 
     @app.post("/v1/admin/import")
     async def import_source(
+        http_request: Request,
         principal: Principal,
-        file: Annotated[UploadFile, File()],
-        source_service: Annotated[str, Form()] = "auto",
-        provider: Annotated[str | None, Form()] = None,
     ) -> dict[str, Any]:
         """Compatibility multipart import. Prefer the import-operations API."""
         require(principal, "admin")
-        safe_name = Path(file.filename or "import.txt").name
-        # Multipart UploadFile is async-only; stage to a temp path with bounded reads,
-        # then stream through the operation lifecycle so the same cancel/progress rules apply.
-        with tempfile.TemporaryDirectory(
-            prefix="atc-import-", dir=active_config.data_dir
-        ) as temporary_directory:
-            upload_path = Path(temporary_directory) / "source-upload"
-            total = 0
-            with upload_path.open("wb") as destination:
-                while chunk := await file.read(1024 * 1024):
-                    total += len(chunk)
-                    if total > active_config.max_import_bytes:
-                        raise InvalidStateError("import exceeds configured size limit")
-                    destination.write(chunk)
-            operation = core.import_operations.start_operation(
-                declared_byte_size=total,
-                filename=safe_name,
-                source_service=source_service,
-                provider=provider,
-            )
+        # FastAPI's File/Form parameters parse multipart before entering this
+        # handler. Parse explicitly after admission so receive, parser spool,
+        # compatibility staging, and the already-gated import helpers share one
+        # Core activity section and updater activation can fence the whole path.
+        async with core.activity_gate.activity_async():
+            # Keep form() evaluation inside the already-admitted scope. The
+            # parser owns spooled files until the whole compatibility path ends.
+            form = await http_request.form()
+            try:
+                file_value = form.get("file")
+                if not isinstance(file_value, StarletteUploadFile):
+                    raise HTTPException(status_code=422, detail="Field 'file' is required")
+                source_service_value = form.get("source_service", "auto")
+                if not isinstance(source_service_value, str):
+                    raise HTTPException(status_code=422, detail="Invalid source_service field")
+                provider_value = form.get("provider")
+                if provider_value is not None and not isinstance(provider_value, str):
+                    raise HTTPException(status_code=422, detail="Invalid provider field")
 
-            def file_iter() -> Any:
-                with upload_path.open("rb") as handle:
-                    while chunk := handle.read(1024 * 1024):
-                        yield chunk
+                safe_name = Path(file_value.filename or "import.txt").name
+                # Multipart UploadFile is async-only; stage to a temp path with bounded reads,
+                # then stream through the operation lifecycle so the same cancel/progress
+                # rules apply.
+                with tempfile.TemporaryDirectory(
+                    prefix="atc-import-", dir=active_config.data_dir
+                ) as temporary_directory:
+                    upload_path = Path(temporary_directory) / "source-upload"
+                    total = 0
+                    with upload_path.open("wb") as destination:
+                        while chunk := await file_value.read(1024 * 1024):
+                            total += len(chunk)
+                            if total > active_config.max_import_bytes:
+                                raise InvalidStateError("import exceeds configured size limit")
+                            destination.write(chunk)
+                    operation = core.import_operations.start_operation(
+                        declared_byte_size=total,
+                        filename=safe_name,
+                        source_service=source_service_value,
+                        provider=provider_value,
+                    )
 
-            finished = await run_in_threadpool(
-                core.import_operations.accept_upload,
-                str(operation["operation_id"]),
-                file_iter(),
-                expected_size=total,
-                process_after=True,
-            )
-            result = finished.get("result")
-            if isinstance(result, dict):
-                return result
-            if finished.get("status") == "complete" and finished.get("source_id"):
-                return await run_in_threadpool(
-                    core.imports.reprocess_source, str(finished["source_id"])
-                )
-            raise InvalidStateError(str(finished.get("error_message") or "import operation failed"))
+                    def file_iter() -> Any:
+                        with upload_path.open("rb") as handle:
+                            while chunk := handle.read(1024 * 1024):
+                                yield chunk
+
+                    finished = await run_in_threadpool(
+                        core.import_operations.accept_upload,
+                        str(operation["operation_id"]),
+                        file_iter(),
+                        expected_size=total,
+                        process_after=True,
+                    )
+                    result = finished.get("result")
+                    if isinstance(result, dict):
+                        return result
+                    if finished.get("status") == "complete" and finished.get("source_id"):
+                        return await run_in_threadpool(
+                            core.imports.reprocess_source, str(finished["source_id"])
+                        )
+                    raise InvalidStateError(
+                        str(finished.get("error_message") or "import operation failed")
+                    )
+            finally:
+                await form.close()
 
     @app.get("/v1/admin/candidates", deprecated=True, tags=["legacy compatibility"])
     def list_candidates(

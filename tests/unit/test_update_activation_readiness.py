@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
+import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from allthecontext.activity import CoreActivityGate
 from allthecontext.capture import BackoffPolicy
 from allthecontext.config import CoreConfig
 from allthecontext.core import app as core_app
@@ -75,6 +79,11 @@ def test_activity_snapshots_are_bounded_and_content_free(tmp_path: Path) -> None
             completed=True,
         )
         assert service.import_operations.activity_snapshot() == {
+            "active": False,
+            "count": 0,
+            "truncated": False,
+        }
+        assert service.imports.activity_snapshot() == {
             "active": False,
             "count": 0,
             "truncated": False,
@@ -330,6 +339,229 @@ def test_final_readiness_barrier_blocks_new_import_scheduler_and_lease_activity(
         attempts=1,
         backoff=BackoffPolicy(),
     )
+
+
+def test_compat_multipart_waits_for_admission_before_receive_or_temp_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    app = create_app(config, update_manager=_UpdatesStub())  # type: ignore[arg-type]
+    service = app.state.core
+    form_started = threading.Event()
+    temp_directory_created = threading.Event()
+    original_form = core_app.Request.form
+    original_temporary_directory = core_app.tempfile.TemporaryDirectory
+
+    def tracked_form(request: Any, **kwargs: Any) -> Any:
+        form_started.set()
+        return original_form(request, **kwargs)
+
+    def tracked_temporary_directory(*args: Any, **kwargs: Any) -> Any:
+        temp_directory_created.set()
+        return original_temporary_directory(*args, **kwargs)
+
+    monkeypatch.setattr(core_app.Request, "form", tracked_form)
+    monkeypatch.setattr(core_app.tempfile, "TemporaryDirectory", tracked_temporary_directory)
+
+    exclusive_started = threading.Event()
+    release_exclusive = threading.Event()
+
+    def hold_exclusive() -> None:
+        with service.activity_gate.exclusive():
+            exclusive_started.set()
+            assert release_exclusive.wait(timeout=5.0)
+
+    holder = threading.Thread(target=hold_exclusive, daemon=True)
+    request_started = threading.Event()
+    response: list[Any] = []
+
+    with TestClient(app) as client:
+        holder.start()
+        assert exclusive_started.wait(timeout=5.0)
+
+        def upload() -> None:
+            request_started.set()
+            response.append(
+                client.post(
+                    "/v1/admin/import",
+                    files={
+                        "file": (
+                            "admission.jsonl",
+                            b'{"kind":"goal","content":"admitted after update"}\n',
+                            "application/jsonl",
+                        )
+                    },
+                    data={"provider": "generic"},
+                )
+            )
+
+        request = threading.Thread(target=upload, daemon=True)
+        request.start()
+        assert request_started.wait(timeout=5.0)
+        assert not form_started.wait(timeout=0.25)
+        assert not temp_directory_created.is_set()
+        assert service.import_operations.activity_snapshot() == {
+            "active": False,
+            "count": 0,
+            "truncated": False,
+        }
+
+        release_exclusive.set()
+        holder.join(timeout=5.0)
+        request.join(timeout=10.0)
+        assert not holder.is_alive()
+        assert not request.is_alive()
+
+    assert form_started.is_set()
+    assert temp_directory_created.is_set()
+    assert response[0].status_code == 200, response[0].text
+
+
+def test_compat_multipart_drains_before_update_and_fences_new_uploads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    form_calls = 0
+    form_lock = threading.Lock()
+    first_form_started = threading.Event()
+    second_form_started = threading.Event()
+    release_first_form = threading.Event()
+    original_form = core_app.Request.form
+
+    def tracked_form(request: Any, **kwargs: Any) -> Any:
+        nonlocal form_calls
+        with form_lock:
+            form_calls += 1
+            call_number = form_calls
+        if call_number == 1:
+            first_form_started.set()
+            assert release_first_form.wait(timeout=5.0)
+        elif call_number == 2:
+            second_form_started.set()
+        return original_form(request, **kwargs)
+
+    monkeypatch.setattr(core_app.Request, "form", tracked_form)
+
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    app = create_app(config, update_manager=_UpdatesStub())  # type: ignore[arg-type]
+    payload = b'{"kind":"goal","content":"first compatibility upload"}\n'
+    first_response: list[Any] = []
+    second_response: list[Any] = []
+    exclusive_started = threading.Event()
+    release_exclusive = threading.Event()
+
+    def post_upload(target: list[Any], content: bytes) -> None:
+        target.append(
+            client.post(
+                "/v1/admin/import",
+                files={"file": ("compat.jsonl", content, "application/jsonl")},
+                data={"provider": "generic"},
+            )
+        )
+
+    def hold_exclusive() -> None:
+        with app.state.core.activity_gate.exclusive():
+            exclusive_started.set()
+            assert release_exclusive.wait(timeout=5.0)
+
+    with TestClient(app) as client:
+        first = threading.Thread(target=post_upload, args=(first_response, payload), daemon=True)
+        first.start()
+        assert first_form_started.wait(timeout=5.0)
+
+        update = threading.Thread(target=hold_exclusive, daemon=True)
+        update.start()
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            with app.state.core.activity_gate._condition:
+                if app.state.core.activity_gate._waiting_exclusive:
+                    break
+            time.sleep(0.01)
+        else:
+            pytest.fail("updater did not enter the activity admission queue")
+
+        second = threading.Thread(target=post_upload, args=(second_response, payload), daemon=True)
+        second.start()
+        assert not second_form_started.wait(timeout=0.25)
+
+        release_first_form.set()
+        first.join(timeout=10.0)
+        assert not first.is_alive()
+        assert first_response[0].status_code == 200, first_response[0].text
+        assert exclusive_started.wait(timeout=5.0)
+        assert not second_form_started.is_set()
+
+        release_exclusive.set()
+        update.join(timeout=10.0)
+        second.join(timeout=10.0)
+        assert not update.is_alive()
+        assert not second.is_alive()
+
+    assert second_response[0].status_code == 200, second_response[0].text
+    assert form_calls == 2
+
+
+@pytest.mark.parametrize("failure", ["malformed", "size_limit"])
+def test_compat_multipart_failures_release_gate_and_temp_files(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    if failure == "size_limit":
+        config = replace(config, max_import_bytes=1)
+    updates = _UpdatesStub()
+    app = create_app(config, update_manager=updates)  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        if failure == "malformed":
+            response = client.post(
+                "/v1/admin/import",
+                content=b"",
+                headers={"Content-Type": "multipart/form-data"},
+            )
+            assert response.status_code == 400, response.text
+        else:
+            response = client.post(
+                "/v1/admin/import",
+                files={"file": ("too-large.txt", b"12", "text/plain")},
+            )
+            assert response.status_code == 422, response.text
+
+        assert app.state.core.import_operations.activity_snapshot() == {
+            "active": False,
+            "count": 0,
+            "truncated": False,
+        }
+        assert not list(config.data_dir.glob("atc-import-*"))
+        update_response = client.post("/v1/admin/updates/install")
+        assert update_response.status_code == 200, update_response.text
+
+
+def test_async_activity_cancellation_releases_gate_reader() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        entered = asyncio.Event()
+
+        async def hold_until_cancelled() -> None:
+            async with gate.activity_async():
+                entered.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(hold_until_cancelled())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        def acquire_exclusive() -> bool:
+            with gate.exclusive():
+                return True
+
+        assert await asyncio.wait_for(asyncio.to_thread(acquire_exclusive), timeout=5.0)
+
+    asyncio.run(exercise())
 
 
 def test_direct_reprocess_activity_is_visible_while_processing(
