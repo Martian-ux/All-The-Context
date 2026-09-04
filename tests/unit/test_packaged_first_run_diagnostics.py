@@ -534,7 +534,6 @@ def test_packaged_mcp_surface_is_exactly_read_only() -> None:
     expected = {
         "bootstrap_context",
         "codex_user_prompt_submit_read",
-        "context_status",
         "get_context_item",
         "search_context",
     }

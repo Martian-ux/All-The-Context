@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import sys
 import threading
 import time
@@ -1016,6 +1017,96 @@ def test_run_cycle_expected_errors_are_content_free_not_fake_success(
         )
         with pytest.raises(TypeError, match="internal-scheduler-bug"):
             service.capture_scheduler.run_cycle()
+
+
+def test_run_cycle_contains_only_transient_sqlite_contention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    with CoreService(config) as service:
+        write_scheduler_enabled(config.data_dir, enabled=True)
+
+        def raise_locked() -> Any:
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(service.capture_scheduler._scheduler, "run_once", raise_locked)
+        report = service.capture_scheduler.run_cycle()
+
+        assert report.plan.enabled is True
+        assert report.dispatched == ()
+        assert report.results == ()
+        assert report.health.state == "unavailable"
+        assert report.health.reason_codes == ("capture_failed",)
+
+        def raise_disk_io() -> Any:
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(service.capture_scheduler._scheduler, "run_once", raise_disk_io)
+        with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+            service.capture_scheduler.run_cycle()
+
+
+def test_transient_sqlite_contention_keeps_loop_alive_for_workspace_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorized = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        source_id = str(authorized["id"])
+        service.capture.enable(source_id)
+        write_scheduler_enabled(config.data_dir, enabled=True)
+
+        original_list_sources = service.capture.list_sources
+        attempts = 0
+        first_contention = threading.Event()
+
+        def list_sources_with_one_transient_lock(
+            *, limit: int = 100, offset: int = 0
+        ) -> tuple[list[Any], int]:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                first_contention.set()
+                raise sqlite3.OperationalError("database is locked")
+            return original_list_sources(limit=limit, offset=offset)
+
+        monkeypatch.setattr(service.capture, "list_sources", list_sources_with_one_transient_lock)
+        service.capture_scheduler._scheduler.config = SchedulerConfig(
+            enabled=False,
+            poll_interval_seconds=1,
+            incremental_interval_seconds=300,
+            max_sources_per_cycle=500,
+            max_source_pages_per_cycle=1,
+            max_health_pages=4,
+            max_workers=1,
+        )
+        try:
+            service.capture_scheduler.start()
+            _wait_until(lambda: first_contention.is_set())
+            assert service.capture_scheduler.status()["running"] is True
+
+            service.capture_scheduler._wakeup.set()
+            _wait_until(
+                lambda: (
+                    LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
+                    and service.capture.status(source_id).get("last_run", {}).get("state")
+                    == "completed"
+                )
+            )
+            assert service.capture_scheduler.status()["running"] is True
+            assert attempts >= 2
+        finally:
+            service.capture_scheduler.shutdown()
 
 
 def test_loop_keeps_running_after_expected_capture_error(

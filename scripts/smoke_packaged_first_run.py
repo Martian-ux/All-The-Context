@@ -450,7 +450,6 @@ _PACKAGED_MCP_TOOLS = frozenset(
     {
         "bootstrap_context",
         "codex_user_prompt_submit_read",
-        "context_status",
         "get_context_item",
         "search_context",
     }

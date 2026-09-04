@@ -16,6 +16,7 @@ adapter logic.
 from __future__ import annotations
 
 import os
+import sqlite3
 import threading
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -52,6 +53,17 @@ UPDATE_HEALTH_OPERATION_ENV = "ATC_UPDATE_HEALTH_OPERATION"
 _CORE_SCHEDULER_JOIN_TIMEOUT_SECONDS = 8.0
 _CORE_SCHEDULER_JOIN_POLL_SECONDS = 0.05
 _CORE_SCHEDULER_THREAD_NAME = "atc-capture-scheduler"
+
+
+def _is_transient_sqlite_contention(error: sqlite3.OperationalError) -> bool:
+    """Recognize SQLite lock arbitration without hiding other storage faults."""
+
+    return " ".join(str(error).casefold().split()) in {
+        "database is busy",
+        "database is locked",
+        "database schema is locked",
+        "database table is locked",
+    }
 
 
 def _merge_health(left: HealthState, right: HealthState) -> HealthState:
@@ -883,6 +895,10 @@ class CoreCaptureScheduler:
                     return self._scheduler.run_once()
                 except CaptureError as error:
                     return self._content_free_cycle_failure(error.code)
+                except sqlite3.OperationalError as error:
+                    if not _is_transient_sqlite_contention(error):
+                        raise
+                    return self._content_free_cycle_failure("capture_failed")
                 except OSError:
                     return self._content_free_cycle_failure("capture_failed")
                 finally:
@@ -902,6 +918,9 @@ class CoreCaptureScheduler:
                 try:
                     if self.dispatch_allowed():
                         self.run_cycle()
+                except sqlite3.OperationalError as error:
+                    if not _is_transient_sqlite_contention(error):
+                        raise
                 except (CaptureError, OSError):
                     pass
                 if self._try_exit(current):
