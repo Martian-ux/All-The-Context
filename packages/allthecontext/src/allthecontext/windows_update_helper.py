@@ -1070,7 +1070,33 @@ def _validate_journal_storage_paths(
             raise HelperError("journal_digest_invalid")
 
 
-def _validate_startup_state(value: dict[str, Any]) -> str:
+def _is_packaged_terminal_replay_state(
+    value: dict[str, Any],
+    packaged_source_commit: str | None,
+) -> bool:
+    """Recognize only the state-first half of an old-helper terminal replay."""
+
+    current_source_commit = value.get("current_source_commit")
+    return bool(
+        packaged_source_commit is not None
+        and value.get("phase") == "installed"
+        and isinstance(current_source_commit, str)
+        and current_source_commit != packaged_source_commit
+        and value.get("offered_source_commit") == current_source_commit
+        and _valid_operation_id(value.get("operation_id"))
+        and isinstance(value.get("transaction_path"), str)
+        and bool(value.get("transaction_path"))
+        and _valid_digest(value.get("handoff_identity"))
+        and value.get("pending_handoff_identity") is None
+        and value.get("completed_handoff_identity") is None
+    )
+
+
+def _validate_startup_state(
+    value: dict[str, Any],
+    *,
+    allow_packaged_terminal_replay: bool = False,
+) -> str:
     legacy_fields = STARTUP_STATE_FIELDS - {
         "automatic_staging_paused",
         "current_source_commit",
@@ -1090,7 +1116,13 @@ def _validate_startup_state(value: dict[str, Any]) -> str:
     packaged_source_commit = _packaged_source_commit()
     if packaged_runtime and (
         packaged_source_commit is None
-        or value.get("current_source_commit") != packaged_source_commit
+        or (
+            value.get("current_source_commit") != packaged_source_commit
+            and not (
+                allow_packaged_terminal_replay
+                and _is_packaged_terminal_replay_state(value, packaged_source_commit)
+            )
+        )
     ):
         raise HelperError("startup_state_invalid")
     phase = value.get("phase")
@@ -2196,25 +2228,52 @@ def launch_recovery_helper(helper: Path, journal: Path) -> None:
     _spawn_recovery_helper(selected_helper, journal)
 
 
-def _dispatch_terminal_replay(journal_path: Path) -> int:
-    """Move a committed replay from the old packaged helper to the target."""
+def _dispatch_terminal_replay_target(journal: UpdateJournal, journal_path: Path) -> None:
+    """Validate a committed A-to-B handoff before starting the installed B helper."""
 
-    journal = UpdateJournal.load(journal_path, terminal_replay=True)
     if journal.phase is not HelperPhase.COMMITTED:
         raise HelperError("journal_identity_invalid")
-    if not _same_path(Path(sys.executable), Path(journal.helper_path)) or not _verified(
-        Path(journal.helper_path),
-        journal.recovery_helper_sha256,
-        journal.recovery_helper_size,
-    ):
-        raise HelperError("recovery_helper_untrusted")
     _validate_handoff_state(journal, journal_path, terminal_replay=True)
     target_digest, target_size = _validate_component_manifest(journal)
     target_helper = Path(journal.stable_update_helper_path)
     if not _verified(target_helper, target_digest, target_size):
         raise HelperError("recovery_helper_untrusted")
     _spawn_recovery_helper(target_helper, journal_path)
+
+
+def _dispatch_terminal_replay(journal_path: Path) -> int:
+    """Move a committed replay from the old packaged helper to the target."""
+
+    journal = UpdateJournal.load(journal_path, terminal_replay=True)
+    if not _same_path(Path(sys.executable), Path(journal.helper_path)) or not _verified(
+        Path(journal.helper_path),
+        journal.recovery_helper_sha256,
+        journal.recovery_helper_size,
+    ):
+        raise HelperError("recovery_helper_untrusted")
+    _dispatch_terminal_replay_target(journal, journal_path)
     return 0
+
+
+def _dispatch_startup_terminal_replay(
+    state_path: Path,
+    state: dict[str, Any],
+) -> None:
+    """Dispatch an authenticated committed replay discovered by Core startup."""
+
+    operation_id = state.get("operation_id")
+    transaction = state.get("transaction_path")
+    if not _valid_operation_id(operation_id) or not isinstance(transaction, str):
+        raise HelperError("startup_state_invalid")
+    expected = state_path.parent / "transactions" / cast(str, operation_id) / "journal.json"
+    if not _same_path(Path(transaction), expected):
+        raise HelperError("startup_state_mismatch")
+    _plain_directory_chain(expected.parent, "startup_state_untrusted")
+    _plain_file_stat(expected, "startup_state_untrusted")
+    journal = UpdateJournal.load(expected, terminal_replay=True)
+    if journal.operation_id != operation_id or not _same_path(Path(journal.state_path), state_path):
+        raise HelperError("startup_state_mismatch")
+    _dispatch_terminal_replay_target(journal, expected)
 
 
 def _process_exists(pid: int) -> bool:
@@ -3422,11 +3481,36 @@ def ensure_recovery_before_core() -> bool:
     try:
         phase = _validate_startup_state(state)
     except HelperError:
-        _write_startup_recovery_diagnostic(
-            state_path,
-            status="blocked",
-            code="startup_state_invalid",
-        )
+        try:
+            phase = _validate_startup_state(
+                state,
+                allow_packaged_terminal_replay=True,
+            )
+        except HelperError:
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_invalid",
+            )
+            return False
+        if phase != "installed":
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="startup_state_invalid",
+                phase=phase,
+            )
+            return False
+        try:
+            _dispatch_startup_terminal_replay(state_path, state)
+        except (HelperError, OSError):
+            _write_startup_recovery_diagnostic(
+                state_path,
+                status="blocked",
+                code="helper_launch_failed",
+                phase=phase,
+            )
+            return False
         return False
     transaction = state.get("transaction_path")
     operation_id = state.get("operation_id")
