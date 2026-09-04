@@ -210,6 +210,7 @@ def test_transaction_directory_creation_failure_reclaims_partial_tree_and_retrie
         is_child = child in {"staged", "backups"} and path.name == child
         if (is_transaction or is_child) and not failed:
             failed = True
+            original_mkdir(path, *args, **kwargs)
             raise OSError("disk full")
         original_mkdir(path, *args, **kwargs)
 
@@ -222,6 +223,100 @@ def test_transaction_directory_creation_failure_reclaims_partial_tree_and_retrie
     monkeypatch.setattr(Path, "mkdir", original_mkdir)
     _install(sources, install_root, journal_root)
     assert bootstrap.is_complete_install(sources, install_root)
+
+
+def test_owned_directory_creation_preserves_preexisting_directory(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    path = parent / "owned"
+    path.mkdir()
+    parent_stat = parent.lstat()
+
+    with pytest.raises(bootstrap.BootstrapInstallAmbiguity):
+        bootstrap._create_owned_directory(
+            path,
+            parent_expected=parent_stat,
+            code="bootstrap_journal_untrusted",
+        )
+
+    assert path.is_dir()
+
+
+def test_create_then_raise_preserves_substituted_non_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    path = parent / "owned"
+    parent_stat = parent.lstat()
+    original_mkdir = Path.mkdir
+
+    def substitute_then_raise(
+        value: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        original_mkdir(value, *args, **kwargs)
+        value.rmdir()
+        value.write_bytes(b"unowned")
+        raise OSError("directory identity changed")
+
+    monkeypatch.setattr(Path, "mkdir", substitute_then_raise)
+    with pytest.raises(bootstrap.BootstrapInstallError):
+        bootstrap._create_owned_directory(
+            path,
+            parent_expected=parent_stat,
+            code="bootstrap_journal_untrusted",
+        )
+
+    assert path.read_bytes() == b"unowned"
+
+
+def test_create_then_raise_preserves_substituted_directory_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    path = parent / "owned"
+    parent_stat = parent.lstat()
+    original_mkdir = Path.mkdir
+    original_plain_stat = bootstrap._plain_directory_stat
+    replaced = False
+
+    def substitute_after_capture(value: Path, code: str):
+        nonlocal replaced
+        result = original_plain_stat(value, code)
+        if not replaced and bootstrap._same_path(value, path):
+            replacement = parent / "replacement"
+            original_mkdir(replacement)
+            value.rmdir()
+            replacement.replace(value)
+            replaced = True
+        return result
+
+    def create_then_raise(
+        value: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        original_mkdir(value, *args, **kwargs)
+        raise OSError("directory creation reported failure")
+
+    monkeypatch.setattr(bootstrap, "_plain_directory_stat", substitute_after_capture)
+    monkeypatch.setattr(Path, "mkdir", create_then_raise)
+    with pytest.raises(bootstrap.BootstrapInstallAmbiguity):
+        bootstrap._create_owned_directory(
+            path,
+            parent_expected=parent_stat,
+            code="bootstrap_journal_untrusted",
+        )
+
+    assert replaced
+    assert path.is_dir()
 
 
 def test_existing_install_rollback_restores_all_four_components(

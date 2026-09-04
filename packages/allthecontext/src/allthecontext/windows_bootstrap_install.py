@@ -64,6 +64,21 @@ class BootstrapInstallAmbiguity(BootstrapInstallError):
         super().__init__(code)
 
 
+class _OwnedDirectoryCreateFailure(Exception):
+    """A directory was created, then its create operation reported failure."""
+
+    def __init__(
+        self,
+        path: Path,
+        created_stat: os.stat_result,
+        cause: BaseException,
+    ) -> None:
+        self.path = path
+        self.created_stat = created_stat
+        self.cause = cause
+        super().__init__(str(cause))
+
+
 class BootstrapPhase(StrEnum):
     STAGING = "staging"
     STAGED = "staged"
@@ -541,12 +556,47 @@ def _create_owned_directory(
         absolute.mkdir()
     except FileExistsError as exc:
         raise BootstrapInstallAmbiguity(code) from exc
-    except OSError as exc:
-        raise BootstrapInstallError(code) from exc
-    created = _plain_directory_stat(absolute, code)
+    except BaseException as exc:
+        try:
+            created = _capture_owned_directory_stat(
+                absolute,
+                parent_expected=parent_expected,
+                code=code,
+            )
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BootstrapInstallError:
+            raise
+        except BaseException as inspect_exc:
+            raise BootstrapInstallError(code) from inspect_exc
+        raise _OwnedDirectoryCreateFailure(absolute, created, exc) from exc
+    return _capture_owned_directory_stat(
+        absolute,
+        parent_expected=parent_expected,
+        code=code,
+    )
+
+
+def _capture_owned_directory_stat(
+    path: Path,
+    *,
+    parent_expected: os.stat_result,
+    code: str,
+) -> os.stat_result:
+    """Capture a stable plain directory identity under its expected parent."""
+
+    created = _plain_directory_stat(path, code)
     if not _same_directory_stat(
         parent_expected,
-        _plain_directory_stat(absolute.parent, code),
+        _plain_directory_stat(path.parent, code),
+    ):
+        raise BootstrapInstallAmbiguity(code)
+    current = _plain_directory_stat(path, code)
+    if not _same_directory_stat(created, current):
+        raise BootstrapInstallAmbiguity(code)
+    if not _same_directory_stat(
+        parent_expected,
+        _plain_directory_stat(path.parent, code),
     ):
         raise BootstrapInstallAmbiguity(code)
     return created
@@ -1535,6 +1585,30 @@ def install_windows_components(
                 code="bootstrap_journal_untrusted",
             )
         except BaseException as exc:
+            if isinstance(exc, _OwnedDirectoryCreateFailure):
+                created_path = _absolute(exc.path)
+                if _same_path(created_path, transaction):
+                    if (
+                        transaction_stat is not None
+                        or staged_stat is not None
+                        or backups_stat is not None
+                    ):
+                        raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted") from exc
+                    transaction_stat = exc.created_stat
+                elif _same_path(created_path, staged_root):
+                    if (
+                        transaction_stat is None
+                        or staged_stat is not None
+                        or backups_stat is not None
+                    ):
+                        raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted") from exc
+                    staged_stat = exc.created_stat
+                elif _same_path(created_path, backups_root):
+                    if transaction_stat is None or staged_stat is None or backups_stat is not None:
+                        raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted") from exc
+                    backups_stat = exc.created_stat
+                else:
+                    raise BootstrapInstallAmbiguity("bootstrap_journal_untrusted") from exc
             if transaction_stat is not None:
                 try:
                     _remove_unjournaled_transaction(
@@ -1548,11 +1622,12 @@ def install_windows_components(
                     raise
                 except BaseException as cleanup_exc:
                     raise BootstrapInstallError("bootstrap_journal_untrusted") from cleanup_exc
-            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                raise
-            if isinstance(exc, BootstrapInstallError):
-                raise
-            raise BootstrapInstallError("bootstrap_journal_untrusted") from exc
+            cause = exc.cause if isinstance(exc, _OwnedDirectoryCreateFailure) else exc
+            if isinstance(cause, (KeyboardInterrupt, SystemExit)):
+                raise cause from None
+            if isinstance(cause, BootstrapInstallError):
+                raise cause from None
+            raise BootstrapInstallError("bootstrap_journal_untrusted") from cause
         now = _utc_now()
         components = [
             BootstrapComponent(
