@@ -3557,6 +3557,74 @@ def test_automatic_staging_can_be_resumed_after_cancellation(tmp_path: Path) -> 
     assert installer.handed_off is False
 
 
+def test_automatic_staging_resume_after_clear_error_rebases_cadence(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    assert manager.check()["phase"] == "available"
+    checked_at = manager.state.last_checked_at
+    assert checked_at is not None
+    manager.cancel()
+
+    cleared = manager.clear_error()
+    assert cleared["phase"] == "idle"
+    assert cleared["automatic_staging_paused"] is True
+    assert cleared["last_checked_at"] == checked_at
+    assert cleared["last_error"] is None
+    assert manager.clear_error()["last_checked_at"] == checked_at
+
+    automation = UpdateAutomation(manager)
+    paused = automation.run_once()
+    assert paused["phase"] == "idle"
+    assert transport.metadata_calls == 1
+
+    resumed = manager.configure(
+        enabled=True,
+        channel="stable",
+        automatic_staging_enabled=True,
+    )
+    assert resumed["phase"] == "idle"
+    assert resumed["automatic_staging_paused"] is False
+    assert resumed["last_checked_at"] is None
+    assert resumed["last_error"] is None
+    assert transport.metadata_calls == 1
+
+    first = automation.run_once()
+    assert first["phase"] == "ready"
+    assert transport.metadata_calls == 2
+    assert transport.stream_calls == 1
+    assert installer.handed_off is False
+
+    second = automation.run_once()
+    assert second["phase"] == "ready"
+    assert transport.metadata_calls == 2
+    assert transport.stream_calls == 1
+
+
+def test_ordinary_update_preference_save_preserves_check_cadence(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    checked_at = manager.state.last_checked_at
+    assert checked_at is not None
+
+    saved = manager.configure(
+        enabled=True,
+        channel="stable",
+        automatic_staging_enabled=False,
+    )
+    assert saved["phase"] == "available"
+    assert saved["automatic_staging_paused"] is False
+    assert saved["last_checked_at"] == checked_at
+
+    status = UpdateAutomation(manager).run_once()
+    assert status["phase"] == "available"
+    assert transport.metadata_calls == 1
+
+
 def test_automatic_download_uses_the_current_candidate_after_supersession(
     tmp_path: Path,
 ) -> None:

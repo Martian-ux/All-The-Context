@@ -3132,6 +3132,16 @@ class UpdateManager:
             and self._packaged_windows_staging_supported()
         )
 
+    def _resume_automatic_staging(self) -> None:
+        """Clear an explicit staging pause and rebase scheduled-check cadence."""
+
+        self.state.automatic_staging_paused = False
+        self._cancel.clear()
+        if self.state.phase is UpdatePhase.CANCELLED:
+            self.state.phase = UpdatePhase.IDLE
+        self.state.last_checked_at = None
+        self.state.last_error = None
+
     def public_status(self) -> dict[str, Any]:
         with self._operation_lock:
             result = asdict(self.state)
@@ -3206,7 +3216,7 @@ class UpdateManager:
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed(preferences=True)
             resume_automatic_staging = (
-                automatic_staging_enabled and self.state.phase is UpdatePhase.CANCELLED
+                automatic_staging_enabled and self.state.automatic_staging_paused
             )
             channel_changed = channel != self.preferences.channel
             if (
@@ -3232,12 +3242,11 @@ class UpdateManager:
             self._atomic_json(self.preferences_path, asdict(next_preferences))
             self.preferences = next_preferences
             if automatic_staging_enabled:
-                self.state.automatic_staging_paused = False
-                self._cancel.clear()
-                if resume_automatic_staging and self.state.phase is UpdatePhase.CANCELLED:
-                    self.state.phase = UpdatePhase.IDLE
-                    self.state.last_checked_at = None
-                    self.state.last_error = None
+                if resume_automatic_staging:
+                    self._resume_automatic_staging()
+                else:
+                    self.state.automatic_staging_paused = False
+                    self._cancel.clear()
             else:
                 self.state.automatic_staging_paused = False
             if channel_changed:
