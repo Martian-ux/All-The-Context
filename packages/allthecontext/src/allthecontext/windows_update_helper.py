@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -31,7 +32,12 @@ from filelock import FileLock, Timeout
 from platformdirs import user_data_path
 
 from . import __version__
-from .build_identity import COMMIT_PATTERN
+from .build_identity import (
+    COMMIT_PATTERN,
+    BuildIdentity,
+    BuildIdentityError,
+    runtime_build_identity,
+)
 from .credentials import (
     CredentialStore,
     DevelopmentFileCredentialStore,
@@ -491,6 +497,36 @@ def _update_keyring_path() -> Path:
     return Path(__file__).resolve().with_name("update_keys.json")
 
 
+def _packaged_helper_runtime() -> bool:
+    return bool(getattr(sys, "frozen", False)) and platform.system() == "Windows"
+
+
+def _packaged_source_commit() -> str | None:
+    """Return the immutable source binding for a frozen Windows helper.
+
+    Source-mode tests and developer runs intentionally have no embedded build
+    identity.  A frozen helper has no such compatibility: an unavailable or
+    contradictory identity is represented by ``None`` and every packaged
+    provenance check below rejects it.
+    """
+
+    if not _packaged_helper_runtime():
+        return None
+    try:
+        identity = runtime_build_identity(required=True)
+    except BuildIdentityError:
+        return None
+    if identity is None:
+        return None
+    if (
+        identity.platform != "windows"
+        or identity.architecture != "x86_64"
+        or not COMMIT_PATTERN.fullmatch(identity.source_commit)
+    ):
+        return None
+    return identity.source_commit
+
+
 def _update_architecture() -> str | None:
     machine = platform.machine().casefold()
     if machine in {"amd64", "x86_64", "x64"}:
@@ -509,6 +545,10 @@ def _pre_cutover_staging_evidence(operation_id: str, state: dict[str, Any]) -> b
     manifest = operation_dir / "manifest.json"
     downloaded_path = state.get("downloaded_path")
     manifest_identity = state.get("manifest_identity")
+    packaged_runtime = _packaged_helper_runtime()
+    packaged_source_commit = _packaged_source_commit()
+    if packaged_runtime and packaged_source_commit is None:
+        return False
     if not isinstance(downloaded_path, str) or not _valid_digest(manifest_identity):
         return False
     try:
@@ -528,12 +568,19 @@ def _pre_cutover_staging_evidence(operation_id: str, state: dict[str, Any]) -> b
         if not _verified(manifest, cast(str, manifest_identity), manifest_stat.st_size):
             return False
         value = _read_json(manifest, MAX_STAGING_MANIFEST_BYTES)
+        if packaged_runtime and (
+            state.get("current_source_commit") != packaged_source_commit
+            or not isinstance(state.get("offered_source_commit"), str)
+            or state.get("offered_source_commit") != value.get("source_commit")
+        ):
+            return False
         verify_manifest(
             value,
             load_keyring(_update_keyring_path()),
             current_version=__version__,
             require_source_commit=(
-                state.get("current_source_commit") is not None
+                packaged_runtime
+                or state.get("current_source_commit") is not None
                 or state.get("offered_source_commit") is not None
             ),
         )
@@ -1038,6 +1085,13 @@ def _validate_startup_state(value: dict[str, Any]) -> str:
     }
     if set(value) not in accepted_fields:
         raise HelperError("startup_state_invalid")
+    packaged_runtime = _packaged_helper_runtime()
+    packaged_source_commit = _packaged_source_commit()
+    if packaged_runtime and (
+        packaged_source_commit is None
+        or value.get("current_source_commit") != packaged_source_commit
+    ):
+        raise HelperError("startup_state_invalid")
     phase = value.get("phase")
     if not isinstance(phase, str) or phase not in STARTUP_RECOVERY_PHASES:
         raise HelperError("startup_state_invalid")
@@ -1212,6 +1266,10 @@ class UpdateJournal:
     component_manifest_path: str | None = None
     component_manifest_sha256: str | None = None
     component_manifest_size: int | None = None
+    current_source_commit: str | None = None
+    target_source_commit: str | None = None
+    rollback_source_commit: str | None = None
+    recovery_source_commit: str | None = None
     schema_version: int = JOURNAL_SCHEMA_VERSION
 
     @classmethod
@@ -1232,10 +1290,22 @@ class UpdateJournal:
             "component_manifest_sha256",
             "component_manifest_size",
         }
+        source_fields = {
+            "current_source_commit",
+            "target_source_commit",
+            "rollback_source_commit",
+            "recovery_source_commit",
+        }
         if set(value) == expected - legacy_fields:
             value.update({field: None for field in legacy_fields})
         elif set(value) == expected - component_fields:
             value.update({field: None for field in component_fields})
+        elif set(value) == expected - source_fields:
+            value.update({field: None for field in source_fields})
+        elif set(value) == expected - source_fields - legacy_fields:
+            value.update({field: None for field in source_fields | legacy_fields})
+        elif set(value) == expected - source_fields - component_fields:
+            value.update({field: None for field in source_fields | component_fields})
         elif set(value) != expected:
             raise HelperError("journal_shape_invalid")
         try:
@@ -1270,6 +1340,33 @@ class UpdateJournal:
             JOURNAL_SCHEMA_VERSION,
             LEGACY_JOURNAL_SCHEMA_VERSION,
         } or not _valid_operation_id(self.operation_id):
+            raise HelperError("journal_identity_invalid")
+        source_commits = (
+            self.current_source_commit,
+            self.target_source_commit,
+            self.rollback_source_commit,
+            self.recovery_source_commit,
+        )
+        if any(
+            value is not None
+            and (not isinstance(value, str) or COMMIT_PATTERN.fullmatch(value) is None)
+            for value in source_commits
+        ):
+            raise HelperError("journal_identity_invalid")
+        packaged_runtime = _packaged_helper_runtime()
+        packaged_source_commit = _packaged_source_commit()
+        if packaged_runtime and (
+            packaged_source_commit is None
+            or self.current_source_commit != packaged_source_commit
+            or self.rollback_source_commit != packaged_source_commit
+            or self.recovery_source_commit != packaged_source_commit
+            or self.target_source_commit is None
+        ):
+            raise HelperError("journal_identity_invalid")
+        if self.current_source_commit is not None and (
+            self.rollback_source_commit != self.current_source_commit
+            or self.recovery_source_commit != self.current_source_commit
+        ):
             raise HelperError("journal_identity_invalid")
         if self.schema_version == LEGACY_JOURNAL_SCHEMA_VERSION and (
             self.recovery_authority_mac is not None or self.terminal_authority_mac is not None
@@ -1707,6 +1804,12 @@ def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[
         or not _same_path(Path(transaction_path), expected_path)
     ):
         raise HelperError("application_state_mismatch")
+    for state_field, journal_value in (
+        ("current_source_commit", journal.current_source_commit),
+        ("offered_source_commit", journal.target_source_commit),
+    ):
+        if journal_value is not None and state.get(state_field) != journal_value:
+            raise HelperError("application_state_mismatch")
     identity = journal_handoff_identity(journal)
     current = state.get("handoff_identity")
     pending = state.get("pending_handoff_identity")
@@ -1748,6 +1851,17 @@ def _validate_terminal_handoff_state(journal: UpdateJournal, journal_path: Path)
         or state.get("current_version") != expected_version
     ):
         raise HelperError("application_state_mismatch")
+    expected_current_source = (
+        journal.target_source_commit
+        if expected_phase == "installed"
+        else journal.current_source_commit
+    )
+    for state_field, journal_value in (
+        ("current_source_commit", expected_current_source),
+        ("offered_source_commit", journal.target_source_commit),
+    ):
+        if journal_value is not None and state.get(state_field) != journal_value:
+            raise HelperError("application_state_mismatch")
     if transaction_path is None:
         if (
             state.get("handoff_identity") is not None
@@ -2161,6 +2275,7 @@ def _validate_component_manifest(journal: UpdateJournal) -> None:
             expected_version=journal.target_version,
             expected_package_sha256=journal.replacement_sha256,
             expected_package_size=journal.replacement_size,
+            expected_source_commit=journal.target_source_commit,
         )
         bindings = component_descriptors(payload)
     except (HelperError, InstalledComponentManifestError, OSError, TypeError, ValueError) as exc:
@@ -2180,6 +2295,62 @@ def _validate_component_manifest(journal: UpdateJournal) -> None:
         digest, size = bindings[role]
         if not _verified(path, digest, size):
             raise HelperError("component_manifest_invalid")
+
+
+def _validate_child_build_identity(
+    value: Mapping[str, Any],
+    *,
+    expected_version: str,
+    expected_source_commit: str,
+    status_report: bool = False,
+) -> None:
+    """Validate the identity emitted by a newly activated packaged child."""
+
+    raw = value.get("build_identity")
+    if not isinstance(raw, dict):
+        raise HelperError("transaction_report_invalid")
+    if status_report:
+        if (
+            raw.get("status") != "verified"
+            or raw.get("reason") is not None
+            or raw.get("sha256") is None
+        ):
+            raise HelperError("transaction_report_invalid")
+        identity_mapping = {
+            field: raw.get(field)
+            for field in (
+                "schema_version",
+                "version",
+                "channel",
+                "platform",
+                "architecture",
+                "source_commit",
+            )
+        }
+        declared_hash = raw.get("sha256")
+    else:
+        identity_mapping = raw
+        declared_hash = value.get("build_identity_sha256")
+    try:
+        identity = BuildIdentity.from_mapping(identity_mapping)
+    except (BuildIdentityError, TypeError) as exc:
+        raise HelperError("transaction_report_invalid") from exc
+    if (
+        identity.version != expected_version
+        or identity.platform != "windows"
+        or identity.architecture != "x86_64"
+        or identity.source_commit != expected_source_commit
+        or declared_hash != identity.sha256
+        or (
+            not status_report
+            and (
+                value.get("channel") != identity.channel
+                or value.get("source_commit") != identity.source_commit
+            )
+        )
+        or (status_report and raw.get("source_commit") != identity.source_commit)
+    ):
+        raise HelperError("transaction_report_invalid")
 
 
 def _validate_rollback_components(journal: UpdateJournal) -> None:
@@ -2292,6 +2463,10 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
             "update_helper_sha256",
             "update_helper_size",
         }
+        if _packaged_helper_runtime() and journal.target_source_commit is not None:
+            expected_keys.update(
+                {"channel", "source_commit", "build_identity", "build_identity_sha256"}
+            )
         if (
             set(value) != expected_keys
             or value.get("status") != "installed"
@@ -2331,6 +2506,15 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
             )
         ):
             raise HelperError("apply_report_invalid")
+        if _packaged_helper_runtime() and journal.target_source_commit is not None:
+            try:
+                _validate_child_build_identity(
+                    value,
+                    expected_version=journal.target_version,
+                    expected_source_commit=journal.target_source_commit,
+                )
+            except HelperError as exc:
+                raise HelperError("apply_report_invalid") from exc
     finally:
         _unlink_plain_file_if_present(report, "transaction_report_untrusted")
     journal.phase = HelperPhase.BINARY_REPLACED
@@ -2362,6 +2546,16 @@ def _verify_diagnostics(journal: UpdateJournal, journal_path: Path) -> None:
             or value.get("update_helper_bundled") is not True
         ):
             raise HelperError("diagnostics_failed")
+        if _packaged_helper_runtime() and journal.target_source_commit is not None:
+            try:
+                _validate_child_build_identity(
+                    value,
+                    expected_version=journal.target_version,
+                    expected_source_commit=journal.target_source_commit,
+                    status_report=True,
+                )
+            except HelperError as exc:
+                raise HelperError("diagnostics_failed") from exc
     finally:
         _unlink_plain_file_if_present(report, "transaction_report_untrusted")
     journal.phase = HelperPhase.DIAGNOSTICS_PASSED
@@ -2384,11 +2578,31 @@ def _verify_health(journal: UpdateJournal, journal_path: Path) -> None:
         raise HelperError("health_check_failed")
     try:
         value = _read_json(report, MAX_JOURNAL_BYTES)
-        if value != {
+        expected: dict[str, Any] = {
             "component": "core",
             "health": "ok",
             "version": journal.target_version,
-        }:
+        }
+        if _packaged_helper_runtime() and journal.target_source_commit is not None:
+            identity = BuildIdentity(
+                version=journal.target_version,
+                channel=(
+                    "beta"
+                    if ReleaseVersion.parse(journal.target_version).stability == 0
+                    else "stable"
+                ),
+                platform="windows",
+                architecture="x86_64",
+                source_commit=journal.target_source_commit,
+            )
+            expected.update(
+                {
+                    "source_commit": journal.target_source_commit,
+                    "build_identity": identity.as_dict(),
+                    "build_identity_sha256": identity.sha256,
+                }
+            )
+        if value != expected:
             raise HelperError("health_check_failed")
     finally:
         _unlink_plain_file_if_present(report, "transaction_report_untrusted")
@@ -2607,6 +2821,11 @@ def _update_state(
         and value.get("pending_handoff_identity") is None
         and value.get("completed_handoff_identity") == journal_identity
     ):
+        value["current_source_commit"] = (
+            journal.target_source_commit
+            if phase == "installed"
+            else journal.current_source_commit
+        )
         value.update(
             {
                 "current_version": (
@@ -2640,6 +2859,11 @@ def _update_state(
             "handoff_identity": None if clear_transaction else value["handoff_identity"],
             "pending_handoff_identity": None,
             "completed_handoff_identity": journal_identity if clear_transaction else None,
+            "current_source_commit": (
+                journal.target_source_commit
+                if phase == "installed"
+                else journal.current_source_commit
+            ),
         }
     )
     _atomic_json(path, value, boundary_code="application_state_untrusted")

@@ -233,6 +233,7 @@ def validate_manifest_bytes(
     expected_version: str,
     expected_package_sha256: str,
     expected_package_size: int,
+    expected_source_commit: str | None = None,
 ) -> dict[str, Any]:
     """Validate metadata copied from the signed Windows release archive."""
 
@@ -244,6 +245,8 @@ def validate_manifest_bytes(
     _validate_shape(payload)
     if payload["version"] != expected_version:
         _failure("installed-component manifest version does not match the update")
+    if expected_source_commit is not None and payload["source_commit"] != expected_source_commit:
+        _failure("installed-component manifest source commit does not match the update")
     package = cast(dict[str, Any], payload["package"])
     if package["sha256"] != expected_package_sha256 or package["size"] != expected_package_size:
         _failure("archive package does not match the installed-component manifest")

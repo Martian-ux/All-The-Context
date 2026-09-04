@@ -5,6 +5,7 @@ import os
 import tomllib
 from pathlib import Path
 
+import allthecontext.updater as updater_module
 import pytest
 from allthecontext import __version__, application_install
 from allthecontext.build_identity import (
@@ -19,7 +20,7 @@ from allthecontext.release_manifest import (
     public_key_value,
     verify_manifest,
 )
-from allthecontext.updater import UpdateConfig, UpdateManager
+from allthecontext.updater import UpdateConfig, UpdateError, UpdateManager
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.build_desktop import helper_arguments
@@ -73,6 +74,11 @@ def test_build_identity_rejects_contradictory_or_stale_metadata() -> None:
     missing_commit.pop("source_commit")
     with pytest.raises(BuildIdentityError, match="fields differ"):
         BuildIdentity.from_mapping(missing_commit)
+
+    boolean_schema = identity.as_dict()
+    boolean_schema["schema_version"] = True
+    with pytest.raises(BuildIdentityError, match="unsupported build identity schema"):
+        BuildIdentity.from_mapping(boolean_schema)
 
 
 def test_windows_packaging_arguments_carry_identity_and_version_resource() -> None:
@@ -138,6 +144,9 @@ def test_stale_windows_registration_is_detected(monkeypatch: pytest.MonkeyPatch)
                 "DisplayVersion": "0.1.0-beta.3",
                 "ATCReleaseChannel": "beta",
                 "ATCSourceCommit": SOURCE_COMMIT,
+                "ATCBuildIdentity": json.dumps(
+                    identity.as_dict(), sort_keys=True, separators=(",", ":")
+                ),
                 "ATCBuildIdentitySha256": identity.sha256,
             }
 
@@ -155,6 +164,50 @@ def test_stale_windows_registration_is_detected(monkeypatch: pytest.MonkeyPatch)
     assert application_install.application_entrypoints_need_refresh() is True
     registry.values["DisplayVersion"] = identity.version
     assert application_install.application_entrypoints_need_refresh() is False
+    registry.values["ATCBuildIdentity"] = json.dumps(
+        {**identity.as_dict(), "source_commit": "b" * 40},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    registry.values["ATCBuildIdentitySha256"] = identity.sha256
+    assert application_install.application_entrypoints_need_refresh() is True
+
+
+def test_updater_source_requirement_rejects_missing_current_identity(tmp_path: Path) -> None:
+    manager = UpdateManager(
+        UpdateConfig(
+            tmp_path / "updates",
+            tmp_path / "keys.json",
+            {},
+            platform_name="windows",
+            architecture="x86_64",
+            require_source_commit=True,
+        ),
+        database_path=tmp_path / "core.sqlite3",
+    )
+
+    with pytest.raises(UpdateError, match="build identity"):
+        manager._expected_source_commit()
+
+
+def test_packaged_updater_rejects_missing_embedded_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(updater_module.sys, "frozen", True, raising=False)
+    manager = UpdateManager(
+        UpdateConfig(
+            tmp_path / "updates",
+            tmp_path / "keys.json",
+            {},
+            current_version=__version__,
+            platform_name="windows",
+            architecture="x86_64",
+        ),
+        database_path=tmp_path / "core.sqlite3",
+    )
+
+    with pytest.raises(UpdateError, match="build identity"):
+        manager._expected_source_commit()
 
 
 def test_packaged_update_verification_requires_the_source_commit() -> None:

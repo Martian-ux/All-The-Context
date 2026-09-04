@@ -23,7 +23,7 @@ from typing import Any, Literal, cast
 from platformdirs import user_data_path
 
 from . import __version__
-from .build_identity import runtime_build_identity
+from .build_identity import BuildIdentity, BuildIdentityError, runtime_build_identity
 from .platform_compat import (
     delete_file_by_identity,
     replace_file_durably,
@@ -3604,6 +3604,16 @@ def application_entrypoints_need_refresh() -> bool:
         identity = runtime_build_identity()
         if identity is None:
             return False
+        try:
+            stored_json, _value_type = winreg.QueryValueEx(key, "ATCBuildIdentity")
+            if not isinstance(stored_json, str):
+                return True
+            stored_value = json.loads(stored_json)
+            stored_identity = BuildIdentity.from_mapping(stored_value)
+        except (BuildIdentityError, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            return True
+        if stored_identity != identity:
+            return True
         expected = {
             "DisplayVersion": identity.version,
             "ATCReleaseChannel": identity.channel,

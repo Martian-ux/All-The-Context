@@ -2702,6 +2702,8 @@ def run_update_health_check(report_path: Path) -> int:
     }
     if build_identity is not None:
         payload["build_identity"] = build_identity.as_dict()
+        payload["source_commit"] = build_identity.source_commit
+        payload["build_identity_sha256"] = build_identity.sha256
     report_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
     try:

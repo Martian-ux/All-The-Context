@@ -16,6 +16,7 @@ from typing import Any, cast
 import allthecontext.updater as updater_module
 import allthecontext.windows_update_helper as update_helper_module
 import pytest
+from allthecontext.build_identity import BuildIdentity
 from allthecontext.installed_component_manifest import (
     CHECKSUM_FILE_NAME,
     MANIFEST_FILE_NAME,
@@ -1584,6 +1585,22 @@ def test_frozen_windows_startup_accepts_retirement_tombstone_after_credential_re
     monkeypatch.setenv("ATC_CORE_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(update_helper_module.platform, "system", lambda: "Windows")
     monkeypatch.setattr(update_helper_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(update_helper_module, "_packaged_helper_runtime", lambda: False)
+    packaged_identity = BuildIdentity(
+        version="0.1.0",
+        channel="stable",
+        platform="windows",
+        architecture="x86_64",
+        source_commit="0" * 40,
+    )
+    monkeypatch.setattr(
+        update_helper_module,
+        "runtime_build_identity",
+        lambda **_: packaged_identity,
+    )
+    state = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    state["current_source_commit"] = packaged_identity.source_commit
+    manager.state_path.write_text(json.dumps(state), encoding="utf-8")
 
     assert tombstone.is_file()
     assert (manager.state_path.parent / "transactions" / operation).is_dir()

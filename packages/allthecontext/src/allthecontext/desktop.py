@@ -643,6 +643,7 @@ def _apply_packaged_update(report_value: str) -> int:
         "channel": build_identity.channel,
         "source_commit": build_identity.source_commit,
         "build_identity": build_identity.as_dict(),
+        "build_identity_sha256": build_identity.sha256,
         "application": str(installed.executable),
         "application_sha256": app_digest,
         "application_size": app_size,

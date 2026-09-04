@@ -13,6 +13,7 @@ from typing import Any
 
 import allthecontext.windows_update_helper as helper_module
 import pytest
+from allthecontext.build_identity import BuildIdentity
 from allthecontext.installed_component_manifest import (
     CHECKSUM_FILE_NAME,
     MANIFEST_FILE_NAME,
@@ -37,6 +38,7 @@ from allthecontext.windows_update_helper import (
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 _RECOVERY_AUTHORITY_VALUES: dict[str, str] = {}
+TEST_SOURCE_COMMIT = "0" * 40
 
 
 class _RecoveryAuthorityStore:
@@ -57,6 +59,17 @@ def _use_test_recovery_authority(monkeypatch: pytest.MonkeyPatch) -> None:
         helper_module,
         "_recovery_authority_store",
         lambda: _RecoveryAuthorityStore(),
+    )
+    monkeypatch.setattr(
+        helper_module,
+        "runtime_build_identity",
+        lambda **_: BuildIdentity(
+            version="0.1.0",
+            channel="stable",
+            platform="windows",
+            architecture="x86_64",
+            source_commit=TEST_SOURCE_COMMIT,
+        ),
     )
 
 
@@ -119,6 +132,7 @@ def _signed_staging(
         release_notes_url="https://updates.example.test/releases/v0.2.0",
         key_id="test-release-key",
         private_key=private_key,
+        source_commit=TEST_SOURCE_COMMIT,
     )
     manifest_path = staging_dir / "manifest.json"
     manifest_path.write_text(
@@ -134,6 +148,8 @@ def _signed_staging(
             "pending_handoff_identity": None,
             "completed_handoff_identity": None,
             "offered_version": manifest["version"],
+            "current_source_commit": TEST_SOURCE_COMMIT,
+            "offered_source_commit": TEST_SOURCE_COMMIT,
             "mandatory": manifest["mandatory"],
             "release_notes_url": manifest["release_notes_url"],
             "downloaded_path": str(artifact),
@@ -286,7 +302,9 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
             {
                 "phase": "restart_required",
                 "current_version": "0.1.0",
+                "current_source_commit": TEST_SOURCE_COMMIT,
                 "offered_version": "0.2.0",
+                "offered_source_commit": TEST_SOURCE_COMMIT,
                 "mandatory": False,
                 "release_notes_url": None,
                 "downloaded_path": str(updates / "staging" / operation_id / "artifact.zip"),
@@ -307,6 +325,10 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         phase=HelperPhase.PREPARED,
         current_version="0.1.0",
         target_version="0.2.0",
+        current_source_commit=TEST_SOURCE_COMMIT,
+        target_source_commit=TEST_SOURCE_COMMIT,
+        rollback_source_commit=TEST_SOURCE_COMMIT,
+        recovery_source_commit=TEST_SOURCE_COMMIT,
         parent_pid=0,
         application_path=str(application),
         replacement_path=str(replacement_path),
@@ -2878,6 +2900,37 @@ def test_malformed_journal_values_fail_closed(
     fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
     with pytest.raises(HelperError):
         UpdateJournal.load(fixture.journal_path)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "current_source_commit",
+        "target_source_commit",
+        "rollback_source_commit",
+        "recovery_source_commit",
+    ],
+)
+@pytest.mark.parametrize("value", [None, "b" * 40, "a" * 39, True])
+def test_frozen_helper_rejects_missing_or_conflicting_journal_source_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Any,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = json.loads(fixture.journal_path.read_text(encoding="utf-8"))
+    journal[field] = value
+    fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    if field == "target_source_commit" and isinstance(value, str) and len(value) == 40:
+        journal_value = UpdateJournal.load(fixture.journal_path)
+        with pytest.raises(HelperError, match="component_manifest_invalid"):
+            helper_module._validate_component_manifest(journal_value)
+    else:
+        with pytest.raises(HelperError, match="journal_identity_invalid"):
+            UpdateJournal.load(fixture.journal_path)
 
 
 def test_journal_failure_diagnostic_is_bounded_and_non_sensitive(tmp_path: Path) -> None:

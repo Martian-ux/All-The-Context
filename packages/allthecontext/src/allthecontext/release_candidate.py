@@ -185,8 +185,11 @@ def _validate_direct_package_report(
     }[target.platform]
     digest, size = sha256_file(direct_package)
     source = value.get("source")
+    report_fields = set(value)
+    expected_fields = required | optional if source_commit is not None else required
     if (
-        (set(value) != required and set(value) != (required | optional))
+        report_fields != expected_fields
+        or isinstance(value.get("schema_version"), bool)
         or value.get("schema_version") != 1
         or value.get("version") != version
         or value.get("platform") != target.platform
@@ -203,7 +206,7 @@ def _validate_direct_package_report(
         or SAFE_FILE_NAME.fullmatch(source) is None
     ):
         raise ManifestError("direct native package report does not match its package")
-    if set(value) == required | optional:
+    if report_fields == required | optional:
         try:
             identity = BuildIdentity.from_mapping(value["build_identity"])
         except (BuildIdentityError, TypeError) as exc:
@@ -1100,7 +1103,12 @@ def prepare_beta_channel(
         target = ReleaseTarget(cast(str, artifact["platform"]), cast(str, artifact["architecture"]))
         manifest_path = release_dir / signed_manifest_name("beta", target)
         manifest = _read_json_object(manifest_path)
-        verify_manifest(manifest, keyring, expected_channel="beta")
+        verify_manifest(
+            manifest,
+            keyring,
+            expected_channel="beta",
+            require_source_commit=True,
+        )
         archive = cast(dict[str, Any], artifact["ota_archive"])
         expected_url = f"https://github.com/{repository}/releases/download/{tag}/{archive['name']}"
         expected_notes = f"https://github.com/{repository}/releases/tag/{tag}"
@@ -1112,10 +1120,7 @@ def prepare_beta_channel(
             or manifest.get("release_notes_url") != expected_notes
             or manifest.get("sha256") != archive["sha256"]
             or manifest.get("size") != archive["size"]
-            or (
-                "source_commit" in manifest
-                and manifest.get("source_commit") != source_commit
-            )
+            or manifest.get("source_commit") != source_commit
         ):
             raise ManifestError(f"signed manifest does not match candidate: {manifest_path.name}")
         destination = (
@@ -1173,6 +1178,7 @@ def verify_beta_channel_site(site_dir: Path, *, keyring_path: Path) -> dict[str,
     }
     if (
         set(index) != required
+        or isinstance(index.get("schema_version"), bool)
         or index.get("schema_version") != 1
         or index.get("channel") != "beta"
         or not isinstance(index.get("version"), str)
@@ -1187,6 +1193,13 @@ def verify_beta_channel_site(site_dir: Path, *, keyring_path: Path) -> dict[str,
     candidate_digest, _ = sha256_file(candidate)
     if candidate_digest != index["candidate_sha256"]:
         raise ManifestError("published candidate inventory digest is wrong")
+    candidate_value = _read_json_object(candidate)
+    if (
+        candidate_value.get("channel") != index["channel"]
+        or candidate_value.get("version") != index["version"]
+        or candidate_value.get("source_commit") != index["source_commit"]
+    ):
+        raise ManifestError("published candidate identity differs from the beta channel index")
     keyring = load_keyring(keyring_path)
     entries = index.get("manifests")
     if not isinstance(entries, list) or not entries:
@@ -1212,7 +1225,12 @@ def verify_beta_channel_site(site_dir: Path, *, keyring_path: Path) -> dict[str,
         if digest != entry.get("sha256"):
             raise ManifestError("beta channel manifest digest is wrong")
         manifest = _read_json_object(path)
-        verify_manifest(manifest, keyring, expected_channel="beta")
-        if "source_commit" in manifest and manifest.get("source_commit") != index["source_commit"]:
+        verify_manifest(
+            manifest,
+            keyring,
+            expected_channel="beta",
+            require_source_commit=True,
+        )
+        if manifest.get("source_commit") != index["source_commit"]:
             raise ManifestError("beta channel manifest source commit differs from its index")
     return index

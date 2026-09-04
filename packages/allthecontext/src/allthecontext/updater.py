@@ -36,7 +36,12 @@ from urllib.parse import urljoin, urlsplit
 from platformdirs import user_data_path
 
 from . import __version__
-from .build_identity import COMMIT_PATTERN, runtime_build_identity, runtime_build_identity_status
+from .build_identity import (
+    COMMIT_PATTERN,
+    BuildIdentityError,
+    runtime_build_identity,
+    runtime_build_identity_status,
+)
 from .desktop_runtime import RuntimeCommand
 from .installed_component_manifest import (
     CHECKSUM_FILE_NAME,
@@ -521,6 +526,8 @@ class InstallPlan:
     core_port: int
     artifact_sha256: str | None = None
     artifact_size: int | None = None
+    current_source_commit: str | None = None
+    target_source_commit: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,13 +539,22 @@ class UpdateConfig:
     current_source_commit: str | None = None
     platform_name: str = field(default_factory=lambda: current_platform()[0])
     architecture: str = field(default_factory=lambda: current_platform()[1])
+    require_source_commit: bool = False
 
     @classmethod
     def default(cls) -> UpdateConfig:
         data_dir = Path(user_data_path("AllTheContext", "AllTheContext", roaming=False))
         package_keyring = Path(__file__).resolve().with_name("update_keys.json")
         platform_name, architecture = current_platform()
-        identity = runtime_build_identity()
+        packaged_runtime = _packaged_update_runtime(platform_name)
+        try:
+            identity = runtime_build_identity(required=packaged_runtime)
+        except BuildIdentityError:
+            # Keep diagnostics and setup able to report a safe failure.  The
+            # manager carries the packaged requirement and will refuse every
+            # source-free or otherwise unbound manifest until identity is
+            # available again.
+            identity = None
         urls: dict[Channel, str] = {}
         if (
             _packaged_update_runtime(platform_name)
@@ -572,6 +588,7 @@ class UpdateConfig:
             current_source_commit=identity.source_commit if identity is not None else None,
             platform_name=platform_name,
             architecture=architecture,
+            require_source_commit=packaged_runtime,
         )
 
 
@@ -1602,6 +1619,7 @@ class PlatformInstaller:
                     expected_version=plan.target_version,
                     expected_package_sha256=replacement_digest,
                     expected_package_size=replacement_size,
+                    expected_source_commit=plan.target_source_commit,
                 )
             except (InstalledComponentManifestError, OSError, RecursionError, TypeError) as exc:
                 raise UpdateError(
@@ -1690,6 +1708,10 @@ class PlatformInstaller:
                 component_manifest_path=str(component_manifest),
                 component_manifest_sha256=manifest_digest,
                 component_manifest_size=manifest_size,
+                current_source_commit=plan.current_source_commit,
+                target_source_commit=plan.target_source_commit,
+                rollback_source_commit=plan.current_source_commit,
+                recovery_source_commit=plan.current_source_commit,
                 created_at=now,
                 updated_at=now,
             )
@@ -2985,6 +3007,39 @@ class UpdateManager:
         if manifest["architecture"] != self.config.architecture:
             raise UpdateError("Signed update metadata targets a different architecture")
 
+    def _expected_source_commit(self) -> str | None:
+        """Return the source binding required by this updater configuration."""
+
+        if _packaged_update_runtime(self.config.platform_name):
+            try:
+                identity = runtime_build_identity(required=True)
+            except BuildIdentityError as exc:
+                raise UpdateError(
+                    "The packaged build identity is unavailable for update verification"
+                ) from exc
+            if identity is None:
+                raise UpdateError(
+                    "The packaged build identity is unavailable for update verification"
+                )
+            if (
+                identity.platform != self.config.platform_name
+                or identity.architecture != self.config.architecture
+                or identity.version != self.config.current_version
+                or identity.source_commit != self.config.current_source_commit
+            ):
+                raise UpdateError("The packaged build identity does not match current runtime")
+            return identity.source_commit
+
+        required = self.config.require_source_commit or (
+            self.config.current_source_commit is not None
+        )
+        commit = self.config.current_source_commit
+        if required and (
+            not isinstance(commit, str) or COMMIT_PATTERN.fullmatch(commit) is None
+        ):
+            raise UpdateError("The packaged build identity is unavailable for update verification")
+        return commit
+
     @staticmethod
     def _validate_manifest_artifact_size(manifest: Mapping[str, Any]) -> None:
         size = manifest["size"]
@@ -3024,16 +3079,18 @@ class UpdateManager:
             raise UpdateError("Verified update metadata changed; check again")
         manifest = bounded.value
         try:
+            expected_source_commit = self._expected_source_commit()
             verify_manifest(
                 manifest,
                 load_keyring(self.config.keyring_path),
                 current_version=self.config.current_version,
                 expected_channel=self.preferences.channel,
-                require_source_commit=self.config.current_source_commit is not None,
+                require_source_commit=expected_source_commit is not None,
             )
-            if self.config.current_source_commit is not None and manifest.get(
-                "source_commit"
-            ) != self.config.current_source_commit:
+            if (
+                expected_source_commit is not None
+                and manifest.get("source_commit") != expected_source_commit
+            ):
                 raise UpdateError("Verified update metadata is for a different source commit")
             self._validate_manifest_target(manifest)
             self._validate_manifest_artifact_size(manifest)
@@ -3427,6 +3484,7 @@ class UpdateManager:
             self.state.last_error = None
             self._save()
             try:
+                expected_source_commit = self._expected_source_commit()
                 raw = self.transport.get_bytes(url, maximum_bytes=MAX_MANIFEST_BYTES)
                 bounded = _decode_bounded_json(
                     raw,
@@ -3440,11 +3498,12 @@ class UpdateManager:
                     keyring,
                     current_version=self.config.current_version,
                     expected_channel=self.preferences.channel,
-                    require_source_commit=self.config.current_source_commit is not None,
+                    require_source_commit=expected_source_commit is not None,
                 )
-                if self.config.current_source_commit is not None and manifest.get(
-                    "source_commit"
-                ) != self.config.current_source_commit:
+                if (
+                    expected_source_commit is not None
+                    and manifest.get("source_commit") != expected_source_commit
+                ):
                     raise UpdateError("Update metadata is for a different source commit")
                 self._validate_manifest_target(manifest)
                 self._validate_manifest_artifact_size(manifest)
@@ -3797,6 +3856,8 @@ class UpdateManager:
                         core_port=core_port,
                         artifact_sha256=cast(str, manifest["sha256"]),
                         artifact_size=cast(int, manifest["size"]),
+                        current_source_commit=self.config.current_source_commit,
+                        target_source_commit=cast(str | None, manifest.get("source_commit")),
                     )
                 )
                 return self.public_status()
