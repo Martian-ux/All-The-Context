@@ -1356,7 +1356,7 @@ def test_interrupted_version_transition_finishes_from_forward_journal(
     application_install.remove_application_entrypoints()
 
 
-def test_same_byte_shortcut_replacement_is_indistinguishable_from_owned_state(
+def test_same_byte_shortcut_replacement_is_preserved_and_blocks_uninstall(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_shortcut_writer(monkeypatch)
@@ -1373,10 +1373,12 @@ def test_same_byte_shortcut_replacement_is_indistinguishable_from_owned_state(
     replacement.write_bytes(target.read_bytes())
     os.replace(replacement, target)
 
-    application_install.remove_application_entrypoints()
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install.remove_application_entrypoints()
 
-    assert not target.exists()
-    assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY] == {}
+    assert raised.value.code == "registration_target_changed"
+    assert target.read_bytes() == f"{executable}||Open your local All The Context Core".encode()
+    assert application_install.WINDOWS_UNINSTALL_KEY in registry.keys
 
 
 def test_shortcut_delete_swap_is_quarantined_without_losing_replacement(
@@ -1551,6 +1553,34 @@ def test_registry_adapter_mutations_are_bound_to_requested_path() -> None:
     )
     assert adapter.delete_value_if_unchanged(key_name, updated)
     assert registry.keys[key_name] == {}
+
+
+def test_registry_adapter_fails_closed_without_native_compare_primitives() -> None:
+    calls: list[str] = []
+
+    class _StdlibShapedRegistry:
+        HKEY_CURRENT_USER = object()
+
+        def OpenKey(self, *_args: object) -> object:
+            calls.append("open")
+            return object()
+
+        def SetValueEx(self, *_args: object) -> None:
+            calls.append("set")
+
+        def DeleteValue(self, *_args: object) -> None:
+            calls.append("delete")
+
+    module = _StdlibShapedRegistry()
+    adapter = platform_compat.WindowsRegistryAdapter(module)
+    expected = application_install.WindowsRegistryValueSnapshot("DisplayName", True, 1, "before")
+
+    assert adapter.atomic_mutations_available is False
+    with pytest.raises(OSError, match="compare-and-set unavailable"):
+        adapter.set_value_if_unchanged("Software\\Vendor", expected, 1, "after")
+    with pytest.raises(OSError, match="compare-and-delete unavailable"):
+        adapter.delete_value_if_unchanged("Software\\Vendor", expected)
+    assert calls == []
 
 
 def test_windows_registry_factory_returns_mutation_capable_adapter(
@@ -1814,6 +1844,93 @@ def test_hardlink_publish_crash_with_nlink_two_converges_on_retry(
     assert not transaction._journal_path.exists()
 
 
+def test_interrupted_restore_replays_unresolved_mutations_after_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, _executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    snapshot = transaction.snapshot()
+    transaction._prepare_journal(snapshot)
+    plan = transaction._shortcut_plans()[0]
+    temporary = transaction._temporary_path(plan.path)
+    generated = transaction._desired_shortcut_data(plan, temporary)
+    metadata = application_install._validate_file_path(temporary, allow_missing=False)
+    assert metadata is not None and transaction._journal is not None
+    transaction._journal.desired_shortcuts[plan.name] = generated
+    transaction._journal.desired_shortcut_identities[plan.name] = (
+        application_install._file_identity(metadata)
+    )
+    transaction._persist_journal("applying", (plan.name,))
+    transaction._publish_new_shortcut(temporary, plan.path, generated)
+    current = application_install._shortcut_state(plan.name, plan.path)
+    assert current.identity is not None
+    transaction._journal.desired_shortcut_identities[plan.name] = current.identity
+    transaction._persist_journal("restoring", (plan.name,))
+
+    status = application_install.recover_application_entrypoints()
+
+    assert status is not None and status.complete is True
+    assert not plan.path.exists()
+    assert not transaction._journal_path.exists()
+
+
+def test_journal_publish_replacement_is_atomic_and_single_linked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, desktop=False
+    )
+    snapshot = transaction.snapshot()
+    transaction._prepare_journal(snapshot)
+    assert transaction._journal is not None
+    original_publish = application_install.replace_file_durably
+    calls: list[tuple[Path, Path]] = []
+
+    def publish_then_crash(source: Path, destination: Path) -> None:
+        calls.append((source, destination))
+        original_publish(source, destination)
+        raise RuntimeError("simulated crash after atomic journal publish")
+
+    monkeypatch.setattr(application_install, "replace_file_durably", publish_then_crash)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        transaction._persist_journal("installed", transaction._owned_names())
+
+    durable = application_install._read_registration_journal(transaction._journal_path)
+    metadata = transaction._journal_path.stat()
+    assert calls and calls[-1][1] == transaction._journal_path
+    assert durable is not None and durable.phase == "installed"
+    assert metadata.st_nlink == 1
+
+
+def test_journal_publish_failure_preserves_prior_complete_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, desktop=False
+    )
+    snapshot = transaction.snapshot()
+    transaction._prepare_journal(snapshot)
+    before = application_install._read_registration_journal(transaction._journal_path)
+    assert before is not None
+
+    def fail_before_publish(_source: Path, _destination: Path) -> None:
+        raise OSError("simulated publication failure")
+
+    monkeypatch.setattr(application_install, "replace_file_durably", fail_before_publish)
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        transaction._persist_journal("installed", transaction._owned_names())
+
+    after = application_install._read_registration_journal(transaction._journal_path)
+    assert raised.value.code == "registration_journal_write_failed"
+    assert after is not None and after.phase == before.phase and after.active == before.active
+
+
 def test_interrupted_uninstall_replays_only_owned_entries(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1846,18 +1963,13 @@ def test_interrupted_uninstall_replays_only_owned_entries(
         "uninstalling", tuple(mutation.name for mutation in transaction._mutations)
     )
 
-    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
-        application_install.recover_application_entrypoints()
+    status = application_install.recover_application_entrypoints()
 
-    assert raised.value.status is not None
-    assert raised.value.status.complete is False
+    assert status is not None and status.complete is True
     files, keys = _surface(start_menu, desktop, registry)
-    assert files["launcher"] is not None
-    assert files["uninstall"] is not None
-    assert files["desktop"] is not None
-    assert application_install.WINDOWS_UNINSTALL_KEY in keys
-    assert transaction._load_journal() is not None
-    assert transaction._load_journal().phase == "uninstalling"
+    assert files == {"launcher": None, "uninstall": None, "desktop": None}
+    assert keys == {application_install.WINDOWS_UNINSTALL_KEY: {}}
+    assert transaction._load_journal() is None
 
 
 def test_generator_failure_cleans_written_temporary(

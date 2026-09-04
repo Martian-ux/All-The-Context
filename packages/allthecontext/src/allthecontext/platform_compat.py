@@ -27,6 +27,8 @@ _OPEN_EXISTING = 3
 _FILE_ATTRIBUTE_NORMAL = 0x00000080
 _FILE_DISPOSITION_INFO = 4
 _AT_EMPTY_PATH = 0x1000
+_MOVEFILE_REPLACE_EXISTING = 0x00000001
+_MOVEFILE_WRITE_THROUGH = 0x00000008
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_PATH = getattr(os, "O_PATH", 0)
 
@@ -173,6 +175,42 @@ def delete_file_by_identity(path: Path, identity: object) -> None:
         raise OSError("identity-bound file deletion is unavailable")
 
 
+def replace_file_durably(source: Path, destination: Path) -> None:
+    """Atomically publish a fully-written sibling file at ``destination``.
+
+    Windows has no portable directory-fsync equivalent.  ``MoveFileExW`` with
+    ``MOVEFILE_WRITE_THROUGH`` is the native durable publication primitive for
+    a same-volume replacement.  POSIX hosts additionally sync the containing
+    directory so a restart observes either the old complete file or the new
+    complete file, never a truncate-in-place intermediate.
+    """
+
+    source = Path(source)
+    destination = Path(destination)
+    if os.name == "nt":
+        kernel32 = windows_dll("kernel32")
+        move_file = kernel32.MoveFileExW
+        move_file.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+        move_file.restype = ctypes.c_int
+        if not move_file(
+            os.fspath(source),
+            os.fspath(destination),
+            _MOVEFILE_REPLACE_EXISTING | _MOVEFILE_WRITE_THROUGH,
+        ):
+            _raise_windows_error(ctypes.get_last_error(), "unable to publish file")
+        return
+
+    os.replace(source, destination)
+    if os.name != "posix":
+        return
+    flags = int(getattr(os, "O_DIRECTORY", 0)) | os.O_RDONLY
+    directory_fd = os.open(destination.parent, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 class WindowsRegistryAdapter:
     """Standard ``winreg`` compatibility plus path-bound registration primitives.
 
@@ -196,28 +234,25 @@ class WindowsRegistryAdapter:
     def _open(self, name: str, access: int) -> Any:
         return self._module.OpenKey(self._current_user, name, 0, access)
 
-    @staticmethod
-    def _matches(expected: object, current: tuple[object, int] | None) -> bool:
-        if current is None:
-            return not bool(getattr(expected, "present", False))
-        if not bool(getattr(expected, "present", False)):
-            return False
-        return current[1] == getattr(
-            expected, "value_type", None
-        ) and WindowsRegistryAdapter._data_equal(current[0], getattr(expected, "data", None))
+    @property
+    def atomic_mutations_available(self) -> bool:
+        """Whether the wrapped runtime supplies real compare-and-set calls.
 
-    @staticmethod
-    def _data_equal(left: object, right: object) -> bool:
-        if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
-            return tuple(left) == tuple(right)
-        return left == right
+        The stdlib ``winreg`` module has no conditional value or key mutation
+        primitive.  A process-local lock cannot close that inter-process race,
+        so the production adapter must refuse registration unless a native
+        host supplies all three explicitly atomic operations.  Focused fakes
+        may provide these methods to model the contract.
+        """
 
-    def _read(self, key: Any, name: str) -> tuple[object, int] | None:
-        try:
-            data, value_type = self._module.QueryValueEx(key, name)
-        except FileNotFoundError:
-            return None
-        return data, int(value_type)
+        return all(
+            callable(getattr(self._module, name, None))
+            for name in (
+                "SetValueIfUnchanged",
+                "DeleteValueIfUnchanged",
+                "DeleteKeyIfUnchanged",
+            )
+        )
 
     def _create_key_native(self, name: str) -> bool:
         advapi32 = windows_dll("advapi32")
@@ -273,58 +308,46 @@ class WindowsRegistryAdapter:
         data: object,
     ) -> bool:
         with _REGISTRY_MUTATION_LOCK:
+            conditional = getattr(self._module, "SetValueIfUnchanged", None)
+            if not callable(conditional):
+                raise OSError("registry compare-and-set unavailable")
             try:
                 with self._open(name, _KEY_READ | _KEY_SET_VALUE) as key:
                     value_name = str(_attribute(expected, "name"))
-                    current = self._read(key, value_name)
-                    if not self._matches(expected, current):
-                        return False
-                    self._module.SetValueEx(key, value_name, 0, value_type, data)
-                    return True
+                    result = conditional(key, value_name, expected, value_type, data)
+                    if not isinstance(result, bool):
+                        raise OSError("registry compare-and-set result invalid")
+                    return result
             except FileNotFoundError:
                 return False
 
     def delete_value_if_unchanged(self, name: str, expected: object) -> bool:
         with _REGISTRY_MUTATION_LOCK:
+            conditional = getattr(self._module, "DeleteValueIfUnchanged", None)
+            if not callable(conditional):
+                raise OSError("registry compare-and-delete unavailable")
             try:
                 with self._open(name, _KEY_READ | _KEY_SET_VALUE) as key:
                     value_name = str(_attribute(expected, "name"))
-                    current = self._read(key, value_name)
-                    if not self._matches(expected, current):
-                        return False
-                    self._module.DeleteValue(key, value_name)
-                    return True
+                    result = conditional(key, value_name, expected)
+                    if not isinstance(result, bool):
+                        raise OSError("registry compare-and-delete result invalid")
+                    return result
             except FileNotFoundError:
                 return False
 
     def delete_key_if_unchanged(self, name: str, expected: tuple[object, ...]) -> bool:
         with _REGISTRY_MUTATION_LOCK:
+            conditional = getattr(self._module, "DeleteKeyIfUnchanged", None)
+            if not callable(conditional):
+                raise OSError("registry compare-and-delete unavailable")
             try:
-                with self._open(name, _KEY_READ) as key:
-                    subkeys, values, _ = self._module.QueryInfoKey(key)
-                    if int(subkeys) != 0 or int(values) != len(
-                        [item for item in expected if bool(getattr(item, "present", False))]
-                    ):
-                        return False
-                    for item in expected:
-                        value_name = str(_attribute(item, "name"))
-                        current = self._read(key, value_name)
-                        if current is None:
-                            if bool(getattr(item, "present", False)):
-                                return False
-                        elif not self._matches(item, current):
-                            return False
+                result = conditional(self._current_user, name, expected)
             except FileNotFoundError:
                 return False
-            try:
-                delete_key = getattr(self._module, "DeleteKeyEx", None)
-                if callable(delete_key):
-                    delete_key(self._current_user, name, 0)
-                else:
-                    self._module.DeleteKey(self._current_user, name)
-            except FileNotFoundError:
-                return False
-            return True
+            if not isinstance(result, bool):
+                raise OSError("registry compare-and-delete result invalid")
+            return result
 
     # Compatibility for focused fakes and callers that use the historical
     # adapter names.  Registration transaction code prefers the path methods.

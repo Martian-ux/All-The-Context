@@ -24,6 +24,7 @@ from platformdirs import user_data_path
 from . import __version__
 from .platform_compat import (
     delete_file_by_identity,
+    replace_file_durably,
     windows_creation_flags,
     windows_dll,
     windows_registry,
@@ -653,13 +654,15 @@ def _same_file_identity(left: _FileIdentity, right: _FileIdentity) -> bool:
     )
 
 
-def _same_file_object(left: _FileIdentity, right: _FileIdentity) -> bool:
-    """Compare only immutable object identity while a file is being rewritten."""
+def _registry_atomic_mutations_available(winreg: Any) -> bool:
+    """Require a provider for every destructive registry compare operation."""
 
-    return (
-        left.device == right.device
-        and left.inode == right.inode
-        and left.attributes == right.attributes
+    capability = getattr(winreg, "atomic_mutations_available", None)
+    if isinstance(capability, bool):
+        return capability
+    return all(
+        callable(getattr(winreg, name, None))
+        for name in ("SetValueIfUnchanged", "DeleteValueIfUnchanged", "DeleteKeyIfUnchanged")
     )
 
 
@@ -1449,50 +1452,29 @@ def _write_registration_journal(
             temporary_metadata = _validate_file_path(temporary, allow_missing=False)
             if temporary_metadata is None:
                 raise WindowsRegistrationError("registration_journal_write_failed")
-            if existing is None:
-                try:
-                    os.link(temporary, path, follow_symlinks=False)
-                except FileExistsError as exc:
-                    raise WindowsRegistrationError("registration_journal_target_changed") from exc
-                except OSError as exc:
-                    raise WindowsRegistrationError("registration_journal_write_failed") from exc
-                published = _safe_lstat(path)
-                if (
-                    published is None
-                    or _is_reparse_or_link(published)
-                    or not stat.S_ISREG(published.st_mode)
-                    or not _same_file_identity(
-                        _file_identity(published), _file_identity(temporary_metadata)
-                    )
-                ):
-                    raise WindowsRegistrationError("registration_journal_target_changed")
-            else:
-                # A journal update must not replace a path that changed after
-                # validation.  Writing through the opened object binds the
-                # mutation to the checked file identity; a swapped path entry
-                # remains untouched and the durable temporary stays retryable.
-                try:
-                    with path.open("r+b") as stream:
-                        opened = os.fstat(stream.fileno())
-                        if not _same_file_object(_file_identity(opened), _file_identity(existing)):
-                            raise WindowsRegistrationError("registration_journal_target_changed")
-                        stream.seek(0)
-                        stream.write(encoded)
-                        stream.truncate()
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                        written = os.fstat(stream.fileno())
-                        if not _same_file_object(_file_identity(written), _file_identity(existing)):
-                            raise WindowsRegistrationError("registration_journal_target_changed")
-                except WindowsRegistrationError:
-                    raise
-                except OSError as exc:
-                    raise WindowsRegistrationError("registration_journal_write_failed") from exc
-                current = _safe_lstat(path)
-                if current is None or not _same_file_object(
-                    _file_identity(current), _file_identity(existing)
-                ):
-                    raise WindowsRegistrationError("registration_journal_target_changed")
+            # The temporary is complete and durable.  Replacing the fixed
+            # journal path as one directory-entry operation means a crash can
+            # expose only the prior complete record or this complete record;
+            # it can never expose a truncate-in-place prefix.  The Windows
+            # adapter uses MoveFileExW/write-through and POSIX uses rename
+            # followed by a directory fsync.
+            try:
+                replace_file_durably(temporary, path)
+            except FileNotFoundError as exc:
+                raise WindowsRegistrationError("registration_journal_target_changed") from exc
+            except OSError as exc:
+                raise WindowsRegistrationError("registration_journal_write_failed") from exc
+            published = _safe_lstat(path)
+            if (
+                published is None
+                or _is_reparse_or_link(published)
+                or not stat.S_ISREG(published.st_mode)
+                or int(published.st_nlink) != 1
+                or not _same_file_identity(
+                    _file_identity(published), _file_identity(temporary_metadata)
+                )
+            ):
+                raise WindowsRegistrationError("registration_journal_target_changed")
             _delete_verified_file(
                 temporary,
                 _file_identity(temporary_metadata),
@@ -1654,6 +1636,11 @@ class WindowsApplicationRegistrationTransaction:
         if executable_metadata is None:
             raise WindowsRegistrationError("registration_executable_missing")
         winreg = self._registry if self._registry is not None else windows_registry()
+        if not _registry_atomic_mutations_available(winreg):
+            # The stdlib winreg surface has no compare-and-set operation.  Do
+            # not begin a partially reversible registration when the provider
+            # cannot prove value/key ownership against another process.
+            raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
         return winreg
 
     def _shortcut_plans(self) -> tuple[_ShortcutPlan, ...]:
@@ -1815,7 +1802,11 @@ class WindowsApplicationRegistrationTransaction:
                 journal = self._upgrade_legacy_journal(journal)
             self._validate_journal(journal)
             self._journal = journal
-            self._journal_identity_trusted = False
+            # An authenticated journal carries the post-publication identity
+            # of every generated shortcut.  Recovery must use it as an
+            # ownership binding; otherwise a same-byte replacement is
+            # indistinguishable from the object ATC published.
+            self._journal_identity_trusted = True
         return journal
 
     def _upgrade_legacy_journal(self, journal: _RegistrationJournal) -> _RegistrationJournal:
@@ -2099,7 +2090,11 @@ class WindowsApplicationRegistrationTransaction:
                 return False
             if self._journal_identity_trusted:
                 expected_identity = journal.desired_shortcut_identities.get(plan.name)
-                if expected_identity is None or current_shortcut.identity != expected_identity:
+                if (
+                    expected_identity is None
+                    or current_shortcut.identity is None
+                    or not _same_file_identity(current_shortcut.identity, expected_identity)
+                ):
                     return False
         return True
 
@@ -2350,7 +2345,12 @@ class WindowsApplicationRegistrationTransaction:
             else:
                 self._publish_new_shortcut(temporary, plan.path, generated)
             after = _shortcut_state(plan.name, plan.path)
-            if not after.present or after.data != generated or after.identity != temporary_identity:
+            if (
+                not after.present
+                or after.data != generated
+                or after.identity is None
+                or not _same_file_identity(after.identity, temporary_identity)
+            ):
                 raise WindowsRegistrationError("registration_shortcut_publish_unverified")
             mutation.after_identity = after.identity
             if after.identity is None:
@@ -2527,7 +2527,11 @@ class WindowsApplicationRegistrationTransaction:
                         if isinstance(mutation, _ShortcutMutation) and mutation.name == plan.name:
                             expected_identity = mutation.after_identity
                             break
-                if expected_identity is None or shortcut.identity != expected_identity:
+                if (
+                    expected_identity is None
+                    or shortcut.identity is None
+                    or not _same_file_identity(shortcut.identity, expected_identity)
+                ):
                     return False
         return True
 
@@ -2562,6 +2566,18 @@ class WindowsApplicationRegistrationTransaction:
         canonical = self._canonical_shortcut_for_name(plan.name)
         if current.present and current.data != canonical:
             raise WindowsRegistrationError("registration_target_changed")
+        if current.present and self._journal_identity_trusted:
+            expected_identity = (
+                self._journal.desired_shortcut_identities.get(plan.name)
+                if self._journal is not None
+                else None
+            )
+            if (
+                expected_identity is None
+                or current.identity is None
+                or not _same_file_identity(current.identity, expected_identity)
+            ):
+                raise WindowsRegistrationError("registration_target_changed")
         quarantine = _shortcut_quarantine_path(plan.path)
         if _safe_lstat(quarantine) is not None:
             raise WindowsRegistrationError("registration_restore_cleanup_ambiguous")
@@ -2573,6 +2589,16 @@ class WindowsApplicationRegistrationTransaction:
                 temporary_metadata.st_mode
             ):
                 raise WindowsRegistrationError("registration_restore_cleanup_ambiguous")
+            if self._journal_identity_trusted:
+                expected_identity = (
+                    self._journal.desired_shortcut_identities.get(plan.name)
+                    if self._journal is not None
+                    else None
+                )
+                if expected_identity is None or not _same_file_identity(
+                    _file_identity(temporary_metadata), expected_identity
+                ):
+                    raise WindowsRegistrationError("registration_target_changed")
             temporary_data = _read_bounded_file(temporary, temporary_metadata)
             if temporary_data != canonical:
                 raise WindowsRegistrationError("registration_target_changed")
@@ -2665,36 +2691,13 @@ class WindowsApplicationRegistrationTransaction:
     def _forward_recover_journal(
         self, journal: _RegistrationJournal
     ) -> WindowsRegistrationRestoreStatus:
-        """Recover restart state without using any journal preimage authority."""
+        """Finish an interrupted forward-only application operation."""
 
         self._journal = journal
         self._snapshot = journal.snapshot
-        self._journal_identity_trusted = False
+        self._journal_identity_trusted = True
         self._key_created = False
         self._mutations = []
-        if journal.phase in {"restoring", "uninstalling"}:
-            current = self._current_snapshot()
-            if self._registration_surface_absent(current):
-                self._clear_journal()
-                return WindowsRegistrationRestoreStatus(True, False, 0)
-            if self._registration_is_desired_checked(current, verify_canonical_shortcuts=True):
-                current_shortcuts = {item.name: item for item in current.shortcuts}
-                for plan in self._shortcut_plans():
-                    shortcut = current_shortcuts[plan.name]
-                    if shortcut.identity is None:
-                        raise WindowsRegistrationError("registration_restore_identity_unavailable")
-                    journal.desired_shortcut_identities[plan.name] = shortcut.identity
-                journal.registry_before.clear()
-                self._persist_journal("installed", self._owned_names())
-                return WindowsRegistrationRestoreStatus(True, False, 0)
-            return WindowsRegistrationRestoreStatus(
-                False,
-                True,
-                0,
-                ("recovery",),
-                ("registration_recovery_forward_only",),
-            )
-
         if journal.phase != "applying":
             raise WindowsRegistrationError("registration_journal_invalid")
         for plan in self._shortcut_plans():
@@ -2876,11 +2879,50 @@ class WindowsApplicationRegistrationTransaction:
             return
         self._delete_created_registry_key()
 
+    def _restore_journal_phase(self) -> str:
+        """Keep restart recovery aligned with the direction of the mutation."""
+
+        if self._journal is not None and self._journal.phase == "uninstalling":
+            return "uninstalling"
+        if any(mutation.remove for mutation in self._mutations):
+            return "uninstalling"
+        return "restoring"
+
+    def _resume_restoring_journal(
+        self, journal: _RegistrationJournal
+    ) -> WindowsRegistrationRestoreStatus:
+        """Rebuild unresolved rollback mutations and retry them after restart."""
+
+        self._journal = journal
+        self._snapshot = journal.snapshot
+        self._journal_identity_trusted = True
+        self._key_created = journal.registry_key_created and not (
+            journal.snapshot.uninstall_key_present
+        )
+        self._mutations = self._journal_mutations(journal, journal.active)
+        return self.restore(journal.snapshot)
+
+    def _resume_uninstalling_journal(
+        self, journal: _RegistrationJournal
+    ) -> WindowsRegistrationRestoreStatus:
+        """Continue only the still-active, identity-bound uninstall mutations."""
+
+        self._journal = journal
+        self._snapshot = journal.snapshot
+        self._journal_identity_trusted = True
+        self._key_created = False
+        self._mutations = self._journal_mutations(journal, journal.active, remove=True)
+        return self.restore(journal.snapshot)
+
     def _recover_journal(self, journal: _RegistrationJournal) -> WindowsRegistrationRestoreStatus:
         try:
             if journal.phase == "migrating":
                 self._complete_version_migration(journal)
                 return WindowsRegistrationRestoreStatus(True, False, 0)
+            if journal.phase == "restoring":
+                return self._resume_restoring_journal(journal)
+            if journal.phase == "uninstalling":
+                return self._resume_uninstalling_journal(journal)
             return self._forward_recover_journal(journal)
         except WindowsRegistrationError as exc:
             return WindowsRegistrationRestoreStatus(
@@ -2966,7 +3008,7 @@ class WindowsApplicationRegistrationTransaction:
         )
         if self._journal is not None and active_before:
             try:
-                self._persist_journal("restoring", active_before)
+                self._persist_journal(self._restore_journal_phase(), active_before)
             except BaseException as exc:
                 errors.append(_safe_error_code(exc))
         if self._key_created:
@@ -3003,7 +3045,7 @@ class WindowsApplicationRegistrationTransaction:
                     dict.fromkeys(cast(RegistrationName, item.name) for item in self._mutations)
                 )
                 try:
-                    self._persist_journal("restoring", remaining)
+                    self._persist_journal(self._restore_journal_phase(), remaining)
                 except BaseException as exc:
                     errors.append(_safe_error_code(exc))
         if not self._mutations:
