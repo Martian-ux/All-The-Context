@@ -18,11 +18,14 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from .config import MAX_IMPORT_BYTES
+from .memory_policy import UNKEYED_CONFLICT_KINDS
 from .storage import (
     _ARCHIVE_PURGE_BARRIER_TABLE,
+    _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE,
     SOURCE_BLOB_CHUNK_BYTES,
     CoreStore,
     _archive_purge_barrier_digest,
+    _archive_source_less_purge_barrier_digest,
     _mutation_evidence_hash,
     _normalize_actor,
     _stable_record_key_from_row,
@@ -409,6 +412,49 @@ def _archive_purge_barrier_key_for_content(
     ):
         return None
     return vault_id, source_id, kind.casefold(), digest
+
+
+def _archive_source_less_purge_barrier_key(
+    row: dict[str, Any] | sqlite3.Row,
+) -> tuple[str, str, str]:
+    """Validate and return one opaque source-less archive purge key."""
+
+    vault_id = row["vault_id"]
+    source_kind = row["source_kind"]
+    barrier_digest = row["barrier_digest"]
+    purged_at = row["purged_at"]
+    if (
+        not isinstance(vault_id, str)
+        or not vault_id
+        or not isinstance(source_kind, str)
+        or source_kind not in UNKEYED_CONFLICT_KINDS
+        or not isinstance(barrier_digest, str)
+        or len(barrier_digest) != 64
+        or any(character not in "0123456789abcdef" for character in barrier_digest)
+        or not isinstance(purged_at, str)
+        or not purged_at
+    ):
+        raise ValueError("source-less archive purge barrier row is invalid")
+    return vault_id, source_kind, barrier_digest
+
+
+def _archive_source_less_purge_barrier_key_for_content(
+    row: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    try:
+        digest = _archive_source_less_purge_barrier_digest(row)
+    except (KeyError, TypeError, ValueError):
+        return None
+    vault_id = row.get("vault_id")
+    kind = row.get("kind")
+    if (
+        digest is None
+        or not isinstance(vault_id, str)
+        or not isinstance(kind, str)
+        or kind.casefold() not in UNKEYED_CONFLICT_KINDS
+    ):
+        return None
+    return vault_id, kind.casefold(), digest
 
 
 def _source_chunk_descriptors(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -970,6 +1016,7 @@ def restore_export(
             connection = sqlite3.connect(database_path)
             connection.row_factory = sqlite3.Row
             try:
+                CoreStore._ensure_archive_source_less_purge_barriers_tx(connection)
                 all_tables = {
                     str(row[0])
                     for row in connection.execute(
@@ -1010,6 +1057,23 @@ def restore_export(
                     with archive.open(f"tables/{_ARCHIVE_PURGE_BARRIER_TABLE}.jsonl") as stream:
                         for row in _iter_jsonl(stream):
                             archive_purge_barriers.add(_archive_purge_barrier_key(row))
+                archive_source_less_purge_barriers: set[tuple[str, str, str]] = set()
+                if _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE in existing:
+                    for barrier in connection.execute(
+                        f"SELECT vault_id,source_kind,barrier_digest,purged_at "
+                        f"FROM {_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}"
+                    ):
+                        archive_source_less_purge_barriers.add(
+                            _archive_source_less_purge_barrier_key(barrier)
+                        )
+                if _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE in manifest_tables:
+                    with archive.open(
+                        f"tables/{_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}.jsonl"
+                    ) as stream:
+                        for row in _iter_jsonl(stream):
+                            archive_source_less_purge_barriers.add(
+                                _archive_source_less_purge_barrier_key(row)
+                            )
                 if "purge_tombstones" in existing:
                     for stable_id, target_type in connection.execute(
                         "SELECT stable_id,target_type FROM purge_tombstones"
@@ -1028,7 +1092,10 @@ def restore_export(
                             target.add(str(row["stable_id"]))
                 blocked_candidates: set[str] = set()
                 if (
-                    blocked_records or blocked_sources or archive_purge_barriers
+                    blocked_records
+                    or blocked_sources
+                    or archive_purge_barriers
+                    or archive_source_less_purge_barriers
                 ) and "context_records" in manifest_tables:
                     with archive.open("tables/context_records.jsonl") as stream:
                         for row in _iter_jsonl(stream):
@@ -1047,8 +1114,18 @@ def restore_export(
                                 blocked_records.add(record_id)
                                 if row.get("candidate_id"):
                                     blocked_candidates.add(str(row["candidate_id"]))
+                            if (
+                                _archive_source_less_purge_barrier_key_for_content(row)
+                                in archive_source_less_purge_barriers
+                            ):
+                                blocked_records.add(record_id)
+                                if row.get("candidate_id"):
+                                    blocked_candidates.add(str(row["candidate_id"]))
                 if (
-                    blocked_records or blocked_sources or archive_purge_barriers
+                    blocked_records
+                    or blocked_sources
+                    or archive_purge_barriers
+                    or archive_source_less_purge_barriers
                 ) and "context_candidates" in manifest_tables:
                     with archive.open("tables/context_candidates.jsonl") as stream:
                         for row in _iter_jsonl(stream):
@@ -1061,6 +1138,11 @@ def restore_export(
                             if (
                                 _archive_purge_barrier_key_for_content(row)
                                 in archive_purge_barriers
+                            ):
+                                blocked_candidates.add(str(row["id"]))
+                            if (
+                                _archive_source_less_purge_barrier_key_for_content(row)
+                                in archive_source_less_purge_barriers
                             ):
                                 blocked_candidates.add(str(row["id"]))
                 if blocked_records and "context_observation_links" in manifest_tables:
@@ -1202,6 +1284,7 @@ def restore_export(
                     # deletion/rebuild barriers work immediately, before the
                     # destination's next startup.
                     CoreStore._ensure_archive_identity_index_tx(connection)
+                    CoreStore._ensure_archive_source_less_purge_barriers_tx(connection)
                     if "context_user_mutations" in all_tables:
                         # The post-restore legacy inference may have created
                         # rows.  Repair evidence and canonical actor fields

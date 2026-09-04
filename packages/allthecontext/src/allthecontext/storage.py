@@ -132,6 +132,7 @@ LIVENESS_CONNECT_TIMEOUT_SECONDS = 0.25
 MAX_ACTIVITY_SNAPSHOT_ITEMS = 500
 _MAX_OBSERVATION_CANDIDATES = 256
 _ARCHIVE_PURGE_BARRIER_TABLE = "archive_purge_barriers"
+_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE = "archive_source_less_purge_barriers"
 
 
 @dataclass(frozen=True)
@@ -200,6 +201,48 @@ def _archive_purge_barrier_digest(
         return None
     key = f"allthecontext-archive-purge-v1\0{source_id}".encode()
     message = archive_identity.encode("ascii")
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+def _archive_source_less_purge_barrier_digest(
+    row: Mapping[str, Any] | sqlite3.Row,
+    *,
+    vault_id: str | None = None,
+    origin: ObservationOrigin | None = None,
+) -> str | None:
+    """Derive an opaque vault-bound barrier for one source-less archive item."""
+
+    try:
+        if any(
+            row[key] is not None
+            for key in ("source_id", "source_reference", "entity_key", "attribute_key")
+        ):
+            return None
+        row_origin = str(row["observation_origin"] or "").casefold()
+        if origin is not None:
+            archive_origin = origin == ObservationOrigin.ARCHIVE_IMPORT
+        else:
+            archive_origin = row_origin == ObservationOrigin.ARCHIVE_IMPORT.value
+        if not archive_origin:
+            return None
+        kind = str(row["kind"]).casefold()
+        content = cast(str | None, row["content"])
+        try:
+            row_vault_id = cast(str | None, row["vault_id"])
+        except KeyError:
+            row_vault_id = None
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (
+        ((row_vault_id is None or not row_vault_id) and (vault_id is None or not vault_id))
+        or content is None
+        or kind not in UNKEYED_CONFLICT_KINDS
+        or archive_lineage_key(kind, content) is None
+    ):
+        return None
+    normalized_kind, value_identity = normalized_import_candidate_key(kind, content)
+    key = f"allthecontext-archive-source-less-purge-v1\0{row_vault_id or vault_id}".encode()
+    message = f"{normalized_kind}\0{value_identity}".encode()
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
@@ -984,6 +1027,26 @@ class CoreStore:
             "(vault_id,source_id,source_kind,barrier_digest)"
         )
 
+    @staticmethod
+    def _ensure_archive_source_less_purge_barriers_tx(
+        connection: sqlite3.Connection,
+    ) -> None:
+        """Repair the opaque compatibility barrier for source-less archive items."""
+
+        connection.execute(
+            f"CREATE TABLE IF NOT EXISTS {_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE} ("
+            "vault_id TEXT NOT NULL REFERENCES vaults(id),"
+            "source_kind TEXT NOT NULL,"
+            "barrier_digest TEXT NOT NULL,"
+            "purged_at TEXT NOT NULL,"
+            "PRIMARY KEY(vault_id,source_kind,barrier_digest))"
+        )
+        connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}_lookup "
+            f"ON {_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}"
+            "(vault_id,source_kind,barrier_digest)"
+        )
+
     def migrate(self) -> int:
         migration_dir = Path(__file__).parent / "migrations" / "core"
         migrations = sorted(migration_dir.glob("[0-9][0-9][0-9]_*.sql"))
@@ -1052,6 +1115,7 @@ class CoreStore:
                 ensure_capture_schema(connection)
                 self._ensure_archive_identity_index_tx(connection)
                 self._ensure_archive_purge_barriers_tx(connection)
+                self._ensure_archive_source_less_purge_barriers_tx(connection)
                 self._recompute_record_keys_tx(connection)
             except BaseException:
                 connection.rollback()
@@ -5643,6 +5707,132 @@ class CoreStore:
         return matches
 
     @staticmethod
+    def _archive_source_less_snapshot_matches_tx(
+        observation: sqlite3.Row,
+        snapshot: Mapping[str, Any] | sqlite3.Row,
+    ) -> bool:
+        """Match one source-less archive snapshot to its bounded lineage slot."""
+
+        def value(key: str) -> Any:
+            if isinstance(snapshot, sqlite3.Row):
+                try:
+                    return snapshot[key]
+                except (IndexError, KeyError):
+                    return None
+            return snapshot.get(key)
+
+        if any(
+            observation[key] is not None
+            for key in ("source_id", "source_reference", "entity_key", "attribute_key")
+        ) or any(
+            value(key) is not None
+            for key in ("source_id", "source_reference", "entity_key", "attribute_key")
+        ):
+            return False
+        snapshot_origin = value("observation_origin")
+        snapshot_kind = value("kind")
+        snapshot_content = value("content")
+        observation_kind = observation["kind"]
+        if (
+            str(snapshot_origin or "").casefold() != ObservationOrigin.ARCHIVE_IMPORT.value
+            or not isinstance(snapshot_kind, str)
+            or not isinstance(snapshot_content, str)
+            or not isinstance(observation_kind, str)
+            or snapshot_kind.casefold() not in UNKEYED_CONFLICT_KINDS
+            or snapshot_kind.casefold() != observation_kind.casefold()
+        ):
+            return False
+        return archive_lineage_key(snapshot_kind, snapshot_content) == archive_lineage_key(
+            observation_kind, str(observation["content"])
+        )
+
+    @classmethod
+    def _archive_source_less_historical_records_tx(
+        cls,
+        connection: sqlite3.Connection,
+        observation: sqlite3.Row,
+    ) -> list[tuple[sqlite3.Row, bool]]:
+        """Resolve source-less archive lineage through bounded current/history rows."""
+
+        if (
+            observation["source_id"] is not None
+            or observation["source_reference"] is not None
+            or observation["entity_key"] is not None
+            or observation["attribute_key"] is not None
+        ):
+            return []
+        kind = str(observation["kind"]).casefold()
+        if kind not in UNKEYED_CONFLICT_KINDS:
+            return []
+        if archive_lineage_key(kind, str(observation["content"])) is None:
+            return []
+        mutation_kinds = (
+            "'correction','restore','availability_change','delete','source_delete',"
+            "'legacy_user_edit'"
+        )
+        rows = connection.execute(
+            "SELECT r.* FROM context_records r "
+            "WHERE r.vault_id=? AND lower(r.kind)=? "
+            "AND (r.source_id IS NULL OR EXISTS ("
+            "SELECT 1 FROM context_user_mutations source_changed "
+            "WHERE source_changed.vault_id=r.vault_id AND source_changed.record_id=r.id "
+            f"AND source_changed.mutation_kind IN ({mutation_kinds}) LIMIT 1)) "
+            "AND (r.observation_origin=? OR EXISTS ("
+            "SELECT 1 FROM context_user_mutations m "
+            "WHERE m.vault_id=r.vault_id AND m.record_id=r.id "
+            f"AND m.mutation_kind IN ({mutation_kinds}) LIMIT 1)) "
+            "AND (r.deleted_at IS NULL OR EXISTS ("
+            "SELECT 1 FROM deletion_tombstones t WHERE t.record_id=r.id "
+            "AND t.deletion_origin='ordinary' LIMIT 1)) "
+            "ORDER BY CASE WHEN EXISTS ("
+            "SELECT 1 FROM context_user_mutations prioritized "
+            "WHERE prioritized.vault_id=r.vault_id AND prioritized.record_id=r.id "
+            f"AND prioritized.mutation_kind IN ({mutation_kinds}) LIMIT 1) "
+            "THEN 0 ELSE 1 END,r.updated_at DESC,r.id LIMIT ?",
+            (
+                observation["vault_id"],
+                kind,
+                ObservationOrigin.ARCHIVE_IMPORT.value,
+                _MAX_OBSERVATION_CANDIDATES + 1,
+            ),
+        ).fetchall()
+        if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow(
+                "source-less historical candidate set exceeds safety bound"
+            )
+
+        matches: list[tuple[sqlite3.Row, bool]] = []
+        for record in rows:
+            current_match = cls._archive_source_less_snapshot_matches_tx(observation, record)
+            historical_match = False
+            if not current_match:
+                versions = connection.execute(
+                    "SELECT snapshot_json FROM context_record_versions "
+                    "WHERE record_id=? ORDER BY version DESC LIMIT ?",
+                    (record["id"], _MAX_OBSERVATION_CANDIDATES + 1),
+                ).fetchall()
+                if len(versions) > _MAX_OBSERVATION_CANDIDATES:
+                    raise _ObservationLookupOverflow(
+                        "source-less historical version set exceeds safety bound"
+                    )
+                historical_match = any(
+                    (
+                        (snapshot := _json_object(cast(str | None, version["snapshot_json"])))
+                        is not None
+                        and cls._archive_source_less_snapshot_matches_tx(observation, snapshot)
+                    )
+                    for version in versions
+                )
+            if not current_match and not historical_match:
+                continue
+            if historical_match and not cls._record_has_archive_supersession_mutation_tx(
+                connection, str(record["id"])
+            ):
+                continue
+            matches.append((cast(sqlite3.Row, record), historical_match))
+        return matches
+
+    @staticmethod
     def _record_has_archive_supersession_mutation_tx(
         connection: sqlite3.Connection, record_id: str
     ) -> bool:
@@ -5702,44 +5892,21 @@ class CoreStore:
     ) -> sqlite3.Row | None:
         """Find user-mutated truth for a legacy unkeyed archive item."""
 
-        if (
-            observation["source_reference"] is not None
-            or observation["entity_key"] is not None
-            or observation["attribute_key"] is not None
-        ):
-            return None
-        kind = str(observation["kind"]).casefold()
-        slot = archive_lineage_key(kind, str(observation["content"]))
-        if slot is None:
-            return None
-        source_less_rows = connection.execute(
-            "SELECT * FROM context_records WHERE vault_id=? AND lower(kind)=? "
-            "AND source_id IS NULL AND source_reference IS NULL "
-            "AND entity_key IS NULL AND attribute_key IS NULL "
-            "AND approval_status='approved' AND deleted_at IS NULL "
-            "AND observation_origin=? ORDER BY observed_at DESC,updated_at DESC,id LIMIT ?",
-            (
-                observation["vault_id"],
-                kind,
-                ObservationOrigin.ARCHIVE_IMPORT.value,
-                _MAX_OBSERVATION_CANDIDATES + 1,
-            ),
-        ).fetchall()
-        if len(source_less_rows) > _MAX_OBSERVATION_CANDIDATES:
-            raise _ObservationLookupOverflow(
-                "source-less lineage candidate set exceeds safety bound"
-            )
-        for record in source_less_rows:
-            if archive_lineage_key(str(record["kind"]), str(record["content"])) != slot:
-                continue
+        matches = self._archive_source_less_historical_records_tx(connection, observation)
+        targets: dict[str, sqlite3.Row] = {}
+        for record, _historical_match in matches:
             canonical = self._canonical_superseder_tx(connection, record, include_deleted=True)
-            if str(canonical["observation_origin"] or "") != (
-                ObservationOrigin.ARCHIVE_IMPORT.value
-            ) or self._record_has_archive_supersession_mutation_tx(
-                connection, str(canonical["id"])
+            if (
+                str(canonical["observation_origin"] or "") != ObservationOrigin.ARCHIVE_IMPORT.value
+                or self._record_has_archive_supersession_mutation_tx(connection, str(record["id"]))
+                or self._record_has_archive_supersession_mutation_tx(
+                    connection, str(canonical["id"])
+                )
             ):
-                return canonical
-        return None
+                targets[str(canonical["id"])] = canonical
+        if len(targets) > 1:
+            raise _ObservationLookupOverflow("source-less lineage target set is ambiguous")
+        return next(iter(targets.values()), None)
 
     def _archive_supersession_barrier_tx(
         self,
@@ -5841,6 +6008,35 @@ class CoreStore:
         return cast(sqlite3.Row | None, rows[0] if rows else None)
 
     @staticmethod
+    def _archive_source_less_purge_barrier_tx(
+        connection: sqlite3.Connection,
+        observation: sqlite3.Row,
+        *,
+        origin: ObservationOrigin | None = None,
+    ) -> sqlite3.Row | None:
+        """Return an exact source-less compatibility purge barrier, if present."""
+
+        digest = _archive_source_less_purge_barrier_digest(observation, origin=origin)
+        if digest is None:
+            return None
+        source_kind = str(observation["kind"]).casefold()
+        rows = connection.execute(
+            f"SELECT * FROM {_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE} "
+            "WHERE vault_id=? AND source_kind=? AND barrier_digest=? LIMIT ?",
+            (
+                observation["vault_id"],
+                source_kind,
+                digest,
+                _MAX_OBSERVATION_CANDIDATES + 1,
+            ),
+        ).fetchall()
+        if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow(
+                "source-less archive purge barrier set exceeds safety bound"
+            )
+        return cast(sqlite3.Row | None, rows[0] if rows else None)
+
+    @staticmethod
     def _insert_archive_purge_barrier_tx(
         connection: sqlite3.Connection,
         record: sqlite3.Row,
@@ -5862,6 +6058,46 @@ class CoreStore:
                 purged_at,
             ),
         )
+
+    @classmethod
+    def _insert_archive_source_less_purge_barrier_tx(
+        cls,
+        connection: sqlite3.Connection,
+        record: sqlite3.Row,
+        *,
+        purged_at: str,
+    ) -> None:
+        """Retain opaque exact-value barriers for purge of source-less history."""
+
+        versions = connection.execute(
+            "SELECT snapshot_json FROM context_record_versions "
+            "WHERE record_id=? ORDER BY version DESC LIMIT ?",
+            (record["id"], _MAX_OBSERVATION_CANDIDATES + 1),
+        ).fetchall()
+        if len(versions) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow("source-less purge history exceeds safety bound")
+        snapshots: list[Mapping[str, Any] | sqlite3.Row] = [record]
+        for version in versions:
+            version_snapshot = _json_object(cast(str | None, version["snapshot_json"]))
+            if version_snapshot is not None:
+                snapshots.append(version_snapshot)
+        for snapshot in snapshots:
+            digest = _archive_source_less_purge_barrier_digest(
+                snapshot,
+                vault_id=str(record["vault_id"]),
+            )
+            if digest is None:
+                continue
+            connection.execute(
+                f"INSERT OR IGNORE INTO {_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}"
+                "(vault_id,source_kind,barrier_digest,purged_at) VALUES(?,?,?,?)",
+                (
+                    record["vault_id"],
+                    str(snapshot["kind"]).casefold(),
+                    digest,
+                    purged_at,
+                ),
+            )
 
     def _registered_source_influence_barrier_tx(
         self,
@@ -6608,7 +6844,15 @@ class CoreStore:
         elif (
             origin == ObservationOrigin.ARCHIVE_IMPORT
             and decision.disposition == ObservationDisposition.APPLIED
-            and self._archive_purge_barrier_tx(connection, observation) is not None
+            and (
+                self._archive_purge_barrier_tx(connection, observation) is not None
+                or self._archive_source_less_purge_barrier_tx(
+                    connection,
+                    observation,
+                    origin=origin,
+                )
+                is not None
+            )
         ):
             self._set_observation_decision_tx(
                 connection,
@@ -7873,8 +8117,12 @@ class CoreStore:
             "irreversible": True,
         }
         # Keep only an opaque, source-bound exact-item barrier.  The archive
-        # identity index and all record/version content are removed below;
-        # source-less rows intentionally receive no unsafe payload hash.
+        # identity index and all record/version content are removed below.
+        self._insert_archive_source_less_purge_barrier_tx(
+            connection,
+            record,
+            purged_at=purged_at,
+        )
         self._insert_archive_purge_barrier_tx(
             connection,
             record,
