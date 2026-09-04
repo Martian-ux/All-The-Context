@@ -38,35 +38,40 @@ def _archive_observation(
     *,
     content: str,
     batch_key: str,
+    kind: str = "interaction_preference",
     source_reference: str = "synthetic-export#conversation=synthetic&message=preference",
     entity_key: str | None = None,
     attribute_key: str | None = None,
+    source_id: str | None = None,
+    source_payload: bytes = b"synthetic archive fixture",
 ) -> CandidateOut:
-    payload = b"synthetic archive fixture"
+    payload = source_payload
     content_hash = sha256(payload).hexdigest()
-    state = store.begin_incomplete_source_blob(
-        content_hash=content_hash,
-        byte_size=len(payload),
-        media_type="text/plain",
-    )
-    if state != "complete":
-        store.write_source_blob_chunk(
+    if source_id is None:
+        state = store.begin_incomplete_source_blob(
             content_hash=content_hash,
-            chunk_index=0,
-            content=payload,
-        )
-        store.finalize_source_blob(
-            content_hash=content_hash,
-            expected_byte_size=len(payload),
+            byte_size=len(payload),
             media_type="text/plain",
         )
-    source = store.create_source_record_for_blob(
-        content_hash=content_hash,
-        source_service="synthetic",
-        source_type="archive",
-        filename="synthetic.txt",
-    )
-    source_id = source.id
+        if state != "complete":
+            store.write_source_blob_chunk(
+                content_hash=content_hash,
+                chunk_index=0,
+                content=payload,
+            )
+            store.finalize_source_blob(
+                content_hash=content_hash,
+                expected_byte_size=len(payload),
+                media_type="text/plain",
+            )
+        source = store.create_source_record_for_blob(
+            content_hash=content_hash,
+            source_service="synthetic",
+            source_type="archive",
+            filename="synthetic.txt",
+        )
+        source_id = source.id
+    assert source_id is not None
     session = store.begin_ingestion(
         mode=IngestionMode.ARCHIVE,
         accessible_sources=[source_id],
@@ -78,7 +83,7 @@ def _archive_observation(
         batch_key,
         [
             CandidateInput(
-                kind="interaction_preference",
+                kind=kind,
                 content=content,
                 entity_key=entity_key,
                 attribute_key=attribute_key,
@@ -370,6 +375,152 @@ def test_one_archive_message_preserves_distinct_values_for_one_slot(tmp_path: Pa
     assert all(item.disposition == ObservationDisposition.APPLIED for item in observations)
     record_ids = {str(item.record_id) for item in observations}
     assert len(record_ids) == 2
+    assert store.status()["counts"]["active_records"] == 2
+
+
+@pytest.mark.parametrize(
+    ("second_source", "second_kind"),
+    [
+        ("other", "interaction_preference"),
+        ("same", "preference"),
+    ],
+    ids=["cross-source", "cross-kind"],
+)
+@pytest.mark.parametrize(
+    "second_content",
+    ["I prefer concise answers.", "I prefer detailed answers."],
+    ids=["same-value", "different-value"],
+)
+def test_archive_slot_fallback_isolated_by_source_and_kind(
+    tmp_path: Path,
+    second_source: str,
+    second_kind: str,
+    second_content: str,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"archive slot source one",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    other_source = store.add_source(
+        b"archive slot source two",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+
+    first = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="slot-fallback-first",
+        kind="interaction_preference",
+        source_reference="message:shared-slot",
+        entity_key="user",
+        attribute_key="response",
+        source_id=source.id,
+    )
+    second = _archive_observation(
+        store,
+        content=second_content,
+        batch_key="slot-fallback-second",
+        kind=second_kind,
+        source_reference="message:shared-slot",
+        entity_key="user",
+        attribute_key="response",
+        source_id=(other_source.id if second_source == "other" else source.id),
+    )
+
+    assert first.record_id is not None
+    assert second.record_id is not None
+    assert second.record_id != first.record_id
+    assert second.disposition in {
+        ObservationDisposition.APPLIED,
+        ObservationDisposition.REINFORCED,
+    }
+    assert store.status()["counts"]["active_records"] == 2
+    assert store.get_record(first.record_id).content == "I prefer concise answers."
+    assert store.get_record(second.record_id).content == second_content
+
+
+@pytest.mark.parametrize(
+    ("second_source", "second_kind"),
+    [
+        ("other", "interaction_preference"),
+        ("same", "preference"),
+    ],
+    ids=["cross-source", "cross-kind"],
+)
+@pytest.mark.parametrize(
+    "reimport_content",
+    ["I prefer concise answers.", "I prefer detailed answers."],
+    ids=["same-value", "different-value"],
+)
+def test_archive_deletion_barriers_are_isolated_across_restart_and_restore(
+    tmp_path: Path,
+    second_source: str,
+    second_kind: str,
+    reimport_content: str,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"archive barrier source one",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    other_source = store.add_source(
+        b"archive barrier source two",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    first = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="barrier-first",
+        kind="interaction_preference",
+        source_reference="message:barrier-slot",
+        entity_key="user",
+        attribute_key="response",
+        source_id=source.id,
+    )
+    second_source_id = other_source.id if second_source == "other" else source.id
+    second = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="barrier-second",
+        kind=second_kind,
+        source_reference="message:barrier-slot",
+        entity_key="user",
+        attribute_key="response",
+        source_id=second_source_id,
+    )
+    assert first.record_id is not None
+    assert second.record_id is not None
+    assert first.record_id != second.record_id
+
+    store.delete_record(first.record_id, reason="isolate archive deletion barrier")
+    store = CoreStore(store.database_path)
+
+    reimported = _archive_observation(
+        store,
+        content=reimport_content,
+        batch_key="barrier-reimport",
+        kind=second_kind,
+        source_reference="message:barrier-reimport",
+        entity_key="user",
+        attribute_key="response",
+        source_id=second_source_id,
+    )
+    assert reimported.record_id == second.record_id
+    assert reimported.disposition in {
+        ObservationDisposition.APPLIED,
+        ObservationDisposition.REINFORCED,
+    }
+    assert store.get_memory_truth(first.record_id).status.value == "deleted"
+    assert store.get_record(second.record_id).content == reimport_content
+
+    restored = store.restore_record(first.record_id, reason="restore isolated archive record")
+    assert restored.id == first.record_id
+    assert store.get_record(second.record_id).content == reimport_content
     assert store.status()["counts"]["active_records"] == 2
 
 

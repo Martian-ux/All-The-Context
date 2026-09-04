@@ -4612,6 +4612,8 @@ class CoreStore:
         connection: sqlite3.Connection,
         observation: sqlite3.Row,
         principal: ClientPrincipal | None = None,
+        *,
+        origin: ObservationOrigin | None = None,
     ) -> sqlite3.Row | None:
         active = (
             "r.approval_status='approved' AND r.deleted_at IS NULL AND NOT EXISTS ("
@@ -4635,15 +4637,21 @@ class CoreStore:
                     return cast(sqlite3.Row, record)
 
         archive_identity = _archive_identity_from_row(observation)
+        archive_observation = origin == ObservationOrigin.ARCHIVE_IMPORT or (
+            archive_identity is not None
+        )
         if archive_identity is not None:
             rows = connection.execute(
                 "SELECT r.* FROM context_record_archive_identities i "
                 "JOIN context_records r ON r.id=i.record_id "
                 f"WHERE i.vault_id=? AND i.archive_identity=? AND {active} "
+                "AND r.source_id IS ? AND lower(r.kind)=? "
                 "AND r.entity_key IS ? AND r.attribute_key IS ? ORDER BY r.id LIMIT ?",
                 (
                     observation["vault_id"],
                     archive_identity,
+                    observation["source_id"],
+                    str(observation["kind"]).casefold(),
                     observation["entity_key"],
                     observation["attribute_key"],
                     _MAX_OBSERVATION_CANDIDATES + 1,
@@ -4659,6 +4667,36 @@ class CoreStore:
                     record, principal
                 ):
                     return cast(sqlite3.Row, record)
+
+        if archive_observation:
+            # An archive observation without a complete source identity must
+            # not use the direct-observation slot fallback below.  It has no
+            # safe source boundary to constrain that lookup.
+            if archive_identity is None:
+                return None
+            rows = connection.execute(
+                "SELECT r.* FROM context_records r WHERE r.vault_id=? "
+                "AND r.source_id IS ? AND lower(r.kind)=? "
+                "AND r.entity_key IS ? AND r.attribute_key IS ? "
+                f"AND {active} ORDER BY r.id LIMIT ?",
+                (
+                    observation["vault_id"],
+                    observation["source_id"],
+                    str(observation["kind"]).casefold(),
+                    observation["entity_key"],
+                    observation["attribute_key"],
+                    _MAX_OBSERVATION_CANDIDATES + 1,
+                ),
+            ).fetchall()
+            if len(rows) > _MAX_OBSERVATION_CANDIDATES:
+                raise _ObservationLookupOverflow("archive slot candidate set exceeds safety bound")
+            fingerprint = _value_fingerprint(observation)
+            for record in rows:
+                if _value_fingerprint(record) == fingerprint and self._record_is_allowed(
+                    record, principal
+                ):
+                    return cast(sqlite3.Row, record)
+            return None
 
         # Direct observations do not have a source identity. Keep this lookup
         # indexed by its declared slot and fail closed when a slot is too
@@ -4743,13 +4781,13 @@ class CoreStore:
                     "JOIN context_records r ON r.id=i.record_id "
                     "WHERE i.vault_id=? AND i.archive_identity=? "
                     "AND r.approval_status='approved' AND r.deleted_at IS NULL "
-                    "AND r.source_id IS ? AND lower(r.kind)=lower(?) "
+                    "AND r.source_id IS ? AND lower(r.kind)=? "
                     "ORDER BY r.observed_at DESC,r.updated_at DESC,r.id LIMIT ?",
                     (
                         observation["vault_id"],
                         archive_identity,
                         observation["source_id"],
-                        observation["kind"],
+                        str(observation["kind"]).casefold(),
                         _MAX_OBSERVATION_CANDIDATES + 1,
                     ),
                 ).fetchall()
@@ -4770,20 +4808,41 @@ class CoreStore:
                     )
                     if not same_message:
                         return cast(sqlite3.Row, allowed[0])
+        if origin == ObservationOrigin.ARCHIVE_IMPORT and archive_identity is None:
+            # Archive targeting requires both source identity and source
+            # address. Do not degrade an incomplete archive row into a
+            # vault-wide entity/attribute or kind scan.
+            return None
         entity_key = cast(str | None, observation["entity_key"])
         attribute_key = cast(str | None, observation["attribute_key"])
         if entity_key is not None and attribute_key is not None:
-            cursor = connection.execute(
-                "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
-                "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
-                "ORDER BY observed_at DESC,updated_at DESC,id LIMIT ?",
-                (
-                    observation["vault_id"],
-                    entity_key,
-                    attribute_key,
-                    _MAX_OBSERVATION_CANDIDATES + 1,
-                ),
-            )
+            if archive_identity is not None:
+                cursor = connection.execute(
+                    "SELECT * FROM context_records WHERE vault_id=? AND source_id IS ? "
+                    "AND lower(kind)=? AND entity_key=? AND attribute_key=? "
+                    "AND approval_status='approved' AND deleted_at IS NULL "
+                    "ORDER BY observed_at DESC,updated_at DESC,id LIMIT ?",
+                    (
+                        observation["vault_id"],
+                        observation["source_id"],
+                        str(observation["kind"]).casefold(),
+                        entity_key,
+                        attribute_key,
+                        _MAX_OBSERVATION_CANDIDATES + 1,
+                    ),
+                )
+            else:
+                cursor = connection.execute(
+                    "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+                    "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+                    "ORDER BY observed_at DESC,updated_at DESC,id LIMIT ?",
+                    (
+                        observation["vault_id"],
+                        entity_key,
+                        attribute_key,
+                        _MAX_OBSERVATION_CANDIDATES + 1,
+                    ),
+                )
             rows = cursor.fetchall()
             if len(rows) > _MAX_OBSERVATION_CANDIDATES:
                 raise _ObservationLookupOverflow("keyed target set exceeds safety bound")
@@ -4844,12 +4903,14 @@ class CoreStore:
             return None
         cursor = connection.execute(
             "SELECT * FROM context_records WHERE vault_id=? AND lower(kind)=? "
+            "AND source_id IS ? "
             "AND approval_status='approved' AND deleted_at IS NULL "
             "AND observation_origin=? "
             "ORDER BY observed_at DESC,updated_at DESC,id LIMIT ?",
             (
                 observation["vault_id"],
                 kind,
+                observation["source_id"],
                 ObservationOrigin.ARCHIVE_IMPORT.value,
                 _MAX_OBSERVATION_CANDIDATES + 1,
             ),
@@ -5097,7 +5158,7 @@ class CoreStore:
             "JOIN ingestion_sessions rs ON rs.id=t.rebuild_session_id "
             "WHERE r.vault_id=? AND i.archive_identity=? AND r.deleted_at IS NOT NULL "
             "AND r.entity_key IS ? AND r.attribute_key IS ? "
-            "AND r.source_id=? AND r.observation_origin=? "
+            "AND r.source_id=? AND lower(r.kind)=? AND r.observation_origin=? "
             "AND t.deletion_origin='source_rebuild' AND t.deletion_source_id=? "
             "AND t.rebuild_session_id=? AND rs.id=? "
             "AND r.candidate_id IS NOT NULL AND r.candidate_id<>? "
@@ -5109,6 +5170,7 @@ class CoreStore:
                 observation["entity_key"],
                 observation["attribute_key"],
                 observation_source_id,
+                str(observation["kind"]).casefold(),
                 ObservationOrigin.ARCHIVE_IMPORT.value,
                 observation_source_id,
                 observation_session_id,
@@ -5140,7 +5202,7 @@ class CoreStore:
                 "JOIN source_records s ON s.id=t.deletion_source_id "
                 "JOIN ingestion_sessions rs ON rs.id=t.rebuild_session_id "
                 "WHERE r.vault_id=? AND i.archive_identity=? AND r.deleted_at IS NOT NULL "
-                "AND r.source_id=? AND r.observation_origin=? "
+                "AND r.source_id=? AND lower(r.kind)=? AND r.observation_origin=? "
                 "AND t.deletion_origin='source_rebuild' AND t.deletion_source_id=? "
                 "AND t.rebuild_session_id=? AND rs.id=? "
                 "AND r.candidate_id IS NOT NULL AND r.candidate_id<>? "
@@ -5150,6 +5212,7 @@ class CoreStore:
                     observation["vault_id"],
                     archive_identity,
                     observation_source_id,
+                    str(observation["kind"]).casefold(),
                     ObservationOrigin.ARCHIVE_IMPORT.value,
                     observation_source_id,
                     observation_session_id,
@@ -5319,14 +5382,14 @@ class CoreStore:
             "JOIN context_records r ON r.id=i.record_id "
             "JOIN deletion_tombstones t ON t.record_id=r.id "
             "WHERE i.vault_id=? AND i.archive_identity=? AND r.source_id=? "
-            "AND lower(r.kind)=lower(?) AND r.entity_key IS ? AND r.attribute_key IS ? "
+            "AND lower(r.kind)=? AND r.entity_key IS ? AND r.attribute_key IS ? "
             "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
             "ORDER BY t.deleted_at DESC,r.id LIMIT ?",
             (
                 observation["vault_id"],
                 archive_identity,
                 source_id,
-                observation["kind"],
+                str(observation["kind"]).casefold(),
                 observation["entity_key"],
                 observation["attribute_key"],
                 _MAX_OBSERVATION_CANDIDATES + 1,
@@ -5349,13 +5412,13 @@ class CoreStore:
                 "SELECT 1 FROM context_record_archive_identities i "
                 "JOIN context_records r ON r.id=i.record_id "
                 "WHERE i.vault_id=? AND i.archive_identity=? AND r.source_id=? "
-                "AND lower(r.kind)=lower(?) AND r.approval_status='approved' "
+                "AND lower(r.kind)=? AND r.approval_status='approved' "
                 "AND r.deleted_at IS NULL LIMIT 1",
                 (
                     observation["vault_id"],
                     archive_identity,
                     source_id,
-                    observation["kind"],
+                    str(observation["kind"]).casefold(),
                 ),
             ).fetchone()
             is not None
@@ -5366,14 +5429,14 @@ class CoreStore:
             "JOIN context_records r ON r.id=i.record_id "
             "JOIN deletion_tombstones t ON t.record_id=r.id "
             "WHERE i.vault_id=? AND i.archive_identity=? AND r.source_id=? "
-            "AND lower(r.kind)=lower(?) "
+            "AND lower(r.kind)=? "
             "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
             "ORDER BY t.deleted_at DESC,r.id LIMIT ?",
             (
                 observation["vault_id"],
                 archive_identity,
                 source_id,
-                observation["kind"],
+                str(observation["kind"]).casefold(),
                 _MAX_OBSERVATION_CANDIDATES + 1,
             ),
         ).fetchall()
@@ -5431,14 +5494,14 @@ class CoreStore:
             "JOIN context_records r ON r.id=i.record_id "
             "WHERE i.vault_id=? AND i.archive_identity=? "
             "AND r.approval_status='approved' AND r.deleted_at IS NULL "
-            "AND r.source_id=? AND lower(r.kind)=lower(?) "
+            "AND r.source_id=? AND lower(r.kind)=? "
             "AND r.entity_key IS ? AND r.attribute_key IS ? "
             "ORDER BY r.updated_at DESC,r.id LIMIT ?",
             (
                 observation["vault_id"],
                 archive_identity,
                 source_id,
-                observation["kind"],
+                str(observation["kind"]).casefold(),
                 observation["entity_key"],
                 observation["attribute_key"],
                 _MAX_OBSERVATION_CANDIDATES + 1,
@@ -6252,7 +6315,7 @@ class CoreStore:
             self._link_observation_tx(connection, observation_id, blocked_id, "blocked_by_deletion")
             self._audit(connection, actor, "observation_ignored", [blocked_id])
         else:
-            exact = self._exact_record_tx(connection, observation, principal)
+            exact = self._exact_record_tx(connection, observation, principal, origin=origin)
             if exact is not None:
                 self._reinforce_record_tx(
                     connection,
