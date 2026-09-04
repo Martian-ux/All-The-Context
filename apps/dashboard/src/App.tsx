@@ -1643,6 +1643,7 @@ function UpdatesView() {
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const actionInFlightRef = useRef<string | null>(null);
 
   const apply = useCallback((next: UpdateStatus) => {
     setStatus(next);
@@ -1655,15 +1656,31 @@ function UpdatesView() {
     void api.updateStatus().then(apply).catch((caught) => setError(errorMessage(caught)));
   }, [apply]);
 
+  function beginAction(label: string): boolean {
+    if (actionInFlightRef.current !== null) return false;
+    actionInFlightRef.current = label;
+    setWorking(label);
+    return true;
+  }
+
+  function finishAction(label: string) {
+    if (actionInFlightRef.current !== label) return;
+    actionInFlightRef.current = null;
+    setWorking(null);
+  }
+
   async function act(label: string, action: () => Promise<UpdateStatus>) {
-    setWorking(label); setError(null); setNotice(null);
+    if (!beginAction(label)) return;
+    setError(null); setNotice(null);
     try { apply(await action()); }
     catch (caught) { setError(errorMessage(caught)); }
-    finally { setWorking(null); }
+    finally { finishAction(label); }
   }
 
   async function saveVerifiedArtifact() {
-    setWorking("save-artifact"); setError(null); setNotice(null);
+    const label = "save-artifact";
+    if (!beginAction(label)) return;
+    setError(null); setNotice(null);
     try {
       const blob = await api.verifiedUpdateArtifact();
       const objectUrl = URL.createObjectURL(blob);
@@ -1674,10 +1691,12 @@ function UpdatesView() {
       URL.revokeObjectURL(objectUrl);
       setNotice("Verified package saved. Follow the platform installation instructions.");
     } catch (caught) { setError(errorMessage(caught)); }
-    finally { setWorking(null); }
+    finally { finishAction(label); }
   }
 
-  const busy = working !== null || status?.phase === "checking" || status?.phase === "downloading" || status?.phase === "installing";
+  const downloadActive = status?.phase === "downloading";
+  const busy = working !== null || status?.phase === "checking" || status?.phase === "installing";
+  const controlsBusy = busy || downloadActive;
   const phaseLabel = status?.phase === "unpublished"
     ? "waiting for first release"
     : status?.phase.replaceAll("_", " ") ?? "loading";
@@ -1701,21 +1720,22 @@ function UpdatesView() {
       <section className="section-block update-controls">
         <div className="section-heading"><div><h2>Preferences</h2><p>Only channels backed by bundled trust metadata are selectable.</p></div></div>
         <div className="update-preferences">
-          <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={busy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable" disabled={!availableChannels.includes("stable")}>Stable</option><option value="beta" disabled={!availableChannels.includes("beta")}>Beta</option></select></label>
-          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} /> Check for updates automatically at launch, at most daily</label>
-          <label className="update-checkbox"><input type="checkbox" checked={stagingEnabled} disabled={busy || !status?.automatic_staging_supported} onChange={(event) => setStagingEnabled(event.target.checked)} /> Stage verified updates automatically (packaged Windows only)</label>
+          <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={controlsBusy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable" disabled={!availableChannels.includes("stable")}>Stable</option><option value="beta" disabled={!availableChannels.includes("beta")}>Beta</option></select></label>
+          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={controlsBusy} onChange={(event) => setEnabled(event.target.checked)} /> Check for updates automatically at launch, at most daily</label>
+          <label className="update-checkbox"><input type="checkbox" checked={stagingEnabled} disabled={controlsBusy || !status?.automatic_staging_supported} onChange={(event) => setStagingEnabled(event.target.checked)} /> Stage verified updates automatically (packaged Windows only)</label>
           {status?.automatic_staging_paused ? <Notice kind="info">Automatic staging is paused after cancellation. Save preferences with staging enabled to resume it.</Notice> : null}
-          <button className="secondary-button" disabled={busy || !selectedChannelAvailable || (status?.enabled === enabled && status?.channel === channel && status?.automatic_staging_enabled === stagingEnabled)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel, stagingEnabled))}>Save preferences</button>
+          <button className="secondary-button" disabled={controlsBusy || !selectedChannelAvailable || (status?.enabled === enabled && status?.channel === channel && status?.automatic_staging_enabled === stagingEnabled)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel, stagingEnabled))}>Save preferences</button>
         </div>
         <div className="decision-bar update-actions">
-          {status?.last_error ? <button className="quiet-button" disabled={busy} onClick={() => void act("clear", api.clearUpdateError)}>Clear error</button> : null}
-          {status?.phase === "available" && !status.mandatory ? <button className="secondary-button" disabled={busy} onClick={() => void act("defer", api.deferUpdate)}>Defer</button> : null}
-          {status?.phase === "downloading" ? <button className="secondary-button" disabled={busy} onClick={() => void act("cancel", api.cancelUpdate)}>Cancel download</button> : null}
-          {status?.phase === "available" ? <button className="primary-button" disabled={busy} onClick={() => void act("download", api.downloadUpdate)}><Download size={15} /> Download &amp; verify</button> : null}
-          {status?.verified_artifact_available ? <button className="primary-button" disabled={busy} onClick={() => void saveVerifiedArtifact()}><Download size={15} /> Save verified package</button> : null}
-          {status?.phase === "ready" && status.automatic_install_supported ? <button className="primary-button" disabled={busy} onClick={() => void act("install", api.installUpdate)}>Install &amp; restart</button> : null}
-          <button className="secondary-button" disabled={busy || !enabled || !status?.configured} onClick={() => void act("check", api.checkForUpdates)}><RefreshCw size={15} /> {working === "check" ? "Checking…" : "Check now"}</button>
+          {status?.last_error ? <button className="quiet-button" disabled={controlsBusy} onClick={() => void act("clear", api.clearUpdateError)}>Clear error</button> : null}
+          {status?.phase === "available" && !status.mandatory ? <button className="secondary-button" disabled={controlsBusy} onClick={() => void act("defer", api.deferUpdate)}>Defer</button> : null}
+          {downloadActive ? <button className="secondary-button" disabled={working !== null} onClick={() => void act("cancel", api.cancelUpdate)}>{working === "cancel" ? "Cancelling…" : "Cancel download"}</button> : null}
+          {status?.phase === "available" ? <button className="primary-button" disabled={controlsBusy} onClick={() => void act("download", api.downloadUpdate)}><Download size={15} /> Download &amp; verify</button> : null}
+          {status?.verified_artifact_available ? <button className="primary-button" disabled={controlsBusy} onClick={() => void saveVerifiedArtifact()}><Download size={15} /> Save verified package</button> : null}
+          {status?.phase === "ready" && status.automatic_install_supported ? <button className="primary-button" disabled={controlsBusy} onClick={() => void act("install", api.installUpdate)}>Install &amp; restart</button> : null}
+          <button className="secondary-button" disabled={controlsBusy || !enabled || !status?.configured} onClick={() => void act("check", api.checkForUpdates)}><RefreshCw size={15} /> {working === "check" ? "Checking…" : "Check now"}</button>
         </div>
+        {working === "cancel" ? <Notice kind="info">Cancellation requested. Waiting for the updater to finish safely.</Notice> : null}
         <p className="quiet-copy">{status?.installer_detail ?? "Loading installer capability…"}</p>
         {status && !status.configured ? <Notice kind="info">No channel metadata endpoint is configured in this build. Checks fail closed until an operator provides a trusted HTTPS endpoint and public keyring.</Notice> : null}
         {status?.release_notes_url ? <a href={status.release_notes_url} target="_blank" rel="noreferrer">Read release notes <ExternalLink size={12} /></a> : null}
