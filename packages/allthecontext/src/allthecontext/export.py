@@ -240,7 +240,11 @@ def _database_to_zip(
                 if table in CAPTURE_RUNTIME_TABLES:
                     continue
                 lowered = table.casefold()
-                if not include_sources and ("source" in lowered or "blob" in lowered):
+                if (
+                    not include_sources
+                    and table != _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE
+                    and ("source" in lowered or "blob" in lowered)
+                ):
                     continue
                 if not include_audit and "audit" in lowered:
                     continue
@@ -252,6 +256,10 @@ def _database_to_zip(
                 with archive.open(f"tables/{table}.jsonl", "w") as output:
                     for row in connection.execute(f'SELECT * FROM "{table}"'):
                         document = {column: _json_value(row[column]) for column in columns}
+                        if table == _ARCHIVE_PURGE_BARRIER_TABLE:
+                            _archive_purge_barrier_key(document)
+                        elif table == _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE:
+                            _archive_source_less_purge_barrier_key(document)
                         if not include_sources:
                             document = _without_source_reference(table, document)
                         document = _without_capture_runtime_reference(document)
@@ -375,18 +383,19 @@ def _archive_purge_barrier_key(row: dict[str, Any] | sqlite3.Row) -> tuple[str, 
     barrier_digest = row["barrier_digest"]
     purged_at = row["purged_at"]
     if (
-        not isinstance(vault_id, str)
-        or not vault_id
+        set(row.keys()) != {"vault_id", "source_id", "source_kind", "barrier_digest", "purged_at"}
+        or not isinstance(vault_id, str)
+        or not vault_id.strip()
         or not isinstance(source_id, str)
-        or not source_id
+        or not source_id.strip()
         or not isinstance(source_kind, str)
-        or not source_kind
+        or not source_kind.strip()
         or source_kind != source_kind.casefold()
         or not isinstance(barrier_digest, str)
         or len(barrier_digest) != 64
         or any(character not in "0123456789abcdef" for character in barrier_digest)
         or not isinstance(purged_at, str)
-        or not purged_at
+        or not purged_at.strip()
     ):
         raise ValueError("archive purge barrier row is invalid")
     return vault_id, source_id, source_kind, barrier_digest
@@ -424,15 +433,17 @@ def _archive_source_less_purge_barrier_key(
     barrier_digest = row["barrier_digest"]
     purged_at = row["purged_at"]
     if (
-        not isinstance(vault_id, str)
-        or not vault_id
+        set(row.keys()) != {"vault_id", "source_kind", "barrier_digest", "purged_at"}
+        or not isinstance(vault_id, str)
+        or not vault_id.strip()
         or not isinstance(source_kind, str)
+        or source_kind != source_kind.casefold()
         or source_kind not in UNKEYED_CONFLICT_KINDS
         or not isinstance(barrier_digest, str)
         or len(barrier_digest) != 64
         or any(character not in "0123456789abcdef" for character in barrier_digest)
         or not isinstance(purged_at, str)
-        or not purged_at
+        or not purged_at.strip()
     ):
         raise ValueError("source-less archive purge barrier row is invalid")
     return vault_id, source_kind, barrier_digest
@@ -455,6 +466,26 @@ def _archive_source_less_purge_barrier_key_for_content(
     ):
         return None
     return vault_id, kind.casefold(), digest
+
+
+def _portable_vault_ids(
+    archive: zipfile.ZipFile,
+    manifest_tables: dict[str, Any],
+) -> set[str]:
+    """Return the package's vault identities without importing vault metadata."""
+
+    if "vaults" not in manifest_tables:
+        return set()
+    vault_ids: set[str] = set()
+    with archive.open("tables/vaults.jsonl") as stream:
+        for row in _iter_jsonl(stream):
+            vault_id = row.get("id")
+            if not isinstance(vault_id, str) or not vault_id.strip():
+                raise ValueError("export vault row has an invalid id")
+            if vault_id in vault_ids:
+                raise ValueError("export vault rows are duplicated")
+            vault_ids.add(vault_id)
+    return vault_ids
 
 
 def _source_chunk_descriptors(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1034,6 +1065,13 @@ def restore_export(
                 manifest_tables = manifest.get("tables", {})
                 if not isinstance(manifest_tables, dict):
                     raise ValueError("export manifest tables must be an object")
+                package_vault_ids = _portable_vault_ids(archive, manifest_tables)
+                destination_vault_ids = (
+                    {str(row[0]) for row in connection.execute("SELECT id FROM vaults").fetchall()}
+                    if "vaults" in all_tables
+                    else set()
+                )
+                portable_vault_ids = package_vault_ids | destination_vault_ids
                 try:
                     source_schema_version = int(manifest.get("schema_version", 0))
                 except (TypeError, ValueError) as error:
@@ -1045,35 +1083,61 @@ def restore_export(
                 accepted_user_mutations = 0
                 ignored_user_mutations = 0
                 archive_purge_barriers: set[tuple[str, str, str, str]] = set()
+                incoming_archive_purge_barriers: set[tuple[str, str, str, str]] = set()
                 if _ARCHIVE_PURGE_BARRIER_TABLE in existing:
                     for barrier in connection.execute(
                         f"SELECT vault_id,source_id,source_kind,barrier_digest,purged_at "
                         f"FROM {_ARCHIVE_PURGE_BARRIER_TABLE}"
                     ):
-                        archive_purge_barriers.add(_archive_purge_barrier_key(barrier))
+                        key = _archive_purge_barrier_key(barrier)
+                        if key[0] not in portable_vault_ids:
+                            raise ValueError(
+                                "destination archive purge barrier has an unknown vault"
+                            )
+                        archive_purge_barriers.add(key)
                 if _ARCHIVE_PURGE_BARRIER_TABLE in manifest_tables:
                     if _ARCHIVE_PURGE_BARRIER_TABLE not in existing:
                         raise ValueError("destination does not support archive purge barriers")
                     with archive.open(f"tables/{_ARCHIVE_PURGE_BARRIER_TABLE}.jsonl") as stream:
                         for row in _iter_jsonl(stream):
-                            archive_purge_barriers.add(_archive_purge_barrier_key(row))
+                            key = _archive_purge_barrier_key(row)
+                            if key[0] not in portable_vault_ids:
+                                raise ValueError(
+                                    "export archive purge barrier has an unknown vault"
+                                )
+                            if key in incoming_archive_purge_barriers:
+                                raise ValueError("export archive purge barriers are duplicated")
+                            incoming_archive_purge_barriers.add(key)
+                            archive_purge_barriers.add(key)
                 archive_source_less_purge_barriers: set[tuple[str, str, str]] = set()
+                incoming_archive_source_less_purge_barriers: set[tuple[str, str, str]] = set()
                 if _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE in existing:
                     for barrier in connection.execute(
                         f"SELECT vault_id,source_kind,barrier_digest,purged_at "
                         f"FROM {_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}"
                     ):
-                        archive_source_less_purge_barriers.add(
-                            _archive_source_less_purge_barrier_key(barrier)
-                        )
+                        source_less_key = _archive_source_less_purge_barrier_key(barrier)
+                        if source_less_key[0] not in portable_vault_ids:
+                            raise ValueError(
+                                "destination source-less archive purge barrier has an unknown vault"
+                            )
+                        archive_source_less_purge_barriers.add(source_less_key)
                 if _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE in manifest_tables:
                     with archive.open(
                         f"tables/{_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}.jsonl"
                     ) as stream:
                         for row in _iter_jsonl(stream):
-                            archive_source_less_purge_barriers.add(
-                                _archive_source_less_purge_barrier_key(row)
-                            )
+                            source_less_key = _archive_source_less_purge_barrier_key(row)
+                            if source_less_key[0] not in portable_vault_ids:
+                                raise ValueError(
+                                    "export source-less archive purge barrier has an unknown vault"
+                                )
+                            if source_less_key in incoming_archive_source_less_purge_barriers:
+                                raise ValueError(
+                                    "export source-less archive purge barriers are duplicated"
+                                )
+                            incoming_archive_source_less_purge_barriers.add(source_less_key)
+                            archive_source_less_purge_barriers.add(source_less_key)
                 if "purge_tombstones" in existing:
                     for stable_id, target_type in connection.execute(
                         "SELECT stable_id,target_type FROM purge_tombstones"

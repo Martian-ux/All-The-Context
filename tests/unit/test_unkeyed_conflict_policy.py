@@ -441,9 +441,7 @@ def test_source_less_archive_purge_barrier_survives_restart_and_restore(
         barrier_count = connection.execute(
             "SELECT COUNT(*) FROM archive_source_less_purge_barriers"
         ).fetchone()[0]
-        barrier = connection.execute(
-            "SELECT * FROM archive_source_less_purge_barriers"
-        ).fetchone()
+        barrier = connection.execute("SELECT * FROM archive_source_less_purge_barriers").fetchone()
     assert barrier_count == 1
     assert barrier is not None
     assert set(barrier.keys()) == {"vault_id", "source_kind", "barrier_digest", "purged_at"}
@@ -485,6 +483,83 @@ def test_source_less_archive_purge_barrier_survives_restart_and_restore(
     assert restored.disposition == ObservationDisposition.IGNORED
     assert restored.record_id is None
     assert isolated.status()["counts"]["active_records"] == 0
+
+
+@pytest.mark.parametrize("mutation", ["correction", "delete", "purge"])
+def test_source_less_archive_default_export_preserves_stale_replay_barrier(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    database = tmp_path / "core.db"
+    store = _store(tmp_path)
+    original = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id=f"default-export-{mutation}-original",
+    )[0]
+    assert original.record_id is not None
+
+    if mutation == "correction":
+        store.correct_record(
+            original.record_id,
+            content="I prefer dark mode.",
+            reason="default export correction",
+            entity_key="user",
+            attribute_key="style",
+        )
+    elif mutation == "delete":
+        store.delete_record(original.record_id, reason="default export deletion")
+    else:
+        store.purge(
+            "record",
+            original.record_id,
+            confirmation=store.purge_confirmation_phrase("record", original.record_id),
+            compact=False,
+        )
+
+    export_path = tmp_path / f"default-{mutation}.atcexp"
+    manifest = create_export(database, export_path, "default-export-passphrase")
+    assert manifest["include_sources"] is False
+    assert manifest["tables"].get("archive_source_less_purge_barriers", 0) == (
+        1 if mutation == "purge" else 0
+    )
+
+    isolated_database = tmp_path / f"isolated-{mutation}.db"
+    isolated = CoreStore(isolated_database)
+    isolated.migrate()
+    restore_export(export_path, isolated_database, "default-export-passphrase")
+    restore_export(export_path, isolated_database, "default-export-passphrase")
+
+    replays = [
+        _import_archive_statements(
+            isolated,
+            kind="interaction_preference",
+            statements=[
+                {
+                    "content": "I prefer concise answers.",
+                    "observed_at": "2024-01-01T00:00:00+00:00",
+                }
+            ],
+            scenario_id=f"default-export-{mutation}-replay-{index}",
+        )[0]
+        for index in ("one", "two")
+    ]
+
+    assert all(item.disposition == ObservationDisposition.IGNORED for item in replays)
+    if mutation == "purge":
+        assert all(item.record_id is None for item in replays)
+        assert isolated.status()["counts"]["active_records"] == 0
+    else:
+        assert all(item.record_id == original.record_id for item in replays)
+        assert isolated.status()["counts"]["active_records"] == (
+            1 if mutation == "correction" else 0
+        )
 
 
 def test_source_less_archive_barriers_do_not_collide_across_kind_or_claim(
