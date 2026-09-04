@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import gc
 import json
 import threading
 import time
 import weakref
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -625,6 +627,58 @@ def test_async_child_task_cannot_bypass_waiting_exclusive_writer() -> None:
     asyncio.run(exercise())
 
 
+def test_no_task_callbacks_and_copied_contexts_cannot_replay_task_admission() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        loop = asyncio.get_running_loop()
+        child_entered: set[str] = set()
+        callback_finished = [asyncio.Event(), asyncio.Event()]
+        child_tasks: list[asyncio.Task[Any]] = []
+        writer_started = threading.Event()
+        release_writer = threading.Event()
+
+        async def child(name: str) -> None:
+            async with gate.activity_async():
+                child_entered.add(name)
+
+        def writer() -> None:
+            with gate.exclusive():
+                writer_started.set()
+                assert release_writer.wait(timeout=5.0)
+
+        def schedule_from_callback(index: int, name: str) -> None:
+            child_tasks.append(asyncio.create_task(child(name)))
+            callback_finished[index].set()
+
+        async with gate.activity_async():
+            writer_task = asyncio.create_task(asyncio.to_thread(writer))
+            for _ in range(500):
+                if gate._waiting_exclusive:
+                    break
+                await asyncio.sleep(0.001)
+            else:
+                pytest.fail("exclusive writer did not begin waiting")
+
+            loop.call_soon(schedule_from_callback, 0, "call-soon")
+            copied_context = contextvars.copy_context()
+            loop.call_soon(copied_context.run, schedule_from_callback, 1, "copied")
+            await asyncio.gather(*(event.wait() for event in callback_finished))
+            await asyncio.sleep(0)
+            assert child_entered == set()
+
+        assert await asyncio.to_thread(writer_started.wait, 5.0)
+        assert child_entered == set()
+        release_writer.set()
+        await writer_task
+        await asyncio.gather(*child_tasks)
+        assert child_entered == {"call-soon", "copied"}
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+
+    asyncio.run(exercise())
+
+
 def test_unrelated_async_tasks_have_isolated_activity_owners() -> None:
     gate = CoreActivityGate()
 
@@ -658,7 +712,7 @@ def test_same_task_nested_async_inline_sync_and_thread_sync_are_reentrant() -> N
     async def exercise() -> None:
         def sync_helper() -> None:
             with gate.activity():
-                assert gate._active_count == 2
+                assert gate._active_count == 4
                 assert len(gate._active_by_owner) == 1
 
         async with gate.activity_async():
@@ -673,11 +727,161 @@ def test_same_task_nested_async_inline_sync_and_thread_sync_are_reentrant() -> N
                 assert len(gate._active_by_owner) == 1
             assert gate._active_count == 1
 
-            await asyncio.to_thread(sync_helper)
+            await gate.run_in_threadpool(sync_helper)
             assert gate._active_count == 1
 
         assert gate._active_count == 0
         assert not gate._active_by_owner
+
+    asyncio.run(exercise())
+
+
+def test_canceled_worker_lease_keeps_writer_out_until_worker_exits() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+        writer_started = threading.Event()
+
+        def worker() -> None:
+            worker_started.set()
+            assert release_worker.wait(timeout=5.0)
+
+        def writer() -> None:
+            with gate.exclusive():
+                writer_started.set()
+
+        dispatch = asyncio.create_task(gate.run_in_threadpool(worker))
+        dispatch_ref = weakref.ref(dispatch)
+        assert await asyncio.to_thread(worker_started.wait, 5.0)
+        dispatch.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatch
+        del dispatch
+        for _ in range(100):
+            gc.collect()
+            await asyncio.sleep(0)
+            if dispatch_ref() is None:
+                break
+        assert dispatch_ref() is None
+
+        writer_task = asyncio.create_task(asyncio.to_thread(writer))
+        for _ in range(500):
+            if gate._waiting_exclusive:
+                break
+            await asyncio.sleep(0.001)
+        else:
+            pytest.fail("exclusive writer did not begin waiting")
+        await asyncio.sleep(0.03)
+        assert not writer_started.is_set()
+
+        release_worker.set()
+        await writer_task
+        assert writer_started.is_set()
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+
+    asyncio.run(exercise())
+
+
+def test_worker_lease_exclusive_upgrade_does_not_self_join() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        entered = threading.Event()
+
+        def worker() -> None:
+            with gate.exclusive():
+                entered.set()
+
+        async with gate.activity_async():
+            await gate.run_in_threadpool(worker)
+            assert entered.is_set()
+            assert gate._active_count == 1
+
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+
+    asyncio.run(exercise())
+
+
+def test_canceled_worker_dispatch_before_start_releases_lease_safely() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        loop = asyncio.get_running_loop()
+        executor = ThreadPoolExecutor(max_workers=1)
+        loop.set_default_executor(executor)
+        blocker_started = threading.Event()
+        release_blocker = threading.Event()
+        worker_ran = threading.Event()
+        writer_started = threading.Event()
+
+        def blocker() -> None:
+            blocker_started.set()
+            assert release_blocker.wait(timeout=5.0)
+
+        def never_started_worker() -> None:
+            worker_ran.set()
+
+        def writer() -> None:
+            with gate.exclusive():
+                writer_started.set()
+
+        blocker_task = asyncio.create_task(asyncio.to_thread(blocker))
+        for _ in range(500):
+            if blocker_started.is_set():
+                break
+            await asyncio.sleep(0.001)
+        else:
+            pytest.fail("default executor blocker did not begin")
+        dispatch = asyncio.create_task(gate.run_in_threadpool(never_started_worker))
+        await asyncio.sleep(0)
+        dispatch.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatch
+        for _ in range(100):
+            if gate._active_count == 0:
+                break
+            await asyncio.sleep(0)
+        else:
+            pytest.fail("canceled worker dispatch did not release its lease")
+        assert not gate._active_by_owner
+
+        release_blocker.set()
+        await blocker_task
+        await asyncio.to_thread(writer)
+        assert writer_started.is_set()
+        assert not worker_ran.is_set()
+
+    asyncio.run(exercise())
+
+
+def test_worker_exception_and_base_exception_release_lease_once() -> None:
+    class SentinelBaseException(BaseException):
+        pass
+
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        def fail(error: BaseException) -> None:
+            raise error
+
+        for error in (RuntimeError("worker failed"), SentinelBaseException()):
+            with pytest.raises(type(error)):
+                await gate.run_in_threadpool(fail, error)
+            assert gate._active_count == 0
+            assert not gate._active_by_owner
+
+        writer_started = threading.Event()
+
+        def writer() -> None:
+            with gate.exclusive():
+                writer_started.set()
+
+        await asyncio.to_thread(writer)
+        assert writer_started.is_set()
 
     asyncio.run(exercise())
 

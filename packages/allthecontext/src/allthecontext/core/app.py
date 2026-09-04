@@ -39,7 +39,6 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 from starlette.background import BackgroundTask
-from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -421,9 +420,9 @@ def create_app(
         recovery_lock = threading.Lock()
         recovery_stopping = threading.Event()
         try:
-            await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
+            await core.activity_gate.run_in_threadpool(core.store.resume_purge_jobs, limit=1)
             if not scheduler_update_health_forced_off():
-                await run_in_threadpool(core.capture_scheduler.start)
+                await core.activity_gate.run_in_threadpool(core.capture_scheduler.start)
                 if (
                     updates.preferences.enabled
                     and updates.preferences.channel in updates.config.manifest_urls
@@ -453,10 +452,10 @@ def create_app(
                     timer.cancel()
                 timer.join()
             try:
-                await run_in_threadpool(update_automation.shutdown)
+                await core.activity_gate.run_in_threadpool(update_automation.shutdown)
             finally:
                 try:
-                    await run_in_threadpool(core.capture_scheduler.shutdown)
+                    await core.activity_gate.run_in_threadpool(core.capture_scheduler.shutdown)
                 finally:
                     try:
                         await asyncio.get_running_loop().run_in_executor(
@@ -470,7 +469,9 @@ def create_app(
                             with operation_observer_executor_lock:
                                 if operation_observer_executor is observer_executor:
                                     operation_observer_executor = None
-                            await run_in_threadpool(core.close, close_observer=False)
+                            await core.activity_gate.run_in_threadpool(
+                                core.close, close_observer=False
+                            )
 
     app = FastAPI(
         title="All The Context Core",
@@ -1077,7 +1078,7 @@ def create_app(
                             break
 
         try:
-            return await run_in_threadpool(run_upload)
+            return await core.activity_gate.run_in_threadpool(run_upload)
         finally:
             stop_pump.set()
             if not pump_task.done():
@@ -1107,7 +1108,9 @@ def create_app(
     @app.post("/v1/admin/import-operations/{operation_id}/retry")
     async def retry_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        return await run_in_threadpool(core.import_operations.retry_operation, operation_id)
+        return await core.activity_gate.run_in_threadpool(
+            core.import_operations.retry_operation, operation_id
+        )
 
     @app.post("/v1/admin/import")
     async def import_source(
@@ -1162,7 +1165,7 @@ def create_app(
                             while chunk := handle.read(1024 * 1024):
                                 yield chunk
 
-                    finished = await run_in_threadpool(
+                    finished = await core.activity_gate.run_in_threadpool(
                         core.import_operations.accept_upload,
                         str(operation["operation_id"]),
                         file_iter(),
@@ -1173,7 +1176,7 @@ def create_app(
                     if isinstance(result, dict):
                         return result
                     if finished.get("status") == "complete" and finished.get("source_id"):
-                        return await run_in_threadpool(
+                        return await core.activity_gate.run_in_threadpool(
                             core.imports.reprocess_source, str(finished["source_id"])
                         )
                     raise InvalidStateError(
@@ -1392,7 +1395,7 @@ def create_app(
             refresh_local_workspace_adapter(core.capture, active_config)
             return core.capture.run(source_id)
 
-        result = await run_in_threadpool(run_now)
+        result = await core.activity_gate.run_in_threadpool(run_now)
         return result.model_dump(mode="json")
 
     @app.post("/v1/admin/sources/{source_id}/reprocess")
@@ -1402,7 +1405,7 @@ def create_app(
         rebuild: bool = False,
     ) -> dict[str, Any]:
         require(principal, "admin")
-        return await run_in_threadpool(
+        return await core.activity_gate.run_in_threadpool(
             partial(core.imports.reprocess_source, source_id, rebuild=rebuild)
         )
 
@@ -1671,7 +1674,7 @@ def create_app(
             )
             os.close(descriptor)
             temporary_path = Path(raw_path)
-            await run_in_threadpool(
+            await core.activity_gate.run_in_threadpool(
                 create_export,
                 active_config.database_path,
                 temporary_path,
