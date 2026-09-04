@@ -13,6 +13,7 @@ import platform
 import secrets
 import stat
 import subprocess
+import sys
 from contextlib import suppress
 from ctypes import wintypes
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from typing import Any, Literal, cast
 from platformdirs import user_data_path
 
 from . import __version__
+from .build_identity import runtime_build_identity
 from .platform_compat import (
     delete_file_by_identity,
     replace_file_durably,
@@ -63,6 +65,10 @@ RegistrationName = Literal[
     "InstallLocation",
     "DisplayIcon",
     "UninstallString",
+    "ATCReleaseChannel",
+    "ATCSourceCommit",
+    "ATCBuildIdentity",
+    "ATCBuildIdentitySha256",
     "NoModify",
     "NoRepair",
 ]
@@ -1631,6 +1637,12 @@ class WindowsApplicationRegistrationTransaction:
         "NoModify",
         "NoRepair",
     )
+    _BUILD_IDENTITY_REGISTRY_NAMES: tuple[str, ...] = (
+        "ATCReleaseChannel",
+        "ATCSourceCommit",
+        "ATCBuildIdentity",
+        "ATCBuildIdentitySha256",
+    )
 
     def __init__(
         self,
@@ -1657,6 +1669,12 @@ class WindowsApplicationRegistrationTransaction:
             _absolute_path(Path(journal_path))
             if journal_path is not None
             else _registration_journal_path(self._install_root)
+        )
+        self._build_identity = runtime_build_identity(required=bool(getattr(sys, "frozen", False)))
+        self._registry_names = (
+            (*self._REGISTRY_NAMES[:6], *self._BUILD_IDENTITY_REGISTRY_NAMES, *self._REGISTRY_NAMES[6:])
+            if self._build_identity is not None
+            else self._REGISTRY_NAMES
         )
         self._journal: _RegistrationJournal | None = None
         self._journal_identity_trusted = False
@@ -1728,15 +1746,33 @@ class WindowsApplicationRegistrationTransaction:
         target = self._executable
         string_values: tuple[tuple[str, int, RegistryData], ...] = (
             ("DisplayName", 1, "All The Context"),
-            ("DisplayVersion", 1, __version__),
+            (
+                "DisplayVersion",
+                1,
+                self._build_identity.version if self._build_identity is not None else __version__,
+            ),
             ("Publisher", 1, "All The Context"),
             ("InstallLocation", 1, str(target.parent)),
             ("DisplayIcon", 1, str(target)),
             ("UninstallString", 1, subprocess.list2cmdline([str(target), "--uninstall"])),
         )
         winreg = self._registry if self._registry is not None else windows_registry()
+        identity_values: tuple[tuple[str, int, RegistryData], ...] = ()
+        if self._build_identity is not None:
+            identity = self._build_identity
+            identity_values = (
+                ("ATCReleaseChannel", 1, identity.channel),
+                ("ATCSourceCommit", 1, identity.source_commit),
+                (
+                    "ATCBuildIdentity",
+                    1,
+                    json.dumps(identity.as_dict(), sort_keys=True, separators=(",", ":")),
+                ),
+                ("ATCBuildIdentitySha256", 1, identity.sha256),
+            )
         return (
             *string_values,
+            *identity_values,
             ("NoModify", int(winreg.REG_DWORD), 1),
             ("NoRepair", int(winreg.REG_DWORD), 1),
         )
@@ -1748,7 +1784,7 @@ class WindowsApplicationRegistrationTransaction:
         names: list[RegistrationName] = []
         for plan in self._shortcut_plans():
             names.append(cast(RegistrationName, plan.name))
-        names.extend(cast(tuple[RegistrationName, ...], self._REGISTRY_NAMES))
+        names.extend(cast(tuple[RegistrationName, ...], self._registry_names))
         return tuple(names)
 
     def _validate_journal(self, journal: _RegistrationJournal) -> None:
@@ -1813,7 +1849,7 @@ class WindowsApplicationRegistrationTransaction:
         if snapshot_shortcuts != shortcut_names:
             raise WindowsRegistrationError("registration_journal_invalid")
         snapshot_registry = tuple(item.name for item in journal.snapshot.registry_values)
-        if snapshot_registry != self._REGISTRY_NAMES:
+        if snapshot_registry != self._registry_names:
             raise WindowsRegistrationError("registration_journal_invalid")
         if set(journal.desired_shortcuts) - set(shortcut_names):
             raise WindowsRegistrationError("registration_journal_invalid")
@@ -1824,7 +1860,7 @@ class WindowsApplicationRegistrationTransaction:
         for shortcut_name, data in journal.desired_shortcuts.items():
             if data != self._canonical_shortcut_for_name(shortcut_name):
                 raise WindowsRegistrationError("registration_journal_mismatch")
-        if set(journal.registry_before) - set(self._REGISTRY_NAMES):
+        if set(journal.registry_before) - set(self._registry_names):
             raise WindowsRegistrationError("registration_journal_invalid")
         for registry_name, snapshot in journal.registry_before.items():
             if snapshot.name != registry_name:
@@ -2038,7 +2074,7 @@ class WindowsApplicationRegistrationTransaction:
             return journal.snapshot
         shortcuts = tuple(_shortcut_state(plan.name, plan.path) for plan in self._shortcut_plans())
         key_present, registry_values = _read_registry_state(
-            winreg, self._uninstall_key, self._REGISTRY_NAMES
+            winreg, self._uninstall_key, self._registry_names
         )
         snapshot = WindowsApplicationRegistrationSnapshot(
             self._plan_token(), key_present, shortcuts, registry_values
@@ -2050,7 +2086,7 @@ class WindowsApplicationRegistrationTransaction:
         winreg = self._check_platform_and_plan()
         shortcuts = tuple(_shortcut_state(plan.name, plan.path) for plan in self._shortcut_plans())
         key_present, registry_values = _read_registry_state(
-            winreg, self._uninstall_key, self._REGISTRY_NAMES
+            winreg, self._uninstall_key, self._registry_names
         )
         return WindowsApplicationRegistrationSnapshot(
             self._plan_token(), key_present, shortcuts, registry_values
@@ -3177,7 +3213,7 @@ class WindowsApplicationRegistrationTransaction:
                     return False
                 canonical = self._canonical_registry()
                 observed = tuple(
-                    _registry_value_snapshot(winreg, key, name) for name in self._REGISTRY_NAMES
+                    _registry_value_snapshot(winreg, key, name) for name in self._registry_names
                 )
                 if any(
                     value.present and not _registry_snapshot_equal(value, canonical[value.name])
@@ -3311,7 +3347,7 @@ class WindowsApplicationRegistrationTransaction:
             name: WindowsShortcutSnapshot(name, False, None) for name in current_shortcuts
         }
         absent_registry = {
-            name: WindowsRegistryValueSnapshot(name, False, None) for name in self._REGISTRY_NAMES
+            name: WindowsRegistryValueSnapshot(name, False, None) for name in self._registry_names
         }
         self._mutations = []
         for plan in self._shortcut_plans():
@@ -3328,7 +3364,7 @@ class WindowsApplicationRegistrationTransaction:
                     True,
                 )
             )
-        for name in self._REGISTRY_NAMES:
+        for name in self._registry_names:
             observed_value = current_registry[name]
             canonical = self._canonical_registry()[name]
             if not _registry_snapshot_equal(observed_value, canonical):
@@ -3477,6 +3513,9 @@ def install_application_entrypoints(executable: Path) -> ApplicationRegistration
 
     if platform.system() != "Windows":
         return None
+    if getattr(sys, "frozen", False):
+        if runtime_build_identity(required=True) is None:
+            raise OSError("The packaged build identity is unavailable")
     target = _absolute_path(executable)
     start_menu, desktop = _windows_locations()
     transaction = WindowsApplicationRegistrationTransaction(
@@ -3547,6 +3586,45 @@ def recover_application_entrypoints() -> WindowsRegistrationRestoreStatus | None
             status=status,
         )
     return status
+
+
+def application_entrypoints_need_refresh() -> bool:
+    """Report whether an existing Windows registration names a stale build."""
+
+    if platform.system() != "Windows":
+        return False
+    winreg = windows_registry()
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _windows_uninstall_key())
+    except OSError:
+        # A first install still enters through the source-to-installed path;
+        # an already-installed copy without a registration is left alone here.
+        return False
+    try:
+        identity = runtime_build_identity()
+        if identity is None:
+            return False
+        expected = {
+            "DisplayVersion": identity.version,
+            "ATCReleaseChannel": identity.channel,
+            "ATCSourceCommit": identity.source_commit,
+            "ATCBuildIdentity": json.dumps(
+                identity.as_dict(), sort_keys=True, separators=(",", ":")
+            ),
+            "ATCBuildIdentitySha256": identity.sha256,
+        }
+        for name, expected_value in expected.items():
+            try:
+                observed, _value_type = winreg.QueryValueEx(key, name)
+            except OSError:
+                return True
+            if observed != expected_value:
+                return True
+        return False
+    finally:
+        close = getattr(key, "Close", None)
+        if callable(close):
+            close()
 
 
 def remove_application_entrypoints() -> None:

@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -51,6 +52,7 @@ from ..browser_session import (
     BrowserSessions,
     BrowserSessionTickets,
 )
+from ..build_identity import runtime_build_identity, runtime_build_identity_status
 from ..capture import CaptureError, CaptureRunResult
 from ..capture_runtime import (
     authorize_local_workspace,
@@ -384,6 +386,7 @@ def create_app(
     update_manager: UpdateManager | None = None,
 ) -> FastAPI:
     active_config = config or CoreConfig.default()
+    build_identity = runtime_build_identity(required=bool(getattr(sys, "frozen", False)))
     core = service or CoreService(active_config)
     # Legacy Edge stores exist only for isolated cleanup of pre-V1 residual state.
     # Ordinary Core operation never starts the sync worker, enrolls, connects, or
@@ -397,6 +400,7 @@ def create_app(
             keyring_path=default_update.keyring_path,
             manifest_urls=default_update.manifest_urls,
             current_version=default_update.current_version,
+            current_source_commit=default_update.current_source_commit,
             platform_name=default_update.platform_name,
             architecture=default_update.architecture,
         ),
@@ -489,7 +493,7 @@ def create_app(
 
     app = FastAPI(
         title="All The Context Core",
-        version=__version__,
+        version=build_identity.version if build_identity is not None else __version__,
         docs_url="/docs",
         redoc_url=None,
         lifespan=lifespan,
@@ -663,8 +667,10 @@ def create_app(
             raise HTTPException(status_code=422, detail="unknown client scope")
 
     @app.get("/health")
-    def health(challenge: str | None = None) -> dict[str, str]:
-        result = {"status": "ok", "component": "core"}
+    def health(challenge: str | None = None) -> dict[str, Any]:
+        result: dict[str, Any] = {"status": "ok", "component": "core"}
+        if build_identity is not None:
+            result["build_identity"] = build_identity.as_dict()
         if challenge is not None:
             try:
                 result["proof"] = instance_proof(active_config, challenge, instance_secret)
@@ -919,6 +925,7 @@ def create_app(
         require(principal, "context:status")
         try:
             result = core.store.status()
+            result["build_identity"] = runtime_build_identity_status()
             runtime = core.capture_scheduler.readiness()
             scheduler = dict(runtime["scheduler"])
             scheduler["alive"] = scheduler["running"]
@@ -980,6 +987,7 @@ def create_app(
             # deterministic; liveness remains the separate /health contract.
             return {
                 "ready": False,
+                "build_identity": runtime_build_identity_status(),
                 "runtime_readiness": {
                     "capture": {
                         "inspected_source_count": 0,
@@ -2609,6 +2617,7 @@ def run_update_health_check(report_path: Path) -> int:
     """Start the real loopback Core once, prove health, and shut down cleanly."""
 
     config = CoreConfig.default()
+    build_identity = runtime_build_identity(required=bool(getattr(sys, "frozen", False)))
     finished = threading.Event()
     healthy = threading.Event()
     servers: list[uvicorn.Server] = []
@@ -2621,7 +2630,10 @@ def run_update_health_check(report_path: Path) -> int:
                 request = urllib.request.Request(url, headers={"Accept": "application/json"})
                 with urllib.request.urlopen(request, timeout=1) as response:
                     value = json.loads(response.read(4097).decode("utf-8"))
-                if value == {"status": "ok", "component": "core"}:
+                if value.get("status") == "ok" and value.get("component") == "core" and (
+                    build_identity is None
+                    or value.get("build_identity") == build_identity.as_dict()
+                ):
                     healthy.set()
                     if servers:
                         servers[0].should_exit = True
@@ -2683,11 +2695,13 @@ def run_update_health_check(report_path: Path) -> int:
     except (OSError, sqlite3.Error, ValueError):
         success = False
 
-    payload = (
-        {"component": "core", "health": "ok", "version": __version__}
-        if success
-        else {"component": "core", "health": "failed", "version": __version__}
-    )
+    payload: dict[str, Any] = {
+        "component": "core",
+        "health": "ok" if success else "failed",
+        "version": build_identity.version if build_identity is not None else __version__,
+    }
+    if build_identity is not None:
+        payload["build_identity"] = build_identity.as_dict()
     report_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
     try:

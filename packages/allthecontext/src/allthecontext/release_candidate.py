@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from .build_identity import BuildIdentity, BuildIdentityError
 from .exact_source_gate import load_matrix_evidence
 from .release_manifest import (
     ARCHITECTURES,
@@ -153,6 +154,7 @@ def _validate_direct_package_report(
     *,
     version: str,
     target: ReleaseTarget,
+    source_commit: str | None = None,
 ) -> None:
     value = _read_json_object(report)
     required = {
@@ -170,6 +172,7 @@ def _validate_direct_package_report(
         "recovery_surface",
         "recovery_console_helper",
     }
+    optional = {"channel", "source_commit", "build_identity", "build_identity_sha256"}
     expected_recovery_surface = {
         "windows": "embedded-console-helper",
         "macos": "bundled-console-helper",
@@ -183,7 +186,7 @@ def _validate_direct_package_report(
     digest, size = sha256_file(direct_package)
     source = value.get("source")
     if (
-        set(value) != required
+        (set(value) != required and set(value) != (required | optional))
         or value.get("schema_version") != 1
         or value.get("version") != version
         or value.get("platform") != target.platform
@@ -200,6 +203,21 @@ def _validate_direct_package_report(
         or SAFE_FILE_NAME.fullmatch(source) is None
     ):
         raise ManifestError("direct native package report does not match its package")
+    if set(value) == required | optional:
+        try:
+            identity = BuildIdentity.from_mapping(value["build_identity"])
+        except (BuildIdentityError, TypeError) as exc:
+            raise ManifestError("direct native package build identity is invalid") from exc
+        if (
+            value.get("channel") != identity.channel
+            or value.get("source_commit") != identity.source_commit
+            or value.get("build_identity_sha256") != identity.sha256
+            or identity.version != version
+            or identity.platform != target.platform
+            or identity.architecture != target.architecture
+            or (source_commit is not None and identity.source_commit != source_commit)
+        ):
+            raise ManifestError("direct native package build identity does not match its report")
     try:
         notice_text = notice.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
@@ -561,6 +579,7 @@ def assemble_candidate(
             paths["direct_package_report"],
             version=version,
             target=target,
+            source_commit=source_commit,
         )
         artifacts.append(
             {
@@ -735,6 +754,7 @@ def verify_candidate(
             paths["direct_package_report"],
             version=version,
             target=target,
+            source_commit=source_commit,
         )
     if targets != sorted(targets):
         raise ManifestError("release candidate targets must use deterministic ordering")
@@ -1092,6 +1112,10 @@ def prepare_beta_channel(
             or manifest.get("release_notes_url") != expected_notes
             or manifest.get("sha256") != archive["sha256"]
             or manifest.get("size") != archive["size"]
+            or (
+                "source_commit" in manifest
+                and manifest.get("source_commit") != source_commit
+            )
         ):
             raise ManifestError(f"signed manifest does not match candidate: {manifest_path.name}")
         destination = (
@@ -1187,5 +1211,8 @@ def verify_beta_channel_site(site_dir: Path, *, keyring_path: Path) -> dict[str,
         digest, _ = sha256_file(path)
         if digest != entry.get("sha256"):
             raise ManifestError("beta channel manifest digest is wrong")
-        verify_manifest(_read_json_object(path), keyring, expected_channel="beta")
+        manifest = _read_json_object(path)
+        verify_manifest(manifest, keyring, expected_channel="beta")
+        if "source_commit" in manifest and manifest.get("source_commit") != index["source_commit"]:
+            raise ManifestError("beta channel manifest source commit differs from its index")
     return index

@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from allthecontext.build_identity import BuildIdentity, BuildIdentityError
 from allthecontext.macos_bundle import validate_macos_bundle_links
 from allthecontext.release_manifest import sha256_file
 
@@ -332,7 +333,8 @@ def verify_package(
         "macos": "all-the-context-recovery",
         "linux": "all-the-context",
     }
-    if set(report) != expected_keys:
+    optional_keys = {"channel", "source_commit", "build_identity", "build_identity_sha256"}
+    if set(report) != expected_keys and set(report) != expected_keys | optional_keys:
         raise RuntimeError("package report has an unexpected schema")
     if report["schema_version"] != 1 or report["platform"] != platform_name:
         raise RuntimeError("package report identifies the wrong platform")
@@ -344,6 +346,20 @@ def verify_package(
     version = report.get("version")
     if not isinstance(version, str) or not version:
         raise RuntimeError("package report version is invalid")
+    if set(report) == expected_keys | optional_keys:
+        try:
+            identity = BuildIdentity.from_mapping(report["build_identity"])
+        except (BuildIdentityError, TypeError) as exc:
+            raise RuntimeError("package report build identity is invalid") from exc
+        if (
+            report.get("channel") != identity.channel
+            or report.get("version") != identity.version
+            or report.get("platform") != identity.platform
+            or report.get("architecture") != identity.architecture
+            or report.get("source_commit") != identity.source_commit
+            or report.get("build_identity_sha256") != identity.sha256
+        ):
+            raise RuntimeError("package report build identity contradicts its fields")
     if report["trust"] != "unsigned-community":
         raise RuntimeError("package report does not disclose unsigned trust")
     if report.get("recovery_surface") != expected_recovery_surface.get(platform_name):

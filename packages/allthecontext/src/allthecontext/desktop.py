@@ -27,11 +27,12 @@ from typing import Any, Literal
 
 from platformdirs import user_data_path
 
-from . import __version__
 from .application_install import (
+    application_entrypoints_need_refresh,
     install_application_entrypoints,
     remove_application_entrypoints,
 )
+from .build_identity import runtime_build_identity, runtime_build_identity_status
 from .client_config import apply_managed_client_cleanup, plan_managed_client_cleanup
 from .config import CoreConfig
 from .credentials import FALLBACK_CREDENTIAL_STORAGE, verify_isolated_os_credential_round_trip
@@ -508,6 +509,10 @@ def prepare_installed_runtime(
     if runtime.executable != app_target:
         # Shortcut/registry registration is intentionally outside the binary
         # transaction and runs only after its complete commit.
+    # Refresh an existing registration only when its identity is stale. This
+    # repairs an older installed registration that may otherwise keep showing
+    # beta.3 without rewriting an unregistered current copy on every launch.
+    if runtime.executable != app_target or application_entrypoints_need_refresh():
         install_application_entrypoints(app_target)
     installed = RuntimeCommand(
         app_target,
@@ -552,9 +557,13 @@ def diagnostics() -> dict[str, Any]:
     runtime = RuntimeCommand.current()
     update_config = UpdateConfig.default()
     system = platform.system()
+    build_identity = runtime_build_identity_status()
     return {
         "application": "All The Context",
-        "version": __version__,
+        "version": build_identity["version"],
+        "channel": build_identity["channel"],
+        "source_commit": build_identity["source_commit"],
+        "build_identity": build_identity,
         "frozen": bool(getattr(sys, "frozen", False)),
         "distribution_trust": (
             "unsigned-community" if getattr(sys, "frozen", False) else "source-development"
@@ -610,6 +619,9 @@ def _apply_packaged_update(report_value: str) -> int:
         raise RuntimeError("Packaged update application is available only on Windows")
     operation = _valid_update_operation()
     report_path = _update_report_path(report_value, operation, "apply-report.json")
+    build_identity = runtime_build_identity(required=True)
+    if build_identity is None:
+        raise RuntimeError("The packaged build identity is unavailable")
     installed, _ = prepare_installed_runtime(RuntimeCommand.current(), relaunch_args=None)
     install_application_entrypoints(installed.executable)
     app_digest, app_size = _file_digest(installed.executable)
@@ -627,7 +639,10 @@ def _apply_packaged_update(report_value: str) -> int:
     recovery_digest, recovery_size = _file_digest(recovery)
     payload = {
         "status": "installed",
-        "version": __version__,
+        "version": build_identity.version,
+        "channel": build_identity.channel,
+        "source_commit": build_identity.source_commit,
+        "build_identity": build_identity.as_dict(),
         "application": str(installed.executable),
         "application_sha256": app_digest,
         "application_size": app_size,

@@ -36,6 +36,7 @@ from urllib.parse import urljoin, urlsplit
 from platformdirs import user_data_path
 
 from . import __version__
+from .build_identity import COMMIT_PATTERN, runtime_build_identity, runtime_build_identity_status
 from .desktop_runtime import RuntimeCommand
 from .installed_component_manifest import (
     CHECKSUM_FILE_NAME,
@@ -472,7 +473,9 @@ class UpdatePreferences:
 class UpdateState:
     phase: UpdatePhase = UpdatePhase.IDLE
     current_version: str = CURRENT_VERSION
+    current_source_commit: str | None = None
     offered_version: str | None = None
+    offered_source_commit: str | None = None
     mandatory: bool = False
     release_notes_url: str | None = None
     downloaded_path: str | None = None
@@ -526,6 +529,7 @@ class UpdateConfig:
     keyring_path: Path
     manifest_urls: Mapping[Channel, str]
     current_version: str = CURRENT_VERSION
+    current_source_commit: str | None = None
     platform_name: str = field(default_factory=lambda: current_platform()[0])
     architecture: str = field(default_factory=lambda: current_platform()[1])
 
@@ -534,6 +538,7 @@ class UpdateConfig:
         data_dir = Path(user_data_path("AllTheContext", "AllTheContext", roaming=False))
         package_keyring = Path(__file__).resolve().with_name("update_keys.json")
         platform_name, architecture = current_platform()
+        identity = runtime_build_identity()
         urls: dict[Channel, str] = {}
         if (
             _packaged_update_runtime(platform_name)
@@ -563,6 +568,8 @@ class UpdateConfig:
             data_dir / "updates",
             package_keyring,
             urls,
+            current_version=identity.version if identity is not None else CURRENT_VERSION,
+            current_source_commit=identity.source_commit if identity is not None else None,
             platform_name=platform_name,
             architecture=architecture,
         )
@@ -1782,6 +1789,7 @@ class UpdateManager:
             self.preferences = self._load_preferences()
             self.state = self._load_state()
             self.state.current_version = config.current_version
+            self.state.current_source_commit = config.current_source_commit
             if self.state.automatic_staging_paused:
                 self._cancel.set()
             self._validate_internal_state()
@@ -2383,7 +2391,9 @@ class UpdateManager:
             allowed = set(UpdateState.__dataclass_fields__)
             state = UpdateState(**{key: item for key, item in value.items() if key in allowed})
             optional_strings = (
+                state.current_source_commit,
                 state.offered_version,
+                state.offered_source_commit,
                 state.release_notes_url,
                 state.downloaded_path,
                 state.backup_path,
@@ -2398,6 +2408,9 @@ class UpdateManager:
             )
             if any(item is not None and not isinstance(item, str) for item in optional_strings):
                 raise ValueError("invalid state string")
+            for source_commit in (state.current_source_commit, state.offered_source_commit):
+                if source_commit is not None and COMMIT_PATTERN.fullmatch(source_commit) is None:
+                    raise ValueError("invalid source commit")
             state.last_error = _sanitize_persisted_error(state.last_error)
             if not isinstance(state.current_version, str):
                 raise ValueError("invalid current version")
@@ -2766,6 +2779,7 @@ class UpdateManager:
             return False
         self.state.phase = UpdatePhase.UNPUBLISHED
         self.state.offered_version = None
+        self.state.offered_source_commit = None
         self.state.mandatory = False
         self.state.release_notes_url = None
         self.state.operation_id = None
@@ -3015,13 +3029,19 @@ class UpdateManager:
                 load_keyring(self.config.keyring_path),
                 current_version=self.config.current_version,
                 expected_channel=self.preferences.channel,
+                require_source_commit=self.config.current_source_commit is not None,
             )
+            if self.config.current_source_commit is not None and manifest.get(
+                "source_commit"
+            ) != self.config.current_source_commit:
+                raise UpdateError("Verified update metadata is for a different source commit")
             self._validate_manifest_target(manifest)
             self._validate_manifest_artifact_size(manifest)
             if (
                 manifest["version"] != self.state.offered_version
                 or manifest["mandatory"] != self.state.mandatory
                 or manifest["release_notes_url"] != self.state.release_notes_url
+                or manifest.get("source_commit") != self.state.offered_source_commit
             ):
                 raise UpdateError("Verified update state no longer matches its metadata")
         except UpdateError:
@@ -3177,6 +3197,7 @@ class UpdateManager:
                     ),
                     "automatic_install_enabled": self.automation_policy.automatic_install_enabled,
                     "automatic_restart_enabled": self.automation_policy.automatic_restart_enabled,
+                    "build_identity": runtime_build_identity_status(),
                     "activation_prerequisite": activation_prerequisite,
                     "restart_required": self.state.phase is UpdatePhase.RESTART_REQUIRED,
                     "restart_deferred": (
@@ -3251,6 +3272,7 @@ class UpdateManager:
                 self.state.automatic_staging_paused = False
             if channel_changed:
                 self.state.offered_version = None
+                self.state.offered_source_commit = None
                 self.state.mandatory = False
                 self.state.release_notes_url = None
                 self.state.operation_id = None
@@ -3418,7 +3440,12 @@ class UpdateManager:
                     keyring,
                     current_version=self.config.current_version,
                     expected_channel=self.preferences.channel,
+                    require_source_commit=self.config.current_source_commit is not None,
                 )
+                if self.config.current_source_commit is not None and manifest.get(
+                    "source_commit"
+                ) != self.config.current_source_commit:
+                    raise UpdateError("Update metadata is for a different source commit")
                 self._validate_manifest_target(manifest)
                 self._validate_manifest_artifact_size(manifest)
                 offered = cast(str, manifest["version"])
@@ -3428,6 +3455,7 @@ class UpdateManager:
                 self._atomic_json(operation_dir / "manifest.json", manifest)
                 self.state.last_checked_at = _utc_now()
                 self.state.offered_version = offered
+                self.state.offered_source_commit = cast(str | None, manifest.get("source_commit"))
                 self.state.mandatory = cast(bool, manifest["mandatory"])
                 self.state.release_notes_url = cast(str, manifest["release_notes_url"])
                 self.state.operation_id = operation_id

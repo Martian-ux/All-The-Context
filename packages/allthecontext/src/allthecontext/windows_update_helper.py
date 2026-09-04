@@ -31,6 +31,7 @@ from filelock import FileLock, Timeout
 from platformdirs import user_data_path
 
 from . import __version__
+from .build_identity import COMMIT_PATTERN
 from .credentials import (
     CredentialStore,
     DevelopmentFileCredentialStore,
@@ -119,7 +120,9 @@ STARTUP_STATE_FIELDS = frozenset(
     {
         "phase",
         "current_version",
+        "current_source_commit",
         "offered_version",
+        "offered_source_commit",
         "mandatory",
         "release_notes_url",
         "downloaded_path",
@@ -529,11 +532,19 @@ def _pre_cutover_staging_evidence(operation_id: str, state: dict[str, Any]) -> b
             value,
             load_keyring(_update_keyring_path()),
             current_version=__version__,
+            require_source_commit=(
+                state.get("current_source_commit") is not None
+                or state.get("offered_source_commit") is not None
+            ),
         )
         if (
             value["platform"] != "windows"
             or value["architecture"] != _update_architecture()
             or value["version"] != state.get("offered_version")
+            or (
+                state.get("offered_source_commit") is not None
+                and value.get("source_commit") != state.get("offered_source_commit")
+            )
             or value["mandatory"] != state.get("mandatory")
             or value["release_notes_url"] != state.get("release_notes_url")
         ):
@@ -1012,8 +1023,20 @@ def _validate_journal_storage_paths(
 
 
 def _validate_startup_state(value: dict[str, Any]) -> str:
-    legacy_fields = STARTUP_STATE_FIELDS - {"automatic_staging_paused"}
-    if set(value) not in {STARTUP_STATE_FIELDS, legacy_fields}:
+    legacy_fields = STARTUP_STATE_FIELDS - {
+        "automatic_staging_paused",
+        "current_source_commit",
+        "offered_source_commit",
+    }
+    accepted_fields = {
+        legacy_fields,
+        STARTUP_STATE_FIELDS,
+        STARTUP_STATE_FIELDS - {"automatic_staging_paused"},
+        STARTUP_STATE_FIELDS - {"current_source_commit", "offered_source_commit"},
+        STARTUP_STATE_FIELDS
+        - {"automatic_staging_paused", "current_source_commit", "offered_source_commit"},
+    }
+    if set(value) not in accepted_fields:
         raise HelperError("startup_state_invalid")
     phase = value.get("phase")
     if not isinstance(phase, str) or phase not in STARTUP_RECOVERY_PHASES:
@@ -1033,6 +1056,12 @@ def _validate_startup_state(value: dict[str, Any]) -> str:
             ReleaseVersion.parse(offered_version)
         except ValueError as exc:
             raise HelperError("startup_state_invalid") from exc
+    for source_commit_field in ("current_source_commit", "offered_source_commit"):
+        source_commit = value.get(source_commit_field)
+        if source_commit is not None and (
+            not isinstance(source_commit, str) or COMMIT_PATTERN.fullmatch(source_commit) is None
+        ):
+            raise HelperError("startup_state_invalid")
     if not isinstance(value.get("mandatory"), bool):
         raise HelperError("startup_state_invalid")
     if "automatic_staging_paused" in value and not isinstance(
