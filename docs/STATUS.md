@@ -13,6 +13,16 @@ downloaded-candidate evidence remain separately bounded. The older
 2026-09-03 protected-main paragraph below is retained as historical context
 until this candidate is pushed and its exact final SHA is recorded.
 
+The final local source head before this evidence update is
+`5c79ada65b912daf40d16be04bb137946296db7b`. Functional integration passed the
+full 3,088-test suite (3,069 passed, 19 capability skips, 3 warnings), and the
+post-scan Windows fixture regression passed 47 tests with 3 capability skips.
+Ruff, format, mypy, docs, Actions pins, collection parity, runner architecture,
+and committed-tree/history security scans are green. Native artifact creation
+is intentionally unavailable on this host because the reproducibility gate
+requires Python 3.12.10 and uv 0.11.32; the host has Python 3.14.3 and uv
+0.12.9. Hosted checks and the draft PR remain pending.
+
 As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
 boundaries. After one setup opt-in, ordinary user prompts and rendered

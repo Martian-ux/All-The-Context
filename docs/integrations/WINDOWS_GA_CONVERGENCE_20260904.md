@@ -105,15 +105,39 @@ same SHA or patch ID after conflict resolution.
   when the embedded identity requires them.
 - Portable export/restore: retained the full graph and purge identity checks;
   machine-local security tables are excluded from exports and skipped when
-  validating legacy archives. The stale session-export regression was updated
-  to assert this explicit boundary.
+  validating legacy archives. Portable ACL lists are detached from excluded
+  source principals, and legacy capture references are ignored before restore.
+  The stale session-export regression was updated to assert this explicit
+  boundary.
 - Storage/archive: retained both observation safety bounds and both purge
   identity validators, including vault and target identity in restore barriers.
+- Test-contract reconciliation: publication fixtures now carry the required
+  source-bound build identity, the project-runtime ambiguity fixture remains
+  self-contained under archive admission rules, and the Windows path fixture
+  uses a neutral absolute root so the committed-tree security scan stays strict.
 
 ## Evidence status
 
-The final integrated commit, exact gate results, artifact decisions/hashes,
-hosted-check snapshot, and draft PR URL are appended to this ledger after the
-last local gate and before handoff. No artifact is executed, installed,
-updated, signed, published, scanned by Defender, or used for clean-machine
-acceptance by this integration worker.
+Final local source head before this evidence update:
+`5c79ada65b912daf40d16be04bb137946296db7b`.
+
+| Gate | Result |
+|---|---|
+| Full pytest after functional integration (`c8b51a0`) | 3,069 passed, 19 capability skips, 3 warnings; 3,088 collected |
+| Post-scan fixture regression at `5c79ada` | 47 passed, 3 capability skips |
+| `python -m ruff check .` | Passed |
+| `python -m ruff format --check .` | Passed; 376 files formatted |
+| `python -m mypy packages/allthecontext/src` | Passed; 112 source files |
+| Docs link check | Passed |
+| Actions pin check | Passed; 48 third-party pins |
+| Runner architecture check | Passed; Windows `x86_64` |
+| Pytest collection parity | Passed; 3,088 node IDs identical sequential/2-worker |
+| Repository security tree/history scan | Passed; 598 tree files and 3,514 reachable blobs, zero findings |
+
+No native artifact was built: reproducibility requires Python 3.12.10 and uv
+0.11.32, while this host provides Python 3.14.3 and uv 0.12.9. PyInstaller
+6.21.0 is present, but the pinned Python/uv gate is not satisfied. Therefore
+there are no artifact hashes or exact-artifact results. No artifact was
+executed, installed, updated, signed, published, scanned by Defender, or used
+for clean-machine acceptance by this integration worker. Hosted-check snapshot
+and the single draft PR URL will be appended after the named branch is pushed.

@@ -3,8 +3,9 @@
 ## ADR-201: Exact Windows hardening convergence preserves authority boundaries
 
 **Status:** accepted locally on 2026-09-04 from exact base
-`7bfd070fd51541cd77f3cde67576f447cdef50bd`; final pushed SHA and hosted
-checks are still pending. The complete source-to-integrated ledger is
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`; local source head
+`5c79ada65b912daf40d16be04bb137946296db7b` is green, while final pushed SHA
+and hosted checks are still pending. The complete source-to-integrated ledger is
 `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`.
 
 Nine requested worker tips produce 49 unique commits after ancestry union,
@@ -14,7 +15,8 @@ resolution retains the Core activity/readiness lifecycle gates, the
 reversible Windows registration transaction, the immutable packaged build
 identity, and the portable graph/purge barriers. Machine-local principals,
 credentials, grants, and in-flight ingestion state remain excluded from
-portable exports; legacy archives containing those rows are ignored without
+portable exports; portable ACL lists are detached from excluded source
+principals, and legacy archives containing those rows are ignored without
 authority mutation.
 
 This decision records source integration only. It does not grant release,
