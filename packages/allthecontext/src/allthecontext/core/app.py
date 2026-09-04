@@ -1002,7 +1002,7 @@ def create_app(
 
         # Bounded queue bridges the async request body to the sync Core worker.
         # maxsize keeps memory within the import RSS envelope.
-        chunk_queue: Queue[bytes | None | _UploadCancelled] = Queue(maxsize=8)
+        chunk_queue: Queue[bytes | _UploadCancelled | None] = Queue(maxsize=8)
         stream_error: list[BaseException] = []
         stop_pump = threading.Event()
 
@@ -1032,7 +1032,7 @@ def create_app(
                     chunk_queue.get_nowait()
                 except Empty:
                     break
-            end_marker: None | _UploadCancelled = _UPLOAD_CANCELLED if cancel_operation else None
+            end_marker: _UploadCancelled | None = _UPLOAD_CANCELLED if cancel_operation else None
             while True:
                 try:
                     chunk_queue.put_nowait(end_marker)
