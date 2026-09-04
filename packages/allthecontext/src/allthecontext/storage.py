@@ -30,6 +30,7 @@ from .memory_policy import (
     ObservationOrigin,
     archive_lineage_key,
     classify_sensitivity,
+    normalize_imported_text,
     normalized_observation_text,
     registered_source_reference,
 )
@@ -4161,6 +4162,10 @@ class CoreStore:
         capture_event_id: str | None = None,
         capture_binding_hash: str | None = None,
     ) -> str:
+        if candidate.source_type in {"archive", "provider_archive", "provider_memory"}:
+            normalized_content = normalize_imported_text(candidate.content)
+            if normalized_content != candidate.content:
+                candidate = candidate.model_copy(update={"content": normalized_content})
         data = candidate.model_dump(mode="json")
         content_hash = _hash_text(_json(data))
         if candidate.idempotency_key is not None and client is not None:
@@ -4951,6 +4956,46 @@ class CoreStore:
             ).fetchone(),
         )
 
+    def _archive_supersession_barrier_tx(
+        self,
+        connection: sqlite3.Connection,
+        observation: sqlite3.Row,
+    ) -> sqlite3.Row | None:
+        """Find current corrected truth that must block old archive evidence."""
+
+        source_id = cast(str | None, observation["source_id"])
+        source_reference = cast(str | None, observation["source_reference"])
+        if source_id is None or source_reference is None:
+            return None
+        rows = cast(
+            list[sqlite3.Row],
+            connection.execute(
+                "SELECT * FROM context_records WHERE vault_id=? AND source_id=? "
+                "AND source_reference=? AND approval_status='approved' "
+                "AND lower(kind)=? AND entity_key IS ? AND attribute_key IS ? "
+                "AND deleted_at IS NULL ORDER BY updated_at DESC,id",
+                (
+                    observation["vault_id"],
+                    source_id,
+                    source_reference,
+                    str(observation["kind"]).casefold(),
+                    observation["entity_key"],
+                    observation["attribute_key"],
+                ),
+            ).fetchall(),
+        )
+        observation_fingerprint = _value_fingerprint(observation)
+        for record in rows:
+            if _value_fingerprint(record) == observation_fingerprint:
+                continue
+            if str(
+                record["observation_origin"] or ""
+            ) != ObservationOrigin.ARCHIVE_IMPORT.value or self._record_has_user_edit_tx(
+                connection, str(record["id"])
+            ):
+                return record
+        return None
+
     def _registered_source_influence_barrier_tx(
         self,
         connection: sqlite3.Connection,
@@ -5649,6 +5694,33 @@ class CoreStore:
                 actor=actor,
             )
             self._audit(connection, actor, "observation_ignored", [])
+        elif (
+            origin == ObservationOrigin.ARCHIVE_IMPORT
+            and decision.disposition == ObservationDisposition.APPLIED
+            and (blocked := self._archive_supersession_barrier_tx(connection, observation))
+            is not None
+        ):
+            blocked_id = str(blocked["id"])
+            self._set_observation_decision_tx(
+                connection,
+                observation_id,
+                disposition=ObservationDisposition.IGNORED,
+                reason=(
+                    "archive evidence was superseded by explicit current context; "
+                    "the imported value was not reapplied"
+                ),
+                policy_version=policy.policy_version,
+                origin=origin,
+                record_id=blocked_id,
+                actor=actor,
+            )
+            self._link_observation_tx(
+                connection,
+                observation_id,
+                blocked_id,
+                "blocked_by_supersession",
+            )
+            self._audit(connection, actor, "observation_ignored", [blocked_id])
         elif (
             origin == ObservationOrigin.ARCHIVE_IMPORT
             and decision.disposition == ObservationDisposition.APPLIED

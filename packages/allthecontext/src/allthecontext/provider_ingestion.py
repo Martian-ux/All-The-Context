@@ -18,7 +18,14 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any, cast
 
-from .memory_policy import archive_lineage_key, classify_sensitivity
+from .memory_policy import (
+    archive_lineage_key,
+    classify_sensitivity,
+    is_self_contained_archive_statement,
+    normalize_imported_text,
+    normalized_import_candidate_key,
+    normalized_import_slot_key,
+)
 from .models import MAX_SLOT_KEY_CHARS, Availability, CandidateInput, Sensitivity
 
 PARSER_VERSION = "provider-archives-v2"
@@ -1311,8 +1318,10 @@ def _candidate_from_statement(
     elif len(cleaned) < _SPECIFIC_MIN_CHARS and _LABEL.match(cleaned) is None:
         return None
     label = _LABEL.match(cleaned)
-    candidate_content = label.group(2).strip() if label else cleaned
+    candidate_content = _clean_statement(label.group(2)) if label else cleaned
     if not candidate_content:
+        return None
+    if not is_self_contained_archive_statement(kind, cleaned):
         return None
     if entity_key is None and attribute_key is None:
         slot = archive_lineage_key(kind, candidate_content)
@@ -1390,8 +1399,7 @@ def _provider_observed_at(value: str | None) -> str | None:
 
 def _clean_statement(value: str) -> str:
     cleaned = _MARKDOWN_PREFIX.sub("", value).strip().strip("\u2022")
-    cleaned = " ".join(cleaned.split())
-    return cleaned.strip()
+    return normalize_imported_text(cleaned)
 
 
 def _looks_like_reference_material(value: str) -> bool:
@@ -1511,7 +1519,7 @@ def _memory_candidate(
     classified = _classify_statement(cleaned)
     kind = classified[0] if classified is not None else "provider_memory"
     label = _LABEL.match(cleaned)
-    candidate_content = label.group(2).strip() if label else cleaned
+    candidate_content = _clean_statement(label.group(2)) if label else cleaned
     return CandidateInput(
         kind=kind,
         content=candidate_content,
@@ -1697,14 +1705,55 @@ def _deduplicate_strings(items: Iterable[str]) -> Iterable[str]:
 
 def _deduplicate_candidates(items: Iterable[CandidateInput]) -> list[CandidateInput]:
     result: list[CandidateInput] = []
-    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    seen: dict[tuple[str, str, tuple[str, ...], str | None, str | None], int] = {}
     for item in items:
         key = (
-            item.kind.casefold(),
-            " ".join(item.content.casefold().split()),
+            *normalized_import_candidate_key(item.kind, item.content),
             tuple(item.scopes),
+            normalized_import_slot_key(item.entity_key),
+            normalized_import_slot_key(item.attribute_key),
         )
-        if key not in seen:
-            seen.add(key)
+        duplicate_index = seen.get(key)
+        if duplicate_index is None:
+            seen[key] = len(result)
             result.append(item)
+            continue
+        existing = result[duplicate_index]
+        source_reference = _merge_source_references(
+            existing.source_reference,
+            item.source_reference,
+        )
+        if source_reference != existing.source_reference:
+            result[duplicate_index] = existing.model_copy(
+                update={"source_reference": source_reference}
+            )
     return result
+
+
+_MERGED_SOURCE_REFERENCE_PREFIX = "archive-provenance-v1:"
+
+
+def _source_reference_parts(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    if value.startswith(_MERGED_SOURCE_REFERENCE_PREFIX):
+        return {part for part in value[len(_MERGED_SOURCE_REFERENCE_PREFIX) :].split("|") if part}
+    return {value}
+
+
+def _merge_source_references(first: str | None, second: str | None) -> str | None:
+    references = sorted(_source_reference_parts(first) | _source_reference_parts(second))
+    if not references:
+        return None
+    if len(references) == 1:
+        return references[0]
+    prefix = _MERGED_SOURCE_REFERENCE_PREFIX
+    selected: list[str] = []
+    current_length = len(prefix)
+    for reference in references:
+        separator = 1 if selected else 0
+        if current_length + separator + len(reference) > 2_000:
+            break
+        selected.append(reference)
+        current_length += separator + len(reference)
+    return prefix + "|".join(selected)

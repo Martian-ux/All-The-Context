@@ -35,7 +35,12 @@ from .import_boundary import (
     refuse_if_over_boundary,
 )
 from .ingestion import IngestionService, archive_session_request
-from .memory_policy import classify_sensitivity
+from .memory_policy import (
+    classify_sensitivity,
+    normalize_imported_text,
+    normalized_import_candidate_key,
+    normalized_import_slot_key,
+)
 from .models import (
     CLOSED_COVERAGE_KEYS,
     MAX_CLOSED_COVERAGE_COUNT,
@@ -203,7 +208,7 @@ class _GenericCoverage:
 
 
 def _candidate(kind: str, content: str, *, evidence: str | None = None) -> CandidateInput | None:
-    normalized = " ".join(content.split()).strip()
+    normalized = normalize_imported_text(content)
     if not normalized or len(normalized) > 64_000:
         return None
     if _SECRET_HINT.search(normalized):
@@ -592,12 +597,23 @@ def _parse_csv_document(
 
 def _deduplicate(items: Iterable[CandidateInput]) -> list[CandidateInput]:
     result: list[CandidateInput] = []
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str, tuple[str, ...], str | None, str | None], int] = {}
     for item in items:
-        key = (item.kind.casefold(), " ".join(item.content.casefold().split()))
-        if key not in seen:
-            seen.add(key)
+        key = (
+            *normalized_import_candidate_key(item.kind, item.content),
+            tuple(item.scopes),
+            normalized_import_slot_key(item.entity_key),
+            normalized_import_slot_key(item.attribute_key),
+        )
+        duplicate_index = seen.get(key)
+        if duplicate_index is None:
+            seen[key] = len(result)
             result.append(item)
+        elif result[duplicate_index].source_reference is None and item.source_reference is not None:
+            # Prefer the provider-normalized entry when a generic extractor
+            # and a provider extractor describe the same logical item. This
+            # retains the addressable provenance without adding a duplicate.
+            result[duplicate_index] = item
     return result
 
 
