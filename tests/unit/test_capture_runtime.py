@@ -39,6 +39,7 @@ from allthecontext.core.service import CoreService
 from allthecontext.experimental_local_git_workspace_connector import (
     LOCAL_GIT_WORKSPACE_PROVIDER,
     LocalGitWorkspaceCaptureProviderAdapter,
+    _root_token,
 )
 from allthecontext.export import create_export
 from allthecontext.memory_policy import (
@@ -1840,6 +1841,13 @@ def test_windows_extended_local_drive_prefix_is_accepted_and_unc_remains_rejecte
         canonical_workspace_root(Path("\\\\?\\UNC\\server\\share\\workspace"))
     with pytest.raises(CaptureError, match="capture_authorization_unavailable"):
         canonical_workspace_root(Path("\\\\.\\C:\\Windows"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path identity normalization")
+def test_windows_onedrive_root_identity_is_case_normalized() -> None:
+    upper = Path(r"C:\Users\Noah\OneDrive - ATC\Workspace")
+    lower = Path(r"c:\users\noah\onedrive - atc\workspace")
+    assert _root_token(upper) == _root_token(lower)
 
 
 def test_malformed_requested_scopes_json_shapes_fail_close_core_and_authorize(

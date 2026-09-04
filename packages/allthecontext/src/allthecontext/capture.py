@@ -1857,6 +1857,22 @@ class CaptureLedger:
             lag_pages=lag_pages,
         )
 
+    def recover_adapter_unavailable(self, source_id: str) -> CaptureSource:
+        """Reset one adapter-unavailable retry state after runtime recovery."""
+
+        now = self.clock()
+        with self.store.transaction() as connection:
+            updated = connection.execute(
+                "UPDATE capture_sources SET lifecycle_state='enabled',retry_count=0,"
+                "next_retry_at=NULL,last_error_code=NULL,last_error_at=NULL,updated_at=? "
+                "WHERE id=? AND lifecycle_state='degraded' "
+                "AND last_error_code='capture_adapter_unavailable'",
+                (now, source_id),
+            )
+            if updated.rowcount not in {0, 1}:
+                raise CaptureError("capture_failed")
+        return self.get_source(source_id)
+
     def stale_result(
         self,
         handle: CaptureRunHandle,
@@ -2021,6 +2037,42 @@ class CaptureCoordinator:
 
     def revoke(self, source_id: str) -> CaptureSource:
         return self.ledger.transition(source_id, "revoked")
+
+    def recover_available_adapters(self, *, provider: str | None = None) -> tuple[str, ...]:
+        """Clear adapter-unavailable degradation after validated recovery.
+
+        Adapter registration is an ephemeral runtime concern. The source
+        lifecycle remains Core-owned, so recovery is performed through the
+        ledger and only for sources whose last durable failure was the bounded
+        ``capture_adapter_unavailable`` condition.
+        """
+
+        sources, _total = self.list_sources(limit=500, offset=0)
+        recovered: list[str] = []
+        for source in sources:
+            if (
+                source.lifecycle_state != "degraded"
+                or source.last_error_code != "capture_adapter_unavailable"
+                or (provider is not None and source.provider != provider)
+            ):
+                continue
+            adapter = self.adapters.get(source.provider)
+            if adapter is None:
+                continue
+            try:
+                manifest = self._adapter_manifest(adapter, source)
+            except CaptureError:
+                continue
+            if (
+                manifest.availability == "unavailable"
+                or manifest.health == "unavailable"
+                or manifest.authorization != "authorized"
+                or manifest.connection != "connected"
+            ):
+                continue
+            self.ledger.recover_adapter_unavailable(source.id)
+            recovered.append(source.id)
+        return tuple(recovered)
 
     def _adapter_page(
         self,

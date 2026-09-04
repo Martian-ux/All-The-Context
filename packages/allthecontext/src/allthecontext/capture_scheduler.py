@@ -48,6 +48,7 @@ type CaptureRunner = Callable[[str], CaptureRunResult]
 type ResourceCost = Callable[[CaptureSource], int]
 ScheduleKind = Literal["initial_backfill", "incremental", "retry"]
 HealthState = Literal["healthy", "degraded", "unavailable"]
+WorkerState = Literal["not_started", "running", "stopped", "failed"]
 CAPTURE_SCHEDULER_ENABLED_ENV = "ATC_CAPTURE_SCHEDULER_ENABLED"
 UPDATE_HEALTH_OPERATION_ENV = "ATC_UPDATE_HEALTH_OPERATION"
 _CORE_SCHEDULER_JOIN_TIMEOUT_SECONDS = 8.0
@@ -725,6 +726,13 @@ class CoreCaptureScheduler:
         self._wakeup = threading.Event()
         self._closing = threading.Event()
         self._thread: threading.Thread | None = None
+        self._worker_state: WorkerState = "not_started"
+        self._worker_failure_code: str | None = None
+        self._worker_restart_count = 0
+        self._last_cycle_reason_code: str | None = None
+        self._adapter_refresh_state: Literal["not_attempted", "available", "unavailable"] = (
+            "not_attempted"
+        )
 
     def dispatch_allowed(self) -> bool:
         if scheduler_update_health_forced_off() or not scheduler_process_gate_open():
@@ -738,10 +746,139 @@ class CoreCaptureScheduler:
         with self._lifecycle_lock:
             thread = self._thread
             running = thread is not None and thread.is_alive()
-        return capture_scheduler_status_payload(
+            worker_state = self._worker_state
+            worker_failure_code = self._worker_failure_code
+            worker_restart_count = self._worker_restart_count
+            last_cycle_reason_code = self._last_cycle_reason_code
+            adapter_refresh_state = self._adapter_refresh_state
+        payload = capture_scheduler_status_payload(
             self.config.data_dir,
             running=running,
         )
+        payload.update(
+            {
+                "adapter_refresh_state": adapter_refresh_state,
+                "last_cycle_reason_code": last_cycle_reason_code,
+                "worker_failure_code": worker_failure_code,
+                "worker_restart_count": worker_restart_count,
+                "worker_restartable": (
+                    not self._closing.is_set()
+                    and not running
+                    and worker_state in {"not_started", "stopped", "failed"}
+                    and bool(payload["dispatch_allowed"])
+                ),
+                "worker_state": worker_state,
+            }
+        )
+        return payload
+
+    @staticmethod
+    def _content_free_error_code(error: BaseException) -> str:
+        if isinstance(error, CaptureError):
+            return error.code
+        if isinstance(error, (OSError, sqlite3.OperationalError)):
+            return "capture_failed"
+        return "worker_failed"
+
+    def _record_cycle_reason(self, reason_code: str | None) -> None:
+        with self._lifecycle_lock:
+            self._last_cycle_reason_code = reason_code
+
+    def _record_worker_failure(self, error: BaseException) -> None:
+        with self._lifecycle_lock:
+            self._worker_state = "failed"
+            self._worker_failure_code = self._content_free_error_code(error)
+
+    def readiness(self) -> dict[str, Any]:
+        """Return content-free scheduler and capture readiness diagnostics."""
+
+        scheduler = self.status()
+        try:
+            batch = self._scheduler._sources(full_scan=True)
+            health = self._scheduler._health_from_sources(
+                batch.sources,
+                source_total=batch.total,
+                truncated=batch.truncated,
+                emit_actions=False,
+            )
+            sources: list[dict[str, Any]] = []
+            for source in batch.sources:
+                adapter_available = False
+                retry_exhausted = False
+                reason_code = source.last_error_code
+                try:
+                    manifest = self.coordinator.capability_manifest(source.id)
+                    adapter_available = (
+                        manifest.availability != "unavailable" and manifest.health != "unavailable"
+                    )
+                    retry_exhausted = source.retry_count >= manifest.retry_policy.max_attempts
+                except CaptureError:
+                    reason_code = reason_code or "capture_capability_invalid"
+                if (
+                    reason_code is None
+                    and not adapter_available
+                    and source.lifecycle_state
+                    in {
+                        "enabled",
+                        "degraded",
+                        "reconciling",
+                    }
+                ):
+                    reason_code = "capture_adapter_unavailable"
+                if retry_exhausted:
+                    reason_code = reason_code or "capture_retry_exhausted"
+                sources.append(
+                    {
+                        "adapter_available": adapter_available,
+                        "id": source.id,
+                        "last_error_code": source.last_error_code,
+                        "lifecycle_state": source.lifecycle_state,
+                        "provider": source.provider,
+                        "reason_code": reason_code,
+                        "retry_count": source.retry_count,
+                        "retry_exhausted": retry_exhausted,
+                        "retry_reason_code": (
+                            "capture_retry_exhausted" if retry_exhausted else None
+                        ),
+                        "retry_scheduled": source.next_retry_at is not None,
+                    }
+                )
+            reason_codes = {
+                reason for connector in health.connectors for reason in connector.reason_codes
+            }
+            reason_codes.update(health.reason_codes)
+            reason_codes.update(
+                source["retry_reason_code"]
+                for source in sources
+                if source["retry_reason_code"] is not None
+            )
+            capture = {
+                "inspected_source_count": health.inspected_source_count,
+                "reason_codes": sorted(reason_codes),
+                "source_total": health.source_total,
+                "sources": sources,
+                "state": health.state,
+                "truncated": health.truncated,
+            }
+        except CaptureError as error:
+            capture = {
+                "inspected_source_count": 0,
+                "reason_codes": [error.code],
+                "source_total": None,
+                "sources": [],
+                "state": "unavailable",
+                "truncated": False,
+            }
+        except (OSError, sqlite3.OperationalError):
+            capture = {
+                "inspected_source_count": 0,
+                "reason_codes": ["capture_failed"],
+                "source_total": None,
+                "sources": [],
+                "state": "unavailable",
+                "truncated": False,
+            }
+        return {"capture": capture, "scheduler": scheduler}
 
     def activity_snapshot(self) -> dict[str, Any]:
         """Return bounded, content-free scheduler and capture activity."""
@@ -813,6 +950,8 @@ class CoreCaptureScheduler:
                 return
             self._stop.clear()
             self._wakeup.clear()
+            self._worker_state = "running"
+            self._worker_restart_count += 1
             spawned = threading.Thread(
                 target=self._loop,
                 name=_CORE_SCHEDULER_THREAD_NAME,
@@ -857,13 +996,17 @@ class CoreCaptureScheduler:
             if current is not None and not current.is_alive():
                 self._thread = None
 
-    def _try_exit(self, current: threading.Thread) -> bool:
+    def _record_cycle_report(self, report: SchedulerRunReport) -> None:
+        reason_codes = set(report.health.reason_codes)
+        reason_codes.update(
+            reason for connector in report.health.connectors for reason in connector.reason_codes
+        )
+        reason_code = sorted(reason_codes)[0] if reason_codes else None
+        self._record_cycle_reason(reason_code)
+
+    def _try_exit(self) -> bool:
         with self._lifecycle_lock:
-            if not self._closing.is_set() and not self._stop.is_set():
-                return False
-            if self._thread is current:
-                self._thread = None
-            return True
+            return self._closing.is_set() or self._stop.is_set()
 
     def _content_free_cycle_failure(self, error_code: str) -> SchedulerRunReport:
         allowed = self.dispatch_allowed()
@@ -887,17 +1030,26 @@ class CoreCaptureScheduler:
                 try:
                     if not self.dispatch_allowed():
                         self._scheduler.disable()
+                        self._record_cycle_reason("dispatch_not_allowed")
                         return SchedulerRunReport(plan=SchedulePlan(enabled=False))
-                    refresh_local_workspace_adapter(self.coordinator, self.config)
+                    refreshed = refresh_local_workspace_adapter(self.coordinator, self.config)
+                    with self._lifecycle_lock:
+                        self._adapter_refresh_state = "available" if refreshed else "unavailable"
+                    self.coordinator.recover_available_adapters()
                     self._scheduler.enable()
-                    return self._scheduler.run_once()
+                    report = self._scheduler.run_once()
+                    self._record_cycle_report(report)
+                    return report
                 except CaptureError as error:
+                    self._record_cycle_reason(error.code)
                     return self._content_free_cycle_failure(error.code)
                 except sqlite3.OperationalError as error:
                     if not _is_transient_sqlite_contention(error):
                         raise
+                    self._record_cycle_reason("capture_failed")
                     return self._content_free_cycle_failure("capture_failed")
                 except OSError:
+                    self._record_cycle_reason("capture_failed")
                     return self._content_free_cycle_failure("capture_failed")
                 finally:
                     self._cycle_lock.release()
@@ -911,17 +1063,22 @@ class CoreCaptureScheduler:
         current = threading.current_thread()
         try:
             while True:
-                if self._try_exit(current):
+                if self._try_exit():
                     return
                 try:
                     if self.dispatch_allowed():
-                        self.run_cycle()
+                        self._record_cycle_report(self.run_cycle())
                 except sqlite3.OperationalError as error:
                     if not _is_transient_sqlite_contention(error):
+                        self._record_worker_failure(error)
                         raise
-                except (CaptureError, OSError):
-                    pass
-                if self._try_exit(current):
+                    self._record_cycle_reason("capture_failed")
+                except (CaptureError, OSError) as error:
+                    self._record_cycle_reason(self._content_free_error_code(error))
+                except BaseException as error:
+                    self._record_worker_failure(error)
+                    raise
+                if self._try_exit():
                     return
                 self._wakeup.wait(timeout=float(self._scheduler.config.poll_interval_seconds))
                 self._wakeup.clear()
@@ -929,6 +1086,10 @@ class CoreCaptureScheduler:
             with self._lifecycle_lock:
                 if self._thread is current:
                     self._thread = None
+                    if self._worker_state == "running":
+                        self._worker_state = "stopped" if self._stop.is_set() else "failed"
+                        if self._worker_state == "failed" and self._worker_failure_code is None:
+                            self._worker_failure_code = "worker_failed"
 
 
 __all__ = [

@@ -914,7 +914,44 @@ def create_app(
     @app.get("/v1/context/status")
     def context_status(principal: Principal) -> dict[str, Any]:
         require(principal, "context:status")
-        return core.store.status()
+        result = core.store.status()
+        runtime = core.capture_scheduler.readiness()
+        scheduler = dict(runtime["scheduler"])
+        scheduler["alive"] = scheduler["running"]
+        try:
+            build_project_runtime(
+                core.store,
+                character_budget=RUNTIME_MAX_CAPSULE_CHARS,
+                item_budget=RUNTIME_MAX_CAPSULE_ITEMS,
+                principal=principal,
+            )
+            project_projection = {
+                "available": True,
+                "reason_code": None,
+                "state": "available",
+            }
+        except ProjectRuntimeError:
+            project_projection = {
+                "available": False,
+                "reason_code": "project_projection_unavailable",
+                "state": "unavailable",
+            }
+        capture = runtime["capture"]
+        readiness_state = "ready"
+        if (
+            scheduler["worker_state"] == "failed"
+            or (scheduler["dispatch_allowed"] and not scheduler["alive"])
+            or capture["state"] == "unavailable"
+            or not project_projection["available"]
+        ):
+            readiness_state = "degraded"
+        result["runtime_readiness"] = {
+            "capture": capture,
+            "project_projection": project_projection,
+            "scheduler": scheduler,
+            "state": readiness_state,
+        }
+        return result
 
     @app.get("/v1/context/coverage")
     def context_truth_coverage(principal: Principal) -> dict[str, Any]:

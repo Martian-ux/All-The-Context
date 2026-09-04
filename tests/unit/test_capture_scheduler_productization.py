@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from allthecontext import cli
+from allthecontext import capture_runtime, cli
 from allthecontext.capture import (
     CaptureCoordinator,
     CaptureError,
@@ -25,6 +25,7 @@ from allthecontext.capture import (
 from allthecontext.capture_runtime import (
     AUTHORIZATION_FILENAME,
     SCHEDULER_CONFIG_FILENAME,
+    authorization_path,
     authorize_local_workspace,
     scheduler_config_path,
     write_scheduler_enabled,
@@ -339,6 +340,169 @@ def test_refresh_after_authorization_matches_admin_run(
         assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
         assert report.results[0].status == "completed"
         assert report.results[0].applied_events == 5
+
+
+def test_scheduler_recovers_exhausted_adapter_unavailable_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorized = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        source_id = str(authorized["id"])
+        service.capture.enable(source_id)
+
+        authorization_path(config.data_dir).write_text("{not-json", encoding="utf-8")
+        assert capture_runtime.refresh_local_workspace_adapter(service.capture, config) is False
+        for _ in range(3):
+            service.capture._mark_unavailable(source_id)
+        exhausted = service.capture.get_source(source_id)
+        assert exhausted.lifecycle_state == "degraded"
+        assert exhausted.retry_count == 3
+        assert exhausted.last_error_code == "capture_adapter_unavailable"
+        readiness = service.capture_scheduler.readiness()
+        source_readiness = readiness["capture"]["sources"][0]
+        assert source_readiness["retry_exhausted"] is True
+        assert source_readiness["retry_reason_code"] == "capture_retry_exhausted"
+        assert "capture_adapter_unavailable" in readiness["capture"]["reason_codes"]
+
+        restored = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        assert restored["id"] == source_id
+
+        write_scheduler_enabled(config.data_dir, enabled=True)
+        report = service.capture_scheduler.run_cycle()
+        recovered = service.capture.get_source(source_id)
+
+    assert report.results[0].status == "completed"
+    assert recovered.lifecycle_state == "enabled"
+    assert recovered.retry_count == 0
+    assert recovered.next_retry_at is None
+    assert recovered.last_error_code is None
+
+
+def test_adapter_refresh_retries_transient_registration_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        original = capture_runtime._try_register_authorized_adapter
+        calls = 0
+
+        def fail_once(coordinator: Any, candidate: CoreConfig) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return False
+            return original(coordinator, candidate)
+
+        monkeypatch.setattr(capture_runtime, "_try_register_authorized_adapter", fail_once)
+        assert capture_runtime.refresh_local_workspace_adapter(service.capture, config) is True
+
+    assert calls == 2
+
+
+def test_authenticated_status_exposes_readiness_but_health_stays_liveness_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        _principal, token = service.store.create_client(
+            ClientCreate(name="readiness-reader", scopes=["context:status"], auto_approve=False)
+        )
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            health = client.get("/health")
+            status = client.get(
+                "/v1/context/status",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok", "component": "core"}
+    assert status.status_code == 200, status.text
+    readiness = status.json()["runtime_readiness"]
+    assert readiness["scheduler"]["alive"] is False
+    assert readiness["scheduler"]["worker_state"] == "not_started"
+    assert readiness["capture"]["state"] == "healthy"
+    assert readiness["project_projection"] == {
+        "available": True,
+        "reason_code": None,
+        "state": "available",
+    }
+    assert "scheduler" not in health.json()
+    _assert_no_root_leak(status.json(), workspace, config.data_dir)
+
+
+def test_worker_failure_is_content_free_and_restartable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(coordinator, config, scheduler_config=SchedulerConfig())
+    write_scheduler_enabled(config.data_dir, enabled=True)
+
+    def boom() -> bool:
+        raise TypeError("private raw failure must not be surfaced")
+
+    observed: list[type[BaseException]] = []
+    monkeypatch.setattr(
+        threading,
+        "excepthook",
+        lambda args: observed.append(args.exc_type),
+    )
+
+    try:
+        scheduler.start()
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
+        failed = scheduler.status()
+        assert failed["running"] is False
+        assert failed["worker_failure_code"] == "worker_failed"
+        assert failed["worker_restartable"] is True
+        assert "private raw failure" not in json.dumps(failed)
+        assert observed == [TypeError]
+
+        monkeypatch.setattr(scheduler, "dispatch_allowed", lambda: True)
+        scheduler.start()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "running")
+        assert scheduler.status()["worker_restart_count"] == 2
+    finally:
+        scheduler.shutdown()
+        store.close()
 
 
 def test_invalid_scheduler_config_fail_closes_without_killing_core(tmp_path: Path) -> None:
