@@ -29,6 +29,26 @@ class _FakeKey:
         return None
 
 
+class _StockPyHKEY:
+    """Stock-shaped PyHKEY: usable by winreg, but with no path metadata."""
+
+    def __init__(self, module: _StockWinreg, raw: int) -> None:
+        self._module = module
+        self._raw = raw
+
+    def __int__(self) -> int:
+        return self._raw
+
+    def __enter__(self) -> _StockPyHKEY:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.Close()
+
+    def Close(self) -> None:
+        self._module._close_handle(self._raw)
+
+
 class _FakeRegistry:
     HKEY_CURRENT_USER = object()
     REG_SZ = 1
@@ -230,19 +250,40 @@ class _StockWinreg:
     def __init__(self) -> None:
         self.state = _FakeRegistry()
         self.set_calls = 0
+        self._handles: dict[int, str] = {}
+        self._next_handle = 100
+        self.closed_handles: list[int] = []
+
+    def _open_handle(self, name: str) -> _StockPyHKEY:
+        raw = self._next_handle
+        self._next_handle += 1
+        self._handles[raw] = name
+        return _StockPyHKEY(self, raw)
+
+    def _close_handle(self, raw: int) -> None:
+        self.closed_handles.append(raw)
+
+    def _fake_key(self, key: object, access: int | None = None) -> _FakeKey:
+        if isinstance(key, _StockPyHKEY):
+            name = self._handles[int(key)]
+            return _FakeKey(self.state, name, self.KEY_ALL_ACCESS if access is None else access)
+        assert isinstance(key, _FakeKey)
+        return key
 
     @property
     def keys(self) -> dict[str, dict[str, tuple[int, object]]]:
         return self.state.keys
 
     def OpenKey(self, root: object, name: str, *args: object) -> _FakeKey:
-        return self.state.OpenKey(root, name, *args)
+        key = self.state.OpenKey(root, name, *args)
+        return self._open_handle(key.name)
 
     def CreateKey(self, root: object, name: str) -> _FakeKey:
-        return self.state.CreateKey(root, name)
+        key = self.state.CreateKey(root, name)
+        return self._open_handle(key.name)
 
     def QueryValueEx(self, key: _FakeKey, name: str) -> tuple[object, int]:
-        return self.state.QueryValueEx(key, name)
+        return self.state.QueryValueEx(self._fake_key(key), name)
 
     def SetValueEx(
         self,
@@ -253,16 +294,23 @@ class _StockWinreg:
         data: object,
     ) -> None:
         self.set_calls += 1
-        self.state.SetValueEx(key, name, reserved, value_type, data)
+        self.state.SetValueEx(
+            self._fake_key(key, self.KEY_SET_VALUE), name, reserved, value_type, data
+        )
 
     def DeleteValue(self, key: _FakeKey, name: str) -> None:
-        self.state.DeleteValue(key, name)
+        self.state.DeleteValue(self._fake_key(key, self.KEY_SET_VALUE), name)
 
     def QueryInfoKey(self, key: _FakeKey) -> tuple[int, int, int]:
-        return self.state.QueryInfoKey(key)
+        return self.state.QueryInfoKey(self._fake_key(key))
 
     def DeleteKey(self, root: object, name: str) -> None:
-        self.state.DeleteKey(root, name)
+        del root
+        if name not in self.keys:
+            raise FileNotFoundError(name)
+        if name in self.state.subkeys:
+            raise OSError(name)
+        self.keys.pop(name)
 
 
 class _FakeAdvapi:
@@ -270,6 +318,11 @@ class _FakeAdvapi:
 
     def __init__(self, module: _StockWinreg) -> None:
         self.module = module
+
+        def ensure_parents(name: str) -> None:
+            parts = name.split("\\")
+            for index in range(1, len(parts)):
+                self.module.keys.setdefault("\\".join(parts[:index]), {})
 
         def create_key(
             _root: object,
@@ -282,13 +335,44 @@ class _FakeAdvapi:
             result_handle: object,
             disposition: object,
         ) -> int:
+            ensure_parents(name)
+            created = name not in self.module.keys
             self.module.keys.setdefault(name, {})
-            ctypes.cast(disposition, ctypes.POINTER(ctypes.c_uint32)).contents.value = 1
-            ctypes.cast(result_handle, ctypes.POINTER(ctypes.c_void_p)).contents.value = 1
+            ctypes.cast(disposition, ctypes.POINTER(ctypes.c_uint32)).contents.value = (
+                1 if created else 2
+            )
+            handle = self.module._open_handle(name)
+            ctypes.cast(result_handle, ctypes.POINTER(ctypes.c_void_p)).contents.value = int(handle)
             return 0
 
         self.RegCreateKeyExW = create_key
-        self.RegCloseKey = lambda _handle: 0
+
+        def close_key(handle: object) -> int:
+            raw = int(getattr(handle, "value", handle))
+            self.module._close_handle(raw)
+            return 0
+
+        def rename_key(parent: object, old: str, new: str) -> int:
+            raw = int(getattr(parent, "value", parent))
+            parent_name = self.module._handles[raw]
+            old_name = f"{parent_name}\\{old}"
+            new_name = f"{parent_name}\\{new}"
+            if new_name in self.module.keys:
+                return 183
+            if old_name not in self.module.keys:
+                return 2
+            self.module.keys[new_name] = self.module.keys.pop(old_name)
+            old_prefix = old_name + "\\"
+            new_prefix = new_name + "\\"
+            moved_subkeys = {
+                (new_prefix + item[len(old_prefix) :]) if item.startswith(old_prefix) else item
+                for item in self.module.state.subkeys
+            }
+            self.module.state.subkeys = moved_subkeys
+            return 0
+
+        self.RegCloseKey = close_key
+        self.RegRenameKey = rename_key
 
 
 def _patch_shortcut_writer(
@@ -1684,14 +1768,15 @@ def test_stock_winreg_forward_install_uses_native_new_key_disposition(
 
     assert result.changed_entries
     assert adapter.atomic_mutations_available is False
-    assert stock.set_calls == len(transaction._REGISTRY_NAMES)
-    assert set(stock.keys[application_install.WINDOWS_UNINSTALL_KEY]) == set(
-        transaction._REGISTRY_NAMES
-    )
+    assert stock.set_calls == len(transaction._REGISTRY_NAMES) + 1
+    assert set(stock.keys[application_install.WINDOWS_UNINSTALL_KEY]) == {
+        *transaction._REGISTRY_NAMES,
+        application_install._REGISTRY_OWNERSHIP_VALUE,
+    }
     assert transaction._journal is not None and transaction._journal.phase == "installed"
 
 
-def test_stock_winreg_existing_key_blocks_write_at_observation_boundary(
+def test_stock_winreg_existing_key_fails_closed_without_atomic_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_shortcut_writer(monkeypatch)
@@ -1701,45 +1786,12 @@ def test_stock_winreg_existing_key_blocks_write_at_observation_boundary(
     transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
         monkeypatch, tmp_path, registry=stock, desktop=False
     )
-    original_set = application_install._set_registry_value_if_unchanged
-    inserted = False
-
-    def insert_between_observe_and_write(
-        winreg: object,
-        key: object,
-        expected: application_install.WindowsRegistryValueSnapshot,
-        value_type: int,
-        data: object,
-        **kwargs: object,
-    ) -> None:
-        nonlocal inserted
-        if not inserted:
-            assert isinstance(key, _FakeKey)
-            stock.keys[key.name][expected.name] = (stock.REG_SZ, "vendor-value")
-            inserted = True
-        original_set(
-            winreg,
-            key,
-            expected,
-            value_type,
-            data,  # type: ignore[arg-type]
-            **kwargs,
-        )
-
-    monkeypatch.setattr(
-        application_install,
-        "_set_registry_value_if_unchanged",
-        insert_between_observe_and_write,
-    )
-
-    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
         transaction.apply(transaction.snapshot())
 
-    assert raised.value.status is not None
-    assert "registration_restore_target_changed" in raised.value.status.errors
-    assert inserted is True
+    assert raised.value.code == "registration_restore_atomicity_unavailable"
     assert stock.set_calls == 0
-    assert stock.keys[key_name] == {"DisplayName": (stock.REG_SZ, "vendor-value")}
+    assert stock.keys[key_name] == {}
 
 
 def test_stock_winreg_failed_rollback_converges_after_native_capability_returns(
@@ -1760,30 +1812,13 @@ def test_stock_winreg_failed_rollback_converges_after_native_capability_returns(
         monkeypatch, tmp_path, registry=adapter, desktop=False
     )
 
-    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
         transaction.apply(transaction.snapshot())
 
-    assert raised.value.status is not None
-    assert raised.value.status.complete is False
-    assert "registration_restore_atomicity_unavailable" in raised.value.status.errors
-    assert transaction._journal_path.exists()
-
-    stock.state.fail_before.clear()
-    resumed = application_install.WindowsApplicationRegistrationTransaction(
-        transaction._executable,
-        start_menu=transaction._start_menu,
-        desktop=transaction._desktop,
-        registry=stock.state,
-        install_root=tmp_path,
-    )
-    journal = resumed._load_journal()
-    assert journal is not None and journal.phase == "restoring"
-
-    status = resumed._recover_journal(journal)
-
-    assert status.complete is True
+    assert raised.value.code == "registration_value_write_failed"
     assert application_install.WINDOWS_UNINSTALL_KEY not in stock.keys
-    assert not resumed._journal_path.exists()
+    assert not any(".atc-stage-" in name for name in stock.keys)
+    assert not transaction._journal_path.exists()
 
 
 def test_stock_winreg_uninstall_residual_converges_after_restart_with_atomic_provider(
@@ -1806,26 +1841,244 @@ def test_stock_winreg_uninstall_residual_converges_after_restart_with_atomic_pro
 
     status = transaction.uninstall()
 
-    assert status.complete is False
-    assert "registration_restore_atomicity_unavailable" in status.errors
-    assert transaction._journal_path.exists()
-    assert stock.keys[application_install.WINDOWS_UNINSTALL_KEY]
+    assert status.complete is True
+    assert application_install.WINDOWS_UNINSTALL_KEY not in stock.keys
+    assert not transaction._journal_path.exists()
 
+
+def test_stock_pyhkey_has_no_path_metadata_and_native_handles_are_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: native if name == "advapi32" else original_windows_dll(name),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter
+    )
+
+    transaction.apply(transaction.snapshot())
+
+    assert not hasattr(_StockPyHKEY, "name")
+    assert not hasattr(_StockPyHKEY, "path")
+    assert stock.closed_handles
+    assert len(stock.closed_handles) == len(set(stock.closed_handles))
+
+
+@pytest.mark.parametrize("boundary", ["create", "set", "publish"])
+def test_stock_native_publish_rejects_canonical_vendor_insertion_at_barrier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, boundary: str
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: native if name == "advapi32" else original_windows_dll(name),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    transaction, _executable, start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter, desktop=False
+    )
+    original_rename = native.RegRenameKey
+    inserted = False
+
+    def insert_vendor() -> None:
+        nonlocal inserted
+        if not inserted:
+            stock.keys[application_install.WINDOWS_UNINSTALL_KEY] = {
+                "DisplayName": (stock.REG_SZ, "vendor")
+            }
+            inserted = True
+
+    def vendor_wins(parent: object, old: str, new: str) -> int:
+        if new == "AllTheContext" and boundary == "publish":
+            insert_vendor()
+        return original_rename(parent, old, new)
+
+    monkeypatch.setattr(native, "RegRenameKey", vendor_wins)
+    if boundary == "create":
+        original_create = native.RegCreateKeyExW
+
+        def create_then_insert(*args: object) -> int:
+            result = original_create(*args)
+            if isinstance(args[1], str) and ".atc-stage-" in args[1]:
+                insert_vendor()
+            return result
+
+        monkeypatch.setattr(native, "RegCreateKeyExW", create_then_insert)
+    elif boundary == "set":
+        original_set = stock.SetValueEx
+
+        def set_then_insert(key: object, *args: object) -> None:
+            original_set(key, *args)
+            if isinstance(key, _StockPyHKEY) and ".atc-stage-" in stock._handles[int(key)]:
+                insert_vendor()
+
+        monkeypatch.setattr(stock, "SetValueEx", set_then_insert)
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        transaction.apply(transaction.snapshot())
+
+    assert raised.value.code == "registration_target_changed"
+    assert stock.keys[application_install.WINDOWS_UNINSTALL_KEY] == {
+        "DisplayName": (stock.REG_SZ, "vendor")
+    }
+    assert inserted is True
+    assert not any(".atc-stage-" in name for name in stock.keys)
+    assert not (start_menu / "All The Context.lnk").exists()
+
+
+@pytest.mark.parametrize("crash_after_rename", [False, True])
+def test_stock_native_stage_rename_crash_recovery_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, crash_after_rename: bool
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: native if name == "advapi32" else original_windows_dll(name),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    transaction, executable, start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter, desktop=False
+    )
+    snapshot = transaction.snapshot()
+    transaction._prepare_journal(snapshot)
+    original_rename = native.RegRenameKey
+
+    def interrupt_rename(parent: object, old: str, new: str) -> int:
+        if crash_after_rename:
+            result = original_rename(parent, old, new)
+            if result == 0:
+                raise RuntimeError("simulated process crash")
+            return result
+        raise OSError("simulated process crash")
+
+    monkeypatch.setattr(native, "RegRenameKey", interrupt_rename)
+    with pytest.raises((application_install.WindowsRegistrationError, RuntimeError)):
+        transaction._apply_registry(snapshot, [])
+    durable = transaction._load_journal()
+    assert durable is not None
+    assert (
+        durable.registry_publication == application_install._REGISTRATION_PUBLICATION_NATIVE_STAGED
+    )
+    assert durable.registry_key_created is False
+
+    monkeypatch.setattr(native, "RegRenameKey", original_rename)
     resumed = application_install.WindowsApplicationRegistrationTransaction(
-        transaction._executable,
-        start_menu=transaction._start_menu,
-        desktop=transaction._desktop,
-        registry=stock.state,
+        executable,
+        start_menu=start_menu,
+        desktop=None,
+        registry=adapter,
         install_root=tmp_path,
     )
-    journal = resumed._load_journal()
-    assert journal is not None and journal.phase == "uninstalling"
+    loaded = resumed._load_journal()
+    assert loaded is not None
+    status = resumed._recover_journal(loaded)
 
-    recovered = resumed._recover_journal(journal)
+    if crash_after_rename:
+        assert status.complete is False
+        assert status.errors == ("registration_recovery_ownership_mismatch",)
+        assert application_install.WINDOWS_UNINSTALL_KEY in stock.keys
+        assert (
+            stock.keys[application_install.WINDOWS_UNINSTALL_KEY][
+                application_install._REGISTRY_OWNERSHIP_VALUE
+            ][1]
+            == loaded.registry_generation
+        )
+        assert resumed._journal_path.exists()
+    else:
+        assert status.complete is True
+        assert loaded.registry_key_created is True
+        assert not any(".atc-stage-" in name for name in stock.keys)
+        assert resumed._load_journal() is not None
+        assert resumed._load_journal().phase == "installed"
 
-    assert recovered.complete is True
-    assert stock.keys[application_install.WINDOWS_UNINSTALL_KEY] == {}
-    assert not resumed._journal_path.exists()
+
+def test_stock_native_ownership_marker_mismatch_preserves_uninstall_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: native if name == "advapi32" else original_windows_dll(name),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    transaction, _executable, start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter, desktop=False
+    )
+    transaction.apply(transaction.snapshot())
+    before = copy.deepcopy(stock.keys[application_install.WINDOWS_UNINSTALL_KEY])
+    stock.keys[application_install.WINDOWS_UNINSTALL_KEY][
+        application_install._REGISTRY_OWNERSHIP_VALUE
+    ] = (stock.REG_SZ, "0" * 32)
+
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        transaction.uninstall()
+
+    assert raised.value.code == "registration_target_changed"
+    assert stock.keys[application_install.WINDOWS_UNINSTALL_KEY] != before
+    assert (
+        stock.keys[application_install.WINDOWS_UNINSTALL_KEY][
+            application_install._REGISTRY_OWNERSHIP_VALUE
+        ][1]
+        == "0" * 32
+    )
+    assert (start_menu / "All The Context.lnk").exists()
+    assert transaction._journal_path.exists()
+
+
+def test_stock_native_uninstall_preserves_vendor_insertion_after_key_rename(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: native if name == "advapi32" else original_windows_dll(name),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    transaction, _executable, start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter, desktop=False
+    )
+    transaction.apply(transaction.snapshot())
+    original_rename = native.RegRenameKey
+
+    def vendor_after_rename(parent: object, old: str, new: str) -> int:
+        result = original_rename(parent, old, new)
+        if result == 0 and old == "AllTheContext" and new.startswith("AllTheContext.atc-backup-"):
+            stock.keys[application_install.WINDOWS_UNINSTALL_KEY] = {
+                "VendorValue": (stock.REG_SZ, "keep")
+            }
+        return result
+
+    monkeypatch.setattr(native, "RegRenameKey", vendor_after_rename)
+    status = transaction.uninstall()
+
+    assert status.complete is True
+    assert stock.keys[application_install.WINDOWS_UNINSTALL_KEY] == {
+        "VendorValue": (stock.REG_SZ, "keep")
+    }
+    assert not (start_menu / "All The Context.lnk").exists()
+    assert not transaction._journal_path.exists()
 
 
 def test_windows_registry_factory_returns_mutation_capable_adapter(
@@ -1992,21 +2245,24 @@ def test_interrupted_apply_is_recovered_from_durable_journal(
     transaction._journal.desired_shortcut_identities[plan.name] = final.identity
     transaction._persist_journal("applying", transaction._journal.active)
 
-    status = application_install.recover_application_entrypoints()
+    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
+        application_install.recover_application_entrypoints()
 
-    assert status is not None and status.complete is True
+    assert raised.value.status is not None
+    assert "registration_recovery_ownership_unproven" in raised.value.status.errors
     assert (start_menu / "All The Context.lnk").exists()
-    assert desktop is not None and (desktop / "All The Context.lnk").exists()
-    assert application_install.WINDOWS_UNINSTALL_KEY in registry.keys
+    assert desktop is not None and not (desktop / "All The Context.lnk").exists()
+    assert application_install.WINDOWS_UNINSTALL_KEY not in registry.keys
+    assert transaction._journal_path.exists()
     assert transaction._load_journal() is not None
-    assert transaction._load_journal().phase == "installed"
+    assert transaction._load_journal().phase == "applying"
 
 
 def test_shortcut_publish_crash_has_durable_destination_identity_and_retry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls = _patch_shortcut_writer(monkeypatch)
-    transaction, executable, start_menu, desktop, registry = _make_transaction(
+    _patch_shortcut_writer(monkeypatch)
+    transaction, _executable, start_menu, desktop, registry = _make_transaction(
         monkeypatch, tmp_path
     )
     monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
@@ -2037,18 +2293,14 @@ def test_shortcut_publish_crash_has_durable_destination_identity_and_retry(
     assert durable.desired_shortcut_identities[plan.name] == current.identity
     assert plan.path.exists()
 
-    status = application_install.recover_application_entrypoints()
+    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
+        application_install.recover_application_entrypoints()
 
-    assert status is not None and status.complete is True
+    assert raised.value.status is not None
+    assert "registration_recovery_ownership_unproven" in raised.value.status.errors
     assert plan.path.exists()
     assert transaction._load_journal() is not None
-    assert transaction._load_journal().phase == "installed"
-    application_install.remove_application_entrypoints()
-    assert not plan.path.exists()
-    assert not transaction._journal_path.exists()
-    application_install.install_application_entrypoints(executable)
-    application_install.remove_application_entrypoints()
-    assert len(calls) >= 4
+    assert transaction._load_journal().phase == "applying"
 
 
 def test_hardlink_publish_crash_with_nlink_two_converges_on_retry(
@@ -2077,16 +2329,15 @@ def test_hardlink_publish_crash_with_nlink_two_converges_on_retry(
     assert temporary.stat().st_nlink == 2
     assert plan.path.stat().st_nlink == 2
 
-    status = application_install.recover_application_entrypoints()
+    with pytest.raises(application_install.WindowsRegistrationCompensationError) as raised:
+        application_install.recover_application_entrypoints()
 
-    assert status is not None and status.complete is True
-    assert not temporary.exists()
+    assert raised.value.status is not None
+    assert "registration_recovery_ownership_unproven" in raised.value.status.errors
+    assert temporary.exists()
     assert plan.path.exists()
     assert transaction._load_journal() is not None
-    assert transaction._load_journal().phase == "installed"
-    application_install.remove_application_entrypoints()
-    assert not plan.path.exists()
-    assert not transaction._journal_path.exists()
+    assert transaction._load_journal().phase == "applying"
 
 
 def test_interrupted_restore_replays_unresolved_mutations_after_restart(

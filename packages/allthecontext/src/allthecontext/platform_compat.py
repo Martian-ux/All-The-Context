@@ -8,13 +8,16 @@ import os
 import subprocess
 import sys
 import threading
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 _ERROR_FILE_NOT_FOUND = 2
 _ERROR_PATH_NOT_FOUND = 3
 _ERROR_SUCCESS = 0
+_ERROR_ALREADY_EXISTS = 183
 _KEY_SET_VALUE = 0x0002
+_KEY_CREATE_SUB_KEY = 0x0004
 _KEY_READ = 0x20019
 _KEY_ALL_ACCESS = 0xF003F
 _DELETE = 0x00010000
@@ -242,9 +245,9 @@ class WindowsRegistryAdapter:
         The stdlib ``winreg`` module has no conditional value or key mutation
         primitive.  A process-local lock cannot close that inter-process race,
         so destructive cleanup remains disabled unless a native host supplies
-        all three explicitly atomic operations.  Forward registration can
-        still use standard ``SetValueEx`` after the native key-creation
-        disposition proves exclusive creation of the fixed key.
+        all three explicitly atomic operations.  Stock forward registration
+        instead uses a fully-populated private sibling and native rename
+        publication; it never writes an observed-absent value in place.
         """
 
         return all(
@@ -256,7 +259,22 @@ class WindowsRegistryAdapter:
             )
         )
 
-    def _create_key_native(self, name: str) -> bool:
+    def _native_key_handle(
+        self,
+        name: str,
+        *,
+        access: int = _KEY_ALL_ACCESS,
+    ) -> tuple[Any, bool]:
+        """Create/open a native key and transfer its handle to ``PyHKEY``.
+
+        A stock ``winreg`` key is a ``PyHKEY`` without ``name`` or ``path``.
+        Callers therefore receive the canonical path separately and must never
+        infer it from the handle.  Once ownership is transferred to ``PyHKEY``
+        its ``Close``/context-manager path owns the native handle; the raw
+        ``RegCreateKeyExW`` handle is closed directly only when conversion
+        fails.
+        """
+
         advapi32 = windows_dll("advapi32")
         create_key = advapi32.RegCreateKeyExW
         create_key.argtypes = (
@@ -284,7 +302,7 @@ class WindowsRegistryAdapter:
                 0,
                 None,
                 0,
-                _KEY_ALL_ACCESS,
+                access,
                 None,
                 ctypes.byref(result_handle),
                 ctypes.byref(disposition),
@@ -292,15 +310,314 @@ class WindowsRegistryAdapter:
         )
         if result != _ERROR_SUCCESS:
             _raise_windows_error(result, "unable to create registry key")
+        raw_handle = result_handle.value
+        if not raw_handle:
+            raise OSError("RegCreateKeyExW returned no handle")
+        created = int(disposition.value) == 1
+        transferred = False
         try:
-            return int(disposition.value) == 1
+            py_hkey = getattr(self._module, "PyHKEY", None)
+            if callable(py_hkey):
+                key = py_hkey(raw_handle)
+                transferred = True
+                return key, created
         finally:
-            if result_handle.value:
-                close_key(result_handle)
+            if not transferred:
+                close_key(ctypes.c_void_p(raw_handle))
+        return self._module.OpenKey(self._current_user, name, 0, access), created
+
+    def _create_key_native(self, name: str) -> bool:
+        key, created = self._native_key_handle(name)
+        try:
+            return created
+        finally:
+            key.Close()
 
     def create_key_if_absent(self, name: str) -> bool:
         with _REGISTRY_MUTATION_LOCK:
             return self._create_key_native(name)
+
+    @staticmethod
+    def _split_key_name(name: str) -> tuple[str, str]:
+        parent, leaf = name.rsplit("\\", 1) if "\\" in name else ("", name)
+        if not leaf or leaf in {".", ".."}:
+            raise ValueError("invalid registry key name")
+        return parent, leaf
+
+    @staticmethod
+    def _key_path(parent: str, leaf: str) -> str:
+        return f"{parent}\\{leaf}" if parent else leaf
+
+    def _open_parent(self, parent: str) -> Any:
+        if not parent:
+            raise OSError("registry parent path is unavailable")
+        return self._module.OpenKey(
+            self._current_user,
+            parent,
+            0,
+            _KEY_READ | _KEY_SET_VALUE | _KEY_CREATE_SUB_KEY | _DELETE,
+        )
+
+    def _set_staged_values(
+        self,
+        key: Any,
+        values: tuple[tuple[str, int, object], ...],
+    ) -> None:
+        setter = getattr(self._module, "SetValueEx", None)
+        if not callable(setter):
+            raise OSError("winreg.SetValueEx is unavailable")
+        for name, value_type, data in values:
+            setter(key, name, 0, int(value_type), data)
+
+    def _staged_values_match(
+        self,
+        key: Any,
+        values: tuple[tuple[str, int, object], ...],
+    ) -> bool:
+        query_info = getattr(self._module, "QueryInfoKey", None)
+        query_value = getattr(self._module, "QueryValueEx", None)
+        if not callable(query_info) or not callable(query_value):
+            raise OSError("registry query primitives are unavailable")
+        subkeys, value_count, _ = query_info(key)
+        if int(subkeys) != 0 or int(value_count) != len(values):
+            return False
+        for name, value_type, data in values:
+            try:
+                observed, observed_type = query_value(key, name)
+            except FileNotFoundError:
+                return False
+            if int(observed_type) != int(value_type) or observed != data:
+                return False
+        return True
+
+    def _staged_values_subset_match(
+        self,
+        key: Any,
+        values: tuple[tuple[str, int, object], ...],
+    ) -> bool:
+        """Accept only an exact subset of expected values on a stage key."""
+
+        query_info = getattr(self._module, "QueryInfoKey", None)
+        query_value = getattr(self._module, "QueryValueEx", None)
+        if not callable(query_info) or not callable(query_value):
+            return False
+        subkeys, value_count, _ = query_info(key)
+        if int(subkeys) != 0 or int(value_count) > len(values):
+            return False
+        expected = {name: (int(value_type), data) for name, value_type, data in values}
+        observed_count = 0
+        for name, (value_type, data) in expected.items():
+            try:
+                observed, observed_type = query_value(key, name)
+            except FileNotFoundError:
+                continue
+            if int(observed_type) != value_type or observed != data:
+                return False
+            observed_count += 1
+        return observed_count == int(value_count)
+
+    def _delete_exact_key(
+        self,
+        name: str,
+        values: tuple[tuple[str, int, object], ...],
+        *,
+        subset: bool = False,
+    ) -> bool:
+        try:
+            with self._module.OpenKey(self._current_user, name, 0, _KEY_READ) as key:
+                matches = (
+                    self._staged_values_subset_match(key, values)
+                    if subset
+                    else self._staged_values_match(key, values)
+                )
+                if not matches:
+                    return False
+        except FileNotFoundError:
+            return True
+        try:
+            self._module.DeleteKey(self._current_user, name)
+        except FileNotFoundError:
+            return True
+        try:
+            with self._module.OpenKey(self._current_user, name, 0, _KEY_READ):
+                return False
+        except FileNotFoundError:
+            return True
+
+    def _rename_child(self, parent_key: Any, old_leaf: str, new_leaf: str) -> None:
+        advapi32 = windows_dll("advapi32")
+        rename_key = advapi32.RegRenameKey
+        rename_key.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p)
+        rename_key.restype = ctypes.c_long
+        try:
+            native_parent = ctypes.c_void_p(int(parent_key))
+        except (TypeError, ValueError):
+            native_parent = parent_key
+        result = int(rename_key(native_parent, old_leaf, new_leaf))
+        if result == _ERROR_ALREADY_EXISTS:
+            raise FileExistsError(new_leaf)
+        if result != _ERROR_SUCCESS:
+            _raise_windows_error(result, "unable to rename registry key")
+
+    def publish_key_if_absent(
+        self,
+        name: str,
+        values: tuple[tuple[str, int, object], ...],
+        generation: str,
+        ownership_value: str,
+    ) -> bool:
+        """Publish one complete key without clobbering a canonical sibling.
+
+        The staging name is derived from the journal generation and lives under
+        the same parent, so the final native rename is an atomic same-parent
+        publication.  ``RegRenameKey`` fails when the canonical child already
+        exists; it does not replace that child.
+        """
+
+        if not generation or any(char not in "0123456789abcdef" for char in generation):
+            raise ValueError("invalid registry generation")
+        if not any(name == ownership_value and data == generation for name, _type, data in values):
+            raise ValueError("registry ownership marker is missing")
+        parent, canonical_leaf = self._split_key_name(name)
+        stage_leaf = f"{canonical_leaf}.atc-stage-{generation}"
+        stage_name = self._key_path(parent, stage_leaf)
+        with _REGISTRY_MUTATION_LOCK:
+            stage_key: Any | None = None
+            try:
+                stage_key, created = self._native_key_handle(stage_name)
+                if created:
+                    self._set_staged_values(stage_key, values)
+                elif not self._staged_values_match(stage_key, values):
+                    if not self._staged_values_subset_match(stage_key, values):
+                        raise OSError("registry staging key changed")
+                    self._set_staged_values(stage_key, values)
+                if not self._staged_values_match(stage_key, values):
+                    raise OSError("registry staging key changed")
+            except BaseException:
+                if stage_key is not None:
+                    stage_key.Close()
+                    stage_key = None
+                    with suppress(OSError):
+                        self._delete_exact_key(stage_name, values, subset=True)
+                raise
+            finally:
+                if stage_key is not None:
+                    stage_key.Close()
+            try:
+                with self._open_parent(parent) as parent_key:
+                    self._rename_child(parent_key, stage_leaf, canonical_leaf)
+            except FileExistsError:
+                # A concurrently-created canonical key is never ours.  The
+                # staging key was fully validated and can be reclaimed by the
+                # same operation without touching the canonical sibling.
+                with suppress(OSError):
+                    self._delete_exact_key(stage_name, values)
+                return False
+            return True
+
+    def registry_key_matches_generation(
+        self,
+        name: str,
+        values: tuple[tuple[str, int, object], ...],
+        generation: str,
+        ownership_value: str,
+    ) -> bool:
+        """Verify the exact published generation through the canonical path."""
+
+        if not generation:
+            return False
+        if not any(name == ownership_value and data == generation for name, _type, data in values):
+            return False
+        try:
+            with self._module.OpenKey(self._current_user, name, 0, _KEY_READ) as key:
+                return self._staged_values_match(key, values)
+        except FileNotFoundError:
+            return False
+
+    def staging_key_exists(self, name: str, generation: str) -> bool:
+        """Report whether the journal-bound private staging key remains."""
+
+        if not generation:
+            return False
+        parent, canonical_leaf = self._split_key_name(name)
+        stage_name = self._key_path(parent, f"{canonical_leaf}.atc-stage-{generation}")
+        try:
+            with self._module.OpenKey(self._current_user, stage_name, 0, _KEY_READ):
+                return True
+        except FileNotFoundError:
+            return False
+
+    def delete_key_if_generation(
+        self,
+        name: str,
+        values: tuple[tuple[str, int, object], ...],
+        generation: str,
+        ownership_value: str,
+    ) -> bool:
+        """Remove an owned key through a journal-bound rename/verify/delete.
+
+        Renaming the canonical child to a private backup first makes a vendor
+        insertion after the rename remain at the canonical path.  If a vendor
+        value was already present before the rename, exact verification fails
+        and the backup is restored (or retained as an explicit residual).
+        """
+
+        if not generation:
+            return False
+        if not any(name == ownership_value and data == generation for name, _type, data in values):
+            return False
+        parent, canonical_leaf = self._split_key_name(name)
+        backup_leaf = f"{canonical_leaf}.atc-backup-{generation}"
+        backup_name = self._key_path(parent, backup_leaf)
+        with _REGISTRY_MUTATION_LOCK:
+            canonical_exists = True
+            try:
+                with self._module.OpenKey(self._current_user, name, 0, _KEY_READ) as key:
+                    canonical_exists = True
+                    if not self._staged_values_match(key, values):
+                        return False
+            except FileNotFoundError:
+                canonical_exists = False
+
+            try:
+                with self._module.OpenKey(self._current_user, backup_name, 0, _KEY_READ) as key:
+                    backup_exists = True
+                    backup_matches = self._staged_values_match(key, values)
+            except FileNotFoundError:
+                backup_exists = False
+                backup_matches = False
+
+            if not backup_exists and canonical_exists:
+                with self._open_parent(parent) as parent_key:
+                    self._rename_child(parent_key, canonical_leaf, backup_leaf)
+                backup_exists = True
+                try:
+                    with self._module.OpenKey(self._current_user, backup_name, 0, _KEY_READ) as key:
+                        backup_matches = self._staged_values_match(key, values)
+                except FileNotFoundError:
+                    backup_matches = False
+
+            if not backup_exists:
+                return not canonical_exists
+            if not backup_matches:
+                # Restore only when the canonical destination is still empty.
+                # Otherwise both entries are retained as a recoverable
+                # residual, and neither can be mistaken for ATC-owned state.
+                try:
+                    with self._module.OpenKey(self._current_user, name, 0, _KEY_READ) as _canonical:
+                        return False
+                except FileNotFoundError:
+                    with self._open_parent(parent) as parent_key:
+                        self._rename_child(parent_key, backup_leaf, canonical_leaf)
+                    return False
+
+            with suppress(FileNotFoundError):
+                self._module.DeleteKey(self._current_user, backup_name)
+            try:
+                with self._module.OpenKey(self._current_user, backup_name, 0, _KEY_READ):
+                    return False
+            except FileNotFoundError:
+                return True
 
     def set_value_if_unchanged(
         self,
