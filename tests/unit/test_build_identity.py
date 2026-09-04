@@ -49,12 +49,15 @@ def test_canonical_build_identity_agrees_with_project_and_runtime_metadata() -> 
         "architecture",
         "source_commit",
     }
-    assert identity.sha256 == make_build_identity(
-        version=__version__,
-        source_commit=SOURCE_COMMIT,
-        platform_name="windows",
-        architecture="x86_64",
-    ).sha256
+    assert (
+        identity.sha256
+        == make_build_identity(
+            version=__version__,
+            source_commit=SOURCE_COMMIT,
+            platform_name="windows",
+            architecture="x86_64",
+        ).sha256
+    )
 
 
 def test_build_identity_rejects_contradictory_or_stale_metadata() -> None:
@@ -116,12 +119,15 @@ def test_direct_package_report_publishes_the_same_identity(tmp_path: Path) -> No
         "architecture": "x86_64",
         "source_commit": SOURCE_COMMIT,
     }
-    assert payload["build_identity_sha256"] == make_build_identity(
-        version=__version__,
-        source_commit=SOURCE_COMMIT,
-        platform_name="linux",
-        architecture="x86_64",
-    ).sha256
+    assert (
+        payload["build_identity_sha256"]
+        == make_build_identity(
+            version=__version__,
+            source_commit=SOURCE_COMMIT,
+            platform_name="linux",
+            architecture="x86_64",
+        ).sha256
+    )
 
 
 def test_stale_windows_registration_is_detected(monkeypatch: pytest.MonkeyPatch) -> None:

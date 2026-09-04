@@ -261,7 +261,7 @@ class CandidateInput(StrictModel):
     supersedes: str | None = Field(default=None, max_length=200)
     explicit_user_statement: bool = False
     idempotency_key: str | None = Field(default=None, max_length=256)
-    schema_version: int = Field(default=1, ge=1)
+    schema_version: StrictInt = Field(default=1, ge=1)
 
     @field_validator("kind", "scopes", "tags", "allowed_clients", "denied_clients")
     @classmethod

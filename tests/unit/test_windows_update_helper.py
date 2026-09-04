@@ -667,6 +667,7 @@ def test_independent_helper_commits_after_real_state_and_database_transition(
     state["handoff_identity"] = helper_module.journal_handoff_identity(
         UpdateJournal.load(fixture.journal_path)
     )
+    state["completed_handoff_identity"] = None
     fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
     assert run_transaction(fixture.journal_path) == 0
     replayed_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
@@ -831,6 +832,85 @@ def test_crash_after_committed_journal_publication_replays_without_rollback(
     )
     assert fixture.application.read_bytes() == fixture.replacement
     assert launched == ["0.1.0"]
+
+
+def test_terminal_replay_rebinds_to_new_packaged_identity_after_cutover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    old_source = TEST_SOURCE_COMMIT
+    new_source = "b" * 40
+    unrelated_source = "c" * 40
+    journal = UpdateJournal.load(fixture.journal_path)
+    component = json.loads(fixture.component_manifest.read_text(encoding="utf-8"))
+    component["source_commit"] = new_source
+    component_raw = canonical_json(component)
+    fixture.component_manifest.write_bytes(component_raw)
+    fixture.component_manifest.with_name(CHECKSUM_FILE_NAME).write_bytes(
+        f"{hashlib.sha256(component_raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    )
+    journal.target_source_commit = new_source
+    journal.component_manifest_sha256 = hashlib.sha256(component_raw).hexdigest()
+    journal.component_manifest_size = len(component_raw)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "offered_source_commit": new_source,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    journal.save(fixture.journal_path)
+    helper_module.bind_recovery_authority(journal, fixture.journal_path)
+    helper_module.bind_handoff_state(journal, fixture.journal_path)
+
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: False)
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    original_update_state = helper_module._update_state
+    crashed = False
+
+    def crash_after_terminal_journal(
+        current: UpdateJournal,
+        *,
+        phase: str,
+        error: str | None,
+        clear_transaction: bool,
+    ) -> None:
+        nonlocal crashed
+        if clear_transaction and current.phase is HelperPhase.COMMITTED and not crashed:
+            crashed = True
+            raise SystemExit(86)
+        original_update_state(
+            current,
+            phase=phase,
+            error=error,
+            clear_transaction=clear_transaction,
+        )
+
+    monkeypatch.setattr(helper_module, "_update_state", crash_after_terminal_journal)
+    with pytest.raises(SystemExit, match="86"):
+        run_transaction(fixture.journal_path)
+    assert crashed is True
+    assert json.loads(fixture.state_path.read_text(encoding="utf-8"))["current_source_commit"] == (
+        new_source
+    )
+
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: True)
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: unrelated_source)
+    with pytest.raises(HelperError, match="journal_identity_invalid"):
+        UpdateJournal.load(fixture.journal_path)
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: new_source)
+    assert run_transaction(fixture.journal_path) == 0
+    replayed = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert replayed["transaction_path"] is None
+    assert replayed["current_source_commit"] == new_source
+    assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.COMMITTED
 
 
 @pytest.mark.parametrize("hostile_report_phase", ["apply", "diagnostics", "health"])
@@ -2886,6 +2966,8 @@ def test_terminal_journal_requires_state_first_terminal_phase(
         ("core_port", True),
         ("replacement_size", "large"),
         ("schema_version", 99),
+        ("schema_version", True),
+        ("schema_version", 1.0),
     ],
 )
 def test_malformed_journal_values_fail_closed(

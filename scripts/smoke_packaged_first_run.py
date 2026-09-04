@@ -44,6 +44,7 @@ sys.path.insert(0, str(ROOT / "packages" / "allthecontext" / "src"))
 import anyio
 import httpx2 as httpx
 from allthecontext import __version__
+from allthecontext.build_identity import BuildIdentity, BuildIdentityError
 from allthecontext.credentials import (
     DEVELOPMENT_FALLBACK_ENV,
     FALLBACK_CREDENTIAL_STORAGE,
@@ -222,6 +223,55 @@ def wait_for_core(base_url: str, admin_token: str) -> None:
     raise RuntimeError("transactional updater did not restart Core within twenty seconds")
 
 
+def read_packaged_build_identity(
+    executable: Path,
+    *,
+    report_path: Path,
+    environment: Mapping[str, str],
+) -> BuildIdentity:
+    """Read the identity from the exact packaged executable used by the smoke."""
+
+    report_path.unlink(missing_ok=True)
+    completed = subprocess.run(
+        [str(executable), "--diagnostics", str(report_path)],
+        env=dict(environment),
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=60,
+    )
+    try:
+        if completed.returncode != 0:
+            raise RuntimeError("packaged diagnostics did not complete")
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+        raw_identity = payload.get("build_identity") if isinstance(payload, dict) else None
+        if not isinstance(raw_identity, dict):
+            raise RuntimeError("packaged diagnostics did not contain a build identity")
+        identity_fields = {
+            field: raw_identity.get(field)
+            for field in (
+                "schema_version",
+                "version",
+                "channel",
+                "platform",
+                "architecture",
+                "source_commit",
+            )
+        }
+        identity = BuildIdentity.from_mapping(identity_fields)
+    except (BuildIdentityError, OSError, TypeError, ValueError, KeyError) as exc:
+        raise RuntimeError("packaged build identity is invalid") from exc
+    finally:
+        report_path.unlink(missing_ok=True)
+    if (
+        identity.version != __version__
+        or identity.platform != "windows"
+        or identity.architecture != "x86_64"
+    ):
+        raise RuntimeError("packaged build identity does not match the Windows smoke")
+    return identity
+
+
 def prepare_packaged_update_transaction(
     *,
     data_dir: Path,
@@ -230,7 +280,15 @@ def prepare_packaged_update_transaction(
     operation_id: str,
     core_port: int,
     target_version: str,
+    packaged_identity: BuildIdentity,
 ) -> tuple[Path, Path]:
+    if (
+        packaged_identity.version != target_version
+        or packaged_identity.platform != "windows"
+        or packaged_identity.architecture != "x86_64"
+    ):
+        raise RuntimeError("packaged update identity does not match the Windows target")
+    source_commit = packaged_identity.source_commit
     updates = data_dir / "updates"
     transaction_dir = updates / "transactions" / operation_id
     rollback_dir = transaction_dir / "rollback"
@@ -282,6 +340,8 @@ def prepare_packaged_update_transaction(
             "operation_id": operation_id,
             "transaction_path": str(journal_path),
             "recovery_attempts": int(state.get("recovery_attempts", 0)) + 1,
+            "current_source_commit": source_commit,
+            "offered_source_commit": source_commit,
         }
     )
     state_temporary = state_path.with_name(f"{state_path.name}.{operation_id}.atc-new")
@@ -342,7 +402,7 @@ def prepare_packaged_update_transaction(
         },
         "platform": "windows",
         "schema_version": 1,
-        "source_commit": "0" * 40,
+        "source_commit": source_commit,
         "version": target_version,
     }
     component_raw = canonical_json(component_payload)
@@ -389,6 +449,10 @@ def prepare_packaged_update_transaction(
         component_manifest_path=str(component_manifest),
         component_manifest_sha256=hashlib.sha256(component_raw).hexdigest(),
         component_manifest_size=len(component_raw),
+        current_source_commit=source_commit,
+        target_source_commit=source_commit,
+        rollback_source_commit=source_commit,
+        recovery_source_commit=source_commit,
         created_at=now,
         updated_at=now,
     )
@@ -968,6 +1032,13 @@ def main() -> int:
     installed_app = Path(str(core_command[0]))
     if not installed_app.is_file():
         raise SystemExit(f"installed desktop app is not stable: {installed_app}")
+    packaged_identity: BuildIdentity | None = None
+    if system == "Windows":
+        packaged_identity = read_packaged_build_identity(
+            executable,
+            report_path=work / "packaged-build-diagnostics.json",
+            environment=environment,
+        )
     if system == "Darwin":
         installed_bundles = [
             candidate
@@ -1127,6 +1198,7 @@ def main() -> int:
 
     packaged_update_result = "not_applicable"
     if system == "Windows":
+        assert packaged_identity is not None
         helper_authority = {
             "ATC_CORE_DATA_DIR": environment["ATC_CORE_DATA_DIR"],
             "ATC_INSTALL_DIR": environment["ATC_INSTALL_DIR"],
@@ -1140,6 +1212,7 @@ def main() -> int:
                 operation_id="d" * 24,
                 core_port=port,
                 target_version=__version__,
+                packaged_identity=packaged_identity,
             )
         interrupted_environment = dict(environment)
         interrupted_environment["ATC_UPDATE_FAULT_AFTER_PHASE"] = "binary_replaced"
@@ -1180,6 +1253,7 @@ def main() -> int:
                 operation_id="e" * 24,
                 core_port=port,
                 target_version=__version__,
+                packaged_identity=packaged_identity,
             )
         rollback_environment = dict(environment)
         rollback_environment.update(

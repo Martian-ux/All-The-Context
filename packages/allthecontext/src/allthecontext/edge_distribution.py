@@ -276,6 +276,13 @@ def parse_edge_image_metadata(value: object) -> tuple[str, str]:
         "source_commit",
     }:
         raise EdgeDistributionError("Edge image metadata fields are invalid")
+    schema_version = value.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != 1
+    ):
+        raise EdgeDistributionError("Edge image metadata schema is invalid")
     image = value.get("image")
     if not isinstance(image, Mapping) or set(image) != {"digest", "reference", "registry"}:
         raise EdgeDistributionError("Edge image metadata identity is invalid")

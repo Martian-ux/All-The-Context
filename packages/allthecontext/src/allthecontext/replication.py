@@ -125,7 +125,11 @@ class ReplicationEvent:
             raise ReplicationError("event_id, vault_id, and record_id are required")
         if self.sequence < 1:
             raise ReplicationError("sequence must be at least 1")
-        if self.schema_version != SCHEMA_VERSION:
+        if (
+            isinstance(self.schema_version, bool)
+            or not isinstance(self.schema_version, int)
+            or self.schema_version != SCHEMA_VERSION
+        ):
             raise ReplicationError(f"unsupported schema_version {self.schema_version}")
         if len(self.payload_hash) != 64:
             raise ReplicationError("payload_hash must be a SHA-256 hex digest")

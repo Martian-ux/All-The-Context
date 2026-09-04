@@ -108,7 +108,11 @@ class BuildIdentity:
         if set(value) != IDENTITY_FIELDS:
             raise BuildIdentityError("build identity fields differ from the version 1 schema")
         schema_version = value.get("schema_version")
-        if isinstance(schema_version, bool) or schema_version != BUILD_IDENTITY_SCHEMA_VERSION:
+        if (
+            isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or schema_version != BUILD_IDENTITY_SCHEMA_VERSION
+        ):
             raise BuildIdentityError("unsupported build identity schema")
         fields = ("version", "channel", "platform", "architecture", "source_commit")
         if any(not isinstance(value.get(field), str) for field in fields):

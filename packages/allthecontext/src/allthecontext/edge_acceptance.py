@@ -58,6 +58,8 @@ def _read_state(workspace: Path) -> dict[str, object]:
         ) from exc
     if (
         not isinstance(parsed, dict)
+        or isinstance(parsed.get("schema_version"), bool)
+        or not isinstance(parsed.get("schema_version"), int)
         or parsed.get("schema_version") != 1
         or not isinstance(parsed.get("record_id"), str)
     ):

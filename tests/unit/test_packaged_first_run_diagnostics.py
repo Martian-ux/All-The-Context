@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from allthecontext.build_identity import make_build_identity
 from allthecontext.credentials import DEVELOPMENT_FALLBACK_ENV, FALLBACK_CREDENTIAL_STORAGE
 from allthecontext.windows_update_helper import HelperError
 
@@ -113,10 +114,25 @@ def test_packaged_transaction_scopes_disposable_helper_authority(
             operation_id="f" * 24,
             core_port=7337,
             target_version=smoke.__version__,
+            packaged_identity=make_build_identity(
+                version=smoke.__version__,
+                platform_name="windows",
+                architecture="x86_64",
+                source_commit="c" * 40,
+            ),
         )
         journal = smoke.UpdateJournal.load(journal_path)
         assert Path(journal.helper_path) == helper
         assert Path(journal.application_path) == installed_app
+        assert journal.current_source_commit == "c" * 40
+        assert journal.target_source_commit == "c" * 40
+        persisted = json.loads((updates / "state.json").read_text(encoding="utf-8"))
+        assert persisted["current_source_commit"] == "c" * 40
+        assert persisted["offered_source_commit"] == "c" * 40
+        component = json.loads(
+            (journal_path.parent / smoke.MANIFEST_FILE_NAME).read_text(encoding="utf-8")
+        )
+        assert component["source_commit"] == "c" * 40
         journal.application_path = str(work / "outside" / "AllTheContext.exe")
         with pytest.raises(HelperError, match="application_state_untrusted"):
             journal.validate(journal_path, boundary_code="application_state_untrusted")

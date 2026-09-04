@@ -18,6 +18,7 @@ from allthecontext.replication import (
     EventType,
     HttpRelayTransport,
     PayloadHashError,
+    ReplicationError,
     ReplicationEvent,
     SignatureError,
     build_event,
@@ -129,6 +130,22 @@ def test_unsigned_wrong_secret_and_tampered_payload_are_rejected() -> None:
     tampered = replace(signed, payload={"reason": "changed"})
     with pytest.raises(PayloadHashError):
         verify_event(tampered, SECRET)
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_direct_event_constructor_rejects_non_integer_schema_version(
+    schema_version: object,
+) -> None:
+    unsigned = build_event(
+        vault_id="vault-1",
+        sequence=1,
+        event_type=EventType.RECORD_WITHDRAWN,
+        record_id="record-1",
+        payload={"reason": "privacy"},
+    )
+
+    with pytest.raises(ReplicationError, match="schema_version"):
+        replace(unsigned, schema_version=schema_version)  # type: ignore[arg-type]
 
 
 def test_http_transport_requires_tls_except_on_loopback() -> None:

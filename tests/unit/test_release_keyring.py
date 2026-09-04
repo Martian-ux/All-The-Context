@@ -165,6 +165,19 @@ def test_keyring_pair_rejects_drift_and_fingerprint_tampering(tmp_path: Path) ->
         validate_keyring_pair(operator, packaged)
 
 
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_keyring_pair_rejects_non_integer_schema_version(
+    tmp_path: Path, schema_version: object
+) -> None:
+    operator, packaged = _empty_keyrings(tmp_path)
+    value = {"schema_version": schema_version, "keys": []}
+    operator.write_text(json.dumps(value), encoding="utf-8")
+    packaged.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="schema"):
+        validate_keyring_pair(operator, packaged)
+
+
 def test_script_keyring_byte_reader_accepts_exact_multibyte_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

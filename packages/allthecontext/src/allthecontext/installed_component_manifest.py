@@ -127,8 +127,10 @@ def _validate_shape(payload: Mapping[str, Any]) -> None:
     }
     if set(payload) != required:
         _failure("installed-component manifest fields or schema are invalid")
-    if payload["schema_version"] != MANIFEST_SCHEMA_VERSION or isinstance(
-        payload["schema_version"], bool
+    if (
+        isinstance(payload["schema_version"], bool)
+        or not isinstance(payload["schema_version"], int)
+        or payload["schema_version"] != MANIFEST_SCHEMA_VERSION
     ):
         _failure("installed-component manifest fields or schema are invalid")
     if payload["manifest_type"] != MANIFEST_TYPE:

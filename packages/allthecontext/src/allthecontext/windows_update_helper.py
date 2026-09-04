@@ -375,6 +375,7 @@ def startup_recovery_diagnostic(path: Path) -> dict[str, str] | None:
     phase = value.get("phase")
     if (
         isinstance(value.get("schema_version"), bool)
+        or not isinstance(value.get("schema_version"), int)
         or value.get("schema_version") != STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION
         or not isinstance(status, str)
         or status not in STARTUP_RECOVERY_DIAGNOSTIC_STATUSES
@@ -1336,10 +1337,16 @@ class UpdateJournal:
     ) -> None:
         if not isinstance(self.phase, HelperPhase):
             raise HelperError("journal_value_invalid")
-        if self.schema_version not in {
-            JOURNAL_SCHEMA_VERSION,
-            LEGACY_JOURNAL_SCHEMA_VERSION,
-        } or not _valid_operation_id(self.operation_id):
+        if (
+            isinstance(self.schema_version, bool)
+            or not isinstance(self.schema_version, int)
+            or self.schema_version
+            not in {
+                JOURNAL_SCHEMA_VERSION,
+                LEGACY_JOURNAL_SCHEMA_VERSION,
+            }
+            or not _valid_operation_id(self.operation_id)
+        ):
             raise HelperError("journal_identity_invalid")
         source_commits = (
             self.current_source_commit,
@@ -1353,21 +1360,34 @@ class UpdateJournal:
             for value in source_commits
         ):
             raise HelperError("journal_identity_invalid")
-        packaged_runtime = _packaged_helper_runtime()
-        packaged_source_commit = _packaged_source_commit()
-        if packaged_runtime and (
-            packaged_source_commit is None
-            or self.current_source_commit != packaged_source_commit
-            or self.rollback_source_commit != packaged_source_commit
-            or self.recovery_source_commit != packaged_source_commit
+        if any(value is not None for value in source_commits) and (
+            self.current_source_commit is None
             or self.target_source_commit is None
-        ):
-            raise HelperError("journal_identity_invalid")
-        if self.current_source_commit is not None and (
-            self.rollback_source_commit != self.current_source_commit
+            or self.rollback_source_commit != self.current_source_commit
             or self.recovery_source_commit != self.current_source_commit
         ):
             raise HelperError("journal_identity_invalid")
+        packaged_runtime = _packaged_helper_runtime()
+        packaged_source_commit = _packaged_source_commit()
+        if packaged_runtime:
+            if packaged_source_commit is None or any(value is None for value in source_commits):
+                raise HelperError("journal_identity_invalid")
+            if self.phase is HelperPhase.COMMITTED:
+                # Cutover publishes the new state before the terminal journal.
+                # A restarted target helper must therefore validate the target
+                # identity, while the MAC still binds the complete old/new
+                # recovery record and the terminal state binds the outcome.
+                if self.target_source_commit != packaged_source_commit:
+                    raise HelperError("journal_identity_invalid")
+            elif any(
+                value != packaged_source_commit
+                for value in (
+                    self.current_source_commit,
+                    self.rollback_source_commit,
+                    self.recovery_source_commit,
+                )
+            ):
+                raise HelperError("journal_identity_invalid")
         if self.schema_version == LEGACY_JOURNAL_SCHEMA_VERSION and (
             self.recovery_authority_mac is not None or self.terminal_authority_mac is not None
         ):
@@ -1789,7 +1809,13 @@ def _reclaim_prebinding_transaction(
 
 def _validate_handoff_state(journal: UpdateJournal, journal_path: Path) -> dict[str, Any]:
     journal.validate(journal_path, boundary_code="application_state_untrusted")
-    validate_recovery_authority(journal, journal_path)
+    validate_recovery_authority(
+        journal,
+        journal_path,
+        require_terminal=journal.phase in TERMINAL_PHASES,
+    )
+    if journal.phase in TERMINAL_PHASES:
+        return _validate_terminal_handoff_state(journal, journal_path)
     state_path = Path(journal.state_path)
     state = _read_json(
         state_path,
@@ -2822,9 +2848,7 @@ def _update_state(
         and value.get("completed_handoff_identity") == journal_identity
     ):
         value["current_source_commit"] = (
-            journal.target_source_commit
-            if phase == "installed"
-            else journal.current_source_commit
+            journal.target_source_commit if phase == "installed" else journal.current_source_commit
         )
         value.update(
             {
@@ -3209,7 +3233,9 @@ def _retirement_tombstone_is_authoritative(
         expected_outcome = phase
         expected_terminal_phase = "committed" if phase == "installed" else "rolled_back"
         if (
-            value.get("schema_version") != RETIREMENT_TOMBSTONE_SCHEMA_VERSION
+            isinstance(value.get("schema_version"), bool)
+            or not isinstance(value.get("schema_version"), int)
+            or value.get("schema_version") != RETIREMENT_TOMBSTONE_SCHEMA_VERSION
             or value.get("operation_id") != operation_id
             or value.get("outcome") != expected_outcome
             or value.get("terminal_phase") != expected_terminal_phase

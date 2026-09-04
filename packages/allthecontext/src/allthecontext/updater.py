@@ -2031,7 +2031,9 @@ class UpdateManager:
         outcome = value.get("outcome")
         terminal_phase = value.get("terminal_phase")
         if (
-            value.get("schema_version") != RETIREMENT_TOMBSTONE_SCHEMA_VERSION
+            isinstance(value.get("schema_version"), bool)
+            or not isinstance(value.get("schema_version"), int)
+            or value.get("schema_version") != RETIREMENT_TOMBSTONE_SCHEMA_VERSION
             or not isinstance(operation, str)
             or len(operation) != 24
             or any(character not in "0123456789abcdef" for character in operation)
@@ -3034,9 +3036,7 @@ class UpdateManager:
             self.config.current_source_commit is not None
         )
         commit = self.config.current_source_commit
-        if required and (
-            not isinstance(commit, str) or COMMIT_PATTERN.fullmatch(commit) is None
-        ):
+        if required and (not isinstance(commit, str) or COMMIT_PATTERN.fullmatch(commit) is None):
             raise UpdateError("The packaged build identity is unavailable for update verification")
         return commit
 

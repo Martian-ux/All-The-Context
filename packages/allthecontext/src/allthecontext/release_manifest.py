@@ -158,7 +158,11 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         missing = sorted(required - set(manifest))
         extra = sorted(set(manifest) - required)
         raise ManifestError(f"manifest fields differ (missing={missing}, extra={extra})")
-    if manifest["schema_version"] != SCHEMA_VERSION:
+    if (
+        isinstance(manifest["schema_version"], bool)
+        or not isinstance(manifest["schema_version"], int)
+        or manifest["schema_version"] != SCHEMA_VERSION
+    ):
         raise ManifestError("unsupported manifest schema version")
     version_value = manifest["version"]
     minimum_value = manifest["minimum_supported_version"]
@@ -373,7 +377,11 @@ def validate_keyring(keyring: dict[str, Any]) -> None:
 
     if set(keyring) != {"schema_version", "keys"}:
         raise ManifestError("keyring fields differ from the version 1 schema")
-    if keyring.get("schema_version") != SCHEMA_VERSION:
+    if (
+        isinstance(keyring.get("schema_version"), bool)
+        or not isinstance(keyring.get("schema_version"), int)
+        or keyring.get("schema_version") != SCHEMA_VERSION
+    ):
         raise ManifestError("unsupported keyring schema")
     keys = keyring.get("keys")
     if not isinstance(keys, list):

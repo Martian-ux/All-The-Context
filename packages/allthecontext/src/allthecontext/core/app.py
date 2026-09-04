@@ -2630,9 +2630,13 @@ def run_update_health_check(report_path: Path) -> int:
                 request = urllib.request.Request(url, headers={"Accept": "application/json"})
                 with urllib.request.urlopen(request, timeout=1) as response:
                     value = json.loads(response.read(4097).decode("utf-8"))
-                if value.get("status") == "ok" and value.get("component") == "core" and (
-                    build_identity is None
-                    or value.get("build_identity") == build_identity.as_dict()
+                if (
+                    value.get("status") == "ok"
+                    and value.get("component") == "core"
+                    and (
+                        build_identity is None
+                        or value.get("build_identity") == build_identity.as_dict()
+                    )
                 ):
                     healthy.set()
                     if servers:

@@ -1478,6 +1478,18 @@ def test_clear_error_rejects_tampered_retirement_tombstone(
     assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
 
 
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_retirement_tombstone_rejects_non_integer_schema_version(
+    tmp_path: Path, schema_version: object
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _ = _completed_manager(tmp_path, manifest, artifact, keyring)
+    _tombstone, payload = manager._ensure_retirement_tombstone()
+    payload["schema_version"] = schema_version
+
+    assert manager._retirement_tombstone_payload(payload) is None
+
+
 def test_clear_error_clears_ordinary_non_recovery_error(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
