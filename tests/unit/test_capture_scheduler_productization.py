@@ -34,6 +34,7 @@ from allthecontext.capture_scheduler import (
     UPDATE_HEALTH_OPERATION_ENV,
     CoreCaptureScheduler,
     SchedulerConfig,
+    _is_transient_sqlite_contention,
     scheduler_update_health_forced_off,
 )
 from allthecontext.config import CoreConfig
@@ -108,6 +109,12 @@ def _event(event_id: str = "scheduler-product-event") -> CaptureEvent:
 def _open_process_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(CAPTURE_SCHEDULER_ENABLED_ENV, "1")
     monkeypatch.delenv(UPDATE_HEALTH_OPERATION_ENV, raising=False)
+
+
+def _sqlite_operational_error(message: str, code: int) -> sqlite3.OperationalError:
+    error = sqlite3.OperationalError(message)
+    error.sqlite_errorcode = code
+    return error
 
 
 def _wait_until(predicate: Any, *, timeout: float = 5.0, interval: float = 0.01) -> None:
@@ -1019,6 +1026,28 @@ def test_run_cycle_expected_errors_are_content_free_not_fake_success(
             service.capture_scheduler.run_cycle()
 
 
+@pytest.mark.parametrize(
+    ("message", "code"),
+    [
+        ("database is busy", sqlite3.SQLITE_BUSY),
+        ("database is locked", sqlite3.SQLITE_BUSY_SNAPSHOT),
+        ("database table is locked", sqlite3.SQLITE_LOCKED_SHAREDCACHE),
+    ],
+)
+def test_sqlite_contention_uses_primary_code_for_extended_errors(message: str, code: int) -> None:
+    assert _is_transient_sqlite_contention(_sqlite_operational_error(message, code)) is True
+
+
+def test_sqlite_contention_rejects_unexpected_errors_even_with_locking_text() -> None:
+    assert (
+        _is_transient_sqlite_contention(
+            _sqlite_operational_error("database table is locked", sqlite3.SQLITE_READONLY)
+        )
+        is False
+    )
+    assert _is_transient_sqlite_contention(sqlite3.OperationalError("database is locked")) is False
+
+
 def test_run_cycle_contains_only_transient_sqlite_contention(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1029,7 +1058,9 @@ def test_run_cycle_contains_only_transient_sqlite_contention(
         write_scheduler_enabled(config.data_dir, enabled=True)
 
         def raise_locked() -> Any:
-            raise sqlite3.OperationalError("database is locked")
+            raise _sqlite_operational_error(
+                "database table is locked", sqlite3.SQLITE_LOCKED_SHAREDCACHE
+            )
 
         monkeypatch.setattr(service.capture_scheduler._scheduler, "run_once", raise_locked)
         report = service.capture_scheduler.run_cycle()
@@ -1041,7 +1072,7 @@ def test_run_cycle_contains_only_transient_sqlite_contention(
         assert report.health.reason_codes == ("capture_failed",)
 
         def raise_disk_io() -> Any:
-            raise sqlite3.OperationalError("disk I/O error")
+            raise _sqlite_operational_error("disk I/O error", sqlite3.SQLITE_IOERR)
 
         monkeypatch.setattr(service.capture_scheduler._scheduler, "run_once", raise_disk_io)
         with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
@@ -1075,9 +1106,11 @@ def test_transient_sqlite_contention_keeps_loop_alive_for_workspace_retry(
         ) -> tuple[list[Any], int]:
             nonlocal attempts
             attempts += 1
-            if attempts == 1:
+            if attempts <= 2:
                 first_contention.set()
-                raise sqlite3.OperationalError("database is locked")
+                raise _sqlite_operational_error(
+                    "database table is locked", sqlite3.SQLITE_LOCKED_SHAREDCACHE
+                )
             return original_list_sources(limit=limit, offset=offset)
 
         monkeypatch.setattr(service.capture, "list_sources", list_sources_with_one_transient_lock)
@@ -1104,7 +1137,7 @@ def test_transient_sqlite_contention_keeps_loop_alive_for_workspace_retry(
                 )
             )
             assert service.capture_scheduler.status()["running"] is True
-            assert attempts >= 2
+            assert attempts >= 3
         finally:
             service.capture_scheduler.shutdown()
 
@@ -1186,6 +1219,50 @@ def test_loop_does_not_swallow_programmer_error(
         assert scheduler._thread is None or scheduler._thread.is_alive() is False
         assert observed
         assert isinstance(observed[0], TypeError)
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+
+def test_loop_does_not_swallow_noncontention_sqlite_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    clock = _MutableClock()
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(
+        coordinator,
+        config,
+        scheduler_config=SchedulerConfig(poll_interval_seconds=1),
+        clock=clock,
+    )
+    write_scheduler_enabled(config.data_dir, enabled=True)
+
+    def boom() -> bool:
+        raise _sqlite_operational_error("database table is locked", sqlite3.SQLITE_READONLY)
+
+    observed: list[BaseException | None] = []
+
+    def hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is sqlite3.OperationalError:
+            observed.append(args.exc_value)
+            return
+        threading.__excepthook__(args)
+
+    monkeypatch.setattr(threading, "excepthook", hook)
+    try:
+        scheduler.start()
+        _wait_until(lambda: scheduler.status()["running"] is True)
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        assert scheduler._thread is None or scheduler._thread.is_alive() is False
+        assert observed
+        assert isinstance(observed[0], sqlite3.OperationalError)
     finally:
         scheduler.shutdown()
         store.close()

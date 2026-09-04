@@ -58,12 +58,10 @@ _CORE_SCHEDULER_THREAD_NAME = "atc-capture-scheduler"
 def _is_transient_sqlite_contention(error: sqlite3.OperationalError) -> bool:
     """Recognize SQLite lock arbitration without hiding other storage faults."""
 
-    return " ".join(str(error).casefold().split()) in {
-        "database is busy",
-        "database is locked",
-        "database schema is locked",
-        "database table is locked",
-    }
+    code = getattr(error, "sqlite_errorcode", None)
+    if not isinstance(code, int):
+        return False
+    return (code & 0xFF) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
 
 
 def _merge_health(left: HealthState, right: HealthState) -> HealthState:
