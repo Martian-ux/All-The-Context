@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
@@ -90,6 +91,17 @@ def _raise_windows_error(code: int, message: str) -> None:
     raise OSError(code, message)
 
 
+def _windows_last_error() -> int:
+    """Read the Win32 thread error without touching a platform-only API elsewhere."""
+
+    if os.name != "nt":
+        return 0
+    getter = getattr(ctypes, "get_last_error", None)
+    if not callable(getter):
+        raise OSError("Windows last-error API is unavailable")
+    return int(cast(Callable[[], int], getter)())
+
+
 def _delete_file_by_windows_handle(
     path: Path,
     expected: tuple[int, int, int, int, int, int],
@@ -130,7 +142,7 @@ def _delete_file_by_windows_handle(
         None,
     )
     if handle == invalid_handle or handle is None:
-        _raise_windows_error(ctypes.get_last_error(), "unable to open file")
+        _raise_windows_error(_windows_last_error(), "unable to open file")
     try:
         msvcrt = importlib.import_module("msvcrt")
         fd = int(msvcrt.open_osfhandle(int(handle), os.O_RDONLY))
@@ -146,7 +158,7 @@ def _delete_file_by_windows_handle(
                 ctypes.byref(disposition),
                 ctypes.sizeof(disposition),
             ):
-                _raise_windows_error(ctypes.get_last_error(), "unable to delete file")
+                _raise_windows_error(_windows_last_error(), "unable to delete file")
         finally:
             os.close(fd)
     finally:
@@ -212,7 +224,7 @@ def replace_file_durably(source: Path, destination: Path) -> None:
             os.fspath(destination),
             _MOVEFILE_REPLACE_EXISTING | _MOVEFILE_WRITE_THROUGH,
         ):
-            _raise_windows_error(ctypes.get_last_error(), "unable to publish file")
+            _raise_windows_error(_windows_last_error(), "unable to publish file")
         return
 
     os.replace(source, destination)
@@ -287,9 +299,7 @@ class _RegistryTransaction:
         try:
             result = int(self._commit(ctypes.c_void_p(self.handle)))
             if not result:
-                _raise_windows_error(
-                    ctypes.get_last_error(), "unable to commit registry transaction"
-                )
+                _raise_windows_error(_windows_last_error(), "unable to commit registry transaction")
         except BaseException as exc:
             self.commit_error = exc
             self.state = _RegistryTransactionState.COMMIT_FAILED
@@ -315,7 +325,7 @@ class _RegistryTransaction:
             result = int(self._rollback(ctypes.c_void_p(self.handle)))
             if not result:
                 _raise_windows_error(
-                    ctypes.get_last_error(), "unable to roll back registry transaction"
+                    _windows_last_error(), "unable to roll back registry transaction"
                 )
         except BaseException as exc:
             self.rollback_error = exc
@@ -335,9 +345,7 @@ class _RegistryTransaction:
         try:
             result = int(self._close(ctypes.c_void_p(self.handle)))
             if not result:
-                _raise_windows_error(
-                    ctypes.get_last_error(), "unable to close registry transaction"
-                )
+                _raise_windows_error(_windows_last_error(), "unable to close registry transaction")
         except BaseException as exc:
             self.close_error = exc
             self.state = _RegistryTransactionState.CLOSE_FAILED
@@ -730,7 +738,7 @@ class WindowsRegistryAdapter:
         raw_handle = create(None, None, 0, 0, 0, 0, None)
         raw_value = getattr(raw_handle, "value", raw_handle)
         if raw_value in {None, _INVALID_HANDLE_VALUE}:
-            _raise_windows_error(ctypes.get_last_error(), "unable to create registry transaction")
+            _raise_windows_error(_windows_last_error(), "unable to create registry transaction")
         return _RegistryTransaction(int(raw_value), commit, rollback, close)
 
     def _run_registry_transaction(self, operation: Any) -> Any:
