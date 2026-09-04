@@ -2313,10 +2313,13 @@ def test_authenticated_operation_status_bypasses_cross_thread_writer_lock(
     monkeypatch.setattr(storage_module, "verify_token", counting_verify)
     monkeypatch.setattr(storage_module.hmac, "digest", recording_digest)
     observer_cleanup: dict[str, object] = {}
+    observer_cleanup_threads: list[str] = []
     original_close_observer = core.store.close_import_operation_observer
 
     def record_observer_cleanup() -> None:
-        observer_cleanup["thread"] = threading.current_thread().name
+        thread_name = threading.current_thread().name
+        observer_cleanup_threads.append(thread_name)
+        observer_cleanup["thread"] = thread_name
         observer_cleanup["had_connection"] = hasattr(
             core.store._operation_observer_local,
             "connection",
@@ -2434,6 +2437,7 @@ def test_authenticated_operation_status_bypasses_cross_thread_writer_lock(
             assert secret.hex().encode() not in durable_bytes
             assert secret.hex().encode() not in response_bytes
 
+    assert observer_cleanup_threads == ["atc-operation-observer_0"]
     assert str(observer_cleanup["thread"]).startswith("atc-operation-observer")
     assert observer_cleanup["had_connection"] is True
     assert observer_cleanup["cleared"] is True

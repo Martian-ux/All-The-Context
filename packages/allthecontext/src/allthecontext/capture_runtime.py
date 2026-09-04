@@ -27,6 +27,7 @@ from typing import Any, NoReturn
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
+from .activity import CoreActivityGate
 from .capture import CaptureCoordinator, CaptureError, CaptureSource
 from .config import CoreConfig
 from .experimental_local_git_workspace_connector import (
@@ -602,11 +603,13 @@ def _new_coordinator(
     store: CoreStore,
     *,
     clock: Callable[[], str] = utc_now,
+    activity_gate: CoreActivityGate | None = None,
 ) -> CaptureCoordinator:
     return CaptureCoordinator(
         store,
         sink=RegisteredSourceCaptureApplicationSink(store, clock=clock),
         clock=clock,
+        activity_gate=activity_gate,
     )
 
 
@@ -655,6 +658,7 @@ def compose_capture_coordinator(
     config: CoreConfig,
     *,
     clock: Callable[[], str] = utc_now,
+    activity_gate: CoreActivityGate | None = None,
 ) -> CaptureCoordinator:
     """Construct the shared foreground capture coordinator.
 
@@ -664,7 +668,7 @@ def compose_capture_coordinator(
     failures stay closed here and do not prevent Core from starting.
     """
 
-    coordinator = _new_coordinator(store, clock=clock)
+    coordinator = _new_coordinator(store, clock=clock, activity_gate=activity_gate)
     _try_register_authorized_adapter(coordinator, config)
     return coordinator
 

@@ -15,10 +15,11 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
+from .activity import CoreActivityGate
 from .config import MAX_IMPORT_BYTES
 from .import_boundary import (
     DEFAULT_CANCEL_REGISTRY,
@@ -44,6 +45,7 @@ from .importers import (
 )
 from .provider_ingestion import ArchiveProvider, normalize_provider
 from .storage import (
+    MAX_ACTIVITY_SNAPSHOT_ITEMS,
     SOURCE_BLOB_CHUNK_BYTES,
     ConflictError,
     CoreStore,
@@ -88,6 +90,7 @@ class ImportOperationService:
         max_bytes: int = MAX_IMPORT_BYTES,
         cancel_registry: ImportCancelRegistry | None = None,
         skip_disk_preflight: bool = False,
+        activity_gate: CoreActivityGate | None = None,
     ) -> None:
         if not 1 <= max_bytes <= MAX_IMPORT_BYTES:
             raise ValueError(f"max_bytes must be between 1 and {MAX_IMPORT_BYTES}")
@@ -97,6 +100,7 @@ class ImportOperationService:
         self.max_bytes = max_bytes
         self.cancel_registry = cancel_registry or DEFAULT_CANCEL_REGISTRY
         self.skip_disk_preflight = skip_disk_preflight
+        self.activity_gate = activity_gate or CoreActivityGate()
         self._active_lock = threading.Lock()
         self._active_workers: set[str] = set()
         self.staging_root = self.data_dir / STAGING_DIR_NAME
@@ -105,7 +109,20 @@ class ImportOperationService:
     def activity_snapshot(self) -> dict[str, Any]:
         """Return bounded, content-free durable import activity."""
 
-        return self.store.active_import_operation_snapshot()
+        durable = self.store.active_import_operation_snapshot()
+        with self._active_lock:
+            worker_count = len(self._active_workers)
+        count = min(MAX_ACTIVITY_SNAPSHOT_ITEMS, max(int(durable["count"]), worker_count))
+        return {
+            "active": bool(durable["active"]) or worker_count > 0,
+            "count": count,
+            "truncated": bool(durable["truncated"]) or worker_count > count,
+        }
+
+    @contextmanager
+    def _activity_scope(self) -> Iterator[None]:
+        with self.activity_gate.activity():
+            yield
 
     def recover_interrupted_operations(self) -> list[dict[str, Any]]:
         """After process restart, terminalize orphan non-terminal operations safely."""
@@ -179,6 +196,24 @@ class ImportOperationService:
         provider: str | None = None,
         media_type: str | None = None,
     ) -> dict[str, Any]:
+        with self._activity_scope():
+            return self._start_operation(
+                declared_byte_size=declared_byte_size,
+                filename=filename,
+                source_service=source_service,
+                provider=provider,
+                media_type=media_type,
+            )
+
+    def _start_operation(
+        self,
+        *,
+        declared_byte_size: object,
+        filename: str | None = None,
+        source_service: str = "auto",
+        provider: str | None = None,
+        media_type: str | None = None,
+    ) -> dict[str, Any]:
         """Create a durable operation id after boundary + disk preflight, before bytes."""
         size = coerce_declared_byte_size(declared_byte_size)
         refuse_if_over_boundary(size, limit=self.max_bytes)
@@ -229,6 +264,11 @@ class ImportOperationService:
         return result
 
     def retry_operation(self, operation_id: str) -> dict[str, Any]:
+        """Retry parse/ingest from a preserved raw source without re-upload."""
+        with self._activity_scope():
+            return self._retry_operation(operation_id)
+
+    def _retry_operation(self, operation_id: str) -> dict[str, Any]:
         """Retry parse/ingest from a preserved raw source without re-upload."""
         operation = self.store.get_import_operation(operation_id)
         if operation["status"] == "complete":
@@ -312,6 +352,22 @@ class ImportOperationService:
         expected_size: int | None = None,
         process_after: bool = True,
     ) -> dict[str, Any]:
+        with self._activity_scope():
+            return self._accept_upload(
+                operation_id,
+                source,
+                expected_size=expected_size,
+                process_after=process_after,
+            )
+
+    def _accept_upload(
+        self,
+        operation_id: str,
+        source: ByteSource,
+        *,
+        expected_size: int | None = None,
+        process_after: bool = True,
+    ) -> dict[str, Any]:
         """Stream source bytes, stage durably, then optionally parse/ingest."""
         if expected_size is not None:
             expected_size = coerce_declared_byte_size(expected_size)
@@ -349,6 +405,22 @@ class ImportOperationService:
                 self._active_workers.discard(operation_id)
 
     def import_path_via_operation(
+        self,
+        path: Path,
+        *,
+        filename: str | None = None,
+        source_service: str = "auto",
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        with self._activity_scope():
+            return self._import_path_via_operation(
+                path,
+                filename=filename,
+                source_service=source_service,
+                provider=provider,
+            )
+
+    def _import_path_via_operation(
         self,
         path: Path,
         *,

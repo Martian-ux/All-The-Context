@@ -420,6 +420,8 @@ def create_app(
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         nonlocal operation_observer_executor, recovery_timer
         observer_executor = get_operation_observer_executor()
+        recovery_lock = threading.Lock()
+        recovery_stopping = threading.Event()
         try:
             await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
             if not scheduler_update_health_forced_off():
@@ -430,7 +432,14 @@ def create_app(
                 ):
                     update_automation.start()
                 if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
-                    recovery_timer = threading.Timer(1.0, updates.recover_after_restart)
+
+                    def recover_after_restart() -> None:
+                        with recovery_lock:
+                            if recovery_stopping.is_set():
+                                return
+                            updates.recover_after_restart()
+
+                    recovery_timer = threading.Timer(1.0, recover_after_restart)
                     recovery_timer.daemon = True
                     recovery_timer.start()
             # Never start the legacy Edge network worker. Cleanup routes construct
@@ -439,8 +448,12 @@ def create_app(
             yield
         finally:
             if recovery_timer is not None:
-                recovery_timer.cancel()
+                timer = recovery_timer
                 recovery_timer = None
+                with recovery_lock:
+                    recovery_stopping.set()
+                    timer.cancel()
+                timer.join()
             try:
                 await run_in_threadpool(update_automation.shutdown)
             finally:
@@ -459,7 +472,7 @@ def create_app(
                             with operation_observer_executor_lock:
                                 if operation_observer_executor is observer_executor:
                                     operation_observer_executor = None
-                            await run_in_threadpool(core.close)
+                            await run_in_threadpool(core.close, close_observer=False)
 
     app = FastAPI(
         title="All The Context Core",
@@ -2284,11 +2297,13 @@ def create_app(
 
         try:
             imports = core.import_operations.activity_snapshot()
+            direct_imports = core.imports.activity_snapshot()
             capture = core.capture_scheduler.activity_snapshot()
         except (OSError, sqlite3.Error, StorageError) as error:
             raise UpdateError(UPDATE_ACTIVATION_BUSY_REASON) from error
         if (
             bool(imports.get("active"))
+            or bool(direct_imports.get("active"))
             or bool(capture.get("foreground_run_active"))
             or bool(capture.get("scheduled_cycle_active"))
             or bool(capture.get("durable_lease_active"))
@@ -2348,7 +2363,13 @@ def create_app(
             # after acquiring its exclusive operation gate and before any
             # install state, backup, credential, or helper mutation.
             ensure_update_activation_ready()
-            return updates.install(readiness_check=ensure_update_activation_ready)
+            # Keep the Core activity barrier through that final check and the
+            # first updater mutation. New imports, scheduler cycles, and
+            # capture leases must wait until activation has committed its
+            # installing/recovery handoff or refused it.
+            with core.activity_gate.exclusive():
+                ensure_update_activation_ready()
+                return updates.install(readiness_check=ensure_update_activation_ready)
 
         status = update_action(install_when_ready)
         if (

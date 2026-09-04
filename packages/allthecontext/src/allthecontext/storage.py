@@ -3320,7 +3320,7 @@ class CoreStore:
         if hasattr(self._operation_observer_local, "fingerprint_key"):
             del self._operation_observer_local.fingerprint_key
 
-    def close(self) -> None:
+    def close(self, *, close_observer: bool = True) -> None:
         """Release handles required for deterministic Windows vault removal.
 
         Shutdown intent: short-lived owners such as packaged provider acceptance
@@ -3337,8 +3337,9 @@ class CoreStore:
         later public method may open a new connection; reuse remains available
         under the current architecture.
         """
-        with suppress(sqlite3.Error):
-            self.close_import_operation_observer()
+        if close_observer:
+            with suppress(sqlite3.Error):
+                self.close_import_operation_observer()
         try:
             with self._write_lock, self.connect() as connection:
                 connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")

@@ -26,6 +26,7 @@ from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, Literal
 
+from .activity import CoreActivityGate
 from .capture import (
     CaptureCapabilityManifest,
     CaptureCoordinator,
@@ -686,6 +687,7 @@ class CoreCaptureScheduler:
         scheduler_config: SchedulerConfig | None = None,
         clock: SchedulerClock | None = None,
         join_timeout_seconds: float = _CORE_SCHEDULER_JOIN_TIMEOUT_SECONDS,
+        activity_gate: CoreActivityGate | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.config = config
@@ -704,6 +706,7 @@ class CoreCaptureScheduler:
             ),
             clock=clock or coordinator.clock,
         )
+        self.activity_gate = activity_gate or CoreActivityGate()
         self._join_timeout_seconds = float(join_timeout_seconds)
         self._control_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
@@ -746,10 +749,11 @@ class CoreCaptureScheduler:
         return activity
 
     def enable(self) -> dict[str, Any]:
-        with self._control_lock:
-            write_scheduler_enabled(self.config.data_dir, enabled=True)
-            self._start_unlocked()
-        return self.status()
+        with self.activity_gate.activity():
+            with self._control_lock:
+                write_scheduler_enabled(self.config.data_dir, enabled=True)
+                self._start_unlocked()
+            return self.status()
 
     def disable(self) -> dict[str, Any]:
         with self._control_lock:
@@ -761,7 +765,7 @@ class CoreCaptureScheduler:
     def start(self) -> None:
         """Start the non-daemon loop after Core is ready. Idempotent."""
 
-        with self._control_lock:
+        with self.activity_gate.activity(), self._control_lock:
             self._start_unlocked()
 
     def stop(self) -> None:
@@ -863,22 +867,25 @@ class CoreCaptureScheduler:
     def run_cycle(self) -> SchedulerRunReport:
         """Run one scheduled cycle without waiting. Fail closed per source."""
 
-        acquired = self._cycle_lock.acquire(blocking=False)
-        if not acquired:
-            return SchedulerRunReport(plan=SchedulePlan(enabled=self.dispatch_allowed()))
-        try:
-            if not self.dispatch_allowed():
-                self._scheduler.disable()
+        with self.activity_gate.activity():
+            if self._stop.is_set() or self._closing.is_set():
                 return SchedulerRunReport(plan=SchedulePlan(enabled=False))
-            refresh_local_workspace_adapter(self.coordinator, self.config)
-            self._scheduler.enable()
-            return self._scheduler.run_once()
-        except CaptureError as error:
-            return self._content_free_cycle_failure(error.code)
-        except OSError:
-            return self._content_free_cycle_failure("capture_failed")
-        finally:
-            self._cycle_lock.release()
+            acquired = self._cycle_lock.acquire(blocking=False)
+            if not acquired:
+                return SchedulerRunReport(plan=SchedulePlan(enabled=self.dispatch_allowed()))
+            try:
+                if not self.dispatch_allowed():
+                    self._scheduler.disable()
+                    return SchedulerRunReport(plan=SchedulePlan(enabled=False))
+                refresh_local_workspace_adapter(self.coordinator, self.config)
+                self._scheduler.enable()
+                return self._scheduler.run_once()
+            except CaptureError as error:
+                return self._content_free_cycle_failure(error.code)
+            except OSError:
+                return self._content_free_cycle_failure("capture_failed")
+            finally:
+                self._cycle_lock.release()
 
     def _loop(self) -> None:
         current = threading.current_thread()

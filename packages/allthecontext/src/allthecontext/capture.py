@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+from .activity import CoreActivityGate
 from .ids import new_id, utc_now
 from .secret_boundary import contains_secret_like_text
 from .storage import (
@@ -1011,9 +1012,16 @@ def ensure_capture_schema(connection: Any, *, through_version: int | None = None
 class CaptureLedger:
     """Typed repository for migration-015 capture state."""
 
-    def __init__(self, store: CoreStore, *, clock: Callable[[], str] = utc_now) -> None:
+    def __init__(
+        self,
+        store: CoreStore,
+        *,
+        clock: Callable[[], str] = utc_now,
+        activity_gate: CoreActivityGate | None = None,
+    ) -> None:
         self.store = store
         self.clock = clock
+        self.activity_gate = activity_gate or CoreActivityGate()
 
     @staticmethod
     def _scopes_from_row(row: Any) -> tuple[str, ...]:
@@ -1256,6 +1264,10 @@ class CaptureLedger:
         }
 
     def begin_run(self, source_id: str) -> tuple[CaptureRunHandle, CaptureSource, int]:
+        with self.activity_gate.activity():
+            return self._begin_run(source_id)
+
+    def _begin_run(self, source_id: str) -> tuple[CaptureRunHandle, CaptureSource, int]:
         self.recover_expired_runs()
         now = self.clock()
         run_id = new_id()
@@ -1932,8 +1944,10 @@ class CaptureCoordinator:
         sink: CaptureApplicationSink | None = None,
         backoff: BackoffPolicy | None = None,
         clock: Callable[[], str] = utc_now,
+        activity_gate: CoreActivityGate | None = None,
     ) -> None:
-        self.ledger = CaptureLedger(store, clock=clock)
+        self.activity_gate = activity_gate or CoreActivityGate()
+        self.ledger = CaptureLedger(store, clock=clock, activity_gate=self.activity_gate)
         self.sink = sink
         self.backoff = backoff or BackoffPolicy()
         self.adapters: dict[str, CaptureProviderAdapter] = {}
@@ -2225,6 +2239,10 @@ class CaptureCoordinator:
         return len(event_ids), applied, duplicates, pending_cursor
 
     def run(self, source_id: str) -> CaptureRunResult:
+        with self.activity_gate.activity():
+            return self._run(source_id)
+
+    def _run(self, source_id: str) -> CaptureRunResult:
         source = self.get_source(source_id)
         if source.lifecycle_state in {"disabled", "paused", "revoked"}:
             return self.ledger.skipped_result(source_id, "capture_source_not_enabled")
