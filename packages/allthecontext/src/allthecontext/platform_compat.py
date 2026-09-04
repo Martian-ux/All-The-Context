@@ -419,6 +419,25 @@ class WindowsRegistryAdapter:
             )
         )
 
+    @property
+    def native_registry_publication_available(self) -> bool:
+        """Whether this winreg surface can own a transacted native key handle.
+
+        CPython exposes registry handles as ``HKEYType`` instances, but does
+        not expose a constructible ``PyHKEY`` wrapper for a raw handle on the
+        hosted Python versions used by the desktop workflow.  Without that
+        wrapper, the KTM publication path cannot safely bind its handles and
+        must use the stock forward-only install path instead.
+        """
+
+        return callable(getattr(self._module, "PyHKEY", None))
+
+    @property
+    def path_bound_registry_handles(self) -> bool:
+        """Stock winreg handles remain bound to the path used to open them."""
+
+        return True
+
     def _native_key_handle(
         self,
         name: str,

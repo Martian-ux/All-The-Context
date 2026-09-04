@@ -691,6 +691,15 @@ def _registry_atomic_mutations_available(winreg: Any) -> bool:
     )
 
 
+def _native_registry_publication_available(winreg: Any) -> bool:
+    """Report whether the provider can bind raw handles for native publication."""
+
+    capability = getattr(winreg, "native_registry_publication_available", None)
+    if isinstance(capability, bool):
+        return capability
+    return callable(getattr(winreg, "publish_key_if_absent", None))
+
+
 def _safe_lstat(path: Path) -> os.stat_result | None:
     try:
         return path.lstat()
@@ -963,10 +972,39 @@ def _registry_snapshot_equal(
 def _validate_registry_key_handle(winreg: Any, key: Any, expected_name: str) -> None:
     """Reject a custom adapter handle unless it identifies the requested key."""
 
-    del winreg
     candidate = getattr(key, "name", getattr(key, "path", None))
+    if candidate is None and bool(getattr(winreg, "path_bound_registry_handles", False)):
+        return
     if not isinstance(candidate, str) or candidate.casefold() != expected_name.casefold():
         raise WindowsRegistrationError("registration_key_path_substitution")
+
+
+def _set_registry_value_forward_only(
+    winreg: Any,
+    key: Any,
+    expected: WindowsRegistryValueSnapshot,
+    value_type: int,
+    data: RegistryData,
+    *,
+    key_name: str | None = None,
+) -> None:
+    """Set one previously absent value through stock winreg forward-only."""
+
+    if not key_name:
+        raise WindowsRegistrationError("registration_key_path_invalid")
+    if expected.present:
+        raise WindowsRegistrationError("registration_target_changed")
+    _validate_registry_key_handle(winreg, key, key_name)
+    current = _registry_value_snapshot(winreg, key, expected.name)
+    if not _registry_snapshot_equal(current, expected):
+        raise WindowsRegistrationError("registration_target_changed")
+    setter = getattr(winreg, "SetValueEx", None)
+    if not callable(setter):
+        raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
+    try:
+        setter(key, expected.name, 0, value_type, _registry_data_for_set(data))
+    except FileNotFoundError:
+        raise WindowsRegistrationError("registration_target_changed") from None
 
 
 def _delete_registry_value_if_unchanged(
@@ -1020,10 +1058,21 @@ def _set_registry_value_if_unchanged(
     data: RegistryData,
     *,
     key_name: str | None = None,
+    allow_forward_only_absent: bool = False,
 ) -> None:
     """Set only an exact value, using an adapter CAS when available."""
 
     if not _registry_atomic_mutations_available(winreg):
+        if allow_forward_only_absent and not expected.present:
+            _set_registry_value_forward_only(
+                winreg,
+                key,
+                expected,
+                value_type,
+                data,
+                key_name=key_name,
+            )
+            return
         raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
 
     conditional = getattr(winreg, "set_value_if_unchanged", None)
@@ -2683,7 +2732,11 @@ class WindowsApplicationRegistrationTransaction:
     ) -> None:
         winreg = self._registry if self._registry is not None else windows_registry()
         publisher = getattr(winreg, "publish_key_if_absent", None)
-        if not expected.uninstall_key_present and callable(publisher):
+        if (
+            not expected.uninstall_key_present
+            and callable(publisher)
+            and _native_registry_publication_available(winreg)
+        ):
             if (
                 self._journal is None
                 or self._journal.registry_generation is None
@@ -2741,8 +2794,6 @@ class WindowsApplicationRegistrationTransaction:
                 cast(RegistrationName, name) for name, _type, _data in self._desired_registry()
             )
             return
-        if not _registry_atomic_mutations_available(winreg):
-            raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
         key_read_set = int(getattr(winreg, "KEY_READ", 0x20019)) | int(
             getattr(winreg, "KEY_SET_VALUE", 0x0002)
         )
@@ -2801,6 +2852,7 @@ class WindowsApplicationRegistrationTransaction:
                         value_type,
                         data,
                         key_name=self._uninstall_key,
+                        allow_forward_only_absent=self._key_created,
                     )
                 except WindowsRegistrationError:
                     raise

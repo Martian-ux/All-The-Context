@@ -2184,6 +2184,37 @@ def test_stock_winreg_forward_install_uses_native_new_key_disposition(
     assert transaction._journal is not None and transaction._journal.phase == "installed"
 
 
+def test_stock_winreg_without_raw_hkey_wrapper_uses_forward_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CPython's pathless HKEYType must not enter the raw-handle KTM path."""
+
+    _patch_shortcut_writer(monkeypatch)
+    stock = _StockWinreg()
+    stock.PyHKEY = None
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: (
+            native if name in {"advapi32", "ntdll", "ktmw32"} else original_windows_dll(name)
+        ),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path, registry=adapter, desktop=False
+    )
+
+    result = transaction.apply(transaction.snapshot())
+
+    assert result.changed_entries
+    assert adapter.native_registry_publication_available is False
+    assert native.transactions == {}
+    assert stock.set_calls == len(transaction._REGISTRY_NAMES)
+    assert transaction._journal is not None and transaction._journal.phase == "installed"
+
+
 def test_stock_winreg_existing_key_fails_closed_without_atomic_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
