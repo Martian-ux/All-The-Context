@@ -11,9 +11,10 @@ from allthecontext import application_install
 
 
 class _FakeKey:
-    def __init__(self, registry: _FakeRegistry, name: str) -> None:
+    def __init__(self, registry: _FakeRegistry, name: str, access: int) -> None:
         self.registry = registry
         self.name = name
+        self.access = access
 
     def __enter__(self) -> _FakeKey:
         return self
@@ -34,11 +35,14 @@ class _FakeRegistry:
     REG_MULTI_SZ = 5
     REG_QWORD = 6
     KEY_READ = 0x20019
+    KEY_QUERY_VALUE = 0x0001
     KEY_SET_VALUE = 0x0002
+    KEY_ALL_ACCESS = 0xF003F
 
     def __init__(self) -> None:
         self.keys: dict[str, dict[str, tuple[int, object]]] = {}
         self.subkeys: set[str] = set()
+        self.open_calls: list[tuple[str, int]] = []
         self.fail_before: set[str] = set()
         self.fail_after: str | None = None
         self.fail_restore_name: str | None = None
@@ -49,16 +53,20 @@ class _FakeRegistry:
     def OpenKey(self, _root: object, name: str, *_args: object) -> _FakeKey:
         if name not in self.keys:
             raise FileNotFoundError(name)
-        return _FakeKey(self, name)
+        access = int(_args[1]) if len(_args) >= 2 else self.KEY_READ
+        self.open_calls.append((name, access))
+        return _FakeKey(self, name, access)
 
     def CreateKey(self, _root: object, name: str) -> _FakeKey:
         self.keys.setdefault(name, {})
         if self.fail_create_after:
             self.fail_create_after = False
             raise OSError(name)
-        return _FakeKey(self, name)
+        return _FakeKey(self, name, self.KEY_ALL_ACCESS)
 
     def QueryValueEx(self, key: _FakeKey, name: str) -> tuple[object, int]:
+        if not key.access & self.KEY_QUERY_VALUE:
+            raise PermissionError("query access required")
         try:
             value_type, data = self.keys[key.name][name]
         except KeyError as exc:
@@ -73,6 +81,8 @@ class _FakeRegistry:
         value_type: int,
         data: object,
     ) -> None:
+        if not key.access & self.KEY_SET_VALUE:
+            raise PermissionError("set access required")
         if name in self.fail_before:
             raise PermissionError(name)
         if self.fail_restore_name == name and data == self.fail_restore_data:
@@ -83,6 +93,8 @@ class _FakeRegistry:
             raise OSError(name)
 
     def DeleteValue(self, key: _FakeKey, name: str) -> None:
+        if not key.access & self.KEY_SET_VALUE:
+            raise PermissionError("set access required")
         if name in self.fail_delete:
             raise PermissionError(name)
         try:
@@ -91,6 +103,8 @@ class _FakeRegistry:
             raise FileNotFoundError(name) from exc
 
     def QueryInfoKey(self, key: _FakeKey) -> tuple[int, int, int]:
+        if not key.access & self.KEY_QUERY_VALUE:
+            raise PermissionError("query access required")
         return (
             len([name for name in self.subkeys if name.startswith(f"{key.name}\\")]),
             len(self.keys[key.name]),
@@ -146,6 +160,7 @@ def _make_transaction(
     monkeypatch.setattr(application_install.platform, "system", lambda: "Windows")
     executable = tmp_path / "AllTheContext.exe"
     executable.write_bytes(b"executable")
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(tmp_path))
     start_menu = tmp_path / "Programs" / "All The Context"
     desktop_path = tmp_path / "Desktop" if desktop else None
     fake_registry = registry or _FakeRegistry()
@@ -438,10 +453,9 @@ def test_install_entrypoints_uses_reversible_registration_transaction(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls = _patch_shortcut_writer(monkeypatch)
-    transaction, executable, start_menu, desktop, registry = _make_transaction(
+    _transaction, executable, start_menu, desktop, registry = _make_transaction(
         monkeypatch, tmp_path
     )
-    del transaction
     monkeypatch.setattr(
         application_install,
         "_windows_locations",
@@ -701,3 +715,241 @@ def test_non_windows_install_is_a_noop_without_loading_winreg(
 
     monkeypatch.setattr(application_install, "windows_registry", unexpected_registry)
     assert application_install.install_application_entrypoints(Path("unused.exe")) is None
+
+
+def test_existing_registry_key_is_opened_for_query_and_set_access(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    registry = _FakeRegistry()
+    registry.keys[application_install.WINDOWS_UNINSTALL_KEY] = {
+        "Unrelated": (registry.REG_SZ, "preserve")
+    }
+    transaction, _executable, _start_menu, _desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+
+    transaction.apply(transaction.snapshot())
+
+    assert any(
+        name == application_install.WINDOWS_UNINSTALL_KEY
+        and access == registry.KEY_READ | registry.KEY_SET_VALUE
+        for name, access in registry.open_calls
+    )
+
+
+def test_public_uninstall_restores_vendor_preimages_and_keeps_shared_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = _patch_shortcut_writer(monkeypatch)
+    registry = _FakeRegistry()
+    registry.keys[application_install.WINDOWS_UNINSTALL_KEY] = {
+        "DisplayName": (registry.REG_EXPAND_SZ, "%VENDOR_NAME%"),
+        "Unrelated": (registry.REG_BINARY, b"vendor-value"),
+    }
+    registry.subkeys.add(application_install.WINDOWS_UNINSTALL_KEY + r"\VendorChild")
+    _transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+    assert desktop is not None
+    start_menu.mkdir(parents=True)
+    desktop.mkdir()
+    (start_menu / "All The Context.lnk").write_bytes(b"vendor-launcher")
+    (start_menu / "Uninstall All The Context.lnk").write_bytes(b"vendor-uninstall")
+    (desktop / "All The Context.lnk").write_bytes(b"vendor-desktop")
+    before = _surface(start_menu, desktop, registry)
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+
+    application_install.install_application_entrypoints(executable)
+    application_install.install_application_entrypoints(executable)
+    assert len(calls) == 3
+    application_install.remove_application_entrypoints()
+
+    assert _surface(start_menu, desktop, registry) == before
+    assert application_install.WINDOWS_UNINSTALL_KEY in registry.keys
+    assert application_install.WINDOWS_UNINSTALL_KEY + r"\VendorChild" in registry.subkeys
+    assert not application_install._registration_journal_path(tmp_path).exists()
+
+
+def test_matching_preexisting_shortcuts_are_recorded_for_uninstall(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = _patch_shortcut_writer(monkeypatch)
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    assert desktop is not None
+    start_menu.mkdir(parents=True)
+    desktop.mkdir()
+    shortcut_specs = (
+        (start_menu / "All The Context.lnk", "", "Open your local All The Context Core"),
+        (desktop / "All The Context.lnk", "", "Open your local All The Context Core"),
+        (
+            start_menu / "Uninstall All The Context.lnk",
+            "--uninstall",
+            "Uninstall All The Context (your context data is kept)",
+        ),
+    )
+    for path, arguments, description in shortcut_specs:
+        path.write_bytes(f"{executable}|{arguments}|{description}".encode())
+
+    transaction.apply(transaction.snapshot())
+
+    assert len(calls) == 3
+    assert transaction._journal is not None
+    assert set(transaction._journal.desired_shortcuts) == {"launcher", "desktop", "uninstall"}
+    assert transaction.uninstall().complete is True
+    assert registry.keys == {}
+    assert all(path.exists() for path, _arguments, _description in shortcut_specs)
+
+
+def test_interrupted_apply_is_recovered_from_durable_journal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    snapshot = transaction.snapshot()
+    transaction._prepare_journal(snapshot)
+    plan = transaction._shortcut_plans()[0]
+    temporary = transaction._temporary_path(plan.path)
+    generated = transaction._desired_shortcut_data(plan, temporary)
+    assert transaction._journal is not None
+    transaction._journal.desired_shortcuts[plan.name] = generated
+    transaction._persist_journal("applying", transaction._active_with(plan.name))
+    mutation = application_install._ShortcutMutation(
+        plan.name, plan.path, snapshot.shortcuts[0], generated
+    )
+    transaction._mutations.append(mutation)
+    transaction._publish_new_shortcut(temporary, plan.path)
+
+    status = application_install.recover_application_entrypoints()
+
+    assert status is not None and status.complete is True
+    assert not (start_menu / "All The Context.lnk").exists()
+    assert registry.keys == {}
+    assert not application_install._registration_journal_path(tmp_path).exists()
+    del executable
+
+
+def test_interrupted_uninstall_replays_only_owned_entries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+
+    transaction = application_install.WindowsApplicationRegistrationTransaction(
+        executable,
+        start_menu=start_menu,
+        desktop=desktop,
+        registry=registry,
+        install_root=tmp_path,
+    )
+    transaction._check_platform_and_plan()
+    journal = transaction._load_journal()
+    assert journal is not None and journal.phase == "installed"
+    transaction._snapshot = journal.snapshot
+    transaction._key_created = not journal.snapshot.uninstall_key_present
+    transaction._mutations = transaction._journal_mutations(journal, transaction._owned_names())
+    transaction._persist_journal("uninstalling", transaction._owned_names())
+    partial = transaction._mutations.pop()
+    assert isinstance(partial, application_install._RegistryMutation)
+    transaction._restore_registry(partial)
+    transaction._persist_journal(
+        "uninstalling", tuple(mutation.name for mutation in transaction._mutations)
+    )
+
+    status = application_install.recover_application_entrypoints()
+
+    assert status is not None and status.complete is True
+    assert _surface(start_menu, desktop, registry) == (
+        {"launcher": None, "uninstall": None, "desktop": None},
+        {},
+    )
+
+
+def test_generator_failure_cleans_written_temporary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transaction, _executable, start_menu, _desktop, _registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+
+    def write_then_fail(
+        path: Path,
+        _executable: Path,
+        *,
+        arguments: str = "",
+        description: str,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"{arguments}|{description}".encode())
+        raise OSError("generator failed after writing")
+
+    monkeypatch.setattr(application_install, "_create_windows_shortcut", write_then_fail)
+    with pytest.raises(application_install.WindowsRegistrationError):
+        transaction.apply(transaction.snapshot())
+
+    assert not list(start_menu.rglob("*.atc-new"))
+
+
+def test_install_root_mismatch_is_rejected_before_registration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    canonical_root = tmp_path / "Canonical Install"
+    canonical_root.mkdir()
+    wrong_root = tmp_path / "Wrong Install"
+    wrong_root.mkdir()
+    wrong_executable = wrong_root / application_install.WINDOWS_APP_NAME
+    wrong_executable.write_bytes(b"wrong")
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(canonical_root))
+    monkeypatch.setattr(application_install.platform, "system", lambda: "Windows")
+    transaction = application_install.WindowsApplicationRegistrationTransaction(
+        wrong_executable,
+        start_menu=tmp_path / "Programs" / "All The Context",
+        desktop=None,
+        registry=_FakeRegistry(),
+        install_root=canonical_root,
+    )
+
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        transaction.snapshot()
+
+    assert raised.value.code == "registration_executable_mismatch"
+
+
+def test_executable_symlink_is_rejected_without_resolving_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _transaction, executable, start_menu, _desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, desktop=False
+    )
+    linked = executable
+    executable.unlink()
+    real_executable = tmp_path / "real.exe"
+    real_executable.write_bytes(b"real")
+    try:
+        linked.symlink_to(real_executable)
+    except OSError:
+        pytest.skip("file symlinks are unavailable")
+    linked_transaction = application_install.WindowsApplicationRegistrationTransaction(
+        linked,
+        start_menu=start_menu,
+        desktop=None,
+        registry=registry,
+        install_root=tmp_path,
+    )
+
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        linked_transaction.snapshot()
+
+    assert raised.value.code == "registration_reparse_path"
