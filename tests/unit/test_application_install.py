@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import os
@@ -48,6 +49,7 @@ class _FakeRegistry:
         self.fail_after: str | None = None
         self.fail_restore_name: str | None = None
         self.fail_restore_data: object | None = None
+        self.fail_restore_delete: str | None = None
         self.fail_delete: set[str] = set()
         self.fail_create_after = False
 
@@ -97,6 +99,8 @@ class _FakeRegistry:
         if not key.access & self.KEY_SET_VALUE:
             raise PermissionError("set access required")
         if name in self.fail_delete:
+            raise PermissionError(name)
+        if self.fail_restore_delete == name:
             raise PermissionError(name)
         try:
             del self.keys[key.name][name]
@@ -189,6 +193,42 @@ def _surface(
     return files, copy.deepcopy(registry.keys)
 
 
+def _write_legacy_journal(
+    transaction: application_install.WindowsApplicationRegistrationTransaction,
+    snapshot: application_install.WindowsApplicationRegistrationSnapshot,
+    *,
+    phase: str,
+    active: tuple[str, ...],
+    desired_shortcuts: dict[str, bytes],
+) -> Path:
+    assert transaction._journal is not None
+    payload = {
+        "schema": 1,
+        "install_root": str(transaction._install_root),
+        "executable": str(transaction._executable),
+        "start_menu": str(transaction._start_menu),
+        "desktop": str(transaction._desktop) if transaction._desktop is not None else None,
+        "uninstall_key": transaction._uninstall_key,
+        "phase": phase,
+        "active": list(active),
+        "snapshot": application_install._encode_snapshot(snapshot),
+        "desired_shortcuts": {
+            name: base64.b64encode(data).decode("ascii") for name, data in desired_shortcuts.items()
+        },
+        "desired_registry": {
+            name: {
+                "value_type": value_type,
+                "data": application_install._encode_registry_data(data),
+            }
+            for name, (value_type, data) in transaction._journal.desired_registry.items()
+        },
+    }
+    path = transaction._journal_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, separators=(",", ":")), encoding="ascii")
+    return path
+
+
 def test_windows_locations_use_redirected_shell_folders(monkeypatch, tmp_path: Path) -> None:
     programs = tmp_path / "Redirected Programs"
     desktop = tmp_path / "OneDrive" / "Desktop"
@@ -277,7 +317,7 @@ def test_registration_snapshot_distinguishes_absent_and_present_states(
     assert str(tmp_path) not in repr(snapshot)
 
 
-def test_registration_apply_and_restore_preserve_exact_prior_files_types_and_data(
+def test_registration_refuses_to_overwrite_preexisting_vendor_surface(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_shortcut_writer(monkeypatch)
@@ -305,23 +345,16 @@ def test_registration_apply_and_restore_preserve_exact_prior_files_types_and_dat
     before = _surface(start_menu, desktop, registry)
 
     snapshot = transaction.snapshot()
-    result = transaction.apply(snapshot)
-    assert set(result.changed_entries) == {
-        "launcher",
-        "desktop",
-        "uninstall",
-        *transaction._REGISTRY_NAMES,
-    }
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        transaction.apply(snapshot)
+
+    assert raised.value.code == "registration_target_changed"
     assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY]["Unrelated"] == (
         registry.REG_SZ,
         "preserve",
     )
-
-    status = transaction.restore(snapshot)
-    assert status.complete is True
-    assert status.retryable is False
     assert _surface(start_menu, desktop, registry) == before
-    assert transaction.restore(snapshot).complete is True
+    assert not application_install._registration_journal_path(tmp_path).exists()
 
 
 @pytest.mark.parametrize("fail_at", [0, 1, 2])
@@ -425,12 +458,10 @@ def test_failed_registry_compensation_is_retryable(
     _patch_shortcut_writer(monkeypatch)
     registry = _FakeRegistry()
     registry.keys[application_install.WINDOWS_UNINSTALL_KEY] = {
-        "DisplayName": (registry.REG_QWORD, 123),
         "Unrelated": (registry.REG_SZ, "keep"),
     }
     registry.fail_before.add("DisplayVersion")
-    registry.fail_restore_name = "DisplayName"
-    registry.fail_restore_data = 123
+    registry.fail_restore_delete = "DisplayName"
     transaction, _executable, _start_menu, _desktop, registry = _make_transaction(
         monkeypatch, tmp_path, registry=registry
     )
@@ -441,13 +472,12 @@ def test_failed_registry_compensation_is_retryable(
     assert raised.value.status is not None
     assert raised.value.status.complete is False
     assert "DisplayName" in raised.value.status.pending
-    registry.fail_restore_name = None
+    registry.fail_restore_delete = None
     status = transaction.restore()
     assert status.complete is True
-    assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY]["DisplayName"] == (
-        registry.REG_QWORD,
-        123,
-    )
+    assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY] == {
+        "Unrelated": (registry.REG_SZ, "keep")
+    }
 
 
 def test_install_entrypoints_uses_reversible_registration_transaction(
@@ -739,7 +769,7 @@ def test_existing_registry_key_is_opened_for_query_and_set_access(
     )
 
 
-def test_public_uninstall_restores_vendor_preimages_and_keeps_shared_key(
+def test_registration_refuses_vendor_surface_and_keeps_shared_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls = _patch_shortcut_writer(monkeypatch)
@@ -762,19 +792,19 @@ def test_public_uninstall_restores_vendor_preimages_and_keeps_shared_key(
     monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
     monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
 
-    application_install.install_application_entrypoints(executable)
-    application_install.install_application_entrypoints(executable)
-    assert len(calls) == 3
-    application_install.remove_application_entrypoints()
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install.install_application_entrypoints(executable)
 
+    assert raised.value.code == "registration_target_changed"
     assert _surface(start_menu, desktop, registry) == before
     assert application_install.WINDOWS_UNINSTALL_KEY in registry.keys
     assert application_install.WINDOWS_UNINSTALL_KEY + r"\VendorChild" in registry.subkeys
+    assert not calls
     assert not application_install._registration_journal_path(tmp_path).exists()
     application_install.remove_application_entrypoints()
 
 
-def test_matching_preexisting_shortcuts_are_recorded_for_uninstall(
+def test_matching_preexisting_shortcuts_are_not_overwritten_without_proof(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls = _patch_shortcut_writer(monkeypatch)
@@ -796,34 +826,23 @@ def test_matching_preexisting_shortcuts_are_recorded_for_uninstall(
     for path, arguments, description in shortcut_specs:
         path.write_bytes(f"{executable}|{arguments}|{description}".encode())
 
-    transaction.apply(transaction.snapshot())
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        transaction.apply(transaction.snapshot())
 
-    assert len(calls) == 3
-    assert transaction._journal is not None
-    assert set(transaction._journal.desired_shortcuts) == {"launcher", "desktop", "uninstall"}
-    assert transaction.uninstall().complete is True
+    assert raised.value.code == "registration_target_changed"
+    assert not calls
     assert registry.keys == {}
     assert all(path.exists() for path, _arguments, _description in shortcut_specs)
 
 
-def test_version_transition_migrates_installed_registration_and_preserves_preimages(
+def test_version_transition_migrates_installed_registration_without_preimage_restore(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_shortcut_writer(monkeypatch)
     registry = _FakeRegistry()
-    registry.keys[application_install.WINDOWS_UNINSTALL_KEY] = {
-        "DisplayVersion": (registry.REG_QWORD, 7),
-        "Unrelated": (registry.REG_BINARY, b"vendor-value"),
-    }
     transaction, executable, start_menu, desktop, registry = _make_transaction(
         monkeypatch, tmp_path, registry=registry
     )
-    assert desktop is not None
-    start_menu.mkdir(parents=True)
-    desktop.mkdir()
-    (start_menu / "All The Context.lnk").write_bytes(b"vendor-launcher")
-    (start_menu / "Uninstall All The Context.lnk").write_bytes(b"vendor-uninstall")
-    (desktop / "All The Context.lnk").write_bytes(b"vendor-desktop")
     before = _surface(start_menu, desktop, registry)
     monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
     monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
@@ -847,6 +866,206 @@ def test_version_transition_migrates_installed_registration_and_preserves_preima
 
     application_install.remove_application_entrypoints()
     assert _surface(start_menu, desktop, registry) == before
+
+
+def test_schema1_installed_journal_is_proven_and_upgraded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    initial = transaction.snapshot()
+    application_install.install_application_entrypoints(executable)
+    installed = transaction._load_journal()
+    assert installed is not None and installed.phase == "installed"
+    path = _write_legacy_journal(
+        transaction,
+        initial,
+        phase="installed",
+        active=transaction._owned_names(),
+        desired_shortcuts=installed.desired_shortcuts,
+    )
+
+    upgraded = transaction._load_journal()
+
+    assert upgraded is not None and upgraded.legacy is False
+    assert upgraded.phase == "installed"
+    assert json.loads(path.read_text(encoding="ascii"))["schema"] == 2
+    application_install.remove_application_entrypoints()
+    assert _surface(start_menu, desktop, registry) == (
+        {"launcher": None, "uninstall": None, "desktop": None},
+        {},
+    )
+
+
+def test_schema1_active_shortcut_is_recovered_only_from_canonical_surface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, _executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    initial = transaction.snapshot()
+    transaction._prepare_journal(initial)
+    plan = transaction._shortcut_plans()[0]
+    temporary = transaction._temporary_path(plan.path)
+    generated = transaction._desired_shortcut_data(plan, temporary)
+    assert transaction._journal is not None
+    transaction._journal.desired_shortcuts[plan.name] = generated
+    transaction._persist_journal("applying", (plan.name,))
+    transaction._publish_new_shortcut(temporary, plan.path)
+    _write_legacy_journal(
+        transaction,
+        initial,
+        phase="applying",
+        active=(plan.name,),
+        desired_shortcuts={plan.name: generated},
+    )
+
+    status = application_install.recover_application_entrypoints()
+
+    assert status is not None and status.complete is True
+    assert not plan.path.exists()
+    assert not transaction._journal_path.exists()
+
+
+def test_schema1_ambiguous_or_tampered_surface_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, _executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    initial = transaction.snapshot()
+    transaction._prepare_journal(initial)
+    plan = transaction._shortcut_plans()[0]
+    temporary = transaction._temporary_path(plan.path)
+    generated = transaction._desired_shortcut_data(plan, temporary)
+    assert transaction._journal is not None
+    _write_legacy_journal(
+        transaction,
+        initial,
+        phase="applying",
+        active=(plan.name,),
+        desired_shortcuts={plan.name: generated},
+    )
+    plan.path.parent.mkdir(parents=True, exist_ok=True)
+    plan.path.write_bytes(b"vendor-shortcut")
+
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install.recover_application_entrypoints()
+
+    assert raised.value.code == "registration_target_changed"
+    assert plan.path.read_bytes() == b"vendor-shortcut"
+    assert json.loads(transaction._journal_path.read_text(encoding="ascii"))["schema"] == 1
+    assert temporary.exists()
+
+
+def test_rewrapped_forged_journal_cannot_touch_vendor_surface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+    journal = transaction._load_journal()
+    assert journal is not None
+
+    def protect_for_test(payload: bytes) -> bytes:
+        return (
+            application_install.hmac.new(
+                application_install._JOURNAL_TEST_KEY,
+                payload,
+                application_install.hashlib.sha256,
+            ).digest()
+            + payload
+        )
+
+    def unprotect_for_test(protected_payload: bytes) -> bytes:
+        expected = application_install.hmac.new(
+            application_install._JOURNAL_TEST_KEY,
+            protected_payload[32:],
+            application_install.hashlib.sha256,
+        ).digest()
+        if protected_payload[:32] != expected:
+            raise application_install.WindowsRegistrationError("registration_journal_auth_invalid")
+        return protected_payload[32:]
+
+    monkeypatch.setattr(application_install, "_protect_registration_payload", protect_for_test)
+    monkeypatch.setattr(application_install, "_unprotect_registration_payload", unprotect_for_test)
+    encoded = application_install._encode_journal(journal, phase="installed", active=journal.active)
+    outer = json.loads(encoded.decode("ascii"))
+    inner = json.loads(base64.b64decode(outer["protected"])[32:].decode("ascii"))
+    inner["snapshot"]["uninstall_key_present"] = False
+    for item in inner["snapshot"]["registry_values"]:
+        if item["name"] == "DisplayName":
+            item["present"] = True
+            item["value_type"] = registry.REG_SZ
+            item["data"] = {"kind": "str", "value": "vendor-preimage"}
+    inner["desired_shortcuts"]["launcher"] = base64.b64encode(b"forged").decode("ascii")
+    inner_bytes = (json.dumps(inner, separators=(",", ":")) + "\n").encode("ascii")
+    protected = (
+        application_install.hmac.new(
+            application_install._JOURNAL_TEST_KEY,
+            inner_bytes,
+            application_install.hashlib.sha256,
+        ).digest()
+        + inner_bytes
+    )
+    outer["protected"] = base64.b64encode(protected).decode("ascii")
+    transaction._journal_path.write_text(json.dumps(outer, separators=(",", ":")), encoding="ascii")
+
+    target = start_menu / "All The Context.lnk"
+    target.write_bytes(b"vendor-shortcut")
+    registry.keys[application_install.WINDOWS_UNINSTALL_KEY]["DisplayName"] = (
+        registry.REG_EXPAND_SZ,
+        "%VENDOR_NAME%",
+    )
+    before = _surface(start_menu, desktop, registry)
+
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install.remove_application_entrypoints()
+
+    assert raised.value.code in {
+        "registration_target_changed",
+        "registration_journal_mismatch",
+    }
+    assert _surface(start_menu, desktop, registry) == before
+
+
+def test_registration_journal_rejects_impossible_registry_presence_shape() -> None:
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install._decode_registry_snapshot(
+            {
+                "name": "DisplayName",
+                "present": False,
+                "value_type": None,
+                "data": {"kind": "str", "value": "should-not-exist"},
+            }
+        )
+
+    assert raised.value.code == "registration_journal_invalid"
+
+
+def test_deep_bounded_journal_json_is_actionable_error(tmp_path: Path) -> None:
+    path = tmp_path / ".atc-registration" / "registration-v1.json"
+    path.parent.mkdir()
+    path.write_text("[" * 3000 + "0" + "]" * 3000, encoding="ascii")
+
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install._read_registration_journal(path)
+
+    assert raised.value.code == "registration_journal_invalid"
 
 
 def test_interrupted_version_transition_finishes_from_forward_journal(
@@ -984,7 +1203,7 @@ def test_journalless_uninstall_is_idempotent_when_only_vendor_preimages_remain(
         "DisplayName": (registry.REG_EXPAND_SZ, "%VENDOR_NAME%"),
         "Unrelated": (registry.REG_BINARY, b"vendor-value"),
     }
-    _transaction, executable, start_menu, desktop, registry = _make_transaction(
+    _transaction, _executable, start_menu, desktop, registry = _make_transaction(
         monkeypatch, tmp_path, registry=registry
     )
     assert desktop is not None
@@ -996,7 +1215,6 @@ def test_journalless_uninstall_is_idempotent_when_only_vendor_preimages_remain(
     monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
     monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
 
-    application_install.install_application_entrypoints(executable)
     application_install.remove_application_entrypoints()
     application_install.remove_application_entrypoints()
 
@@ -1040,6 +1258,51 @@ def test_interrupted_apply_is_recovered_from_durable_journal(
     assert registry.keys == {}
     assert not application_install._registration_journal_path(tmp_path).exists()
     del executable
+
+
+def test_shortcut_publish_crash_has_durable_destination_identity_and_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = _patch_shortcut_writer(monkeypatch)
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    snapshot = transaction.snapshot()
+    transaction._prepare_journal(snapshot)
+    plan = transaction._shortcut_plans()[0]
+    persist_calls = 0
+    original_persist = transaction._persist_journal
+
+    def crash_after_publication(
+        phase: str, active: tuple[application_install.RegistrationName, ...]
+    ) -> None:
+        nonlocal persist_calls
+        persist_calls += 1
+        if persist_calls == 2:
+            raise RuntimeError("simulated process crash")
+        original_persist(phase, active)
+
+    monkeypatch.setattr(transaction, "_persist_journal", crash_after_publication)
+    with pytest.raises(RuntimeError, match="simulated process crash"):
+        transaction._apply_shortcut(plan, snapshot.shortcuts[0], [])
+
+    durable = application_install._read_registration_journal(transaction._journal_path)
+    current = application_install._shortcut_state(plan.name, plan.path)
+    assert durable is not None
+    assert current.identity is not None
+    assert durable.desired_shortcut_identities[plan.name] == current.identity
+    assert plan.path.exists()
+
+    status = application_install.recover_application_entrypoints()
+
+    assert status is not None and status.complete is True
+    assert not plan.path.exists()
+    assert not transaction._journal_path.exists()
+    application_install.install_application_entrypoints(executable)
+    application_install.remove_application_entrypoints()
+    assert len(calls) >= 4
 
 
 def test_interrupted_uninstall_replays_only_owned_entries(
