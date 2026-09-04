@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import base64
 import copy
+import ctypes
 import hashlib
+import hmac
 import json
 import os
 import platform
+import secrets
 import stat
 import subprocess
 from contextlib import suppress
+from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -18,7 +22,8 @@ from typing import Any, Literal, cast
 from platformdirs import user_data_path
 
 from . import __version__
-from .platform_compat import windows_creation_flags, windows_registry
+from .platform_compat import windows_creation_flags, windows_dll, windows_registry
+from .release_manifest import ManifestError, ReleaseVersion
 
 WINDOWS_UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\AllTheContext"
 WINDOWS_APP_ID = "AllTheContext"
@@ -32,7 +37,7 @@ _MAX_SHORTCUT_BYTES = 1024 * 1024
 _MAX_REGISTRY_DATA_BYTES = 64 * 1024
 _MAX_STATUS_ITEMS = 16
 _REPARSE_POINT = 0x400
-_REGISTRATION_JOURNAL_SCHEMA = 1
+_REGISTRATION_JOURNAL_SCHEMA = 2
 _REGISTRATION_JOURNAL_NAME = "registration-v1.json"
 _REGISTRATION_JOURNAL_DIRECTORY = ".atc-registration"
 _MAX_REGISTRATION_JOURNAL_BYTES = 8 * 1024 * 1024
@@ -130,7 +135,9 @@ class _RegistrationJournal:
     uninstall_key: str
     snapshot: WindowsApplicationRegistrationSnapshot
     desired_shortcuts: dict[ShortcutName, bytes]
+    desired_shortcut_identities: dict[ShortcutName, _FileIdentity]
     desired_registry: dict[str, tuple[int, RegistryData]]
+    registry_before: dict[str, WindowsRegistryValueSnapshot]
     phase: str
     active: tuple[RegistrationName, ...]
 
@@ -289,6 +296,149 @@ def _decode_identity(value: object) -> _FileIdentity | None:
     ):
         raise WindowsRegistrationError("registration_journal_invalid")
     return _FileIdentity(*(int(value[field]) for field in fields))
+
+
+def _encode_registry_snapshot(snapshot: WindowsRegistryValueSnapshot) -> dict[str, object]:
+    return {
+        "name": snapshot.name,
+        "present": snapshot.present,
+        "value_type": snapshot.value_type,
+        "data": _encode_registry_data(snapshot.data),
+    }
+
+
+def _decode_registry_snapshot(value: object) -> WindowsRegistryValueSnapshot:
+    if not isinstance(value, dict):
+        raise WindowsRegistrationError("registration_journal_invalid")
+    name = value.get("name")
+    present = value.get("present")
+    value_type = value.get("value_type")
+    if not isinstance(name, str) or not isinstance(present, bool):
+        raise WindowsRegistrationError("registration_journal_invalid")
+    if value_type is not None and (not isinstance(value_type, int) or isinstance(value_type, bool)):
+        raise WindowsRegistrationError("registration_journal_invalid")
+    data = _decode_registry_data(value.get("data"))
+    if present != (value_type is not None):
+        raise WindowsRegistrationError("registration_journal_invalid")
+    return WindowsRegistryValueSnapshot(name, present, value_type, data)
+
+
+class _WindowsDataBlob(ctypes.Structure):
+    _fields_ = (
+        ("cbData", wintypes.DWORD),
+        ("pbData", ctypes.POINTER(ctypes.c_ubyte)),
+    )
+
+
+_JOURNAL_TEST_KEY = secrets.token_bytes(32)
+_JOURNAL_PROTECTION_DESCRIPTION = "All The Context registration journal"
+
+
+def _protect_registration_payload(payload: bytes) -> bytes:
+    """Protect journal bytes with the current Windows user's DPAPI boundary.
+
+    DPAPI authenticates the journal against the Windows user profile and detects
+    ordinary file tampering. A same-user process with the ability to run code
+    as this account can still use that account's DPAPI authority; canonical
+    path/component checks below remain mandatory and this limit is intentional.
+    The non-Windows branch exists only for tests that emulate Windows APIs on a
+    non-Windows host and is deliberately process-local, never a production
+    security boundary.
+    """
+
+    if os.name != "nt":
+        return hmac.new(_JOURNAL_TEST_KEY, payload, hashlib.sha256).digest() + payload
+    try:
+        crypt32 = windows_dll("crypt32")
+        kernel32 = windows_dll("kernel32")
+        protect = crypt32.CryptProtectData
+        protect.argtypes = (
+            ctypes.POINTER(_WindowsDataBlob),
+            wintypes.LPCWSTR,
+            ctypes.POINTER(_WindowsDataBlob),
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(_WindowsDataBlob),
+        )
+        protect.restype = wintypes.BOOL
+        free = kernel32.LocalFree
+        free.argtypes = (ctypes.c_void_p,)
+        free.restype = ctypes.c_void_p
+        buffer = ctypes.create_string_buffer(payload)
+        source = _WindowsDataBlob(len(payload), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)))
+        protected = _WindowsDataBlob()
+        if not protect(
+            ctypes.byref(source),
+            _JOURNAL_PROTECTION_DESCRIPTION,
+            None,
+            None,
+            None,
+            0x1,
+            ctypes.byref(protected),
+        ):
+            raise OSError("CryptProtectData failed")
+        try:
+            return ctypes.string_at(protected.pbData, protected.cbData)
+        finally:
+            free(ctypes.cast(protected.pbData, ctypes.c_void_p))
+    except WindowsRegistrationError:
+        raise
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        raise WindowsRegistrationError("registration_journal_auth_unavailable") from exc
+
+
+def _unprotect_registration_payload(protected: bytes) -> bytes:
+    if os.name != "nt":
+        if len(protected) < hashlib.sha256().digest_size:
+            raise WindowsRegistrationError("registration_journal_auth_invalid")
+        expected = hmac.new(_JOURNAL_TEST_KEY, protected[32:], hashlib.sha256).digest()
+        if not hmac.compare_digest(protected[:32], expected):
+            raise WindowsRegistrationError("registration_journal_auth_invalid")
+        return protected[32:]
+    try:
+        crypt32 = windows_dll("crypt32")
+        kernel32 = windows_dll("kernel32")
+        unprotect = crypt32.CryptUnprotectData
+        unprotect.argtypes = (
+            ctypes.POINTER(_WindowsDataBlob),
+            ctypes.POINTER(wintypes.LPWSTR),
+            ctypes.POINTER(_WindowsDataBlob),
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(_WindowsDataBlob),
+        )
+        unprotect.restype = wintypes.BOOL
+        free = kernel32.LocalFree
+        free.argtypes = (ctypes.c_void_p,)
+        free.restype = ctypes.c_void_p
+        buffer = ctypes.create_string_buffer(protected)
+        source = _WindowsDataBlob(
+            len(protected), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
+        )
+        description = wintypes.LPWSTR()
+        plaintext = _WindowsDataBlob()
+        if not unprotect(
+            ctypes.byref(source),
+            ctypes.byref(description),
+            None,
+            None,
+            None,
+            0x1,
+            ctypes.byref(plaintext),
+        ):
+            raise OSError("CryptUnprotectData failed")
+        try:
+            return ctypes.string_at(plaintext.pbData, plaintext.cbData)
+        finally:
+            if description:
+                free(ctypes.cast(description, ctypes.c_void_p))
+            free(ctypes.cast(plaintext.pbData, ctypes.c_void_p))
+    except WindowsRegistrationError:
+        raise
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        raise WindowsRegistrationError("registration_journal_auth_invalid") from exc
 
 
 def _encode_snapshot(snapshot: WindowsApplicationRegistrationSnapshot) -> dict[str, object]:
@@ -672,15 +822,32 @@ def _encode_journal(journal: _RegistrationJournal, *, phase: str, active: tuple[
             name: base64.b64encode(data).decode("ascii")
             for name, data in journal.desired_shortcuts.items()
         },
+        "desired_shortcut_identities": {
+            name: _encode_identity(identity)
+            for name, identity in journal.desired_shortcut_identities.items()
+        },
         "desired_registry": {
             name: {"value_type": value_type, "data": _encode_registry_data(data)}
             for name, (value_type, data) in journal.desired_registry.items()
         },
+        "registry_before": {
+            name: _encode_registry_snapshot(snapshot)
+            for name, snapshot in journal.registry_before.items()
+        },
     }
     try:
-        encoded = (json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n").encode(
-            "ascii"
-        )
+        payload_bytes = (
+            json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
+        ).encode("ascii")
+        protected = base64.b64encode(_protect_registration_payload(payload_bytes)).decode("ascii")
+        encoded = (
+            json.dumps(
+                {"schema": _REGISTRATION_JOURNAL_SCHEMA, "protected": protected},
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("ascii")
     except (TypeError, ValueError, UnicodeError) as exc:
         raise WindowsRegistrationError("registration_journal_invalid") from exc
     if len(encoded) > _MAX_REGISTRATION_JOURNAL_BYTES:
@@ -704,6 +871,26 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         raise WindowsRegistrationError("registration_journal_invalid") from exc
     if not isinstance(decoded, dict):
         raise WindowsRegistrationError("registration_journal_invalid")
+    if (
+        set(decoded) != {"schema", "protected"}
+        or decoded.get("schema") != _REGISTRATION_JOURNAL_SCHEMA
+    ):
+        raise WindowsRegistrationError("registration_journal_invalid")
+    protected_raw = decoded.get("protected")
+    if not isinstance(protected_raw, str):
+        raise WindowsRegistrationError("registration_journal_invalid")
+    try:
+        payload_bytes = base64.b64decode(protected_raw.encode("ascii"), validate=True)
+        decoded = json.loads(
+            _unprotect_registration_payload(payload_bytes).decode("ascii"),
+            object_pairs_hook=_json_object_no_duplicates,
+        )
+    except WindowsRegistrationError:
+        raise
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise WindowsRegistrationError("registration_journal_auth_invalid") from exc
+    if not isinstance(decoded, dict):
+        raise WindowsRegistrationError("registration_journal_invalid")
     required = {
         "schema",
         "install_root",
@@ -715,7 +902,9 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         "active",
         "snapshot",
         "desired_shortcuts",
+        "desired_shortcut_identities",
         "desired_registry",
+        "registry_before",
     }
     if set(decoded) != required or decoded.get("schema") != _REGISTRATION_JOURNAL_SCHEMA:
         raise WindowsRegistrationError("registration_journal_invalid")
@@ -730,17 +919,23 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
     phase = decoded.get("phase")
     active_raw = decoded.get("active")
     desired_shortcuts_raw = decoded.get("desired_shortcuts")
+    desired_shortcut_identities_raw = decoded.get("desired_shortcut_identities")
     desired_registry_raw = decoded.get("desired_registry")
+    registry_before_raw = decoded.get("registry_before")
     if (
-        phase not in {"applying", "installed", "restoring", "uninstalling"}
+        phase not in {"applying", "migrating", "installed", "restoring", "uninstalling"}
         or not isinstance(active_raw, list)
         or len(active_raw) > _MAX_STATUS_ITEMS
         or any(not isinstance(name, str) for name in active_raw)
         or len(set(active_raw)) != len(active_raw)
         or not isinstance(desired_shortcuts_raw, dict)
+        or not isinstance(desired_shortcut_identities_raw, dict)
         or not isinstance(desired_registry_raw, dict)
+        or not isinstance(registry_before_raw, dict)
         or len(desired_shortcuts_raw) > _MAX_STATUS_ITEMS
+        or len(desired_shortcut_identities_raw) > _MAX_STATUS_ITEMS
         or len(desired_registry_raw) > _MAX_STATUS_ITEMS
+        or len(registry_before_raw) > _MAX_STATUS_ITEMS
     ):
         raise WindowsRegistrationError("registration_journal_invalid")
     try:
@@ -752,6 +947,14 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
             if len(data) > _MAX_SHORTCUT_BYTES:
                 raise ValueError
             desired_shortcuts[name] = data
+        desired_shortcut_identities: dict[ShortcutName, _FileIdentity] = {}
+        for name, identity_raw in desired_shortcut_identities_raw.items():
+            if name not in {"launcher", "desktop", "uninstall"}:
+                raise ValueError
+            identity = _decode_identity(identity_raw)
+            if identity is None:
+                raise ValueError
+            desired_shortcut_identities[name] = identity
         desired_registry: dict[str, tuple[int, RegistryData]] = {}
         for name, item in desired_registry_raw.items():
             if not isinstance(name, str) or not isinstance(item, dict):
@@ -760,6 +963,14 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
             if not isinstance(value_type, int) or isinstance(value_type, bool):
                 raise ValueError
             desired_registry[name] = (int(value_type), _decode_registry_data(item.get("data")))
+        registry_before: dict[str, WindowsRegistryValueSnapshot] = {}
+        for name, snapshot_raw in registry_before_raw.items():
+            if not isinstance(name, str):
+                raise ValueError
+            registry_snapshot = _decode_registry_snapshot(snapshot_raw)
+            if registry_snapshot.name != name:
+                raise ValueError
+            registry_before[name] = registry_snapshot
         snapshot = _decode_snapshot(decoded["snapshot"])
     except (ValueError, UnicodeError, WindowsRegistrationError):
         raise WindowsRegistrationError("registration_journal_invalid") from None
@@ -771,7 +982,9 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         decoded["uninstall_key"],
         snapshot,
         desired_shortcuts,
+        desired_shortcut_identities,
         desired_registry,
+        registry_before,
         phase,
         tuple(active_raw),
     )
@@ -935,6 +1148,7 @@ class WindowsApplicationRegistrationTransaction:
         self._mutations: list[_ShortcutMutation | _RegistryMutation] = []
         self._key_created = False
         self._applied = False
+        self._canonical_shortcut_cache: dict[ShortcutName, bytes] = {}
 
     def _check_platform_and_plan(self) -> Any:
         if platform.system() != "Windows":
@@ -1019,7 +1233,13 @@ class WindowsApplicationRegistrationTransaction:
         return tuple(names)
 
     def _validate_journal(self, journal: _RegistrationJournal) -> None:
-        if journal.phase not in {"applying", "installed", "restoring", "uninstalling"}:
+        if journal.phase not in {
+            "applying",
+            "migrating",
+            "installed",
+            "restoring",
+            "uninstalling",
+        }:
             raise WindowsRegistrationError("registration_journal_invalid")
         if not _same_path(Path(journal.install_root), self._install_root):
             raise WindowsRegistrationError("registration_journal_mismatch")
@@ -1049,17 +1269,56 @@ class WindowsApplicationRegistrationTransaction:
             raise WindowsRegistrationError("registration_journal_invalid")
         if set(journal.desired_shortcuts) - set(shortcut_names):
             raise WindowsRegistrationError("registration_journal_invalid")
+        if set(journal.desired_shortcut_identities) - set(shortcut_names):
+            raise WindowsRegistrationError("registration_journal_invalid")
+        if set(journal.desired_shortcut_identities) - set(journal.desired_shortcuts):
+            raise WindowsRegistrationError("registration_journal_invalid")
+        if set(journal.registry_before) - set(self._REGISTRY_NAMES):
+            raise WindowsRegistrationError("registration_journal_invalid")
+        for name, snapshot in journal.registry_before.items():
+            if snapshot.name != name:
+                raise WindowsRegistrationError("registration_journal_invalid")
         desired_registry = {
             name: (value_type, data) for name, value_type, data in self._desired_registry()
         }
-        if journal.desired_registry != desired_registry:
+        if set(journal.desired_registry) != set(desired_registry):
             raise WindowsRegistrationError("registration_journal_mismatch")
+        for name, expected in desired_registry.items():
+            observed = journal.desired_registry[name]
+            if name != "DisplayVersion":
+                if observed != expected:
+                    raise WindowsRegistrationError("registration_journal_mismatch")
+                continue
+            if observed[0] != expected[0] or not isinstance(observed[1], str):
+                raise WindowsRegistrationError("registration_journal_mismatch")
+            try:
+                ReleaseVersion.parse(observed[1])
+            except ManifestError:
+                raise WindowsRegistrationError("registration_journal_invalid") from None
         if journal.phase == "installed" and set(journal.active) != set(owned):
             raise WindowsRegistrationError("registration_journal_invalid")
         if journal.phase == "installed" and set(journal.desired_shortcuts) != set(shortcut_names):
             raise WindowsRegistrationError("registration_journal_invalid")
+        if journal.phase == "installed" and set(journal.desired_shortcut_identities) != set(
+            shortcut_names
+        ):
+            raise WindowsRegistrationError("registration_journal_invalid")
+        if journal.phase == "installed" and journal.registry_before:
+            raise WindowsRegistrationError("registration_journal_invalid")
+        if journal.phase == "migrating" and journal.active != ("DisplayVersion",):
+            raise WindowsRegistrationError("registration_journal_invalid")
+        if journal.phase == "migrating" and set(journal.registry_before) != {"DisplayVersion"}:
+            raise WindowsRegistrationError("registration_journal_invalid")
         for name in journal.active:
             if name in shortcut_names and name not in journal.desired_shortcuts:
+                raise WindowsRegistrationError("registration_journal_invalid")
+            if name in shortcut_names and name not in journal.desired_shortcut_identities:
+                raise WindowsRegistrationError("registration_journal_invalid")
+            if (
+                name == "DisplayVersion"
+                and journal.phase in {"applying", "migrating", "restoring"}
+                and name not in journal.registry_before
+            ):
                 raise WindowsRegistrationError("registration_journal_invalid")
 
     def _load_journal(self) -> _RegistrationJournal | None:
@@ -1101,7 +1360,9 @@ class WindowsApplicationRegistrationTransaction:
             self._uninstall_key,
             snapshot,
             {},
+            {},
             desired_registry,
+            {},
             "applying",
             (),
         )
@@ -1131,16 +1392,22 @@ class WindowsApplicationRegistrationTransaction:
                         after_data = shortcut_before.data
                     else:
                         raise WindowsRegistrationError("registration_journal_invalid")
+                after_identity = journal.desired_shortcut_identities.get(shortcut_name)
+                if after_identity is None:
+                    raise WindowsRegistrationError("registration_journal_invalid")
                 mutations.append(
                     _ShortcutMutation(
                         shortcut_name,
                         self._shortcut_path(shortcut_name),
                         shortcut_before,
                         after_data,
+                        after_identity,
                     )
                 )
             else:
-                registry_before = before_registry.get(name)
+                registry_before = (
+                    journal.registry_before.get(name) if journal.phase != "installed" else None
+                ) or before_registry.get(name)
                 desired = journal.desired_registry.get(name)
                 if registry_before is None or desired is None:
                     raise WindowsRegistrationError("registration_journal_invalid")
@@ -1218,6 +1485,176 @@ class WindowsApplicationRegistrationTransaction:
         ):
             raise WindowsRegistrationError("registration_target_changed", transaction=self)
 
+    def _canonical_shortcut_data(self, plan: _ShortcutPlan) -> bytes:
+        cached = self._canonical_shortcut_cache.get(plan.name)
+        if cached is not None:
+            return cached
+        temporary = self._temporary_path(plan.path)
+        generated: bytes | None = None
+        try:
+            generated = self._desired_shortcut_data(plan, temporary)
+            self._canonical_shortcut_cache[plan.name] = generated
+            return generated
+        finally:
+            self._cleanup_temporary(temporary, generated)
+
+    def _canonical_shortcuts(self) -> dict[ShortcutName, bytes]:
+        return {plan.name: self._canonical_shortcut_data(plan) for plan in self._shortcut_plans()}
+
+    @staticmethod
+    def _registry_values_by_name(
+        snapshot: WindowsApplicationRegistrationSnapshot,
+    ) -> dict[str, WindowsRegistryValueSnapshot]:
+        return {value.name: value for value in snapshot.registry_values}
+
+    def _registration_matches_journal(
+        self,
+        journal: _RegistrationJournal,
+        current: WindowsApplicationRegistrationSnapshot | None = None,
+    ) -> bool:
+        """Validate the installed surface before trusting journal preimages."""
+
+        observed = current or self._current_snapshot()
+        if not observed.uninstall_key_present:
+            return False
+        current_registry = self._registry_values_by_name(observed)
+        for name, (value_type, data) in journal.desired_registry.items():
+            expected = WindowsRegistryValueSnapshot(name, True, value_type, data)
+            if not _registry_snapshot_equal(current_registry[name], expected):
+                return False
+        canonical_shortcuts = self._canonical_shortcuts()
+        current_shortcuts = {shortcut.name: shortcut for shortcut in observed.shortcuts}
+        for plan in self._shortcut_plans():
+            expected_data = journal.desired_shortcuts.get(plan.name)
+            expected_identity = journal.desired_shortcut_identities.get(plan.name)
+            current_shortcut = current_shortcuts[plan.name]
+            if (
+                expected_data is None
+                or expected_identity is None
+                or expected_data != canonical_shortcuts[plan.name]
+                or not current_shortcut.present
+                or current_shortcut.data != expected_data
+                or current_shortcut.identity != expected_identity
+            ):
+                return False
+        return True
+
+    def _registration_surface_requires_journal(
+        self,
+        current: WindowsApplicationRegistrationSnapshot,
+    ) -> bool:
+        """Detect canonical remnants without treating vendor preimages as ATC state."""
+
+        if any(shortcut.present for shortcut in current.shortcuts):
+            canonical_shortcuts = self._canonical_shortcuts()
+            if any(
+                shortcut.present and shortcut.data == canonical_shortcuts[shortcut.name]
+                for shortcut in current.shortcuts
+            ):
+                return True
+        expected_registry = {
+            name: WindowsRegistryValueSnapshot(name, True, value_type, data)
+            for name, value_type, data in self._desired_registry()
+        }
+        for value in current.registry_values:
+            if not value.present:
+                continue
+            if value.name == "DisplayVersion":
+                if isinstance(value.data, str):
+                    try:
+                        ReleaseVersion.parse(value.data)
+                    except ManifestError:
+                        continue
+                    return True
+            elif _registry_snapshot_equal(value, expected_registry[value.name]):
+                return True
+        return False
+
+    def _complete_version_migration(self, journal: _RegistrationJournal) -> None:
+        """Finish a durable forward-only DisplayVersion migration."""
+
+        self._journal = journal
+        self._snapshot = journal.snapshot
+        before = journal.registry_before.get("DisplayVersion")
+        desired_tuple = journal.desired_registry.get("DisplayVersion")
+        if before is None or desired_tuple is None:
+            raise WindowsRegistrationError("registration_journal_invalid", transaction=self)
+        value_type, data = desired_tuple
+        desired = WindowsRegistryValueSnapshot("DisplayVersion", True, value_type, data)
+        current = self._current_snapshot()
+        current_registry = self._registry_values_by_name(current)
+        current_version = current_registry["DisplayVersion"]
+        if _registry_snapshot_equal(current_version, desired):
+            journal.registry_before.clear()
+            self._persist_journal("installed", self._owned_names())
+            return
+        if not _registry_snapshot_equal(current_version, before):
+            raise WindowsRegistrationError("registration_target_changed", transaction=self)
+        winreg = self._registry if self._registry is not None else windows_registry()
+        key_read_set = int(getattr(winreg, "KEY_READ", 0x20019)) | int(
+            getattr(winreg, "KEY_SET_VALUE", 0x0002)
+        )
+        mutation = _RegistryMutation("DisplayVersion", before, desired)
+        self._mutations = [mutation]
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, self._uninstall_key, 0, key_read_set
+            ) as key:
+                current_value = _registry_value_snapshot(winreg, key, "DisplayVersion")
+                if not _registry_snapshot_equal(current_value, before):
+                    raise WindowsRegistrationError("registration_target_changed", transaction=self)
+                try:
+                    winreg.SetValueEx(
+                        key,
+                        "DisplayVersion",
+                        0,
+                        value_type,
+                        _registry_data_for_set(data),
+                    )
+                except OSError as exc:
+                    raise WindowsRegistrationError(
+                        "registration_value_write_failed", transaction=self
+                    ) from exc
+                after = _registry_value_snapshot(winreg, key, "DisplayVersion")
+                if not _registry_snapshot_equal(after, desired):
+                    raise WindowsRegistrationError(
+                        "registration_value_write_unverified", transaction=self
+                    )
+        except WindowsRegistrationError:
+            raise
+        except FileNotFoundError:
+            raise WindowsRegistrationError(
+                "registration_key_unreadable", transaction=self
+            ) from None
+        except OSError as exc:
+            raise WindowsRegistrationError(
+                "registration_value_write_failed", transaction=self
+            ) from exc
+        self._mutations.clear()
+        journal.registry_before.clear()
+        self._persist_journal("installed", self._owned_names())
+
+    def _migrate_installed_journal(self, journal: _RegistrationJournal) -> None:
+        desired_registry = {
+            name: (value_type, data) for name, value_type, data in self._desired_registry()
+        }
+        if journal.desired_registry == desired_registry:
+            return
+        current = self._current_snapshot()
+        if not self._registration_matches_journal(journal, current):
+            raise WindowsRegistrationError("registration_target_changed", transaction=self)
+        old_version = journal.desired_registry.get("DisplayVersion")
+        new_version = desired_registry.get("DisplayVersion")
+        if old_version is None or new_version is None or old_version == new_version:
+            raise WindowsRegistrationError("registration_journal_mismatch", transaction=self)
+        journal.desired_registry = desired_registry
+        journal.registry_before = {
+            "DisplayVersion": self._registry_values_by_name(current)["DisplayVersion"]
+        }
+        self._journal = journal
+        self._persist_journal("migrating", ("DisplayVersion",))
+        self._complete_version_migration(journal)
+
     def _desired_shortcut_data(self, plan: _ShortcutPlan, temporary: Path) -> bytes:
         if _safe_lstat(temporary) is not None:
             raise WindowsRegistrationError("registration_temporary_exists", transaction=self)
@@ -1288,6 +1725,7 @@ class WindowsApplicationRegistrationTransaction:
         generated: bytes | None = None
         try:
             generated = self._desired_shortcut_data(plan, temporary)
+            self._canonical_shortcut_cache[plan.name] = generated
             current = _shortcut_state(plan.name, plan.path)
             if current != before:
                 raise WindowsRegistrationError("registration_target_changed")
@@ -1295,6 +1733,9 @@ class WindowsApplicationRegistrationTransaction:
                 if self._journal is None:
                     raise WindowsRegistrationError("registration_journal_missing", transaction=self)
                 self._journal.desired_shortcuts[plan.name] = generated
+                if before.identity is None:
+                    raise WindowsRegistrationError("registration_target_changed", transaction=self)
+                self._journal.desired_shortcut_identities[plan.name] = before.identity
                 self._persist_journal("applying", self._journal.active)
                 return
             if self._journal is None:
@@ -1311,6 +1752,10 @@ class WindowsApplicationRegistrationTransaction:
             if not after.present or after.data != generated:
                 raise WindowsRegistrationError("registration_shortcut_publish_unverified")
             mutation.after_identity = after.identity
+            if after.identity is None:
+                raise WindowsRegistrationError("registration_shortcut_publish_unverified")
+            self._journal.desired_shortcut_identities[plan.name] = after.identity
+            self._persist_journal("applying", self._journal.active)
             changed_entries.append(plan.name)
         finally:
             if temporary_owned:
@@ -1351,6 +1796,7 @@ class WindowsApplicationRegistrationTransaction:
                 mutation = _RegistryMutation(name, before, desired_value)
                 if self._journal is None:
                     raise WindowsRegistrationError("registration_journal_missing", transaction=self)
+                self._journal.registry_before[name] = before
                 self._persist_journal("applying", self._active_with(cast(RegistrationName, name)))
                 self._mutations.append(mutation)
                 try:
@@ -1388,6 +1834,9 @@ class WindowsApplicationRegistrationTransaction:
         journal = self._journal or self._load_journal()
         if journal is not None:
             if journal.phase == "installed":
+                current = self._current_snapshot()
+                if not self._registration_is_desired(current):
+                    self._migrate_installed_journal(journal)
                 if not self._registration_is_desired(self._current_snapshot()):
                     raise WindowsRegistrationError("registration_target_changed", transaction=self)
                 self._applied = True
@@ -1403,6 +1852,7 @@ class WindowsApplicationRegistrationTransaction:
             self._apply_registry(selected, changed_entries)
             if self._journal is None:
                 raise WindowsRegistrationError("registration_journal_missing", transaction=self)
+            self._journal.registry_before.clear()
             self._persist_journal("installed", self._owned_names())
         except BaseException as exc:
             status = self.restore()
@@ -1417,6 +1867,14 @@ class WindowsApplicationRegistrationTransaction:
         return WindowsRegistrationApplyResult(selected, tuple(changed_entries))
 
     def _registration_is_desired(self, current: WindowsApplicationRegistrationSnapshot) -> bool:
+        return self._registration_is_desired_checked(current)
+
+    def _registration_is_desired_checked(
+        self,
+        current: WindowsApplicationRegistrationSnapshot,
+        *,
+        verify_canonical_shortcuts: bool = False,
+    ) -> bool:
         if not current.uninstall_key_present:
             return False
         desired = self._desired_registry()
@@ -1429,36 +1887,30 @@ class WindowsApplicationRegistrationTransaction:
             for value in current.registry_values
         ):
             return False
-        before_by_name = {
-            shortcut.name: shortcut
-            for shortcut in (self._snapshot.shortcuts if self._snapshot else ())
-        }
-        after_by_name = {
-            mutation.name: mutation
-            for mutation in self._mutations
-            if isinstance(mutation, _ShortcutMutation)
-        }
-        for shortcut in current.shortcuts:
-            mutation = after_by_name.get(shortcut.name)
+        canonical_shortcuts = self._canonical_shortcuts() if verify_canonical_shortcuts else None
+        shortcut_by_name = {shortcut.name: shortcut for shortcut in current.shortcuts}
+        for plan in self._shortcut_plans():
+            shortcut = shortcut_by_name[plan.name]
             expected_data = (
-                self._journal.desired_shortcuts.get(shortcut.name)
+                self._journal.desired_shortcuts.get(plan.name)
                 if self._journal is not None
                 else None
             )
             if expected_data is None:
-                expected_data = (
-                    mutation.after_data
-                    if mutation is not None
-                    else before_by_name[shortcut.name].data
-                )
-            expected_identity = mutation.after_identity if mutation is not None else None
-            if self._journal is None or shortcut.name not in self._journal.desired_shortcuts:
-                expected_identity = before_by_name[shortcut.name].identity
-            if (
-                not shortcut.present
-                or shortcut.data != expected_data
-                or (expected_identity is not None and shortcut.identity != expected_identity)
-            ):
+                expected_data = self._canonical_shortcut_data(plan)
+            if canonical_shortcuts is not None and expected_data != canonical_shortcuts[plan.name]:
+                return False
+            if not shortcut.present or shortcut.data != expected_data:
+                return False
+            expected_identity: _FileIdentity | None = None
+            if self._journal is not None:
+                expected_identity = self._journal.desired_shortcut_identities.get(plan.name)
+            if expected_identity is None:
+                for mutation in self._mutations:
+                    if isinstance(mutation, _ShortcutMutation) and mutation.name == plan.name:
+                        expected_identity = mutation.after_identity
+                        break
+            if expected_identity is None or shortcut.identity != expected_identity:
                 return False
         return True
 
@@ -1572,6 +2024,9 @@ class WindowsApplicationRegistrationTransaction:
             self._key_created = False
 
     def _recover_journal(self, journal: _RegistrationJournal) -> WindowsRegistrationRestoreStatus:
+        if journal.phase == "migrating":
+            self._complete_version_migration(journal)
+            return WindowsRegistrationRestoreStatus(True, False, 0)
         self._snapshot = journal.snapshot
         self._journal = journal
         self._key_created = not journal.snapshot.uninstall_key_present
@@ -1584,9 +2039,18 @@ class WindowsApplicationRegistrationTransaction:
         self._check_platform_and_plan()
         journal = self._load_journal()
         if journal is None:
+            current = self._current_snapshot()
+            if self._registration_surface_requires_journal(current):
+                raise WindowsRegistrationError("registration_journal_missing", transaction=self)
             return WindowsRegistrationRestoreStatus(True, False, 0)
         if journal.phase != "installed":
             raise WindowsRegistrationError("registration_recovery_required", transaction=self)
+        current = self._current_snapshot()
+        if not self._registration_is_desired_checked(current, verify_canonical_shortcuts=True):
+            self._migrate_installed_journal(journal)
+            current = self._current_snapshot()
+        if not self._registration_is_desired_checked(current, verify_canonical_shortcuts=True):
+            raise WindowsRegistrationError("registration_target_changed", transaction=self)
         self._snapshot = journal.snapshot
         self._key_created = not journal.snapshot.uninstall_key_present
         owned = self._owned_names()
@@ -1716,7 +2180,15 @@ def recover_application_entrypoints() -> WindowsRegistrationRestoreStatus | None
         return None
     if journal.phase == "installed":
         transaction._snapshot = journal.snapshot
-        if not transaction._registration_is_desired(transaction._current_snapshot()):
+        current = transaction._current_snapshot()
+        if not transaction._registration_is_desired_checked(
+            current, verify_canonical_shortcuts=True
+        ):
+            transaction._migrate_installed_journal(journal)
+            current = transaction._current_snapshot()
+        if not transaction._registration_is_desired_checked(
+            current, verify_canonical_shortcuts=True
+        ):
             raise WindowsRegistrationError("registration_target_changed", transaction=transaction)
         return WindowsRegistrationRestoreStatus(True, False, 0)
     status = transaction._recover_journal(journal)
@@ -1746,7 +2218,15 @@ def remove_application_entrypoints() -> None:
     journal = transaction._load_journal()
     if journal is None:
         # No durable ownership record means this may be a legacy or shared
-        # registration.  Preserve it rather than deleting user-owned state.
+        # registration.  Preserve it, but report stale fixed-surface entries
+        # instead of silently claiming that uninstall succeeded.
+        status = transaction.uninstall()
+        if not status.complete:
+            raise WindowsRegistrationCompensationError(
+                "registration_uninstall_required",
+                transaction=transaction,
+                status=status,
+            )
         return
     if journal.phase != "installed":
         status = transaction._recover_journal(journal)
@@ -1756,7 +2236,13 @@ def remove_application_entrypoints() -> None:
                 transaction=transaction,
                 status=status,
             )
-        return
+        journal = transaction._load_journal()
+        if journal is None:
+            return
+        if journal.phase != "installed":
+            raise WindowsRegistrationError(
+                "registration_recovery_required", transaction=transaction
+            )
     status = transaction.uninstall()
     if not status.complete:
         raise WindowsRegistrationCompensationError(
