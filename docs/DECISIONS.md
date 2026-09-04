@@ -1,5 +1,57 @@
 # Architecture decisions
 
+## ADR-200: Explicit Windows staging and evidence receipts remain bounded gates
+
+**Status:** accepted locally on 2026-09-03 after integration from exact clean
+base `db5218c988d1a131a3d4371599e86f7d955e0389`; amended by integrated commit
+`47a0c7b3007fd5e271a07c78be13d74f771df904`, content-equivalent by stable patch
+ID to remediation worker `ecc79ec7984a974e0a81904ba3010a845b9d62c6`. The
+original worker object is not an ancestor. Hosted checks must bind to the final
+pushed commit.
+
+The integrated ancestry carries commits
+`32c1a827e86cc8804d64ebfe9ba6252532ccc6df`,
+`e01433cacb2ddcf696042eef94ac8d6abb0f1ee1`, and
+`67096f6ca2f7741de1d66aba546107f36a7fae51` in that order, content-equivalent
+by stable patch ID to the single-parent workers
+`4ddbc11e0442fba71b7002bae104cdc5de425441`,
+`5efdffc9eb70446d22980d8816a37bee762ccfbe`, and
+`b5eb29adc2e53e90bd4df14392691cf068c7f184`. The staging-safety remediation
+is integrated as `47a0c7b3007fd5e271a07c78be13d74f771df904`; its source worker
+is the single-parent commit `ecc79ec7984a974e0a81904ba3010a845b9d62c6` with
+parent `4ddbc11e0442fba71b7002bae104cdc5de425441`. These are content
+provenance mappings, not ancestry claims. Older persisted `enabled=true`
+preferences remain check-only because `automatic_staging_enabled` is a
+separate persisted consent that defaults false. A packaged Windows capability
+is required before consent can trigger signed-metadata revalidation and
+operation-scoped staging inside the Core lifetime. The worker uses bounded
+retry/disk controls, a total transfer deadline, durable cancellation pause,
+and bounded shutdown join. READY remains inert. It has no OS task/service
+registration, process-launch, Core-shutdown, forced-restart, or reboot
+authority. Install and activation remain operator-driven.
+
+The clean-machine receipt is an auditor for operator-run evidence and never
+launches an installer or product executable. The Defender receipt is a
+path-free, exact-byte-bound contract around Defender's supported custom scan;
+it changes no Defender settings and fails closed on unavailable, stale,
+malformed, disabled, detected, deleted, mutated, or reparse targets. Source
+tests use disposable fixtures/fakes, so schemas and tests do not constitute a
+real Defender scan, clean-machine execution, released artifact, signing,
+publication, or downloaded-candidate execution claim.
+
+The wave does not resolve the multi-file production installer rollback residual
+in `packages/allthecontext/src/allthecontext/desktop.py` around lines 450–498.
+Real artifact-level Defender evidence and an ordinary clean-machine execution
+remain separate required gates, as do signing, publication, and release
+acceptance.
+
+The dashboard cancellation review fix is integrated as
+`309d28d5966f4f072fa82ff98b843f8d1d80d2d0`, content-equivalent by stable patch
+ID to worker `14f351741c5b4cb2d2343aeea4cba88a27a4380b` (the source worker
+object is not an ancestor). It serializes dashboard update actions, prevents
+unrelated controls from racing an active download, and covers cancellation
+feedback, protected API posting, and bounded error recovery.
+
 ## ADR-199: Integrate Windows hardening as bounded, check-only source evidence
 
 **Status:** accepted locally on 2026-09-03 after integration from exact

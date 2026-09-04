@@ -207,6 +207,18 @@ def test_ci_declares_matrix_security_and_parity_job_names() -> None:
         assert forbidden not in text
 
 
+def test_ci_dashboard_audit_runs_only_on_node_22() -> None:
+    dashboard = _job_bodies(_read(WORKFLOWS / "ci.yml"))["dashboard"]
+    steps = _step_blocks(dashboard)
+    audit_steps = [step for step in steps if "npm audit --audit-level=high" in step]
+
+    assert len(audit_steps) == 1
+    assert re.search(r"(?m)^\s+if: matrix\.node == 22\s*$", audit_steps[0])
+    assert any("npm run check" in step for step in steps)
+    assert any("npm test" in step for step in steps)
+    assert any("npm run build" in step for step in steps)
+
+
 def test_ci_trigger_is_pr_main_and_version_tag_only() -> None:
     text = _read(WORKFLOWS / "ci.yml")
     trigger = re.search(r"(?ms)^on:\n(?P<body>.*?)^permissions:\n", text)

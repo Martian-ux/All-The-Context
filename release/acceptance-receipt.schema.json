@@ -99,9 +99,218 @@
     },
     "microsoft_reassessment": {
       "$ref": "#/$defs/microsoftReassessment"
+    },
+    "windows_acceptance": {
+      "$ref": "#/$defs/windowsAcceptance"
     }
   },
   "$defs": {
+    "windowsAcceptanceDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256", "size"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "windowsAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "platform",
+        "architecture",
+        "source_commit",
+        "version",
+        "clean_machine",
+        "developer_tooling",
+        "prerequisites",
+        "permissions",
+        "defender",
+        "core",
+        "artifacts",
+        "components",
+        "checks",
+        "leftovers"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "platform": { "const": "windows" },
+        "architecture": { "const": "x86_64" },
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-beta\\.[1-9][0-9]*)?$"
+        },
+        "clean_machine": { "const": true },
+        "developer_tooling": { "const": false },
+        "prerequisites": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "os_family", "architecture", "developer_tooling_absent"],
+          "properties": {
+            "status": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "os_family": { "const": "windows" },
+            "architecture": { "const": "x86_64" },
+            "developer_tooling_absent": { "const": true }
+          }
+        },
+        "permissions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "scope", "elevation"],
+          "properties": {
+            "status": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "scope": { "const": "current_user" },
+            "elevation": { "const": "not_required" }
+          }
+        },
+        "defender": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "artifact_scan",
+            "real_time_protection_enabled",
+            "target_files_present",
+            "new_detections",
+            "quarantine_events",
+            "signature_version"
+          ],
+          "properties": {
+            "status": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "artifact_scan": { "const": "completed" },
+            "real_time_protection_enabled": { "const": true },
+            "target_files_present": { "const": true },
+            "new_detections": { "type": "integer", "minimum": 0 },
+            "quarantine_events": { "type": "integer", "minimum": 0 },
+            "signature_version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "core": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "host", "loopback_only", "public_listener_count"],
+          "properties": {
+            "status": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "host": { "const": "127.0.0.1" },
+            "loopback_only": { "const": true },
+            "public_listener_count": { "const": 0 }
+          }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "direct_package",
+            "installed_component_archive",
+            "installed_component_manifest",
+            "installed_component_checksum",
+            "native_build_provenance",
+            "native_build_provenance_checksum"
+          ],
+          "properties": {
+            "direct_package": { "$ref": "#/$defs/windowsAcceptanceDescriptor" },
+            "installed_component_archive": { "$ref": "#/$defs/windowsAcceptanceDescriptor" },
+            "installed_component_manifest": { "$ref": "#/$defs/windowsAcceptanceDescriptor" },
+            "installed_component_checksum": { "$ref": "#/$defs/windowsAcceptanceDescriptor" },
+            "native_build_provenance": { "$ref": "#/$defs/windowsAcceptanceDescriptor" },
+            "native_build_provenance_checksum": { "$ref": "#/$defs/windowsAcceptanceDescriptor" }
+          }
+        },
+        "components": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["role", "filename", "sha256", "size"],
+            "properties": {
+              "role": { "enum": ["main", "mcp", "recovery", "updater"] },
+              "filename": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "size": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ordinary_install",
+            "first_run_setup",
+            "restart",
+            "login_startup",
+            "update_interruption",
+            "update_recovery",
+            "rollback",
+            "uninstall",
+            "state_preserved",
+            "state_removed",
+            "no_leftover_binaries",
+            "no_leftover_shortcuts",
+            "no_leftover_tasks",
+            "no_leftover_runonce",
+            "protected_os_store",
+            "setup_rollback"
+          ],
+          "properties": {
+            "ordinary_install": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "first_run_setup": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "restart": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "login_startup": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "update_interruption": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "update_recovery": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "rollback": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "uninstall": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "state_preserved": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "state_removed": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "no_leftover_binaries": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "no_leftover_shortcuts": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "no_leftover_tasks": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "no_leftover_runonce": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "protected_os_store": { "enum": ["pass", "fail", "not_run", "unavailable"] },
+            "setup_rollback": { "enum": ["pass", "fail", "not_run", "unavailable"] }
+          }
+        },
+        "leftovers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "installed_binaries",
+            "shortcuts",
+            "scheduled_tasks",
+            "runonce_entries",
+            "orphaned_client_secrets"
+          ],
+          "properties": {
+            "installed_binaries": { "type": "integer", "minimum": 0 },
+            "shortcuts": { "type": "integer", "minimum": 0 },
+            "scheduled_tasks": { "type": "integer", "minimum": 0 },
+            "runonce_entries": { "type": "integer", "minimum": 0 },
+            "orphaned_client_secrets": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
     "microsoftReassessment": {
       "type": "object",
       "additionalProperties": false,
@@ -197,6 +406,32 @@
       "then": {
         "properties": {
           "gate_id": { "const": "BETA-S06" }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["windows_acceptance"]
+      },
+      "then": {
+        "properties": {
+          "gate_id": { "enum": ["BETA-P01", "BETA-S03"] },
+          "evidence_kind": { "const": "exact_downloaded_artifact" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gate_id": { "enum": ["BETA-P01", "BETA-S03"] },
+          "status": { "const": "pass" }
+        },
+        "required": ["gate_id", "status"]
+      },
+      "then": {
+        "required": ["windows_acceptance"],
+        "properties": {
+          "evidence_kind": { "const": "exact_downloaded_artifact" }
         }
       }
     }

@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import threading
+import time
 import urllib.error
 import zipfile
 from dataclasses import dataclass
@@ -368,6 +369,7 @@ def _manager(
     current_version: str = "0.1.0",
     installer: FakeInstaller | None = None,
     health: FakeHealth | None = None,
+    automatic_staging: bool = False,
 ) -> tuple[UpdateManager, FakeTransport, FakeInstaller]:
     database = tmp_path / "core.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -388,7 +390,14 @@ def _manager(
         transport=transport,
         installer=active_installer,
         health_probe=health or FakeHealth(True),
+        automation_policy=UpdateAutomationPolicy(automatic_download_enabled=automatic_staging),
     )
+    if automatic_staging:
+        manager.configure(
+            enabled=True,
+            channel="stable",
+            automatic_staging_enabled=True,
+        )
     return manager, transport, active_installer
 
 
@@ -3072,6 +3081,49 @@ def test_metadata_transport_preserves_the_http_status_code() -> None:
     assert str(error.value) == "Update endpoint returned HTTP 404"
 
 
+def test_release_download_has_a_total_transfer_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = b"slow"
+
+    class SlowResponse:
+        fp = None
+
+        def __init__(self) -> None:
+            self.headers = {"Content-Length": str(len(artifact))}
+
+        def __enter__(self) -> SlowResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _size: int = -1) -> bytes:
+            time.sleep(0.02)
+            return artifact
+
+    class SlowOpener:
+        @staticmethod
+        def open(_request: Any, *, timeout: float) -> SlowResponse:
+            assert timeout == updater_module.CONNECT_TIMEOUT_SECONDS
+            return SlowResponse()
+
+    monkeypatch.setattr(updater_module, "TRANSFER_TIMEOUT_SECONDS", 0.01)
+    transport = HttpsTransport()
+    transport._opener = cast(Any, SlowOpener())
+    target = tmp_path / "artifact.zip"
+
+    with pytest.raises(UpdateError, match="total time limit"):
+        transport.stream(
+            "https://updates.example.test/releases/v0.2.0/artifact.zip",
+            target,
+            expected_bytes=len(artifact),
+            cancelled=lambda: False,
+        )
+
+    assert not target.exists()
+
+
 def test_defer_is_persisted_and_mandatory_update_cannot_be_deferred(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
@@ -3096,8 +3148,56 @@ def test_update_automation_policy_defaults_to_check_only_without_restart_authori
     policy = UpdateAutomationPolicy()
 
     assert policy.checks_enabled is True
+    assert policy.automatic_download_enabled is False
     assert policy.automatic_install_enabled is False
     assert policy.automatic_restart_enabled is False
+
+
+def test_enabled_preferences_remain_check_only_without_explicit_staging_consent(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, automatic_staging=True)
+    manager.preferences_path.write_text(
+        json.dumps({"enabled": True, "channel": "stable", "deferred_version": None}),
+        encoding="utf-8",
+    )
+    transport = FakeTransport(manifest, artifact)
+    restarted = UpdateManager(
+        manager.config,
+        database_path=manager.database_path,
+        transport=transport,
+        installer=FakeInstaller(),
+        health_probe=FakeHealth(True),
+        automation_policy=UpdateAutomationPolicy(automatic_download_enabled=True),
+    )
+
+    status = UpdateAutomation(restarted).run_once()
+
+    assert status["phase"] == "available"
+    assert status["automatic_staging_enabled"] is False
+    assert status["automatic_staging_supported"] is True
+    assert transport.metadata_calls == 1
+    assert transport.stream_calls == 0
+
+
+def test_automatic_staging_requires_packaged_windows_support(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        installer=FakeInstaller(supported=False),
+        automatic_staging=True,
+    )
+
+    status = UpdateAutomation(manager).run_once()
+
+    assert status["phase"] == "available"
+    assert status["automatic_staging_enabled"] is True
+    assert status["automatic_staging_supported"] is False
+    assert transport.stream_calls == 0
 
 
 def test_disabled_update_automation_does_not_start_a_worker_or_check(
@@ -3144,6 +3244,7 @@ def test_update_automation_runs_periodically_in_process_without_host_registratio
     manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
     automation = UpdateAutomation(
         manager,
+        policy=UpdateAutomationPolicy(automatic_download_enabled=False),
         config=UpdateAutomationConfig(
             check_interval=timedelta(milliseconds=20),
             retry_initial_delay=timedelta(milliseconds=1),
@@ -3159,6 +3260,8 @@ def test_update_automation_runs_periodically_in_process_without_host_registratio
         nonlocal calls
         calls += 1
         result = original_check(interval=interval)
+        if calls == 1:
+            manager.state.last_checked_at = None
         if calls >= 2:
             reached_second_check.set()
             automation.stop()
@@ -3173,6 +3276,82 @@ def test_update_automation_runs_periodically_in_process_without_host_registratio
     assert transport.metadata_calls >= 2
     assert automation.status()["automation_running"] is False
     assert not (tmp_path / "service").exists()
+
+
+def test_update_automation_shutdown_cancels_slow_download_and_persists_pause(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring, automatic_staging=True)
+    entered = threading.Event()
+
+    def slow_stream(
+        url: str,
+        target: Path,
+        *,
+        expected_bytes: int,
+        cancelled: Any,
+    ) -> tuple[str, int]:
+        del url, target, expected_bytes
+        entered.set()
+        while not cancelled():
+            time.sleep(0.01)
+        raise UpdateError("Update download was cancelled")
+
+    transport.stream = slow_stream  # type: ignore[method-assign]
+    automation = UpdateAutomation(
+        manager,
+        config=UpdateAutomationConfig(
+            check_interval=timedelta(seconds=10),
+            retry_initial_delay=timedelta(seconds=1),
+            retry_max_delay=timedelta(seconds=3),
+            retry_attempts=2,
+            join_timeout_seconds=1,
+        ),
+    )
+    automation.start()
+    assert entered.wait(timeout=2)
+
+    started = time.monotonic()
+    automation.shutdown()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2
+    assert automation.status()["automation_running"] is False
+    assert manager.state.phase is UpdatePhase.CANCELLED
+    assert manager.state.automatic_staging_paused is True
+    assert (
+        json.loads(manager.state_path.read_text(encoding="utf-8"))["automatic_staging_paused"]
+        is True
+    )
+
+    restarted_transport = FakeTransport(manifest, artifact)
+    restarted = UpdateManager(
+        manager.config,
+        database_path=manager.database_path,
+        transport=restarted_transport,
+        installer=FakeInstaller(),
+        health_probe=FakeHealth(True),
+        automation_policy=UpdateAutomationPolicy(automatic_download_enabled=True),
+    )
+    resumed = UpdateAutomation(restarted).run_once()
+    assert resumed["automatic_staging_paused"] is True
+    assert restarted_transport.stream_calls == 0
+
+
+def test_update_automation_shutdown_without_pending_offer_does_not_pause_staging(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+
+    UpdateAutomation(manager).shutdown()
+
+    assert manager.state.automatic_staging_paused is False
+    assert (
+        json.loads(manager.state_path.read_text(encoding="utf-8"))["automatic_staging_paused"]
+        is False
+    )
 
 
 def test_update_automation_does_not_expose_an_unstarted_thread_to_shutdown(
@@ -3242,7 +3421,9 @@ def test_update_automation_offline_retry_is_bounded_and_non_destructive(
     tmp_path: Path,
 ) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
-    manager, transport, installer = _manager(tmp_path, manifest, artifact, keyring)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
     transport.metadata_error = UpdateError(
         "Update endpoint could not be reached within the time limit"
     )
@@ -3298,5 +3479,264 @@ def test_update_automation_preserves_staged_install_and_surfaces_restart_deferra
     assert deferred["restart_deferred"] is True
     assert deferred["automatic_install_enabled"] is False
     assert deferred["automatic_restart_enabled"] is False
+    assert deferred["activation_prerequisite"] is not None
+    assert "non-disruptive" in deferred["activation_prerequisite"]
+    assert "restart" in deferred["activation_prerequisite"]
     assert automation.run_once()["phase"] == "restart_required"
     assert transport.metadata_calls == metadata_calls
+
+
+def test_update_automation_downloads_and_verifies_enabled_windows_updates_without_activation(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    automation = UpdateAutomation(manager)
+
+    status = automation.run_once()
+
+    assert status["phase"] == "ready"
+    assert status["automatic_download_enabled"] is True
+    assert status["verified_artifact_available"] is True
+    assert transport.metadata_calls == 1
+    assert transport.stream_calls == 1
+    assert Path(manager._operation_directory() / "artifact.zip").read_bytes() == artifact
+    assert installer.handed_off is False
+    assert status["automatic_install_enabled"] is False
+    assert status["automatic_restart_enabled"] is False
+    assert "restart" in (status["activation_prerequisite"] or "")
+
+
+def test_automatic_download_does_not_clear_a_pending_cancel(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    assert manager.check()["phase"] == "available"
+    manager.cancel()
+    automation = UpdateAutomation(manager)
+
+    first = automation.run_once()
+    second = automation.run_once()
+
+    assert first["phase"] == "cancelled"
+    assert second["phase"] == "cancelled"
+    assert transport.stream_calls == 0
+    assert installer.handed_off is False
+    assert not (manager._operation_directory() / "artifact.zip").exists()
+
+
+def test_automatic_staging_can_be_resumed_after_cancellation(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    assert manager.check()["phase"] == "available"
+    manager.cancel()
+
+    resumed = manager.configure(
+        enabled=True,
+        channel="stable",
+        automatic_staging_enabled=True,
+    )
+
+    assert resumed["phase"] == "idle"
+    assert resumed["automatic_staging_enabled"] is True
+    assert resumed["automatic_staging_paused"] is False
+    assert resumed["last_checked_at"] is None
+    assert resumed["last_error"] is None
+    assert transport.stream_calls == 0
+
+    staged = UpdateAutomation(manager).run_once()
+
+    assert staged["phase"] == "ready"
+    assert transport.metadata_calls == 2
+    assert transport.stream_calls == 1
+    assert installer.handed_off is False
+
+
+def test_automatic_staging_resume_after_clear_error_rebases_cadence(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    assert manager.check()["phase"] == "available"
+    checked_at = manager.state.last_checked_at
+    assert checked_at is not None
+    manager.cancel()
+
+    cleared = manager.clear_error()
+    assert cleared["phase"] == "idle"
+    assert cleared["automatic_staging_paused"] is True
+    assert cleared["last_checked_at"] == checked_at
+    assert cleared["last_error"] is None
+    assert manager.clear_error()["last_checked_at"] == checked_at
+
+    automation = UpdateAutomation(manager)
+    paused = automation.run_once()
+    assert paused["phase"] == "idle"
+    assert transport.metadata_calls == 1
+
+    resumed = manager.configure(
+        enabled=True,
+        channel="stable",
+        automatic_staging_enabled=True,
+    )
+    assert resumed["phase"] == "idle"
+    assert resumed["automatic_staging_paused"] is False
+    assert resumed["last_checked_at"] is None
+    assert resumed["last_error"] is None
+    assert transport.metadata_calls == 1
+
+    first = automation.run_once()
+    assert first["phase"] == "ready"
+    assert transport.metadata_calls == 2
+    assert transport.stream_calls == 1
+    assert installer.handed_off is False
+
+    second = automation.run_once()
+    assert second["phase"] == "ready"
+    assert transport.metadata_calls == 2
+    assert transport.stream_calls == 1
+
+
+def test_ordinary_update_preference_save_preserves_check_cadence(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    checked_at = manager.state.last_checked_at
+    assert checked_at is not None
+
+    saved = manager.configure(
+        enabled=True,
+        channel="stable",
+        automatic_staging_enabled=False,
+    )
+    assert saved["phase"] == "available"
+    assert saved["automatic_staging_paused"] is False
+    assert saved["last_checked_at"] == checked_at
+
+    status = UpdateAutomation(manager).run_once()
+    assert status["phase"] == "available"
+    assert transport.metadata_calls == 1
+
+
+def test_automatic_download_uses_the_current_candidate_after_supersession(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring, automatic_staging=True)
+    replacement, _, _ = _fixture(tmp_path, version="0.3.0")
+    original_check = manager.scheduled_check
+
+    def scheduled_check(*, interval: timedelta) -> dict[str, Any]:
+        first = original_check(interval=interval)
+        transport.manifest = replacement
+        manager.check()
+        return first
+
+    manager.scheduled_check = scheduled_check  # type: ignore[method-assign]
+    status = UpdateAutomation(manager).run_once()
+
+    assert status["phase"] == "ready"
+    assert transport.stream_calls == 1
+    assert transport.stream_urls == [replacement["url"]]
+    assert status["offered_version"] == "0.3.0"
+
+
+def test_automatic_download_checks_disk_budget_before_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    monkeypatch.setattr(
+        updater_module.shutil,
+        "disk_usage",
+        lambda _path: shutil._ntuple_diskusage(total=100, used=99, free=1),
+    )
+
+    status = UpdateAutomation(manager).run_once()
+
+    assert status["phase"] == "error"
+    assert status["last_error"] == "Insufficient disk space to stage and recover this update"
+    assert transport.stream_calls == 0
+    assert installer.handed_off is False
+
+
+def test_staged_update_survives_restart_without_redownload(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring, automatic_staging=True)
+    assert UpdateAutomation(manager).run_once()["phase"] == "ready"
+    staged = manager._operation_directory() / "artifact.zip"
+
+    restarted, restarted_transport, restarted_installer = _manager(
+        tmp_path, manifest, artifact, keyring
+    )
+    status = UpdateAutomation(restarted).run_once()
+
+    assert status["phase"] == "ready"
+    assert staged.is_file()
+    assert staged.read_bytes() == artifact
+    assert transport.stream_calls == 1
+    assert restarted_transport.metadata_calls == 0
+    assert restarted_transport.stream_calls == 0
+    assert restarted_installer.handed_off is False
+
+
+def test_automatic_download_failures_use_bounded_retry_backoff(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    transport.download_error = UpdateError(
+        "Update endpoint could not be reached within the time limit"
+    )
+    automation = UpdateAutomation(
+        manager,
+        config=UpdateAutomationConfig(
+            check_interval=timedelta(seconds=10),
+            retry_initial_delay=timedelta(seconds=1),
+            retry_max_delay=timedelta(seconds=3),
+            retry_attempts=2,
+        ),
+    )
+
+    first = automation.run_once()
+    second = automation.run_once()
+
+    assert first["phase"] == "error"
+    assert second["phase"] == "error"
+    assert transport.metadata_calls == 2
+    assert transport.stream_calls == 2
+    assert automation.next_delay_seconds == 2
+    assert installer.handed_off is False
+    assert not list((tmp_path / "updates" / "staging").rglob("artifact.zip"))
+
+
+def test_automatic_download_rechecks_signed_metadata_before_streaming(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    assert manager.check()["phase"] == "available"
+    persisted = manager._operation_directory() / "manifest.json"
+    value = json.loads(persisted.read_text(encoding="utf-8"))
+    value["release_notes_url"] = "https://updates.example.test/forged"
+    persisted.write_text(json.dumps(value), encoding="utf-8")
+
+    status = UpdateAutomation(manager).run_once()
+
+    assert status["phase"] == "error"
+    assert "metadata" in (status["last_error"] or "").casefold()
+    assert transport.stream_calls == 0
+    assert installer.handed_off is False

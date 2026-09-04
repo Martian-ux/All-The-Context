@@ -14,6 +14,32 @@ function status() {
   return { core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { observations: 4, tentative_observations: 0, active_records: 2, sources: 1, pending_replication_events: 0 } };
 }
 
+function updateStatusPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    phase: "idle",
+    current_version: "0.1.0",
+    offered_version: null,
+    mandatory: false,
+    last_checked_at: null,
+    last_error: null,
+    recovery_attempts: 0,
+    enabled: true,
+    channel: "stable",
+    deferred_version: null,
+    automatic_staging_enabled: false,
+    automatic_staging_paused: false,
+    automatic_install_supported: false,
+    automatic_download_enabled: false,
+    automatic_staging_supported: false,
+    activation_prerequisite: null,
+    verified_artifact_available: false,
+    installer_detail: "Manual installation is required",
+    configured: true,
+    available_channels: ["stable"],
+    ...overrides,
+  };
+}
+
 function contextRecord(id = "record-1", content = "Prefers concise technical explanations.", version = 1) {
   return {
     id,
@@ -1312,6 +1338,116 @@ describe("dashboard", () => {
     expect(await screen.findByRole("button", { name: /install & restart/i })).toBeEnabled();
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/check"))).toBe(true);
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/download"))).toBe(true);
+  });
+
+  it("allows cancelling an active update download while protecting unrelated actions", async () => {
+    const update = updateStatusPayload({
+      phase: "downloading",
+      offered_version: "0.2.0",
+      automatic_install_supported: true,
+    });
+    let resolveCancel: ((response: Response) => void) | undefined;
+    const fetch = vi.fn((request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return Promise.resolve(json(status()));
+      if (url.endsWith("/admin/updates/cancel")) {
+        return new Promise<Response>((resolve) => { resolveCancel = resolve; });
+      }
+      if (url.endsWith("/admin/updates") && !init?.method) return Promise.resolve(json(update));
+      return Promise.resolve(json({ items: [] }));
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    const cancel = await screen.findByRole("button", { name: "Cancel download" });
+    expect(cancel).toBeEnabled();
+    expect(screen.getByRole("button", { name: /check now/i })).toBeDisabled();
+    expect(screen.getByLabelText("Update channel")).toBeDisabled();
+    expect(screen.getByLabelText(/Check for updates automatically/i)).toBeDisabled();
+
+    fireEvent.click(cancel);
+    fireEvent.click(cancel);
+
+    expect(fetch.mock.calls.filter(([request]) => String(request).endsWith("/admin/updates/cancel"))).toHaveLength(1);
+    expect(await screen.findByRole("button", { name: /cancelling/i })).toBeDisabled();
+    expect(screen.getByText(/waiting for the updater to finish safely/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /check now/i })).toBeDisabled();
+
+    resolveCancel?.(json(updateStatusPayload({
+      phase: "cancelled",
+      offered_version: "0.2.0",
+      last_error: "Update download was cancelled",
+      automatic_staging_paused: true,
+    })));
+
+    expect(await screen.findByText("Update download was cancelled")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /check now/i })).toBeEnabled();
+  });
+
+  it("lets a paused automatic staging preference be resumed", async () => {
+    const update = updateStatusPayload({
+      phase: "cancelled",
+      offered_version: "0.2.0",
+      last_error: "Update download was cancelled",
+      automatic_staging_enabled: true,
+      automatic_staging_paused: true,
+      automatic_staging_supported: true,
+    });
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/updates/preferences")) {
+        return json(updateStatusPayload({
+          automatic_staging_enabled: true,
+          automatic_staging_paused: false,
+        }));
+      }
+      if (url.endsWith("/admin/updates") && !init?.method) return json(update);
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    const resume = await screen.findByRole("button", { name: "Resume automatic staging" });
+    expect(resume).toBeEnabled();
+    fireEvent.click(resume);
+
+    await waitFor(() => expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/preferences"))).toBe(true));
+    const request = fetch.mock.calls.find(([input]) => String(input).endsWith("/admin/updates/preferences"));
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      enabled: true,
+      channel: "stable",
+      automatic_staging_enabled: true,
+    });
+  });
+
+  it("shows a bounded cancellation error and restores the active cancel action", async () => {
+    const update = updateStatusPayload({ phase: "downloading", offered_version: "0.2.0" });
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/updates/cancel")) {
+        return new Response(JSON.stringify({ detail: "Cancellation endpoint unavailable" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/admin/updates") && !init?.method) return json(update);
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel download" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cancellation endpoint unavailable");
+    expect(screen.getByRole("button", { name: "Cancel download" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /check now/i })).toBeDisabled();
   });
 
   it("shows an unpublished trusted channel without a raw HTTP error", async () => {

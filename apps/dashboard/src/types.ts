@@ -182,7 +182,12 @@ export interface UpdateStatus {
   enabled: boolean;
   channel: "stable" | "beta";
   deferred_version?: string | null;
+  automatic_staging_enabled: boolean;
+  automatic_staging_paused: boolean;
   automatic_install_supported: boolean;
+  automatic_download_enabled: boolean;
+  automatic_staging_supported: boolean;
+  activation_prerequisite?: string | null;
   verified_artifact_available: boolean;
   installer_detail: string;
   configured: boolean;

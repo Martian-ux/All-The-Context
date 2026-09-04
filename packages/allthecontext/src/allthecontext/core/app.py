@@ -154,6 +154,7 @@ from ..storage import (
 from ..updater import (
     Channel,
     UpdateAutomation,
+    UpdateAutomationPolicy,
     UpdateConfig,
     UpdateError,
     UpdateManager,
@@ -347,6 +348,7 @@ class UpdatePreferencesRequest(BaseModel):
 
     enabled: bool
     channel: Channel
+    automatic_staging_enabled: bool = False
 
 
 class CaptureCreateRequest(BaseModel):
@@ -392,7 +394,13 @@ def create_app(
         ),
         database_path=active_config.database_path,
     )
-    update_automation = UpdateAutomation(updates)
+    staging_supported = bool(
+        getattr(updates, "_packaged_windows_staging_supported", lambda: False)()
+    )
+    update_automation = UpdateAutomation(
+        updates,
+        policy=UpdateAutomationPolicy(automatic_download_enabled=staging_supported),
+    )
     operation_observer_executor: ThreadPoolExecutor | None = None
     operation_observer_executor_lock = threading.Lock()
 
@@ -2248,7 +2256,11 @@ def create_app(
         request: UpdatePreferencesRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
-        status = updates.configure(enabled=request.enabled, channel=request.channel)
+        status = updates.configure(
+            enabled=request.enabled,
+            channel=request.channel,
+            automatic_staging_enabled=request.automatic_staging_enabled,
+        )
         if request.enabled and status["configured"]:
             update_automation.start()
         else:

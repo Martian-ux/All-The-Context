@@ -223,6 +223,132 @@ def _pass_receipt(
         "limitations": [],
         "attempts": [{"attempt": 1, "status": "pass"}],
     }
+    if gate_id in {"BETA-P01", "BETA-S03"}:
+        if not inventory_digests:
+            raise AssertionError("Windows acceptance receipts require inventory digests in tests")
+        windows_names = [name for name in inventory_digests if "windows-x86_64" in name]
+        direct_name = next(
+            name for name in windows_names if name.endswith("-windows-x86_64-unsigned.exe")
+        )
+        archive_name = next(name for name in windows_names if name != direct_name)
+        component_digest = "c" * 64
+        body["artifact_digests"] = {
+            direct_name: inventory_digests[direct_name],
+            archive_name: inventory_digests[archive_name],
+        }
+        body["windows_acceptance"] = {
+            "schema_version": 1,
+            "platform": "windows",
+            "architecture": "x86_64",
+            "source_commit": SOURCE,
+            "version": VERSION,
+            "clean_machine": True,
+            "developer_tooling": False,
+            "prerequisites": {
+                "status": "pass",
+                "os_family": "windows",
+                "architecture": "x86_64",
+                "developer_tooling_absent": True,
+            },
+            "permissions": {
+                "status": "pass",
+                "scope": "current_user",
+                "elevation": "not_required",
+            },
+            "defender": {
+                "status": "pass",
+                "artifact_scan": "completed",
+                "real_time_protection_enabled": True,
+                "target_files_present": True,
+                "new_detections": 0,
+                "quarantine_events": 0,
+                "signature_version": "test",
+            },
+            "core": {
+                "status": "pass",
+                "host": "127.0.0.1",
+                "loopback_only": True,
+                "public_listener_count": 0,
+            },
+            "artifacts": {
+                "direct_package": {
+                    "name": direct_name,
+                    "sha256": inventory_digests[direct_name],
+                    "size": 1,
+                },
+                "installed_component_archive": {
+                    "name": archive_name,
+                    "sha256": inventory_digests[archive_name],
+                    "size": 1,
+                },
+                "installed_component_manifest": {
+                    "name": "installed-component-manifest.json",
+                    "sha256": component_digest,
+                    "size": 1,
+                },
+                "installed_component_checksum": {
+                    "name": "installed-component-manifest.json.sha256",
+                    "sha256": component_digest,
+                    "size": 1,
+                },
+                "native_build_provenance": {
+                    "name": "native-build-provenance.json",
+                    "sha256": component_digest,
+                    "size": 1,
+                },
+                "native_build_provenance_checksum": {
+                    "name": "native-build-provenance.json.sha256",
+                    "sha256": component_digest,
+                    "size": 1,
+                },
+            },
+            "components": [
+                {
+                    "role": role,
+                    "filename": filename,
+                    "sha256": component_digest,
+                    "size": 1,
+                }
+                for role, filename in (
+                    ("main", "AllTheContext.exe"),
+                    ("mcp", "AllTheContextMCP.exe"),
+                    ("recovery", "AllTheContextRecovery.exe"),
+                    ("updater", "AllTheContextUpdater.exe"),
+                )
+            ],
+            "checks": {
+                check: "pass"
+                for check in (
+                    "ordinary_install",
+                    "first_run_setup",
+                    "restart",
+                    "login_startup",
+                    "update_interruption",
+                    "update_recovery",
+                    "rollback",
+                    "uninstall",
+                    "state_preserved",
+                    "state_removed",
+                    "no_leftover_binaries",
+                    "no_leftover_shortcuts",
+                    "no_leftover_tasks",
+                    "no_leftover_runonce",
+                    "protected_os_store",
+                    "setup_rollback",
+                )
+            },
+            "leftovers": {
+                counter: 0
+                for counter in (
+                    "installed_binaries",
+                    "shortcuts",
+                    "scheduled_tasks",
+                    "runonce_entries",
+                    "orphaned_client_secrets",
+                )
+            },
+        }
+        return body
     if evidence_kind == "exact_downloaded_artifact":
         if not inventory_digests:
             raise AssertionError("exact artifact receipts require inventory digests in tests")
@@ -647,7 +773,10 @@ def test_publication_gate_rejects_arbitrary_safe_key_as_exact_binding(tmp_path: 
             receipt["artifact_digests"] = {"acceptance-smoke-fixture.bin": "c" * 64}
     bundle_path = tmp_path / "bundle.json"
     bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
-    with pytest.raises(ManifestError, match="not declared by the candidate inventory"):
+    with pytest.raises(
+        ManifestError,
+        match=r"not declared by the candidate inventory|Windows acceptance .*not bound",
+    ):
         evaluate_publication_gate(
             release_dir=release_dir,
             candidate_sha256=digest,

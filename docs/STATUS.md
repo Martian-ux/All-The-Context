@@ -42,6 +42,70 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-09-03 — Windows update evidence wave (integration candidate)
+
+This integration starts from clean `db5218c988d1a131a3d4371599e86f7d955e0389`,
+which matched fetched `origin/main` before mutation and had no conflicting open
+pull request. Its ancestry contains integration commits
+`32c1a827e86cc8804d64ebfe9ba6252532ccc6df`,
+`e01433cacb2ddcf696042eef94ac8d6abb0f1ee1`,
+`67096f6ca2f7741de1d66aba546107f36a7fae51`, and
+`47a0c7b3007fd5e271a07c78be13d74f771df904`, whose stable patch IDs match,
+respectively, the original workers
+`4ddbc11e0442fba71b7002bae104cdc5de425441`,
+`5efdffc9eb70446d22980d8816a37bee762ccfbe`,
+`b5eb29adc2e53e90bd4df14392691cf068c7f184`, and
+`ecc79ec7984a974e0a81904ba3010a845b9d62c6`. The original worker objects are
+not ancestors; the mapping is content provenance only. The first three
+integrated commits applied without conflicts, and the remediation integrated
+after the local staging equivalent. It adds the explicit-consent, lifecycle,
+packaged-Windows, and transfer-deadline safeguards below.
+
+Older users who had only the prior `enabled=true` check preference remain
+check-only: automatic staging is a separately persisted explicit
+`automatic_staging_enabled` consent and defaults to false when absent. Only a
+packaged Windows capability can honor that consent. When enabled, the
+in-process worker may revalidate and stage a signed-metadata-bound candidate
+using the existing serialized `UpdateManager`, bounded disk/retry controls,
+operation-scoped staging, a total transfer deadline, and durable pause after
+cancellation. Shutdown signals cancellation and uses a bounded join. It does
+not register a task or service, launch a process, shut down Core, force an
+application restart, or reboot Windows. READY remains inert; installation and
+activation remain operator-driven, and the dashboard surfaces the prerequisite.
+
+The clean-machine command is an operator-evidence auditor: it never launches an
+installer or product executable. Its strict path-free receipt binds a claimed
+ordinary clean-machine lifecycle, zero leftovers, exact candidate assets,
+installed four-component bytes, and native-build provenance. The Defender tool
+uses only the supported custom-scan operation, changes no Defender settings,
+and emits a path-free receipt bound to the exact package and four components.
+The new schemas and source tests are contracts only: they do not claim a real
+Defender scan, ordinary clean-machine execution, artifact release, signing,
+publication, or execution of a downloaded candidate.
+
+The remediation worker evidence is separately bound to source worker
+`ecc79ec…` and integrated commit `47a0c7b…`: updater 189 passed with 2
+expected symlink skips, Core API 20 passed, and dashboard 70 passed with
+TypeScript checking/build. The held pre-remediation integration also passed
+2,755 tests with 14 expected filesystem-capability skips and 2 existing
+Starlette deprecation warnings; its safe source package/build and independent
+manifest checks passed. The dashboard cancellation review fix is integrated
+as `309d28d5966f4f072fa82ff98b843f8d1d80d2d0`, content-equivalent by stable
+patch ID to source worker `14f351741c5b4cb2d2343aeea4cba88a27a4380b`. It
+serializes dashboard update actions, keeps unrelated controls disabled during
+an active download, reports bounded cancellation progress, and covers the
+protected cancellation API and failure recovery. Final exact-SHA gates,
+package/build hashes, and hosted checks must be recorded against the final
+head.
+The distribution plan remains unsigned; SmartScreen warnings are accepted,
+but Defender quarantine or deletion is not.
+
+Residuals are explicit: multi-file production installer rollback in
+`packages/allthecontext/src/allthecontext/desktop.py` around lines 450–498 is
+not closed by this wave. Real artifact-level Defender scanning and ordinary
+clean-machine execution remain required, along with separate signing,
+publication, and release evidence.
+
 ### 2026-09-03 — Windows hardening wave integration candidate
 
 Starting from the exact clean protected-main SHA
