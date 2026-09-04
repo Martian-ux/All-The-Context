@@ -212,6 +212,60 @@ def test_exact_unkeyed_reinforce_does_not_duplicate_current(tmp_path: Path) -> N
     assert second.record_id == first.record_id
 
 
+def test_source_less_archive_reimport_routes_around_user_superseder(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    original = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-user-superseder-original",
+    )[0]
+    assert original.disposition == ObservationDisposition.APPLIED
+    assert original.record_id is not None
+
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["fiction-archive"],
+        unavailable_sources=[],
+        idempotency_key="source-less-user-superseder-correction",
+    )
+    submitted = store.submit_batch(
+        str(session["session_id"]),
+        "source-less-user-superseder-correction-batch",
+        [
+            CandidateInput(
+                kind="interaction_preference",
+                content="I prefer detailed answers.",
+                observed_at="2025-01-01T00:00:00+00:00",
+                explicit_user_statement=True,
+                supersedes=original.record_id,
+            )
+        ],
+    )
+    corrected = store.approve_candidate(str(submitted["candidate_ids"][0]))
+    assert corrected.supersedes == original.record_id
+    stale = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-user-superseder-stale",
+    )[0]
+
+    assert stale.disposition == ObservationDisposition.IGNORED
+    assert stale.record_id == corrected.id
+    assert store.get_record(corrected.id).content == "I prefer detailed answers."
+
+
 def test_different_kinds_do_not_collide(tmp_path: Path) -> None:
     store = _store(tmp_path)
     goal = store.add_candidate(

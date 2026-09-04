@@ -5,6 +5,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from allthecontext.export import create_export, restore_export
 from allthecontext.importers import parse_json
 from allthecontext.memory_policy import (
     ObservationOrigin,
@@ -23,8 +24,14 @@ from allthecontext.models import (
     ObservationDisposition,
 )
 from allthecontext.provider_ingestion import _merge_source_references
+from allthecontext.recovery_admin import carry_forward_purge_tombstones
 from allthecontext.retrieval import RetrievalEngine
-from allthecontext.storage import CoreStore, InvalidStateError, source_rebuild_marker
+from allthecontext.storage import (
+    CoreStore,
+    InvalidStateError,
+    _archive_purge_barrier_digest,
+    source_rebuild_marker,
+)
 
 
 def _store(tmp_path: Path) -> CoreStore:
@@ -860,6 +867,254 @@ def test_slot_changing_correction_delete_blocks_stale_archive_resurrection(
     assert stale.record_id == original.record_id
     assert store.get_memory_truth(original.record_id).status.value == "deleted"
     assert store.status()["counts"]["active_records"] == 0
+
+
+def test_archive_reimport_cannot_mutate_active_user_superseder_or_its_delete(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"active user superseder archive",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    source_reference = "message:active-user-superseder"
+    original = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="active-user-superseder-original",
+        source_id=source.id,
+        source_reference=source_reference,
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert original.record_id is not None
+
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="active-user-superseder-correction",
+    )
+    submitted = store.submit_batch(
+        str(session["session_id"]),
+        "active-user-superseder-correction-batch",
+        [
+            CandidateInput(
+                kind="interaction_preference",
+                content="The user explicitly prefers detailed answers.",
+                entity_key="user",
+                attribute_key="style",
+                source_id=source.id,
+                source_reference=source_reference,
+                source_service="synthetic",
+                source_type="provider_archive",
+                supersedes=original.record_id,
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    superseder = store.approve_candidate(str(submitted["candidate_ids"][0]))
+    assert superseder.supersedes == original.record_id
+
+    stale = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="active-user-superseder-stale",
+        source_id=source.id,
+        source_reference=source_reference,
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert stale.disposition == ObservationDisposition.IGNORED
+    assert stale.record_id == superseder.id
+    assert store.get_record(superseder.id).content == (
+        "The user explicitly prefers detailed answers."
+    )
+
+    corrected = store.correct_record(
+        superseder.id,
+        content="The user prefers a final detailed style.",
+        reason="final user superseder correction",
+    )
+    corrected_stale = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="active-user-superseder-corrected-stale",
+        source_id=source.id,
+        source_reference=source_reference,
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert corrected_stale.disposition == ObservationDisposition.IGNORED
+    assert corrected_stale.record_id == corrected.id
+    assert store.get_record(corrected.id).content == "The user prefers a final detailed style."
+
+    store.delete_record(corrected.id, reason="remove final user superseder")
+    deleted_stale = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="active-user-superseder-deleted-stale",
+        source_id=source.id,
+        source_reference=source_reference,
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert deleted_stale.disposition == ObservationDisposition.IGNORED
+    assert deleted_stale.record_id == corrected.id
+    assert store.get_record(corrected.id, include_deleted=True).content == (
+        "The user prefers a final detailed style."
+    )
+    assert store.status()["counts"]["active_records"] == 1
+
+
+def test_archive_purge_barrier_is_exact_opaque_and_survives_restart_repair_restore(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "core.db"
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"archive purge barrier source",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    other_source = store.add_source(
+        b"other archive purge barrier source",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    purged = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="purge-barrier-target",
+        source_id=source.id,
+        source_reference="message:purge-barrier-target",
+        entity_key="user",
+        attribute_key="style",
+    )
+    sibling = _archive_observation(
+        store,
+        content="I prefer detailed answers.",
+        batch_key="purge-barrier-sibling",
+        source_id=source.id,
+        source_reference="message:purge-barrier-sibling",
+        entity_key="user",
+        attribute_key="format",
+    )
+    other = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="purge-barrier-other-source",
+        source_id=other_source.id,
+        source_reference="message:purge-barrier-target",
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert purged.record_id is not None
+    assert sibling.record_id is not None and sibling.record_id != purged.record_id
+    assert other.record_id is not None and other.record_id != purged.record_id
+
+    store.purge(
+        "record",
+        purged.record_id,
+        confirmation=store.purge_confirmation_phrase("record", purged.record_id),
+        compact=False,
+    )
+    with store.connect() as connection:
+        barrier = connection.execute(
+            "SELECT * FROM archive_purge_barriers WHERE source_id=?",
+            (source.id,),
+        ).fetchone()
+        assert barrier is not None
+        assert set(barrier.keys()) == {
+            "vault_id",
+            "source_id",
+            "source_kind",
+            "barrier_digest",
+            "purged_at",
+        }
+        assert "purge-barrier-target" not in repr(tuple(barrier))
+        assert "concise" not in repr(tuple(barrier))
+        assert barrier["barrier_digest"] != archive_import_identity(
+            source.id,
+            "message:purge-barrier-target",
+            "interaction_preference",
+            "I prefer concise answers.",
+        )
+        assert (
+            _archive_purge_barrier_digest(
+                {
+                    "source_id": source.id,
+                    "source_reference": "message:purge-barrier-target",
+                    "source_type": "provider_archive",
+                    "observation_origin": ObservationOrigin.ARCHIVE_IMPORT.value,
+                    "kind": "interaction_preference",
+                    "content": "I prefer concise answers.",
+                }
+            )
+            == barrier["barrier_digest"]
+        )
+
+    restarted = CoreStore(database)
+    restarted.initialize_vault()
+    with restarted.connect() as connection:
+        connection.execute("DELETE FROM context_record_archive_identities")
+    repaired = CoreStore(database)
+    repaired.initialize_vault()
+
+    isolated_database = tmp_path / "isolated.db"
+    isolated_schema = CoreStore(isolated_database)
+    isolated_schema.migrate()
+    carried = carry_forward_purge_tombstones(database, isolated_database)
+    assert carried["carried_archive_purge_barriers"] == 1
+
+    blocked = _archive_observation(
+        repaired,
+        content="I prefer concise answers.",
+        batch_key="purge-barrier-reimport",
+        source_id=source.id,
+        source_reference="message:purge-barrier-target",
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert blocked.disposition == ObservationDisposition.IGNORED
+    assert blocked.record_id is None
+
+    sibling_reimport = _archive_observation(
+        repaired,
+        content="I prefer detailed answers.",
+        batch_key="purge-barrier-sibling-reimport",
+        source_id=source.id,
+        source_reference="message:purge-barrier-sibling",
+        entity_key="user",
+        attribute_key="format",
+    )
+    assert sibling_reimport.record_id == sibling.record_id
+    assert sibling_reimport.disposition in {
+        ObservationDisposition.APPLIED,
+        ObservationDisposition.REINFORCED,
+    }
+
+    export_path = tmp_path / "post-purge.atcexp"
+    create_export(
+        database,
+        export_path,
+        "purge-barrier-passphrase",
+        include_sources=True,
+    )
+    restore_export(export_path, database, "purge-barrier-passphrase")
+    repeated = _archive_observation(
+        repaired,
+        content="I prefer concise answers.",
+        batch_key="purge-barrier-repeated-reimport",
+        source_id=source.id,
+        source_reference="message:purge-barrier-target",
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert repeated.disposition == ObservationDisposition.IGNORED
+    assert repeated.record_id is None
+    assert repaired.status()["counts"]["active_records"] == 2
 
 
 @pytest.mark.parametrize(

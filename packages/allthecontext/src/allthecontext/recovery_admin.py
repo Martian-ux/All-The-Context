@@ -31,7 +31,12 @@ from .export import (
     create_export,
     restore_export,
 )
-from .storage import CoreStore, InvalidStateError, _normalize_actor
+from .storage import (
+    _ARCHIVE_PURGE_BARRIER_TABLE,
+    CoreStore,
+    InvalidStateError,
+    _normalize_actor,
+)
 from .windows_update_helper import (
     STARTUP_RECOVERY_DIAGNOSTIC_NAME,
     startup_recovery_diagnostic,
@@ -266,6 +271,7 @@ def carry_forward_purge_tombstones(
     if not active_database.is_file():
         return {
             "carried_purge_tombstones": 0,
+            "carried_archive_purge_barriers": 0,
             "carried_user_mutations": 0,
             "active_present": False,
             "vault_id": None,
@@ -288,6 +294,14 @@ def carry_forward_purge_tombstones(
                 "replication_sequence,replication_event_id FROM purge_tombstones"
             ).fetchall()
             if _table_exists(active, "purge_tombstones")
+            else []
+        )
+        archive_barriers = (
+            active.execute(
+                f"SELECT vault_id,source_id,source_kind,barrier_digest,purged_at "
+                f"FROM {_ARCHIVE_PURGE_BARRIER_TABLE}"
+            ).fetchall()
+            if _table_exists(active, _ARCHIVE_PURGE_BARRIER_TABLE)
             else []
         )
         mutations = []
@@ -323,9 +337,10 @@ def carry_forward_purge_tombstones(
     finally:
         active.close()
     vault_id = str(vault["id"]) if vault is not None else None
-    if not tombs and not mutations:
+    if not tombs and not archive_barriers and not mutations:
         return {
             "carried_purge_tombstones": 0,
+            "carried_archive_purge_barriers": 0,
             "carried_user_mutations": 0,
             "active_present": True,
             "vault_id": vault_id,
@@ -362,6 +377,23 @@ def carry_forward_purge_tombstones(
             )
             if inserted.rowcount == 1:
                 carried += 1
+        carried_archive_barriers = 0
+        if _table_exists(isolated, _ARCHIVE_PURGE_BARRIER_TABLE):
+            for barrier in archive_barriers:
+                inserted = isolated.execute(
+                    f"INSERT OR IGNORE INTO {_ARCHIVE_PURGE_BARRIER_TABLE}"
+                    "(vault_id,source_id,source_kind,barrier_digest,purged_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (
+                        str(barrier["vault_id"]),
+                        str(barrier["source_id"]),
+                        str(barrier["source_kind"]),
+                        str(barrier["barrier_digest"]),
+                        str(barrier["purged_at"]),
+                    ),
+                )
+                if inserted.rowcount == 1:
+                    carried_archive_barriers += 1
         carried_mutations = 0
         allowed_kinds = {
             "restore",
@@ -424,6 +456,7 @@ def carry_forward_purge_tombstones(
         isolated.close()
     return {
         "carried_purge_tombstones": carried,
+        "carried_archive_purge_barriers": carried_archive_barriers,
         "carried_user_mutations": carried_mutations,
         "active_present": True,
         "vault_id": vault_id,
