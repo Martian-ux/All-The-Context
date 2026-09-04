@@ -444,34 +444,38 @@ def create_app(
             # already-configured residual connection.
             yield
         finally:
-            if recovery_timer is not None:
-                timer = recovery_timer
-                recovery_timer = None
-                with recovery_lock:
-                    recovery_stopping.set()
-                    timer.cancel()
-                timer.join()
-            try:
-                await core.activity_gate.run_in_threadpool(update_automation.shutdown)
-            finally:
+            # Close only while the gate owns its exclusive writer barrier. The
+            # barrier rejects new activity first, drains all existing task and
+            # worker leases, and then keeps Core.close isolated from readers.
+            async with core.activity_gate.shutdown_async():
+                if recovery_timer is not None:
+                    timer = recovery_timer
+                    recovery_timer = None
+                    with recovery_lock:
+                        recovery_stopping.set()
+                        timer.cancel()
+                    timer.join()
                 try:
-                    await core.activity_gate.run_in_threadpool(core.capture_scheduler.shutdown)
+                    await core.activity_gate.run_in_threadpool(update_automation.shutdown)
                 finally:
                     try:
-                        await asyncio.get_running_loop().run_in_executor(
-                            observer_executor,
-                            core.store.close_import_operation_observer,
-                        )
+                        await core.activity_gate.run_in_threadpool(core.capture_scheduler.shutdown)
                     finally:
                         try:
-                            observer_executor.shutdown(wait=True, cancel_futures=True)
-                        finally:
-                            with operation_observer_executor_lock:
-                                if operation_observer_executor is observer_executor:
-                                    operation_observer_executor = None
-                            await core.activity_gate.run_in_threadpool(
-                                core.close, close_observer=False
+                            await asyncio.get_running_loop().run_in_executor(
+                                observer_executor,
+                                core.store.close_import_operation_observer,
                             )
+                        finally:
+                            try:
+                                observer_executor.shutdown(wait=True, cancel_futures=True)
+                            finally:
+                                with operation_observer_executor_lock:
+                                    if operation_observer_executor is observer_executor:
+                                        operation_observer_executor = None
+                                await core.activity_gate.run_in_threadpool(
+                                    core.close, close_observer=False
+                                )
 
     app = FastAPI(
         title="All The Context Core",
@@ -1005,6 +1009,33 @@ def create_app(
                     continue
             return False
 
+        request_aborted = threading.Event()
+
+        def _signal_worker_end(*, cancel_operation: bool = False) -> None:
+            """Wake the sync iterator even when the bounded queue is full."""
+            stop_pump.set()
+            if cancel_operation:
+                request_aborted.set()
+                core.import_operations.cancel_registry.request_cancel(operation_id)
+            # A sentinel must be visible to the worker, not left behind a full
+            # queue. A producer already in put() will observe stop_pump and any
+            # late item is drained by the worker's finally block.
+            while True:
+                try:
+                    chunk_queue.get_nowait()
+                except Empty:
+                    break
+            while True:
+                try:
+                    chunk_queue.put_nowait(None)
+                    break
+                except Full:
+                    # A producer that was already inside Queue.put may win
+                    # one final race after stop_pump is set. Remove that item
+                    # and retry until the sentinel is definitely queued.
+                    with suppress(Empty):
+                        chunk_queue.get_nowait()
+
         async def _pump() -> None:
             try:
                 async for chunk in http_request.stream():
@@ -1025,9 +1056,14 @@ def create_app(
                             return
                 await asyncio.to_thread(_put_bounded, None)
             except BaseException as error:
-                stream_error.append(error)
-                with suppress(Exception):
-                    await asyncio.to_thread(_put_bounded, None)
+                if isinstance(error, asyncio.CancelledError):
+                    stream_error.append(
+                        ImportCancelledError("multipart upload request was canceled")
+                    )
+                    _signal_worker_end(cancel_operation=True)
+                else:
+                    stream_error.append(error)
+                    _signal_worker_end()
 
         pump_task = asyncio.create_task(_pump())
 
@@ -1078,9 +1114,22 @@ def create_app(
                             break
 
         try:
-            return await core.activity_gate.run_in_threadpool(run_upload)
+            cancel_options: dict[str, Any] = {
+                "_atc_cancel_callback": lambda: _signal_worker_end(cancel_operation=True),
+                "_atc_drain_on_cancel": True,
+            }
+            return await core.activity_gate.run_in_threadpool(
+                run_upload,
+                **cancel_options,
+            )
+        except asyncio.CancelledError:
+            # The gate helper has already drained a started worker. This flag
+            # also covers cancellation while admission was still pending, when
+            # no worker lease existed yet.
+            request_aborted.set()
+            raise
         finally:
-            stop_pump.set()
+            _signal_worker_end(cancel_operation=request_aborted.is_set())
             if not pump_task.done():
                 pump_task.cancel()
             # CancelledError is BaseException (not Exception) on supported Python.
@@ -1092,8 +1141,19 @@ def create_app(
                 pass
             except Exception:
                 pass
+            if request_aborted.is_set():
+                # Persist cancellation for an operation whose worker never
+                # started, or whose bridge was canceled before it could observe
+                # the sentinel. Terminal workers make this idempotent.
+                with suppress(BaseException):
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            core.import_operations.cancel_operation,
+                            operation_id,
+                        )
+                    )
             # Drain so no blocked threadpool put remains after disconnect/cancel.
-            with suppress(Exception):
+            with suppress(BaseException):
                 while True:
                     try:
                         chunk_queue.get_nowait()

@@ -6,8 +6,8 @@ import asyncio
 import threading
 import weakref
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager
-from typing import Any, ParamSpec, TypeVar
+from contextlib import asynccontextmanager, contextmanager, suppress
+from typing import Any, ParamSpec, TypeVar, cast
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -115,6 +115,8 @@ class CoreActivityGate:
         self._exclusive_owner: object | None = None
         self._exclusive_depth = 0
         self._waiting_exclusive = 0
+        self._closing = False
+        self._shutdown_owner: _ActivityOwner | None = None
 
     @staticmethod
     def _current_task() -> asyncio.Task[Any] | None:
@@ -142,8 +144,18 @@ class CoreActivityGate:
         if lease is not None and lease._gate is self and lease.usable_in_current_thread():
             return lease.owner, lease
 
-        # No-task callbacks and copied contexts use an ordinary thread owner.
-        # They cannot inherit a task's admission accidentally.
+        # A synchronous callback can run on an event loop thread without a
+        # current task. Blocking there behind a writer would freeze the loop,
+        # and treating it as a thread owner would bypass task admission.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Core synchronous activity requires a running asyncio task")
+
+        # No-task worker threads use an ordinary thread owner. They cannot
+        # inherit a task's admission accidentally.
         return ("thread", threading.get_ident()), None
 
     def _release_owner(self, owner: _ActivityOwner) -> None:
@@ -156,9 +168,9 @@ class CoreActivityGate:
                     self._active_by_owner[owner] = remaining
                 else:
                     self._active_by_owner.pop(owner, None)
-            if self._exclusive_owner == owner:
-                self._exclusive_owner = None
-                self._exclusive_depth = 0
+            # Task completion only revokes the task's direct admission. A
+            # delegated lease or an exclusive section may still be using this
+            # durable owner identity; only that lease/context may release it.
             if active or self._exclusive_owner is None:
                 self._condition.notify_all()
 
@@ -178,6 +190,8 @@ class CoreActivityGate:
     def _enter(self, owner: object, lease: _ActivityLease | None = None) -> None:
         with self._condition:
             reentrant = self._active_by_owner.get(owner, 0) > 0 or self._exclusive_owner == owner
+            if self._closing and not reentrant:
+                raise RuntimeError("Core activity gate is shutting down")
             while not reentrant and (
                 self._exclusive_owner is not None or self._waiting_exclusive > 0
             ):
@@ -238,6 +252,8 @@ class CoreActivityGate:
                     reentrant = (
                         self._active_by_owner.get(owner, 0) > 0 or self._exclusive_owner == owner
                     )
+                    if self._closing and not reentrant:
+                        raise RuntimeError("Core activity gate is shutting down")
                     if reentrant or (
                         self._exclusive_owner is None and self._waiting_exclusive == 0
                     ):
@@ -259,6 +275,12 @@ class CoreActivityGate:
         **kwargs: P.kwargs,
     ) -> R:
         """Run a sync helper with an explicit, completion-bound admission lease."""
+
+        cancel_callback = cast(
+            Callable[[], object] | None,
+            kwargs.pop("_atc_cancel_callback", None),
+        )
+        drain_on_cancel = bool(kwargs.pop("_atc_drain_on_cancel", False))
 
         async with self.activity_async():
             task = self._current_task()
@@ -290,11 +312,69 @@ class CoreActivityGate:
             worker_task.add_done_callback(worker_done)
             try:
                 # The worker must outlive cancellation of the awaiting task.
-                return await asyncio.shield(worker_task)
+                return cast(R, await self._await_worker_result(worker_task))
             except asyncio.CancelledError:
                 if lease.cancel_before_start():
                     worker_task.cancel()
+                if cancel_callback is not None:
+                    # The caller's cancellation remains authoritative even if
+                    # the bridge wakeup itself encounters a closed resource.
+                    with suppress(BaseException):
+                        cancel_callback()
+                if drain_on_cancel:
+                    await self._drain_worker(worker_task)
                 raise
+
+    async def _drain_worker(self, worker_task: asyncio.Future[Any]) -> None:
+        """Await a worker despite the cancellation being drained."""
+
+        while not worker_task.done():
+            try:
+                await self._await_worker_result(worker_task)
+            except asyncio.CancelledError:
+                # A request can be canceled more than once while its bridge is
+                # unwound. Keep draining until the lease is actually released.
+                continue
+            except BaseException:
+                break
+        if worker_task.done() and not worker_task.cancelled():
+            with suppress(BaseException):
+                worker_task.exception()
+        while worker_task in self._delegated_workers:
+            await asyncio.sleep(0)
+
+    async def _await_worker_result(self, worker_task: asyncio.Future[Any]) -> Any:
+        """Await a worker through a weak callback that does not retain its task.
+
+        ``asyncio.shield`` on newer Python versions installs an internal
+        callback that can retain the canceled awaiting Task from the worker
+        until the worker completes. A weak proxy future preserves the same
+        cancellation isolation without creating that reverse lifetime edge.
+        """
+
+        waiter: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        waiter_ref = weakref.ref(waiter)
+
+        def worker_result(completed: asyncio.Future[Any]) -> None:
+            target = waiter_ref()
+            if target is None or target.done():
+                return
+            if completed.cancelled():
+                target.cancel()
+                return
+            try:
+                result = completed.result()
+            except BaseException as error:
+                target.set_exception(error)
+            else:
+                target.set_result(result)
+
+        worker_task.add_done_callback(worker_result)
+        try:
+            return await waiter
+        except asyncio.CancelledError:
+            worker_task.remove_done_callback(worker_result)
+            raise
 
     def _acquire_lease(self, owner: _ActivityOwner) -> _ActivityLease:
         lease = _ActivityLease(self, owner)
@@ -304,6 +384,69 @@ class CoreActivityGate:
             self._active_count += 1
             self._active_by_owner[owner] = self._active_by_owner.get(owner, 0) + 1
         return lease
+
+    @asynccontextmanager
+    async def shutdown_async(self) -> AsyncIterator[None]:
+        """Fence new work, drain current work, and hold the writer barrier."""
+
+        task = self._current_task()
+        if task is None:
+            raise RuntimeError("Core shutdown requires a running asyncio task")
+        owner = self._owner_for_task(task)
+        acquired = False
+        outermost = False
+        cancellation_requested = False
+        with self._condition:
+            if self._shutdown_owner is not None and self._shutdown_owner is not owner:
+                raise RuntimeError("Core activity shutdown is already in progress")
+            # Keep the gate closed even while waiting for existing owners and
+            # delegated workers to finish. Reentrant work by those owners can
+            # complete; unrelated work is rejected immediately.
+            outermost = self._shutdown_owner is None
+            self._shutdown_owner = owner
+            self._closing = True
+        try:
+            while True:
+                with self._condition:
+                    if self._exclusive_owner == owner:
+                        self._exclusive_depth += 1
+                        acquired = True
+                        break
+                    if (
+                        self._exclusive_owner is None
+                        and not (self._active_count - self._active_by_owner.get(owner, 0))
+                        and not self._delegated_workers
+                    ):
+                        self._exclusive_owner = owner
+                        self._exclusive_depth = 1
+                        acquired = True
+                        break
+                try:
+                    await asyncio.sleep(0.01)
+                except asyncio.CancelledError:
+                    # Lifespan cancellation must not interrupt the drain and
+                    # leave storage open or the gate permanently poisoned.
+                    cancellation_requested = True
+                    continue
+            yield
+        finally:
+            if acquired:
+                with self._condition:
+                    if self._exclusive_owner != owner:
+                        raise RuntimeError("Core activity shutdown ownership was lost")
+                    self._exclusive_depth -= 1
+                    if self._exclusive_depth == 0:
+                        self._exclusive_owner = None
+                        self._condition.notify_all()
+                    if outermost and self._exclusive_depth == 0:
+                        # CoreService instances may be used by another
+                        # application lifespan (notably in-process test hosts),
+                        # so reopen admission only after the barrier is fully
+                        # released.
+                        self._shutdown_owner = None
+                        self._closing = False
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     @staticmethod
     def _run_with_lease(
@@ -332,6 +475,12 @@ class CoreActivityGate:
 
         owner, _lease = self._current_owner()
         with self._condition:
+            if (
+                self._closing
+                and self._shutdown_owner is not owner
+                and self._exclusive_owner != owner
+            ):
+                raise RuntimeError("Core activity gate is shutting down")
             if self._exclusive_owner == owner:
                 self._exclusive_depth += 1
             else:

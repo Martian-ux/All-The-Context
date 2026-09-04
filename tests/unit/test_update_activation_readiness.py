@@ -4,6 +4,7 @@ import asyncio
 import contextvars
 import gc
 import json
+import sys
 import threading
 import time
 import weakref
@@ -553,6 +554,79 @@ def test_compat_multipart_failures_release_gate_and_temp_files(
         assert update_response.status_code == 200, update_response.text
 
 
+def test_http_put_cancellation_sends_sentinel_and_drains_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext.import_boundary import ImportCancelledError
+    from allthecontext.import_operations import ImportOperationService
+    from allthecontext.security import ClientPrincipal
+
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    service = CoreService(config)
+    app = create_app(config, service=service)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", None) == "/v1/admin/import-operations/{operation_id}/content"
+    )
+    operation = service.import_operations.start_operation(
+        declared_byte_size=1,
+        filename="canceled-bridge.bin",
+    )
+    worker_started = threading.Event()
+
+    def consume_until_sentinel(
+        self: ImportOperationService,
+        operation_id: str,
+        source: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del self, operation_id, kwargs
+        worker_started.set()
+        list(source)
+        raise ImportCancelledError("request canceled")
+
+    monkeypatch.setattr(ImportOperationService, "accept_upload", consume_until_sentinel)
+
+    async def exercise() -> None:
+        stream_hold = asyncio.Event()
+
+        class RequestStub:
+            def __init__(self) -> None:
+                self.headers = {"content-length": "1"}
+
+            async def stream(self) -> Any:
+                yield b"x"
+                await stream_hold.wait()
+
+        principal = ClientPrincipal(
+            id="test-admin",
+            name="test-admin",
+            scopes=frozenset({"admin"}),
+        )
+        request_task = asyncio.create_task(
+            endpoint(str(operation["operation_id"]), RequestStub(), principal)
+        )
+        assert await asyncio.to_thread(worker_started.wait, 5.0)
+        request_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request_task
+
+        assert (
+            service.import_operations.get_operation(str(operation["operation_id"]))["status"]
+            == "cancelled"
+        )
+        assert service.activity_gate._active_count == 0
+        assert not service.activity_gate._delegated_workers
+        assert not service.activity_gate._active_by_owner
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        service.close()
+
+
 def test_async_activity_cancellation_releases_gate_reader() -> None:
     gate = CoreActivityGate()
 
@@ -679,6 +753,142 @@ def test_no_task_callbacks_and_copied_contexts_cannot_replay_task_admission() ->
     asyncio.run(exercise())
 
 
+def test_canceled_parent_keeps_worker_exclusive_owner_until_worker_exit() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+        writer_started = threading.Event()
+
+        def worker() -> None:
+            with gate.exclusive():
+                worker_started.set()
+                assert release_worker.wait(timeout=5.0)
+
+        def writer() -> None:
+            with gate.exclusive():
+                writer_started.set()
+
+        dispatch = asyncio.create_task(gate.run_in_threadpool(worker))
+        assert await asyncio.to_thread(worker_started.wait, 5.0)
+        dispatch.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatch
+        del dispatch
+        assert gate._exclusive_owner is not None
+        assert len(gate._delegated_workers) == 1
+
+        writer_task = asyncio.create_task(asyncio.to_thread(writer))
+        for _ in range(500):
+            if gate._waiting_exclusive:
+                break
+            await asyncio.sleep(0.001)
+        else:
+            pytest.fail("exclusive writer did not begin waiting")
+        await asyncio.sleep(0.03)
+        assert not writer_started.is_set()
+
+        release_worker.set()
+        await writer_task
+        assert writer_started.is_set()
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+        assert not gate._delegated_workers
+
+    asyncio.run(exercise())
+
+
+def test_sync_activity_callback_fails_without_blocking_event_loop() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        callback_finished = asyncio.Event()
+        callback_errors: list[BaseException] = []
+        writer_started = threading.Event()
+        release_writer = threading.Event()
+
+        def writer() -> None:
+            with gate.exclusive():
+                writer_started.set()
+                assert release_writer.wait(timeout=5.0)
+
+        def callback() -> None:
+            try:
+                with gate.activity():
+                    raise AssertionError("event-loop callback bypassed activity admission")
+            except BaseException as error:
+                callback_errors.append(error)
+            finally:
+                callback_finished.set()
+
+        async with gate.activity_async():
+            writer_task = asyncio.create_task(asyncio.to_thread(writer))
+            for _ in range(500):
+                if gate._waiting_exclusive:
+                    break
+                await asyncio.sleep(0.001)
+            else:
+                pytest.fail("exclusive writer did not begin waiting")
+            asyncio.get_running_loop().call_soon(callback)
+            await asyncio.wait_for(callback_finished.wait(), timeout=1.0)
+            assert len(callback_errors) == 1
+            assert isinstance(callback_errors[0], RuntimeError)
+            assert not writer_started.is_set()
+
+        assert await asyncio.to_thread(writer_started.wait, 5.0)
+        release_writer.set()
+        await writer_task
+        assert gate._active_count == 0
+
+    asyncio.run(exercise())
+
+
+def test_shutdown_async_fences_new_work_and_drains_existing_activity() -> None:
+    gate = CoreActivityGate()
+
+    async def exercise() -> None:
+        active_started = asyncio.Event()
+        release_active = asyncio.Event()
+        shutdown_entered = asyncio.Event()
+
+        async def active() -> None:
+            async with gate.activity_async():
+                active_started.set()
+                await release_active.wait()
+
+        async def shutdown() -> None:
+            async with gate.shutdown_async():
+                shutdown_entered.set()
+
+        active_task = asyncio.create_task(active())
+        await active_started.wait()
+        shutdown_task = asyncio.create_task(shutdown())
+        for _ in range(500):
+            if gate._closing:
+                break
+            await asyncio.sleep(0.001)
+        else:
+            pytest.fail("shutdown did not close admission")
+
+        async def new_activity() -> None:
+            async with gate.activity_async():
+                pass
+
+        with pytest.raises(RuntimeError, match="shutting down"):
+            await new_activity()
+        assert not shutdown_entered.is_set()
+        release_active.set()
+        await active_task
+        await shutdown_task
+        assert shutdown_entered.is_set()
+        assert gate._active_count == 0
+        assert not gate._active_by_owner
+        assert not gate._closing
+
+    asyncio.run(exercise())
+
+
 def test_unrelated_async_tasks_have_isolated_activity_owners() -> None:
     gate = CoreActivityGate()
 
@@ -759,6 +969,8 @@ def test_canceled_worker_lease_keeps_writer_out_until_worker_exits() -> None:
         with pytest.raises(asyncio.CancelledError):
             await dispatch
         del dispatch
+        assert sys.version_info >= (3, 12)
+        assert len(gate._delegated_workers) == 1
         for _ in range(100):
             gc.collect()
             await asyncio.sleep(0)
@@ -1119,6 +1331,89 @@ def test_lifespan_drains_running_recovery_callback_before_core_close(
     assert created[0].cancelled is True
     assert created[0].joined is True
     assert events.index("recovery_finished") < events.index("core_close")
+
+
+def test_lifespan_core_close_waits_for_gate_drain_and_holds_exclusive_barrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    service = CoreService(config)
+    gate = service.activity_gate
+    reader_entered = threading.Event()
+    release_reader = threading.Event()
+    close_state: list[tuple[bool, int, bool]] = []
+    original_close = service.close
+
+    def reader() -> None:
+        with gate.activity():
+            reader_entered.set()
+            assert release_reader.wait(timeout=5.0)
+
+    def record_close(*, close_observer: bool = True) -> None:
+        with gate._condition:
+            close_state.append(
+                (
+                    gate._exclusive_owner is not None,
+                    gate._active_count,
+                    all(owner == gate._exclusive_owner for owner in gate._active_by_owner),
+                )
+            )
+        original_close(close_observer=close_observer)
+
+    monkeypatch.setattr(service, "close", record_close)
+    app = create_app(config, service=service)
+    client = TestClient(app)
+    client.__enter__()
+    reader_thread = threading.Thread(target=reader, daemon=True)
+    shutdown_thread: threading.Thread | None = None
+    rejected: list[BaseException] = []
+    try:
+        reader_thread.start()
+        assert reader_entered.wait(timeout=5.0)
+        shutdown_thread = threading.Thread(
+            target=lambda: client.__exit__(None, None, None),
+            daemon=True,
+        )
+        shutdown_thread.start()
+        for _ in range(500):
+            if gate._closing:
+                break
+            time.sleep(0.001)
+        else:
+            pytest.fail("lifespan shutdown did not close admission")
+        assert not close_state
+
+        def attempt_after_shutdown() -> None:
+            try:
+                with gate.activity():
+                    pass
+            except BaseException as error:
+                rejected.append(error)
+
+        rejected_thread = threading.Thread(target=attempt_after_shutdown, daemon=True)
+        rejected_thread.start()
+        rejected_thread.join(timeout=5.0)
+        assert not rejected_thread.is_alive()
+        assert len(rejected) == 1
+        assert isinstance(rejected[0], RuntimeError)
+
+        release_reader.set()
+        reader_thread.join(timeout=5.0)
+        shutdown_thread.join(timeout=10.0)
+        assert not reader_thread.is_alive()
+        assert not shutdown_thread.is_alive()
+    finally:
+        release_reader.set()
+        reader_thread.join(timeout=5.0)
+        if shutdown_thread is None:
+            client.__exit__(None, None, None)
+        elif shutdown_thread.is_alive():
+            shutdown_thread.join(timeout=10.0)
+
+    assert close_state
+    assert close_state[0][0] is True
+    assert close_state[0][2] is True
 
 
 def test_lifespan_closes_core_after_scheduler_shutdown(
