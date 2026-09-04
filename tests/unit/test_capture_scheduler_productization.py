@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -574,6 +575,82 @@ def test_bounded_join_returns_during_in_flight_cycle(
     finally:
         release.set()
         scheduler.shutdown()
+        store.close()
+
+
+def test_loop_converges_when_gate_closes_between_dispatch_and_activity_enter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    clock = _MutableClock()
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(
+        coordinator,
+        config,
+        scheduler_config=SchedulerConfig(poll_interval_seconds=1),
+        clock=clock,
+    )
+    write_scheduler_enabled(config.data_dir, enabled=True)
+    enter_started = threading.Event()
+    allow_enter = threading.Event()
+    shutdown_entered = threading.Event()
+    release_shutdown = threading.Event()
+    observed: list[BaseException | None] = []
+    shutdown_errors: list[BaseException] = []
+    original_enter = scheduler.activity_gate._enter
+    calling_thread_id = threading.get_ident()
+
+    def blocked_enter(owner: object, lease: Any = None) -> None:
+        if threading.get_ident() == calling_thread_id:
+            original_enter(owner, lease)
+            return
+        enter_started.set()
+        if not allow_enter.wait(timeout=5):
+            raise AssertionError("scheduler activity enter was not released")
+        original_enter(owner, lease)
+
+    monkeypatch.setattr(scheduler.activity_gate, "_enter", blocked_enter)
+
+    def hook(args: threading.ExceptHookArgs) -> None:
+        observed.append(args.exc_value)
+
+    monkeypatch.setattr(threading, "excepthook", hook)
+
+    async def hold_gate_shutdown() -> None:
+        async with scheduler.activity_gate.shutdown_async():
+            shutdown_entered.set()
+            await asyncio.to_thread(release_shutdown.wait, 5.0)
+
+    def close_gate() -> None:
+        try:
+            asyncio.run(hold_gate_shutdown())
+        except BaseException as error:
+            shutdown_errors.append(error)
+
+    gate_closer = threading.Thread(target=close_gate)
+    try:
+        scheduler.start()
+        assert enter_started.wait(timeout=5)
+        gate_closer.start()
+        assert shutdown_entered.wait(timeout=5)
+        allow_enter.set()
+        scheduler.shutdown()
+        release_shutdown.set()
+        gate_closer.join(timeout=5)
+        assert gate_closer.is_alive() is False
+        assert shutdown_errors == []
+        assert observed == []
+        assert scheduler.status()["running"] is False
+    finally:
+        allow_enter.set()
+        release_shutdown.set()
+        scheduler.shutdown()
+        if gate_closer.ident is not None:
+            gate_closer.join(timeout=5)
         store.close()
 
 

@@ -627,6 +627,67 @@ def test_http_put_cancellation_sends_sentinel_and_drains_worker(
         service.close()
 
 
+def test_http_put_cancellation_marks_real_upload_cancelled(
+    tmp_path: Path,
+) -> None:
+    from allthecontext.security import ClientPrincipal
+
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    service = CoreService(config)
+    app = create_app(config, service=service)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", None) == "/v1/admin/import-operations/{operation_id}/content"
+    )
+    operation = service.import_operations.start_operation(
+        declared_byte_size=2,
+        filename="real-cancellation.bin",
+    )
+    operation_id = str(operation["operation_id"])
+
+    async def exercise() -> None:
+        stream_hold = asyncio.Event()
+        stream_started = asyncio.Event()
+
+        class RequestStub:
+            def __init__(self) -> None:
+                self.headers = {"content-length": "2"}
+
+            async def stream(self) -> Any:
+                stream_started.set()
+                yield b"x"
+                await stream_hold.wait()
+
+        principal = ClientPrincipal(
+            id="test-admin",
+            name="test-admin",
+            scopes=frozenset({"admin"}),
+        )
+        request_task = asyncio.create_task(endpoint(operation_id, RequestStub(), principal))
+        await stream_started.wait()
+        for _ in range(500):
+            status = await asyncio.to_thread(service.import_operations.get_operation, operation_id)
+            if status["status"] == "uploading":
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("real upload worker did not enter uploading state")
+
+        request_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request_task
+
+        assert service.import_operations.get_operation(operation_id)["status"] == "cancelled"
+        assert service.activity_gate._active_count == 0
+        assert not service.activity_gate._delegated_workers
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        service.close()
+
+
 def test_async_activity_cancellation_releases_gate_reader() -> None:
     gate = CoreActivityGate()
 

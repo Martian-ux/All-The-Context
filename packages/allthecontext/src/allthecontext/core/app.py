@@ -178,6 +178,13 @@ _CLAUDE_CODE_MEMORY_VALIDATION_ROUTES = {
 UPDATE_ACTIVATION_BUSY_REASON = "Update activation deferred until Core activity is quiescent"
 
 
+class _UploadCancelled:
+    __slots__ = ()
+
+
+_UPLOAD_CANCELLED = _UploadCancelled()
+
+
 class _LifecycleBodyTooLarge(Exception):
     """Internal signal used to stop reading an oversized lifecycle request."""
 
@@ -995,7 +1002,7 @@ def create_app(
 
         # Bounded queue bridges the async request body to the sync Core worker.
         # maxsize keeps memory within the import RSS envelope.
-        chunk_queue: Queue[bytes | None] = Queue(maxsize=8)
+        chunk_queue: Queue[bytes | None | _UploadCancelled] = Queue(maxsize=8)
         stream_error: list[BaseException] = []
         stop_pump = threading.Event()
 
@@ -1025,9 +1032,10 @@ def create_app(
                     chunk_queue.get_nowait()
                 except Empty:
                     break
+            end_marker: None | _UploadCancelled = _UPLOAD_CANCELLED if cancel_operation else None
             while True:
                 try:
-                    chunk_queue.put_nowait(None)
+                    chunk_queue.put_nowait(end_marker)
                     break
                 except Full:
                     # A producer that was already inside Queue.put may win
@@ -1090,6 +1098,8 @@ def create_app(
                                 "import cancelled by operator request"
                             ) from None
                         continue
+                    if item is _UPLOAD_CANCELLED:
+                        raise ImportCancelledError("multipart upload request was canceled")
                     if item is None:
                         if stream_error:
                             raise stream_error[0]

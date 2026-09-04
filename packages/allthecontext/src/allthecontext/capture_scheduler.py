@@ -26,7 +26,7 @@ from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, Literal
 
-from .activity import CoreActivityGate
+from .activity import CoreActivityGate, CoreActivityGateClosingError
 from .capture import (
     CaptureCapabilityManifest,
     CaptureCoordinator,
@@ -867,25 +867,31 @@ class CoreCaptureScheduler:
     def run_cycle(self) -> SchedulerRunReport:
         """Run one scheduled cycle without waiting. Fail closed per source."""
 
-        with self.activity_gate.activity():
-            if self._stop.is_set() or self._closing.is_set():
-                return SchedulerRunReport(plan=SchedulePlan(enabled=False))
-            acquired = self._cycle_lock.acquire(blocking=False)
-            if not acquired:
-                return SchedulerRunReport(plan=SchedulePlan(enabled=self.dispatch_allowed()))
-            try:
-                if not self.dispatch_allowed():
-                    self._scheduler.disable()
+        try:
+            with self.activity_gate.activity():
+                if self._stop.is_set() or self._closing.is_set():
                     return SchedulerRunReport(plan=SchedulePlan(enabled=False))
-                refresh_local_workspace_adapter(self.coordinator, self.config)
-                self._scheduler.enable()
-                return self._scheduler.run_once()
-            except CaptureError as error:
-                return self._content_free_cycle_failure(error.code)
-            except OSError:
-                return self._content_free_cycle_failure("capture_failed")
-            finally:
-                self._cycle_lock.release()
+                acquired = self._cycle_lock.acquire(blocking=False)
+                if not acquired:
+                    return SchedulerRunReport(plan=SchedulePlan(enabled=self.dispatch_allowed()))
+                try:
+                    if not self.dispatch_allowed():
+                        self._scheduler.disable()
+                        return SchedulerRunReport(plan=SchedulePlan(enabled=False))
+                    refresh_local_workspace_adapter(self.coordinator, self.config)
+                    self._scheduler.enable()
+                    return self._scheduler.run_once()
+                except CaptureError as error:
+                    return self._content_free_cycle_failure(error.code)
+                except OSError:
+                    return self._content_free_cycle_failure("capture_failed")
+                finally:
+                    self._cycle_lock.release()
+        except CoreActivityGateClosingError:
+            # The worker may pass dispatch_allowed() just before Core shutdown
+            # closes the shared gate. This is expected convergence, not a
+            # scheduler failure; the worker observes its own closing fence next.
+            return SchedulerRunReport(plan=SchedulePlan(enabled=False))
 
     def _loop(self) -> None:
         current = threading.current_thread()

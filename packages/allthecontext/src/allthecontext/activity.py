@@ -100,6 +100,10 @@ class _ActivityLease:
 _activity_thread_state = threading.local()
 
 
+class CoreActivityGateClosingError(RuntimeError):
+    """Raised when new activity races with Core shutdown admission fencing."""
+
+
 class CoreActivityGate:
     """Writer-priority reentrant activity barrier for update activation."""
 
@@ -191,7 +195,7 @@ class CoreActivityGate:
         with self._condition:
             reentrant = self._active_by_owner.get(owner, 0) > 0 or self._exclusive_owner == owner
             if self._closing and not reentrant:
-                raise RuntimeError("Core activity gate is shutting down")
+                raise CoreActivityGateClosingError("Core activity gate is shutting down")
             while not reentrant and (
                 self._exclusive_owner is not None or self._waiting_exclusive > 0
             ):
@@ -253,7 +257,7 @@ class CoreActivityGate:
                         self._active_by_owner.get(owner, 0) > 0 or self._exclusive_owner == owner
                     )
                     if self._closing and not reentrant:
-                        raise RuntimeError("Core activity gate is shutting down")
+                        raise CoreActivityGateClosingError("Core activity gate is shutting down")
                     if reentrant or (
                         self._exclusive_owner is None and self._waiting_exclusive == 0
                     ):
@@ -480,7 +484,7 @@ class CoreActivityGate:
                 and self._shutdown_owner is not owner
                 and self._exclusive_owner != owner
             ):
-                raise RuntimeError("Core activity gate is shutting down")
+                raise CoreActivityGateClosingError("Core activity gate is shutting down")
             if self._exclusive_owner == owner:
                 self._exclusive_depth += 1
             else:
