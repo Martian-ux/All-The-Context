@@ -1,5 +1,22 @@
 # Architecture decisions
 
+## ADR-202: Win32 last-error reads stay behind a typed compatibility boundary
+
+**Status:** accepted locally on 2026-09-04 at exact candidate head
+`a68dc920bc185385225e1cf4dd1851a4bfb8aa18`, implemented by
+`6c9e90d1bd602b37609ed672564144fb52719a48`. The Ubuntu CI failure was caused
+by typeshed correctly omitting the Windows-only `ctypes.get_last_error` API on
+non-Windows platforms. `platform_compat.py` now exposes one private helper
+that short-circuits before API lookup on non-Windows hosts, reads the native
+thread error on Windows, and raises a controlled error if a Windows runtime
+cannot provide that API. Native callers use the helper uniformly. Focused
+tests use monkeypatched platform values and fake getters only; they do not
+invoke services, processes, registry, tasks, or candidate artifacts.
+
+This is a source typing/runtime compatibility repair only. It does not grant
+artifact, hosted, release, signing, Defender, clean-machine, provider/client,
+or downloaded-candidate evidence.
+
 ## ADR-201: Exact Windows hardening convergence preserves authority boundaries
 
 **Status:** accepted locally on 2026-09-04 from exact base

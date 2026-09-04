@@ -84,6 +84,20 @@ updated to assert that explicit security boundary. Source-level tests and
 static checks are evidence contracts only; this candidate does not execute,
 install, update, sign, publish, or Defender-scan a candidate artifact.
 
+### 2026-09-04 — Cross-platform Windows last-error compatibility repair
+
+The Ubuntu failure in hosted run `33924062730` was isolated to seven mypy
+`attr-defined` errors for `ctypes.get_last_error` in
+`platform_compat.py`; Ruff was green. At the exact PR head
+`a68dc920bc185385225e1cf4dd1851a4bfb8aa18`, commit
+`6c9e90d1bd602b37609ed672564144fb52719a48` adds the typed private
+`_windows_last_error` boundary and routes every native last-error read through
+it. Non-Windows execution returns before looking up the Windows-only API;
+Windows retains the real thread last-error value and fails closed if its API
+is unavailable. Focused validation passed 70 tests with 4 capability skips.
+Default, Linux, and Windows mypy checks passed; full final-tree validation and
+the post-push hosted result remain pending.
+
 ### 2026-09-03 — Windows update evidence wave (integration candidate)
 
 This integration starts from clean `db5218c988d1a131a3d4371599e86f7d955e0389`,
