@@ -5401,6 +5401,11 @@ class CoreStore:
         for row in slot_rows:
             if _value_fingerprint(row) == observation_fingerprint:
                 return cast(sqlite3.Row, row)
+        historical_rows = CoreStore._archive_historical_slot_records_tx(
+            connection, observation, state="deleted_ordinary"
+        )
+        if historical_rows:
+            return historical_rows[0]
         if slot_rows:
             return None
         # A deleted record may have had its slot metadata corrected before the
@@ -5462,6 +5467,115 @@ class CoreStore:
         return {str(row["archive_identity"]) for row in rows}
 
     @staticmethod
+    def _archive_slot_metadata_matches_tx(
+        observation: sqlite3.Row,
+        snapshot: Mapping[str, Any] | sqlite3.Row,
+        archive_identity: str,
+    ) -> bool:
+        """Match one bounded historical snapshot to an archive item and slot."""
+
+        try:
+            if _archive_identity_from_row(snapshot) != archive_identity:
+                return False
+        except (KeyError, TypeError, ValueError):
+            return False
+
+        def value(key: str) -> Any:
+            if isinstance(snapshot, sqlite3.Row):
+                try:
+                    return snapshot[key]
+                except (IndexError, KeyError):
+                    return None
+            return snapshot.get(key)
+
+        if value("source_id") != observation["source_id"]:
+            return False
+        snapshot_kind = value("kind")
+        observation_kind = observation["kind"]
+        if not isinstance(snapshot_kind, str) or not isinstance(observation_kind, str):
+            return False
+        if snapshot_kind.casefold() != observation_kind.casefold():
+            return False
+        snapshot_entity = value("entity_key")
+        snapshot_attribute = value("attribute_key")
+        observation_entity = observation["entity_key"]
+        observation_attribute = observation["attribute_key"]
+        if (
+            (snapshot_entity is not None and not isinstance(snapshot_entity, str))
+            or (snapshot_attribute is not None and not isinstance(snapshot_attribute, str))
+            or (observation_entity is not None and not isinstance(observation_entity, str))
+            or (observation_attribute is not None and not isinstance(observation_attribute, str))
+        ):
+            return False
+        try:
+            return _normalized_slot_key(snapshot_entity) == _normalized_slot_key(
+                observation_entity
+            ) and _normalized_slot_key(snapshot_attribute) == _normalized_slot_key(
+                observation_attribute
+            )
+        except InvalidStateError:
+            return False
+
+    @classmethod
+    def _archive_historical_slot_records_tx(
+        cls,
+        connection: sqlite3.Connection,
+        observation: sqlite3.Row,
+        *,
+        state: Literal["active", "deleted_ordinary"],
+    ) -> list[sqlite3.Row]:
+        """Resolve an archive identity through bounded current and old slots."""
+
+        archive_identity = _archive_identity_from_row(observation)
+        if archive_identity is None or observation["source_id"] is None:
+            return []
+        if state == "active":
+            state_join = ""
+            state_where = "AND r.approval_status='approved' AND r.deleted_at IS NULL"
+        else:
+            state_join = "JOIN deletion_tombstones t ON t.record_id=r.id"
+            state_where = "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary'"
+        records = connection.execute(
+            "SELECT r.* FROM context_record_archive_identities i "
+            "JOIN context_records r ON r.id=i.record_id "
+            f"{state_join} "
+            "WHERE i.vault_id=? AND i.archive_identity=? "
+            f"{state_where} ORDER BY r.updated_at DESC,r.id LIMIT ?",
+            (
+                observation["vault_id"],
+                archive_identity,
+                _MAX_OBSERVATION_CANDIDATES + 1,
+            ),
+        ).fetchall()
+        if len(records) > _MAX_OBSERVATION_CANDIDATES:
+            raise _ObservationLookupOverflow(
+                "historical archive candidate set exceeds safety bound"
+            )
+
+        matches: list[sqlite3.Row] = []
+        for record in records:
+            if cls._archive_slot_metadata_matches_tx(observation, record, archive_identity):
+                matches.append(cast(sqlite3.Row, record))
+                continue
+            versions = connection.execute(
+                "SELECT snapshot_json FROM context_record_versions "
+                "WHERE record_id=? ORDER BY version DESC LIMIT ?",
+                (record["id"], _MAX_OBSERVATION_CANDIDATES + 1),
+            ).fetchall()
+            if len(versions) > _MAX_OBSERVATION_CANDIDATES:
+                raise _ObservationLookupOverflow(
+                    "historical archive version set exceeds safety bound"
+                )
+            for version in versions:
+                snapshot = _json_object(cast(str | None, version["snapshot_json"]))
+                if snapshot is not None and cls._archive_slot_metadata_matches_tx(
+                    observation, snapshot, archive_identity
+                ):
+                    matches.append(cast(sqlite3.Row, record))
+                    break
+        return matches
+
+    @staticmethod
     def _record_has_archive_supersession_mutation_tx(
         connection: sqlite3.Connection, record_id: str
     ) -> bool:
@@ -5520,6 +5634,16 @@ class CoreStore:
                 return cast(sqlite3.Row, record)
             if _value_fingerprint(record) == observation_fingerprint:
                 continue
+        historical_rows = self._archive_historical_slot_records_tx(
+            connection, observation, state="active"
+        )
+        for record in historical_rows:
+            if str(
+                record["observation_origin"] or ""
+            ) != ObservationOrigin.ARCHIVE_IMPORT.value or (
+                self._record_has_archive_supersession_mutation_tx(connection, str(record["id"]))
+            ):
+                return record
         return None
 
     def _registered_source_influence_barrier_tx(

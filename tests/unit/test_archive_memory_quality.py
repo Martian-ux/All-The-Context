@@ -773,6 +773,302 @@ def test_archive_barriers_survive_reference_format_and_slot_changes(tmp_path: Pa
     assert deleted_reimport.record_id == original.record_id
 
 
+def test_slot_changing_correction_blocks_stale_original_archive_reimport(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"slot-changing correction archive",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    original = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="slot-changing-correction-original",
+        source_id=source.id,
+        source_reference="message:slot-changing-correction",
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert original.record_id is not None
+    corrected = store.correct_record(
+        original.record_id,
+        content="I prefer detailed answers.",
+        reason="slot-changing correction barrier",
+        entity_key="other",
+        attribute_key="other",
+    )
+
+    stale = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="slot-changing-correction-stale",
+        source_id=source.id,
+        source_reference="message:slot-changing-correction",
+        entity_key="user",
+        attribute_key="style",
+    )
+
+    assert corrected.entity_key == "other"
+    assert corrected.attribute_key == "other"
+    assert stale.disposition == ObservationDisposition.IGNORED
+    assert stale.record_id == original.record_id
+    assert store.get_record(original.record_id).content == "I prefer detailed answers."
+    assert store.status()["counts"]["active_records"] == 1
+
+
+def test_slot_changing_correction_delete_blocks_stale_archive_resurrection(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"slot-changing deletion archive",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    original = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="slot-changing-delete-original",
+        source_id=source.id,
+        source_reference="message:slot-changing-delete",
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert original.record_id is not None
+    store.correct_record(
+        original.record_id,
+        content="I prefer detailed answers.",
+        reason="slot-changing deletion correction",
+        entity_key="other",
+        attribute_key="other",
+    )
+    store.delete_record(original.record_id, reason="slot-changing deletion barrier")
+
+    stale = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="slot-changing-delete-stale",
+        source_id=source.id,
+        source_reference="message:slot-changing-delete",
+        entity_key="user",
+        attribute_key="style",
+    )
+
+    assert stale.disposition == ObservationDisposition.IGNORED
+    assert stale.record_id == original.record_id
+    assert store.get_memory_truth(original.record_id).status.value == "deleted"
+    assert store.status()["counts"]["active_records"] == 0
+
+
+@pytest.mark.parametrize(
+    ("source_scope", "kind"),
+    [("other-source", "interaction_preference"), ("same-source", "preference")],
+    ids=["cross-source", "cross-kind"],
+)
+def test_historical_archive_barrier_keeps_source_and_kind_bound(
+    tmp_path: Path,
+    source_scope: str,
+    kind: str,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"historical barrier source one",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    other_source = store.add_source(
+        b"historical barrier source two",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    original = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="historical-bound-original",
+        kind="interaction_preference",
+        source_id=source.id,
+        source_reference="message:historical-bound",
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert original.record_id is not None
+    store.correct_record(
+        original.record_id,
+        content="I prefer detailed answers.",
+        reason="historical source-kind isolation",
+        entity_key="other",
+        attribute_key="other",
+    )
+
+    independent = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="historical-bound-independent",
+        kind=kind,
+        source_id=other_source.id if source_scope == "other-source" else source.id,
+        source_reference="message:historical-bound",
+        entity_key="user",
+        attribute_key="style",
+    )
+
+    assert independent.record_id is not None
+    assert independent.record_id != original.record_id
+    assert independent.disposition in {
+        ObservationDisposition.APPLIED,
+        ObservationDisposition.REINFORCED,
+    }
+    assert store.get_record(original.record_id).content == "I prefer detailed answers."
+    assert store.status()["counts"]["active_records"] == 2
+
+
+def test_ambiguous_archive_identity_uses_historical_slot_without_identity_migration(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"ambiguous historical identity archive",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="ambiguous-historical-identity",
+    )
+    submitted = store.submit_batch(
+        str(session["session_id"]),
+        "ambiguous-historical-identity-batch",
+        [
+            CandidateInput(
+                kind="interaction_preference",
+                content="I prefer concise answers.",
+                entity_key=attribute,
+                attribute_key="value",
+                source_id=source.id,
+                source_reference="message:ambiguous-historical-identity",
+                source_service="synthetic",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+            for attribute in ("style", "format")
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=[source.id]),
+    )
+    first, second = [
+        store.get_candidate(str(candidate_id)) for candidate_id in submitted["candidate_ids"]
+    ]
+    assert first.record_id is not None and second.record_id is not None
+    assert first.record_id != second.record_id
+
+    store.correct_record(
+        first.record_id,
+        content="I prefer detailed answers.",
+        reason="ambiguous historical identity correction",
+        entity_key="other",
+        attribute_key="other",
+    )
+    stale_style = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="ambiguous-historical-style-replay",
+        source_id=source.id,
+        source_reference="message:ambiguous-historical-identity",
+        entity_key="style",
+        attribute_key="value",
+    )
+    format_replay = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="ambiguous-historical-format-replay",
+        source_id=source.id,
+        source_reference="message:ambiguous-historical-identity",
+        entity_key="format",
+        attribute_key="value",
+    )
+
+    assert stale_style.disposition == ObservationDisposition.IGNORED
+    assert stale_style.record_id == first.record_id
+    assert format_replay.record_id == second.record_id
+    assert format_replay.disposition in {
+        ObservationDisposition.APPLIED,
+        ObservationDisposition.REINFORCED,
+    }
+    assert store.get_record(first.record_id).content == "I prefer detailed answers."
+    assert store.status()["counts"]["active_records"] == 2
+
+
+def test_historical_archive_barrier_is_repaired_and_replay_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "core.db"
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"historical archive repair fixture",
+        source_service="synthetic",
+        source_type="provider_archive",
+    )
+    original = _archive_observation(
+        store,
+        content="I prefer concise answers.",
+        batch_key="historical-repair-original",
+        source_id=source.id,
+        source_reference="message:historical-repair",
+        entity_key="user",
+        attribute_key="style",
+    )
+    assert original.record_id is not None
+    store.correct_record(
+        original.record_id,
+        content="I prefer detailed answers.",
+        reason="historical repair correction",
+        entity_key="other",
+        attribute_key="other",
+    )
+    with store.connect() as connection:
+        connection.execute("DELETE FROM context_record_archive_identities")
+
+    repaired = CoreStore(database)
+    repaired.initialize_vault()
+    with repaired.connect() as connection:
+        repaired_index = connection.execute(
+            "SELECT COUNT(*) FROM context_record_archive_identities WHERE record_id=?",
+            (original.record_id,),
+        ).fetchone()[0]
+    assert repaired_index >= 2
+
+    first_replay = _archive_observation(
+        repaired,
+        content="I prefer concise answers.",
+        batch_key="historical-repair-replay-one",
+        source_id=source.id,
+        source_reference="message:historical-repair",
+        entity_key="user",
+        attribute_key="style",
+    )
+    second_replay = _archive_observation(
+        repaired,
+        content="I prefer concise answers.",
+        batch_key="historical-repair-replay-two",
+        source_id=source.id,
+        source_reference="message:historical-repair",
+        entity_key="user",
+        attribute_key="style",
+    )
+
+    assert first_replay.disposition == ObservationDisposition.IGNORED
+    assert second_replay.disposition == ObservationDisposition.IGNORED
+    assert first_replay.record_id == original.record_id
+    assert second_replay.record_id == original.record_id
+    assert repaired.get_record(original.record_id).content == "I prefer detailed answers."
+    assert repaired.status()["counts"]["active_records"] == 1
+
+
 def test_active_archive_identity_reuses_record_after_slot_change(tmp_path: Path) -> None:
     store = _store(tmp_path)
     original = _archive_observation(
