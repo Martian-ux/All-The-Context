@@ -3205,6 +3205,9 @@ class UpdateManager:
         with self._exclusive():
             self._require_no_active_handoff()
             self._require_metadata_writes_allowed(preferences=True)
+            resume_automatic_staging = (
+                automatic_staging_enabled and self.state.phase is UpdatePhase.CANCELLED
+            )
             channel_changed = channel != self.preferences.channel
             if (
                 self.state.completed_handoff_identity is not None
@@ -3231,6 +3234,10 @@ class UpdateManager:
             if automatic_staging_enabled:
                 self.state.automatic_staging_paused = False
                 self._cancel.clear()
+                if resume_automatic_staging and self.state.phase is UpdatePhase.CANCELLED:
+                    self.state.phase = UpdatePhase.IDLE
+                    self.state.last_checked_at = None
+                    self.state.last_error = None
             else:
                 self.state.automatic_staging_paused = False
             if channel_changed:

@@ -1702,6 +1702,14 @@ function UpdatesView() {
     : status?.phase.replaceAll("_", " ") ?? "loading";
   const availableChannels = status?.available_channels ?? (status?.configured ? [status.channel] : []);
   const selectedChannelAvailable = availableChannels.includes(channel);
+  const resumeAutomaticStaging = Boolean(
+    status?.automatic_staging_paused
+    && stagingEnabled
+    && status.automatic_staging_supported,
+  );
+  const preferencesUnchanged = status?.enabled === enabled
+    && status?.channel === channel
+    && status?.automatic_staging_enabled === stagingEnabled;
   return (
     <div className="narrow-column">
       <section className="backup-intro">
@@ -1723,8 +1731,8 @@ function UpdatesView() {
           <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={controlsBusy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable" disabled={!availableChannels.includes("stable")}>Stable</option><option value="beta" disabled={!availableChannels.includes("beta")}>Beta</option></select></label>
           <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={controlsBusy} onChange={(event) => setEnabled(event.target.checked)} /> Check for updates automatically at launch, at most daily</label>
           <label className="update-checkbox"><input type="checkbox" checked={stagingEnabled} disabled={controlsBusy || !status?.automatic_staging_supported} onChange={(event) => setStagingEnabled(event.target.checked)} /> Stage verified updates automatically (packaged Windows only)</label>
-          {status?.automatic_staging_paused ? <Notice kind="info">Automatic staging is paused after cancellation. Save preferences with staging enabled to resume it.</Notice> : null}
-          <button className="secondary-button" disabled={controlsBusy || !selectedChannelAvailable || (status?.enabled === enabled && status?.channel === channel && status?.automatic_staging_enabled === stagingEnabled)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel, stagingEnabled))}>Save preferences</button>
+          {status?.automatic_staging_paused ? <Notice kind="info">{status.automatic_staging_supported ? "Automatic staging is paused after cancellation. Resume automatic staging to check again and reverify the signed metadata." : "Automatic staging is paused after cancellation and is unavailable in this build."}</Notice> : null}
+          <button className="secondary-button" disabled={controlsBusy || !selectedChannelAvailable || (!resumeAutomaticStaging && preferencesUnchanged)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel, stagingEnabled))}>{resumeAutomaticStaging ? "Resume automatic staging" : "Save preferences"}</button>
         </div>
         <div className="decision-bar update-actions">
           {status?.last_error ? <button className="quiet-button" disabled={controlsBusy} onClick={() => void act("clear", api.clearUpdateError)}>Clear error</button> : null}

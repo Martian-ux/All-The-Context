@@ -1386,6 +1386,45 @@ describe("dashboard", () => {
     expect(await screen.findByRole("button", { name: /check now/i })).toBeEnabled();
   });
 
+  it("lets a paused automatic staging preference be resumed", async () => {
+    const update = updateStatusPayload({
+      phase: "cancelled",
+      offered_version: "0.2.0",
+      last_error: "Update download was cancelled",
+      automatic_staging_enabled: true,
+      automatic_staging_paused: true,
+      automatic_staging_supported: true,
+    });
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/updates/preferences")) {
+        return json(updateStatusPayload({
+          automatic_staging_enabled: true,
+          automatic_staging_paused: false,
+        }));
+      }
+      if (url.endsWith("/admin/updates") && !init?.method) return json(update);
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    const resume = await screen.findByRole("button", { name: "Resume automatic staging" });
+    expect(resume).toBeEnabled();
+    fireEvent.click(resume);
+
+    await waitFor(() => expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/preferences"))).toBe(true));
+    const request = fetch.mock.calls.find(([input]) => String(input).endsWith("/admin/updates/preferences"));
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      enabled: true,
+      channel: "stable",
+      automatic_staging_enabled: true,
+    });
+  });
+
   it("shows a bounded cancellation error and restores the active cancel action", async () => {
     const update = updateStatusPayload({ phase: "downloading", offered_version: "0.2.0" });
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {

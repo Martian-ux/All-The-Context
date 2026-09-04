@@ -348,7 +348,7 @@ class UpdatePreferencesRequest(BaseModel):
 
     enabled: bool
     channel: Channel
-    automatic_staging_enabled: bool
+    automatic_staging_enabled: bool = False
 
 
 class CaptureCreateRequest(BaseModel):

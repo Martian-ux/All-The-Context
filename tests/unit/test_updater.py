@@ -3528,6 +3528,35 @@ def test_automatic_download_does_not_clear_a_pending_cancel(tmp_path: Path) -> N
     assert not (manager._operation_directory() / "artifact.zip").exists()
 
 
+def test_automatic_staging_can_be_resumed_after_cancellation(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, installer = _manager(
+        tmp_path, manifest, artifact, keyring, automatic_staging=True
+    )
+    assert manager.check()["phase"] == "available"
+    manager.cancel()
+
+    resumed = manager.configure(
+        enabled=True,
+        channel="stable",
+        automatic_staging_enabled=True,
+    )
+
+    assert resumed["phase"] == "idle"
+    assert resumed["automatic_staging_enabled"] is True
+    assert resumed["automatic_staging_paused"] is False
+    assert resumed["last_checked_at"] is None
+    assert resumed["last_error"] is None
+    assert transport.stream_calls == 0
+
+    staged = UpdateAutomation(manager).run_once()
+
+    assert staged["phase"] == "ready"
+    assert transport.metadata_calls == 2
+    assert transport.stream_calls == 1
+    assert installer.handed_off is False
+
+
 def test_automatic_download_uses_the_current_candidate_after_supersession(
     tmp_path: Path,
 ) -> None:

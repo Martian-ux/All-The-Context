@@ -303,6 +303,24 @@ def test_update_controls_are_admin_scoped_and_persist_preferences(tmp_path: Path
         assert invalid.status_code == 422
 
 
+def test_update_preferences_accepts_legacy_payload_as_check_only(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_app(config)) as client:
+        response = client.put(
+            "/v1/admin/updates/preferences",
+            json={"enabled": True, "channel": "stable"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["automatic_staging_enabled"] is False
+    assert (
+        json.loads((tmp_path / "updates" / "preferences.json").read_text(encoding="utf-8"))[
+            "automatic_staging_enabled"
+        ]
+        is False
+    )
+
+
 def test_verified_update_artifact_is_private_no_store_and_ephemeral(tmp_path: Path) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     artifact = tmp_path / "private-export.zip"
