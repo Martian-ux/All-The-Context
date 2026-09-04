@@ -1793,8 +1793,16 @@ class WindowsApplicationRegistrationTransaction:
             or any(char not in "0123456789abcdef" for char in journal.registry_identity)
         ):
             raise WindowsRegistrationError("registration_journal_invalid")
+        if (journal.registry_generation is None) != (journal.registry_identity is None):
+            raise WindowsRegistrationError("registration_journal_invalid")
         if journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED and (
             journal.registry_generation is None or journal.registry_identity is None
+        ):
+            raise WindowsRegistrationError("registration_journal_invalid")
+        if (
+            journal.registry_key_created
+            and not journal.snapshot.uninstall_key_present
+            and journal.registry_generation is None
         ):
             raise WindowsRegistrationError("registration_journal_invalid")
         owned = self._owned_names()
@@ -1881,8 +1889,8 @@ class WindowsApplicationRegistrationTransaction:
             try:
                 self._registry_native_residual = self._native_registry_residual_exists(journal)
             except BaseException:
-                # Inability to inspect a journal-bound native residual is
-                # itself ambiguity; startup must retain the journal.
+                # Inability to inspect any journal-bound generation is itself
+                # ambiguity; startup must retain the journal.
                 self._registry_native_residual = True
             # An authenticated journal carries the post-publication identity
             # of every generated shortcut.  Recovery must use it as an
@@ -2174,6 +2182,18 @@ class WindowsApplicationRegistrationTransaction:
                     return True
         except OSError:
             return True
+        # A fresh journal with no prior key has an additional ambiguous
+        # state: a committed transactional publication may have happened
+        # before registry_key_created was durably recorded.  Treat any
+        # canonical key as evidence until the journal records completion.
+        if not journal.registry_key_created and not journal.snapshot.uninstall_key_present:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._uninstall_key, 0, 0):
+                    return True
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return True
         # The canonical key is not a residual.  Ownership of that published
         # key is checked separately; treating a healthy canonical match as a
         # residual wedges every restart-loaded installed journal.
@@ -2258,11 +2278,15 @@ class WindowsApplicationRegistrationTransaction:
         observed = current or self._current_snapshot()
         if not observed.uninstall_key_present:
             return False
-        if journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED:
-            if self._refresh_native_registry_residual(journal):
-                return False
-            if not self._native_registry_matches_generation(journal):
-                return False
+        if journal.registry_generation is not None and self._refresh_native_registry_residual(
+            journal
+        ):
+            return False
+        if (
+            journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
+            and not self._native_registry_matches_generation(journal)
+        ):
+            return False
         current_registry = self._registry_values_by_name(observed)
         canonical_registry = self._canonical_registry()
         for name, expected in canonical_registry.items():
@@ -2329,9 +2353,8 @@ class WindowsApplicationRegistrationTransaction:
 
         self._journal = journal
         self._snapshot = journal.snapshot
-        if (
-            journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
-            and self._refresh_native_registry_residual(journal)
+        if journal.registry_generation is not None and self._refresh_native_registry_residual(
+            journal
         ):
             raise WindowsRegistrationError("registration_recovery_required", transaction=self)
         desired_tuple = journal.desired_registry.get("DisplayVersion")
@@ -2728,7 +2751,7 @@ class WindowsApplicationRegistrationTransaction:
         if journal is not None:
             if journal.phase == "installed":
                 if (
-                    journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
+                    journal.registry_generation is not None
                     and self._refresh_native_registry_residual(journal)
                 ):
                     raise WindowsRegistrationError(
@@ -2779,13 +2802,18 @@ class WindowsApplicationRegistrationTransaction:
         del verify_canonical_shortcuts
         if not current.uninstall_key_present:
             return False
-        if self._journal is not None and self._journal.registry_publication == (
-            _REGISTRATION_PUBLICATION_NATIVE_STAGED
+        if (
+            self._journal is not None
+            and self._journal.registry_generation is not None
+            and self._refresh_native_registry_residual(self._journal)
         ):
-            if self._refresh_native_registry_residual(self._journal):
-                return False
-            if not self._native_registry_matches_generation(self._journal):
-                return False
+            return False
+        if (
+            self._journal is not None
+            and self._journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
+            and not self._native_registry_matches_generation(self._journal)
+        ):
+            return False
         registry = self._canonical_registry()
         if any(
             not _registry_snapshot_equal(value, registry[value.name])
@@ -3184,6 +3212,14 @@ class WindowsApplicationRegistrationTransaction:
     def _restore_journal_phase(self) -> str:
         """Keep restart recovery aligned with the direction of the mutation."""
 
+        if (
+            self._journal is not None
+            and self._journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
+            and self._journal.registry_generation is not None
+            and not self._journal.registry_key_created
+            and not self._journal.snapshot.uninstall_key_present
+        ):
+            return "applying"
         if self._journal is not None and self._journal.phase == "uninstalling":
             return "uninstalling"
         if any(mutation.remove for mutation in self._mutations):
@@ -3254,9 +3290,8 @@ class WindowsApplicationRegistrationTransaction:
             return WindowsRegistrationRestoreStatus(True, False, 0)
         if journal.phase != "installed":
             raise WindowsRegistrationError("registration_recovery_required", transaction=self)
-        if (
-            journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
-            and self._refresh_native_registry_residual(journal)
+        if journal.registry_generation is not None and self._refresh_native_registry_residual(
+            journal
         ):
             raise WindowsRegistrationError("registration_recovery_required", transaction=self)
         current = self._current_snapshot()
@@ -3396,11 +3431,21 @@ class WindowsApplicationRegistrationTransaction:
                 pending.append(mutation.name)
         if self._key_created and "uninstall_key" not in pending:
             pending.append("uninstall_key")
+        registry_transaction_pending = (
+            self._journal is not None
+            and self._journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
+            and self._journal.registry_generation is not None
+            and not self._journal.registry_key_created
+            and not self._journal.snapshot.uninstall_key_present
+        )
+        if registry_transaction_pending and "registry_transaction" not in pending:
+            pending.append("registry_transaction")
         if (
             not self._mutations
             and not self._key_created
             and self._journal is not None
             and not self._registry_native_residual
+            and not registry_transaction_pending
         ):
             try:
                 self._clear_journal()
@@ -3476,7 +3521,7 @@ def recover_application_entrypoints() -> WindowsRegistrationRestoreStatus | None
         return None
     if journal.phase == "installed":
         if (
-            journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED
+            journal.registry_generation is not None
             and transaction._refresh_native_registry_residual(journal)
         ):
             raise WindowsRegistrationError(

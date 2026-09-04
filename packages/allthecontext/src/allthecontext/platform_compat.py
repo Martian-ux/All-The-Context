@@ -5,18 +5,20 @@ from __future__ import annotations
 import ctypes
 import importlib
 import os
-import secrets
 import subprocess
 import sys
 import threading
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _ERROR_FILE_NOT_FOUND = 2
 _ERROR_PATH_NOT_FOUND = 3
 _ERROR_SUCCESS = 0
 _ERROR_ALREADY_EXISTS = 183
+_REG_CREATED_NEW_KEY = 1
+_REG_OPENED_EXISTING_KEY = 2
+_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _REGISTRY_OWNERSHIP_VALUE = "ATCRegistrationGeneration"
 _REGISTRY_IDENTITY_VALUE = "ATCRegistrationJournal"
 _REGISTRY_IDENTITY_HEX_LENGTH = 32
@@ -218,15 +220,48 @@ def replace_file_durably(source: Path, destination: Path) -> None:
         os.close(directory_fd)
 
 
+class _RegistryTransaction:
+    """Small owner for one native KTM transaction handle."""
+
+    def __init__(self, handle: int, commit: Any, rollback: Any, close: Any) -> None:
+        self.handle = handle
+        self._commit = commit
+        self._rollback = rollback
+        self._close = close
+        self.committed = False
+        self.closed = False
+
+    def commit(self) -> None:
+        result = int(self._commit(ctypes.c_void_p(self.handle)))
+        if not result:
+            _raise_windows_error(ctypes.get_last_error(), "unable to commit registry transaction")
+        self.committed = True
+
+    def rollback(self) -> None:
+        if self.committed or self.closed:
+            return
+        result = int(self._rollback(ctypes.c_void_p(self.handle)))
+        if not result:
+            _raise_windows_error(
+                ctypes.get_last_error(), "unable to roll back registry transaction"
+            )
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        result = int(self._close(ctypes.c_void_p(self.handle)))
+        self.closed = True
+        if not result:
+            _raise_windows_error(ctypes.get_last_error(), "unable to close registry transaction")
+
+
 class WindowsRegistryAdapter:
     """Standard ``winreg`` compatibility plus bounded registry primitives.
 
-    The lower-case mutation methods below are used only when the wrapped
-    provider supplies the matching native compare operations.  They open the
-    requested HKCU path inside this adapter, compare the requested preimage,
-    and mutate that same path without returning a key handle to the caller.
-    The public winreg-shaped methods remain delegated for ordinary forward
-    writes and read-only consumers elsewhere in the desktop bootstrap.
+    The lower-case mutation methods below use native KTM registry transactions
+    for generation-bound publication/deletion.  The public winreg-shaped
+    methods remain delegated for ordinary forward writes and read-only
+    consumers elsewhere in the desktop bootstrap.
     """
 
     def __init__(self, module: Any) -> None:
@@ -250,8 +285,8 @@ class WindowsRegistryAdapter:
         primitive.  A process-local lock cannot close that inter-process race,
         so destructive cleanup remains disabled unless a native host supplies
         all three explicitly atomic operations.  Stock forward registration
-        instead uses a fully-populated private sibling and native rename
-        publication; it never writes an observed-absent value in place.
+        instead uses a complete transacted key and never writes an
+        observed-absent value in place.
         """
 
         return all(
@@ -411,192 +446,216 @@ class WindowsRegistryAdapter:
             and all(char in "0123456789abcdef" for char in identity_markers[0])
         )
 
-    def _delete_exact_key(
+    def _transacted_key_handle(
         self,
         name: str,
-        values: tuple[tuple[str, int, object], ...],
+        transaction: _RegistryTransaction,
         *,
-        tombstone_name: str | None = None,
-        ownership_value: str = _REGISTRY_OWNERSHIP_VALUE,
-        identity_value: str = _REGISTRY_IDENTITY_VALUE,
-    ) -> bool:
-        """Isolate and remove an exact key through its native key handle.
+        create: bool,
+        access: int,
+    ) -> tuple[Any, int]:
+        """Open a registry key through the KTM-bound Win32 API.
 
-        ``winreg.DeleteKey`` takes a parent and a path.  Verifying a key,
-        closing that key, and then deleting the path is therefore a
-        verify-close-delete race: another process can replace the path between
-        the verification and delete.  ``RegRenameKey`` accepts the key handle
-        itself when its subkey argument is ``NULL``.  Move the already-open,
-        fully-validated key to a private tombstone, validate that same handle
-        again, and use the native handle-bound delete.  Any ambiguity leaves
-        the tombstone in place for bounded retry; it is never restored or
-        removed by a later path-based delete.
+        The returned ``PyHKEY`` owns the native key handle.  This deliberately
+        requires stock ``winreg.PyHKEY`` support; a provider that cannot
+        transfer and close the handle is not an atomic registry provider.
         """
 
-        ownership_markers = [
-            data for key_name, _type, data in values if key_name == ownership_value
-        ]
-        if (
-            len(ownership_markers) != 1
-            or not isinstance(ownership_markers[0], str)
-            or not self._complete_identity_shape(
-                values, ownership_markers[0], ownership_value, identity_value
+        advapi32 = windows_dll("advapi32")
+        function_name = "RegCreateKeyTransactedW" if create else "RegOpenKeyTransactedW"
+        function = getattr(advapi32, function_name, None)
+        py_hkey = getattr(self._module, "PyHKEY", None)
+        close_key = getattr(advapi32, "RegCloseKey", None)
+        if not callable(function) or not callable(py_hkey) or not callable(close_key):
+            raise OSError("transactional registry handles are unavailable")
+        result_handle = ctypes.c_void_p()
+        disposition = ctypes.c_uint32(_REG_OPENED_EXISTING_KEY)
+        root = ctypes.c_void_p(int(self._current_user) & 0xFFFFFFFFFFFFFFFF)
+        if create:
+            function.argtypes = (
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_uint32,
+                ctypes.c_wchar_p,
+                ctypes.c_uint32,
+                ctypes.c_uint32,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(ctypes.c_uint32),
+                ctypes.c_void_p,
+                ctypes.c_void_p,
             )
-        ):
-            return False
-        source_parent, _source_leaf = self._split_key_name(name)
-        tombstone = tombstone_name or self._key_path(
-            source_parent, f".atc-tombstone-{secrets.token_hex(8)}"
-        )
-        tombstone_parent, tombstone_leaf = self._split_key_name(tombstone)
-        if tombstone_parent != source_parent or tombstone_leaf in {".", ".."}:
-            raise ValueError("invalid registry tombstone name")
-        access = _KEY_READ | _KEY_SET_VALUE | _KEY_CREATE_SUB_KEY | _DELETE
-        try:
-            with self._module.OpenKey(self._current_user, tombstone, 0, _KEY_READ):
-                return False
-        except FileNotFoundError:
-            pass
-        key: Any | None = None
-        try:
-            key = self._module.OpenKey(self._current_user, name, 0, access)
-        except FileNotFoundError:
-            return True
-        try:
-            return self._isolate_and_delete_open_key(
-                key,
-                values,
-                tombstone,
-                tombstone_leaf,
+            function.restype = ctypes.c_long
+            result = int(
+                function(
+                    root,
+                    name,
+                    0,
+                    None,
+                    0,
+                    access,
+                    None,
+                    ctypes.byref(result_handle),
+                    ctypes.byref(disposition),
+                    ctypes.c_void_p(transaction.handle),
+                    None,
+                )
             )
+        else:
+            function.argtypes = (
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_uint32,
+                ctypes.c_uint32,
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+            )
+            function.restype = ctypes.c_long
+            result = int(
+                function(
+                    root,
+                    name,
+                    0,
+                    access,
+                    ctypes.byref(result_handle),
+                    ctypes.c_void_p(transaction.handle),
+                    None,
+                )
+            )
+        if result in {_ERROR_FILE_NOT_FOUND, _ERROR_PATH_NOT_FOUND}:
+            raise FileNotFoundError(name)
+        if result != _ERROR_SUCCESS:
+            operation = "create" if create else "open"
+            _raise_windows_error(result, f"unable to {operation} transacted key")
+        raw_handle = result_handle.value
+        if raw_handle in {None, _INVALID_HANDLE_VALUE}:
+            raise OSError("transactional registry API returned no handle")
+        transferred = False
+        try:
+            key = py_hkey(raw_handle)
+            transferred = True
+            return key, int(disposition.value)
         finally:
-            if key is not None:
-                with suppress(OSError):
-                    key.Close()
+            if not transferred:
+                close_key(ctypes.c_void_p(raw_handle))
 
-    def _isolate_and_delete_open_key(
+    def _set_transacted_values(
         self,
         key: Any,
         values: tuple[tuple[str, int, object], ...],
-        tombstone: str,
-        tombstone_leaf: str,
-    ) -> bool:
-        """Isolate and remove one already-open key without reopening its path."""
+    ) -> None:
+        setter = getattr(self._module, "SetValueEx", None)
+        if not callable(setter):
+            raise OSError("winreg.SetValueEx is unavailable")
+        for name, value_type, data in values:
+            setter(key, name, 0, int(value_type), data)
 
-        if not self._staged_values_match(key, values):
-            return False
-        self._rename_open_key(key, tombstone_leaf)
-        if not self._staged_values_match(key, values):
-            # The key was atomically isolated, but it no longer has the
-            # complete owned shape.  Preserve it under the tombstone.
-            return False
-        if not self._delete_open_key(key, values):
-            return False
-        return self._key_is_absent(tombstone)
-
-    def _delete_isolated_key(
+    def _delete_transacted_key(
         self,
         name: str,
-        values: tuple[tuple[str, int, object], ...],
-        *,
-        ownership_value: str = _REGISTRY_OWNERSHIP_VALUE,
-        identity_value: str = _REGISTRY_IDENTITY_VALUE,
+        transaction: _RegistryTransaction,
     ) -> bool:
-        """Delete an already-isolated tombstone through its native handle."""
-
-        ownership_markers = [
-            data for key_name, _type, data in values if key_name == ownership_value
-        ]
-        if (
-            len(ownership_markers) != 1
-            or not isinstance(ownership_markers[0], str)
-            or not self._complete_identity_shape(
-                values, ownership_markers[0], ownership_value, identity_value
-            )
-        ):
-            return False
-        access = _KEY_READ | _KEY_SET_VALUE | _KEY_CREATE_SUB_KEY | _DELETE
-        key: Any | None = None
-        try:
-            key = self._module.OpenKey(self._current_user, name, 0, access)
-        except FileNotFoundError:
-            return True
-        try:
-            if not self._staged_values_match(key, values):
-                return False
-            if not self._delete_open_key(key, values):
-                return False
-            return self._key_is_absent(name)
-        finally:
-            if key is not None:
-                with suppress(OSError):
-                    key.Close()
-
-    def _rename_open_key(self, key: Any, new_leaf: str) -> None:
-        """Atomically rename the exact key represented by ``key``."""
+        """Delete a key by ``RegDeleteKeyTransactedW`` inside KTM."""
 
         advapi32 = windows_dll("advapi32")
-        rename_key = advapi32.RegRenameKey
-        rename_key.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p)
-        rename_key.restype = ctypes.c_long
-        try:
-            native_key = ctypes.c_void_p(int(key))
-        except (TypeError, ValueError):
-            native_key = key
-        result = int(rename_key(native_key, None, new_leaf))
-        if result == _ERROR_ALREADY_EXISTS:
-            raise FileExistsError(new_leaf)
-        if result != _ERROR_SUCCESS:
-            _raise_windows_error(result, "unable to isolate registry key")
-
-    def _delete_open_key(
-        self,
-        key: Any,
-        values: tuple[tuple[str, int, object], ...],
-    ) -> bool:
-        """Delete one isolated key by handle after a final exact check."""
-
-        # The caller validates immediately after isolation.  Revalidate here
-        # while the same native handle is still live, so a mutation between
-        # that validation and the destructive syscall cannot be counted as a
-        # successful cleanup.  The handle also prevents a path replacement
-        # from redirecting the syscall to a different key object.
-        if not self._staged_values_match(key, values):
+        function = getattr(advapi32, "RegDeleteKeyTransactedW", None)
+        if not callable(function):
+            raise OSError("transactional registry deletion is unavailable")
+        function.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        )
+        function.restype = ctypes.c_long
+        root = ctypes.c_void_p(int(self._current_user) & 0xFFFFFFFFFFFFFFFF)
+        result = int(
+            function(
+                root,
+                name,
+                _DELETE,
+                0,
+                ctypes.c_void_p(transaction.handle),
+                None,
+            )
+        )
+        if result in {_ERROR_FILE_NOT_FOUND, _ERROR_PATH_NOT_FOUND}:
             return False
-
-        ntdll = windows_dll("ntdll")
-        delete_key = getattr(ntdll, "NtDeleteKey", None)
-        close_handle = getattr(ntdll, "NtClose", None)
-        if not callable(delete_key) or not callable(close_handle):
-            raise OSError("native registry handle deletion is unavailable")
-        delete_key.argtypes = (ctypes.c_void_p,)
-        delete_key.restype = ctypes.c_long
-        close_handle.argtypes = (ctypes.c_void_p,)
-        close_handle.restype = ctypes.c_long
-
-        detach = getattr(key, "Detach", None)
-        if callable(detach):
-            raw_handle = int(detach())
-            try:
-                result = int(delete_key(ctypes.c_void_p(raw_handle)))
-            finally:
-                close_handle(ctypes.c_void_p(raw_handle))
-        else:
-            result = int(delete_key(key))
         if result != _ERROR_SUCCESS:
-            raise OSError(result, "unable to delete isolated registry key")
+            _raise_windows_error(result, "unable to delete transacted registry key")
         return True
 
-    def _key_is_absent(self, name: str) -> bool:
-        """Prove that the exact private name is absent after native deletion."""
-
+    def _transacted_key_is_absent(
+        self,
+        name: str,
+        transaction: _RegistryTransaction,
+    ) -> bool:
         try:
-            with self._module.OpenKey(self._current_user, name, 0, _KEY_READ):
-                return False
+            key, _disposition = self._transacted_key_handle(
+                name,
+                transaction,
+                create=False,
+                access=_KEY_READ,
+            )
         except FileNotFoundError:
             return True
-        except OSError:
+        try:
             return False
+        finally:
+            key.Close()
+
+    def _begin_registry_transaction(self) -> _RegistryTransaction:
+        """Begin a local KTM transaction or fail closed on unsupported hosts."""
+
+        ktmw32 = windows_dll("ktmw32")
+        create = cast(Any, getattr(ktmw32, "CreateTransaction", None))
+        commit = cast(Any, getattr(ktmw32, "CommitTransaction", None))
+        rollback = cast(Any, getattr(ktmw32, "RollbackTransaction", None))
+        close = cast(Any, getattr(ktmw32, "CloseHandle", None))
+        if not callable(close):
+            close = cast(Any, getattr(windows_dll("kernel32"), "CloseHandle", None))
+        if not all(callable(function) for function in (create, commit, rollback, close)):
+            raise OSError("KTM registry transactions are unavailable")
+        create.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_wchar_p,
+        )
+        create.restype = ctypes.c_void_p
+        commit.argtypes = (ctypes.c_void_p,)
+        commit.restype = ctypes.c_int
+        rollback.argtypes = (ctypes.c_void_p,)
+        rollback.restype = ctypes.c_int
+        close.argtypes = (ctypes.c_void_p,)
+        close.restype = ctypes.c_int
+        raw_handle = create(None, None, 0, 0, 0, 0, None)
+        raw_value = getattr(raw_handle, "value", raw_handle)
+        if raw_value in {None, _INVALID_HANDLE_VALUE}:
+            _raise_windows_error(ctypes.get_last_error(), "unable to create registry transaction")
+        return _RegistryTransaction(int(raw_value), commit, rollback, close)
+
+    def _run_registry_transaction(self, operation: Any) -> Any:
+        transaction = self._begin_registry_transaction()
+        try:
+            result = operation(transaction)
+            if result is False:
+                transaction.rollback()
+                return result
+            transaction.commit()
+            return result
+        except BaseException:
+            with suppress(BaseException):
+                transaction.rollback()
+            raise
+        finally:
+            transaction.close()
 
     def publish_key_if_absent(
         self,
@@ -606,12 +665,14 @@ class WindowsRegistryAdapter:
         ownership_value: str,
         identity_value: str = _REGISTRY_IDENTITY_VALUE,
     ) -> bool:
-        """Publish one complete key without clobbering a canonical sibling.
+        """Atomically materialize the exact key and remove its stage.
 
-        The staging name is derived from the journal generation and lives under
-        the same parent, so the final native rename is an atomic same-parent
-        publication.  ``RegRenameKey`` fails when the canonical child already
-        exists; it does not replace that child.
+        KTM gives the stage read, canonical create, value materialization, and
+        stage removal one commit point.  A rename of a mutable staged key is
+        intentionally not used: it cannot bind the content check to the
+        publication syscall.  Windows Vista and later expose these APIs, but
+        a missing/disabled API or a commit conflict is an unsupported or
+        ambiguous provider and never falls back to path-based mutation.
         """
 
         if not self._complete_identity_shape(values, generation, ownership_value, identity_value):
@@ -619,79 +680,65 @@ class WindowsRegistryAdapter:
         parent, canonical_leaf = self._split_key_name(name)
         stage_leaf = f"{canonical_leaf}.atc-stage-{generation}"
         stage_name = self._key_path(parent, stage_leaf)
-        with _REGISTRY_MUTATION_LOCK:
-            stage_key: Any | None = None
-            rename_attempted = False
+
+        def publish(transaction: _RegistryTransaction) -> bool:
+            stage_key, stage_disposition = self._transacted_key_handle(
+                stage_name,
+                transaction,
+                create=True,
+                access=_KEY_READ | _KEY_SET_VALUE | _KEY_CREATE_SUB_KEY,
+            )
             try:
-                stage_key, created = self._native_key_handle(stage_name)
-                if created:
-                    self._set_staged_values(stage_key, values)
-                elif not self._staged_values_match(stage_key, values):
-                    raise OSError("registry staging key changed")
+                if stage_disposition == _REG_CREATED_NEW_KEY:
+                    self._set_transacted_values(stage_key, values)
+                elif stage_disposition != _REG_OPENED_EXISTING_KEY:
+                    raise OSError("invalid registry stage disposition")
                 if not self._staged_values_match(stage_key, values):
                     raise OSError("registry staging key changed")
-                # Keep the validated handle live through publication.  A
-                # parent-plus-stage-name rename would reopen a mutable path
-                # after this check and could publish a vendor replacement.
-                rename_attempted = True
-                self._rename_open_key(stage_key, canonical_leaf)
-                # The exact key was moved, but its contents changed before
-                # publication could be accepted.  Preserve the ambiguous
-                # canonical object and fail closed.
-                return self._staged_values_match(stage_key, values)
-            except FileExistsError:
-                if stage_key is not None:
-                    tombstone = self._key_path(parent, f"{stage_leaf}.atc-tombstone")
-                    try:
-                        try:
-                            with self._module.OpenKey(self._current_user, tombstone, 0, _KEY_READ):
-                                return False
-                        except FileNotFoundError:
-                            pass
-                        self._isolate_and_delete_open_key(
-                            stage_key,
-                            values,
-                            tombstone,
-                            f"{stage_leaf}.atc-tombstone",
-                        )
-                    finally:
-                        stage_key.Close()
-                        stage_key = None
-                # A canonical sibling won the no-clobber barrier.  The stage
-                # handle itself was used for cleanup, so a reused stage path
-                # cannot redirect deletion to another key object.
-                return False
-            except BaseException:
-                if stage_key is not None:
-                    # Once the native rename was attempted, its outcome is
-                    # ambiguous.  Never reopen and delete the stage path:
-                    # another owner may already have reused that name.
-                    if not rename_attempted:
-                        try:
-                            tombstone = self._key_path(parent, f"{stage_leaf}.atc-tombstone")
-                            try:
-                                with self._module.OpenKey(
-                                    self._current_user, tombstone, 0, _KEY_READ
-                                ):
-                                    return False
-                            except FileNotFoundError:
-                                pass
-                            self._isolate_and_delete_open_key(
-                                stage_key,
-                                values,
-                                tombstone,
-                                f"{stage_leaf}.atc-tombstone",
-                            )
-                        finally:
-                            stage_key.Close()
-                            stage_key = None
-                    else:
-                        stage_key.Close()
-                        stage_key = None
-                raise
             finally:
-                if stage_key is not None:
-                    stage_key.Close()
+                stage_key.Close()
+
+            canonical_key, canonical_disposition = self._transacted_key_handle(
+                name,
+                transaction,
+                create=True,
+                access=_KEY_READ | _KEY_SET_VALUE | _KEY_CREATE_SUB_KEY,
+            )
+            try:
+                if canonical_disposition != _REG_CREATED_NEW_KEY:
+                    return False
+                self._set_transacted_values(canonical_key, values)
+                if not self._staged_values_match(canonical_key, values):
+                    raise OSError("registry canonical key changed")
+            finally:
+                canonical_key.Close()
+
+            if not self._delete_transacted_key(stage_name, transaction):
+                raise OSError("registry staging key disappeared")
+            if not self._transacted_key_is_absent(stage_name, transaction):
+                raise OSError("registry staging key remains")
+            canonical_key, _disposition = self._transacted_key_handle(
+                name,
+                transaction,
+                create=False,
+                access=_KEY_READ,
+            )
+            try:
+                if not self._staged_values_match(canonical_key, values):
+                    raise OSError("registry canonical key changed")
+            finally:
+                canonical_key.Close()
+            return True
+
+        with _REGISTRY_MUTATION_LOCK:
+            published = self._run_registry_transaction(publish)
+        if not isinstance(published, bool) or not published:
+            return False
+        # The commit is atomic, but a post-commit observer can still report a
+        # vendor mutation.  Do not turn that ambiguity into a success.
+        return self.registry_key_matches_generation(
+            name, values, generation, ownership_value, identity_value
+        ) and not self.staging_key_exists(name, generation)
 
     def registry_key_matches_generation(
         self,
@@ -745,22 +792,33 @@ class WindowsRegistryAdapter:
         stage_leaf = f"{canonical_leaf}.atc-stage-{generation}"
         stage_name = self._key_path(parent, stage_leaf)
         tombstone_name = self._key_path(parent, f"{stage_leaf}.atc-tombstone")
-        try:
-            with self._module.OpenKey(self._current_user, tombstone_name, 0, _KEY_READ):
-                return self._delete_isolated_key(
-                    tombstone_name,
-                    values,
-                    ownership_value=_REGISTRY_OWNERSHIP_VALUE,
-                    identity_value=_REGISTRY_IDENTITY_VALUE,
-                )
-        except FileNotFoundError:
-            return self._delete_exact_key(
-                stage_name,
-                values,
-                tombstone_name=tombstone_name,
-                ownership_value=_REGISTRY_OWNERSHIP_VALUE,
-                identity_value=_REGISTRY_IDENTITY_VALUE,
-            )
+
+        def cleanup(transaction: _RegistryTransaction) -> bool:
+            for candidate in (tombstone_name, stage_name):
+                try:
+                    key, _disposition = self._transacted_key_handle(
+                        candidate,
+                        transaction,
+                        create=False,
+                        access=_KEY_READ,
+                    )
+                except FileNotFoundError:
+                    continue
+                try:
+                    if not self._staged_values_match(key, values):
+                        return False
+                finally:
+                    key.Close()
+                if not self._delete_transacted_key(candidate, transaction):
+                    return False
+                return self._transacted_key_is_absent(candidate, transaction)
+            return True
+
+        with _REGISTRY_MUTATION_LOCK:
+            cleaned = self._run_registry_transaction(cleanup)
+        if not isinstance(cleaned, bool) or not cleaned:
+            return False
+        return not self.registry_residual_exists(name, generation)
 
     def registry_residual_exists(self, name: str, generation: str) -> bool:
         """Report any operation-shaped private key without claiming ownership."""
@@ -792,132 +850,53 @@ class WindowsRegistryAdapter:
         ownership_value: str,
         identity_value: str = _REGISTRY_IDENTITY_VALUE,
     ) -> bool:
-        """Remove an owned key through a journal-bound rename/verify/delete.
+        """Delete an exact generation-bound key at one KTM commit point.
 
-        Renaming the canonical child to a private backup first makes a vendor
-        insertion after the rename remain at the canonical path.  If a vendor
-        value was already present before the rename, exact verification fails
-        and the private backup is retained as an explicit residual.
+        The transacted open, complete-value check, ``RegDeleteKeyTransactedW``
+        call, and commit are one OS transaction.  A concurrent value/key
+        mutation therefore conflicts with the transaction instead of being
+        deleted by a later handle syscall and reported as success.
         """
 
         if not self._complete_identity_shape(values, generation, ownership_value, identity_value):
             return False
-        parent, canonical_leaf = self._split_key_name(name)
-        backup_leaf = f"{canonical_leaf}.atc-backup-{generation}"
-        backup_name = self._key_path(parent, backup_leaf)
-        backup_tombstone_name = self._key_path(parent, f"{backup_leaf}.atc-tombstone")
-        with _REGISTRY_MUTATION_LOCK:
-            canonical_exists = True
+        self._split_key_name(name)
+
+        def delete(transaction: _RegistryTransaction) -> bool:
             try:
-                with self._module.OpenKey(self._current_user, name, 0, _KEY_READ) as key:
-                    canonical_exists = True
-                    if not self._staged_values_match(key, values):
-                        return False
+                key, _disposition = self._transacted_key_handle(
+                    name,
+                    transaction,
+                    create=False,
+                    access=_KEY_READ,
+                )
             except FileNotFoundError:
-                canonical_exists = False
-
-            backup_tombstone_exists = False
+                return True
             try:
-                with self._module.OpenKey(self._current_user, backup_tombstone_name, 0, _KEY_READ):
-                    backup_tombstone_exists = True
-            except FileNotFoundError:
-                pass
-
-            try:
-                with self._module.OpenKey(self._current_user, backup_name, 0, _KEY_READ) as key:
-                    backup_exists = True
-                    backup_matches = self._staged_values_match(key, values)
-            except FileNotFoundError:
-                backup_exists = False
-                backup_matches = False
-
-            if backup_tombstone_exists:
-                if not self._delete_isolated_key(
-                    backup_tombstone_name,
-                    values,
-                    ownership_value=ownership_value,
-                    identity_value=identity_value,
-                ):
+                if not self._staged_values_match(key, values):
                     return False
-                backup_tombstone_exists = False
-
-            if backup_exists:
-                if not backup_matches:
-                    # A private key with a matching generation but a changed
-                    # or incomplete shape is not ours.  Preserve it and do
-                    # not let canonical disappearance turn it into a
-                    # replacement registration.
-                    return False
-                if not self._delete_exact_key(
-                    backup_name,
-                    values,
-                    tombstone_name=backup_tombstone_name,
-                    ownership_value=ownership_value,
-                    identity_value=identity_value,
-                ):
-                    return False
-                backup_exists = False
-                if not canonical_exists:
-                    return True
-
-            if not backup_exists and canonical_exists:
-                # The source key handle, rather than the parent plus a path,
-                # is the ownership barrier.  A vendor insertion at the
-                # canonical path after this move remains a separate key.
-                source_key: Any | None = None
-                moved_to_backup = False
-                try:
-                    source_key = self._module.OpenKey(
-                        self._current_user,
-                        name,
-                        0,
-                        _KEY_READ | _KEY_SET_VALUE | _KEY_CREATE_SUB_KEY | _DELETE,
-                    )
-                    if not self._staged_values_match(source_key, values):
-                        return False
-                    if backup_tombstone_exists:
-                        return False
-                    self._rename_open_key(source_key, backup_leaf)
-                    moved_to_backup = True
-                    backup_matches = self._staged_values_match(source_key, values)
-                except FileNotFoundError:
-                    canonical_exists = False
-                finally:
-                    if source_key is not None:
-                        with suppress(OSError):
-                            source_key.Close()
-                if moved_to_backup:
-                    backup_exists = True
-                else:
-                    # Re-read the private sibling after the source-handle
-                    # race.  A vendor may have created or changed it while
-                    # the canonical key disappeared; that state is never
-                    # adopted and is retained for review/retry.
-                    try:
-                        with self._module.OpenKey(
-                            self._current_user, backup_name, 0, _KEY_READ
-                        ) as key:
-                            backup_exists = True
-                            backup_matches = self._staged_values_match(key, values)
-                    except FileNotFoundError:
-                        backup_exists = False
-                        backup_matches = False
-
-            if not backup_exists:
-                return not canonical_exists
-            if not backup_matches:
-                # A private key with a matching generation but a changed or
-                # incomplete shape is not ours.  In particular, never move it
-                # into canonical merely because canonical disappeared.
+            finally:
+                key.Close()
+            if not self._delete_transacted_key(name, transaction):
                 return False
+            return self._transacted_key_is_absent(name, transaction)
 
-            return self._delete_exact_key(
-                backup_name,
-                values,
-                tombstone_name=backup_tombstone_name,
-                ownership_value=ownership_value,
-                identity_value=identity_value,
-            )
+        with _REGISTRY_MUTATION_LOCK:
+            deleted = self._run_registry_transaction(delete)
+        if not isinstance(deleted, bool) or not deleted:
+            return False
+        return self._key_is_absent(name) and not self.registry_residual_exists(name, generation)
+
+    def _key_is_absent(self, name: str) -> bool:
+        """Prove that a registry path is absent after a committed operation."""
+
+        try:
+            with self._module.OpenKey(self._current_user, name, 0, _KEY_READ):
+                return False
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
 
     def set_value_if_unchanged(
         self,
