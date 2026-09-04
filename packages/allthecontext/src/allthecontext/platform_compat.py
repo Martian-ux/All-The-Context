@@ -91,8 +91,20 @@ def _raise_windows_error(code: int, message: str) -> None:
     raise OSError(code, message)
 
 
-def _windows_last_error() -> int:
-    """Read the Win32 thread error without touching a platform-only API elsewhere."""
+def _windows_last_error(provider: object | None = None) -> int:
+    """Read a native or explicitly modeled Win32 thread error.
+
+    ``ctypes.get_last_error`` is only present on Windows.  A fake DLL used by
+    the cross-platform tests may instead expose ``get_last_error`` itself;
+    requiring that explicit seam prevents a Linux test double from silently
+    turning a modeled native failure into error code zero.
+    """
+
+    if provider is not None:
+        getter = getattr(provider, "get_last_error", None)
+        if not callable(getter):
+            raise OSError("Windows provider last-error API is unavailable")
+        return int(cast(Callable[[], int], getter)())
 
     if os.name != "nt":
         return 0
@@ -259,11 +271,20 @@ class _RegistryTransaction:
     evidence instead of trying to make this handle look clean.
     """
 
-    def __init__(self, handle: int, commit: Any, rollback: Any, close: Any) -> None:
+    def __init__(
+        self,
+        handle: int,
+        commit: Any,
+        rollback: Any,
+        close: Any,
+        *,
+        last_error_provider: object | None = None,
+    ) -> None:
         self.handle = handle
         self._commit = commit
         self._rollback = rollback
         self._close = close
+        self._last_error_provider = last_error_provider
         self.state = _RegistryTransactionState.ACTIVE
         self.committed = False
         self.rolled_back = False
@@ -277,6 +298,9 @@ class _RegistryTransaction:
 
     def _raise_inactive(self) -> None:
         raise OSError("registry transaction is no longer active")
+
+    def _last_error(self) -> int:
+        return _windows_last_error(self._last_error_provider)
 
     def commit(self) -> None:
         if self.committed:
@@ -299,7 +323,7 @@ class _RegistryTransaction:
         try:
             result = int(self._commit(ctypes.c_void_p(self.handle)))
             if not result:
-                _raise_windows_error(_windows_last_error(), "unable to commit registry transaction")
+                _raise_windows_error(self._last_error(), "unable to commit registry transaction")
         except BaseException as exc:
             self.commit_error = exc
             self.state = _RegistryTransactionState.COMMIT_FAILED
@@ -324,9 +348,7 @@ class _RegistryTransaction:
         try:
             result = int(self._rollback(ctypes.c_void_p(self.handle)))
             if not result:
-                _raise_windows_error(
-                    _windows_last_error(), "unable to roll back registry transaction"
-                )
+                _raise_windows_error(self._last_error(), "unable to roll back registry transaction")
         except BaseException as exc:
             self.rollback_error = exc
             self.state = _RegistryTransactionState.ROLLBACK_FAILED
@@ -345,7 +367,7 @@ class _RegistryTransaction:
         try:
             result = int(self._close(ctypes.c_void_p(self.handle)))
             if not result:
-                _raise_windows_error(_windows_last_error(), "unable to close registry transaction")
+                _raise_windows_error(self._last_error(), "unable to close registry transaction")
         except BaseException as exc:
             self.close_error = exc
             self.state = _RegistryTransactionState.CLOSE_FAILED
@@ -738,8 +760,17 @@ class WindowsRegistryAdapter:
         raw_handle = create(None, None, 0, 0, 0, 0, None)
         raw_value = getattr(raw_handle, "value", raw_handle)
         if raw_value in {None, _INVALID_HANDLE_VALUE}:
-            _raise_windows_error(_windows_last_error(), "unable to create registry transaction")
-        return _RegistryTransaction(int(raw_value), commit, rollback, close)
+            _raise_windows_error(
+                _windows_last_error(ktmw32 if os.name != "nt" else None),
+                "unable to create registry transaction",
+            )
+        return _RegistryTransaction(
+            int(raw_value),
+            commit,
+            rollback,
+            close,
+            last_error_provider=ktmw32 if os.name != "nt" else None,
+        )
 
     def _run_registry_transaction(self, operation: Any) -> Any:
         transaction = self._begin_registry_transaction()
@@ -1092,6 +1123,8 @@ class WindowsRegistryAdapter:
 def windows_registry() -> Any:
     """Load the production registry adapter only after a runtime Windows guard."""
 
+    if os.name != "nt":
+        raise OSError("Windows registry is unavailable on this platform")
     return WindowsRegistryAdapter(importlib.import_module("winreg"))
 
 

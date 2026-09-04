@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import unquote
 
 LINK = re.compile(r"(?<!!)\[[^]]*]\(([^)]+)\)")
+COMMIT_TOKEN = re.compile(r"`([0-9a-f]+)`")
+CONVERGENCE_LEDGER = Path("docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md")
 
 
 def broken_links(root: Path) -> list[str]:
@@ -36,9 +39,37 @@ def broken_links(root: Path) -> list[str]:
     return failures
 
 
+def convergence_ledger_failures(root: Path) -> list[str]:
+    """Require every long hexadecimal ledger token to be a local commit SHA."""
+
+    ledger = root / CONVERGENCE_LEDGER
+    if not ledger.exists():
+        return [f"missing convergence ledger: {CONVERGENCE_LEDGER}"]
+    failures: list[str] = []
+    tokens = {
+        match.group(1)
+        for match in COMMIT_TOKEN.finditer(ledger.read_text(encoding="utf-8"))
+        if len(match.group(1)) >= 20
+    }
+    for token in sorted(tokens):
+        if len(token) != 40:
+            failures.append(f"{ledger}: commit SHA is not 40 hex characters: {token}")
+            continue
+        resolved = subprocess.run(
+            ["git", "cat-file", "-e", f"{token}^{{commit}}"],
+            cwd=root,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if resolved.returncode != 0:
+            failures.append(f"{ledger}: commit SHA does not resolve: {token}")
+    return failures
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
-    failures = broken_links(root)
+    failures = [*broken_links(root), *convergence_ledger_failures(root)]
     for failure in failures:
         print(failure)
     return 1 if failures else 0

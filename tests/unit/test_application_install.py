@@ -362,6 +362,7 @@ class _FakeAdvapi:
 
     def __init__(self, module: _StockWinreg) -> None:
         self.module = module
+        self.last_error = 0
         self.transactions: dict[int, _FakeRegistryTransaction] = {}
         self._next_transaction = 10_000
         self.commit_hook: object | None = None
@@ -428,6 +429,7 @@ class _FakeAdvapi:
             if callable(hook):
                 hook(transaction)
             if self.module.keys != transaction.before:
+                self.last_error = 5
                 return 0
             self.module.state.keys = copy.deepcopy(transaction.registry.keys)
             self.module.state.subkeys = copy.deepcopy(transaction.registry.subkeys)
@@ -604,6 +606,9 @@ class _FakeAdvapi:
         self.NtDeleteKey = delete_key
         self.NtClose = close_native
 
+    def get_last_error(self) -> int:
+        return self.last_error
+
 
 def _patch_shortcut_writer(
     monkeypatch: pytest.MonkeyPatch,
@@ -628,6 +633,30 @@ def _patch_shortcut_writer(
 
     monkeypatch.setattr(application_install, "_create_windows_shortcut", write_shortcut)
     return calls
+
+
+def _fake_windows_file_deleter(path: Path, identity: object) -> None:
+    """Model the Windows identity-bound delete primitive on POSIX test hosts."""
+
+    metadata = path.lstat()
+    if not isinstance(identity, application_install._FileIdentity) or not (
+        application_install._same_file_identity(
+            application_install._file_identity(metadata), identity
+        )
+    ):
+        raise OSError("file identity changed")
+    path.unlink()
+
+
+@pytest.fixture(autouse=True)
+def _linux_windows_file_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.name != "nt":
+        # The registration tests model Windows while running on every CI OS.
+        # Keep the production POSIX path fail-closed and inject this explicit
+        # provider only for the simulated Windows surface.
+        monkeypatch.setattr(
+            application_install, "delete_file_by_identity", _fake_windows_file_deleter
+        )
 
 
 def _make_transaction(
@@ -655,6 +684,7 @@ def _make_transaction(
         start_menu=start_menu,
         desktop=desktop_path,
         registry=fake_registry,
+        file_deleter=_fake_windows_file_deleter if os.name != "nt" else None,
     )
     return transaction, executable, start_menu, desktop_path, fake_registry
 
@@ -1826,14 +1856,14 @@ def test_shortcut_delete_swap_is_quarantined_without_losing_replacement(
         transaction._journal.desired_shortcut_identities["launcher"],
         True,
     )
-    original_delete = application_install.delete_file_by_identity
+    original_delete = transaction._file_deleter or application_install.delete_file_by_identity
 
     def swap_before_delete(path: Path, identity: application_install._FileIdentity) -> None:
         if path == target:
             target.write_bytes(b"replacement-after-validation")
         original_delete(path, identity)
 
-    monkeypatch.setattr(application_install, "delete_file_by_identity", swap_before_delete)
+    monkeypatch.setattr(transaction, "_file_deleter", swap_before_delete)
     with pytest.raises(application_install.WindowsRegistrationError) as raised:
         transaction._restore_shortcut(mutation)
 
@@ -2468,6 +2498,7 @@ def test_windows_registry_factory_returns_mutation_capable_adapter(
         OpenKey=object(),
         REG_SZ=1,
     )
+    monkeypatch.setattr(platform_compat.os, "name", "nt")
     monkeypatch.setattr(platform_compat.importlib, "import_module", lambda _name: module)
 
     adapter = platform_compat.windows_registry()

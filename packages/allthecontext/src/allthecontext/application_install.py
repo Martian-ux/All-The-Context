@@ -14,6 +14,7 @@ import secrets
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import suppress
 from ctypes import wintypes
 from dataclasses import dataclass, field
@@ -73,6 +74,8 @@ RegistrationName = Literal[
     "NoRepair",
 ]
 RegistryData = str | int | bytes | tuple[str, ...] | None
+FileDeleter = Callable[[Path, object], None]
+FileReplacer = Callable[[Path, Path], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -764,6 +767,7 @@ def _delete_verified_file(
     expected_data: bytes,
     *,
     failure_code: str,
+    file_deleter: FileDeleter | None = None,
 ) -> None:
     """Delete only the object bound to the checked identity, never a swapped name."""
 
@@ -777,7 +781,7 @@ def _delete_verified_file(
     if _read_bounded_file(path, metadata) != expected_data:
         raise WindowsRegistrationError("registration_restore_target_changed")
     try:
-        delete_file_by_identity(path, expected_identity)
+        (file_deleter or delete_file_by_identity)(path, expected_identity)
     except FileNotFoundError:
         return
     except OSError as exc:
@@ -798,6 +802,8 @@ def _restore_quarantined_shortcut(
     original: Path,
     expected_identity: _FileIdentity,
     expected_data: bytes,
+    *,
+    file_deleter: FileDeleter | None = None,
 ) -> None:
     """Put a quarantined file back without replacing a concurrent target."""
 
@@ -828,6 +834,7 @@ def _restore_quarantined_shortcut(
         expected_identity,
         expected_data,
         failure_code="registration_restore_cleanup_failed",
+        file_deleter=file_deleter,
     )
 
 
@@ -835,6 +842,8 @@ def _quarantine_and_remove_shortcut(
     path: Path,
     expected_identity: _FileIdentity,
     expected_data: bytes,
+    *,
+    file_deleter: FileDeleter | None = None,
 ) -> None:
     """Remove one expected shortcut through an identity-bound final operation."""
 
@@ -855,6 +864,7 @@ def _quarantine_and_remove_shortcut(
         expected_identity,
         expected_data,
         failure_code="registration_restore_delete_failed",
+        file_deleter=file_deleter,
     )
 
 
@@ -1491,6 +1501,8 @@ def _write_registration_journal(
     *,
     phase: str,
     active: tuple[RegistrationName, ...] | None = None,
+    file_deleter: FileDeleter | None = None,
+    file_replacer: FileReplacer | None = None,
 ) -> None:
     effective_active = journal.active if active is None else active
     encoded = _encode_journal(journal, phase=phase, active=effective_active)
@@ -1520,7 +1532,7 @@ def _write_registration_journal(
             # adapter uses MoveFileExW/write-through and POSIX uses rename
             # followed by a directory fsync.
             try:
-                replace_file_durably(temporary, path)
+                (file_replacer or replace_file_durably)(temporary, path)
             except FileNotFoundError as exc:
                 raise WindowsRegistrationError("registration_journal_target_changed") from exc
             except OSError as exc:
@@ -1541,6 +1553,7 @@ def _write_registration_journal(
                 _file_identity(temporary_metadata),
                 encoded,
                 failure_code="registration_journal_cleanup_failed",
+                file_deleter=file_deleter,
             )
         except WindowsRegistrationError:
             raise
@@ -1550,7 +1563,11 @@ def _write_registration_journal(
         raise WindowsRegistrationError("registration_journal_write_failed") from exc
 
 
-def _remove_registration_journal(path: Path) -> None:
+def _remove_registration_journal(
+    path: Path,
+    *,
+    file_deleter: FileDeleter | None = None,
+) -> None:
     metadata = _safe_lstat(path)
     if metadata is None:
         return
@@ -1561,6 +1578,7 @@ def _remove_registration_journal(path: Path) -> None:
         _file_identity(metadata),
         data,
         failure_code="registration_journal_cleanup_failed",
+        file_deleter=file_deleter,
     )
     with suppress(OSError):
         path.parent.rmdir()
@@ -1654,12 +1672,16 @@ class WindowsApplicationRegistrationTransaction:
         registry: Any | None = None,
         install_root: Path | None = None,
         journal_path: Path | None = None,
+        file_deleter: FileDeleter | None = None,
+        file_replacer: FileReplacer | None = None,
     ) -> None:
         self._executable = _absolute_path(Path(executable))
         self._start_menu = _absolute_path(Path(start_menu))
         self._desktop = _absolute_path(Path(desktop)) if desktop is not None else None
         self._uninstall_key = uninstall_key
         self._registry = registry
+        self._file_deleter = file_deleter
+        self._file_replacer = file_replacer
         self._install_root = (
             _absolute_path(Path(install_root))
             if install_root is not None
@@ -1690,6 +1712,12 @@ class WindowsApplicationRegistrationTransaction:
         self._registry_native_residual = False
         self._applied = False
         self._canonical_shortcut_cache: dict[ShortcutName, bytes] = {}
+
+    def _delete_file(self, path: Path, identity: object) -> None:
+        (self._file_deleter or delete_file_by_identity)(path, identity)
+
+    def _replace_file(self, source: Path, destination: Path) -> None:
+        (self._file_replacer or replace_file_durably)(source, destination)
 
     def _check_platform_and_plan(self) -> Any:
         if platform.system() != "Windows":
@@ -1966,6 +1994,8 @@ class WindowsApplicationRegistrationTransaction:
             journal,
             phase=phase,
             active=active,
+            file_deleter=self._delete_file,
+            file_replacer=self._replace_file,
         )
         journal.phase = phase
         journal.active = active
@@ -1993,12 +2023,19 @@ class WindowsApplicationRegistrationTransaction:
         )
         journal.registry_generation = self._registry_generation
         journal.registry_identity = self._registry_identity
-        _write_registration_journal(self._journal_path, journal, phase="applying", active=())
+        _write_registration_journal(
+            self._journal_path,
+            journal,
+            phase="applying",
+            active=(),
+            file_deleter=self._delete_file,
+            file_replacer=self._replace_file,
+        )
         self._journal = journal
         self._journal_identity_trusted = True
 
     def _clear_journal(self) -> None:
-        _remove_registration_journal(self._journal_path)
+        _remove_registration_journal(self._journal_path, file_deleter=self._delete_file)
         self._journal = None
 
     def _journal_mutations(
@@ -2515,8 +2552,7 @@ class WindowsApplicationRegistrationTransaction:
     def _canonical_temporary_path(path: Path) -> Path:
         return path.with_name(f".{path.name}.atc-canonical")
 
-    @staticmethod
-    def _cleanup_temporary(path: Path, data: bytes | None) -> None:
+    def _cleanup_temporary(self, path: Path, data: bytes | None) -> None:
         metadata = _safe_lstat(path)
         if metadata is None:
             return
@@ -2525,10 +2561,16 @@ class WindowsApplicationRegistrationTransaction:
         observed_data = _read_bounded_file(path, metadata)
         if data is not None and observed_data != data:
             raise WindowsRegistrationError("registration_temporary_changed")
-        _quarantine_and_remove_shortcut(path, _file_identity(metadata), observed_data)
+        _quarantine_and_remove_shortcut(
+            path,
+            _file_identity(metadata),
+            observed_data,
+            file_deleter=self._delete_file,
+        )
 
-    @staticmethod
-    def _publish_new_shortcut(temporary: Path, target: Path, data: bytes | None = None) -> None:
+    def _publish_new_shortcut(
+        self, temporary: Path, target: Path, data: bytes | None = None
+    ) -> None:
         temporary_metadata = _validate_file_path(temporary, allow_missing=False)
         if temporary_metadata is None:
             raise WindowsRegistrationError("registration_temporary_changed")
@@ -2543,7 +2585,12 @@ class WindowsApplicationRegistrationTransaction:
         except OSError as exc:
             raise WindowsRegistrationError("registration_shortcut_publish_failed") from exc
         try:
-            _quarantine_and_remove_shortcut(temporary, temporary_identity, temporary_data)
+            _quarantine_and_remove_shortcut(
+                temporary,
+                temporary_identity,
+                temporary_data,
+                file_deleter=self._delete_file,
+            )
         except WindowsRegistrationError:
             # The target link is intentionally left in place.  The durable
             # journal records its identity and recovery can converge the
@@ -2956,6 +3003,7 @@ class WindowsApplicationRegistrationTransaction:
                     temporary,
                     _file_identity(temporary_metadata),
                     temporary_data,
+                    file_deleter=self._delete_file,
                 )
             else:
                 try:
@@ -3104,11 +3152,21 @@ class WindowsApplicationRegistrationTransaction:
                 # This is the exact crash window after os.link and before the
                 # temporary hardlink cleanup.  Removing the fixed temporary
                 # entry leaves the canonical target at nlink==1.
-                _quarantine_and_remove_shortcut(temporary, expected_identity, temporary_data)
+                _quarantine_and_remove_shortcut(
+                    temporary,
+                    expected_identity,
+                    temporary_data,
+                    file_deleter=self._delete_file,
+                )
             elif _same_file_identity(temporary_identity, expected_identity) and (
                 temporary_data == canonical
             ):
-                _quarantine_and_remove_shortcut(temporary, expected_identity, temporary_data)
+                _quarantine_and_remove_shortcut(
+                    temporary,
+                    expected_identity,
+                    temporary_data,
+                    file_deleter=self._delete_file,
+                )
             else:
                 raise WindowsRegistrationError("registration_restore_target_changed")
 
@@ -3125,6 +3183,7 @@ class WindowsApplicationRegistrationTransaction:
                 target_quarantine,
                 expected_identity,
                 _read_bounded_file(target_quarantine, target_quarantine_metadata),
+                file_deleter=self._delete_file,
             )
 
         current = _shortcut_state(mutation.name, mutation.path)
@@ -3140,7 +3199,12 @@ class WindowsApplicationRegistrationTransaction:
             or not _same_file_identity(current.identity, expected_identity)
         ):
             raise WindowsRegistrationError("registration_restore_target_changed")
-        _quarantine_and_remove_shortcut(mutation.path, expected_identity, canonical)
+        _quarantine_and_remove_shortcut(
+            mutation.path,
+            expected_identity,
+            canonical,
+            file_deleter=self._delete_file,
+        )
 
     def _restore_registry(self, mutation: _RegistryMutation) -> None:
         winreg = self._registry if self._registry is not None else windows_registry()
@@ -3596,7 +3660,13 @@ def application_entrypoints_need_refresh() -> bool:
 
     if platform.system() != "Windows":
         return False
-    winreg = windows_registry()
+    try:
+        winreg = windows_registry()
+    except (ImportError, OSError):
+        # A test may model a Windows bootstrap on a non-Windows host.  The
+        # production factory refuses to import ``winreg`` there; an absent
+        # read-only provider means that no refresh decision can be made.
+        return False
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _windows_uninstall_key())
     except OSError:

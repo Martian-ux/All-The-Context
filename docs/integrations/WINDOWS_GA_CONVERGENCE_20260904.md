@@ -46,7 +46,7 @@ same SHA or patch ID after conflict resolution.
 | 1 | `25a59f3c3d3c8f03869f4cecc6c8ae2b51324763` | `29471c7ed6db887f1a315d8e9ee13590196d6b42` | Harden Windows bootstrap installation transaction | Applied |
 | 2 | `19aedd5c0e33cc5977eae572bff8078bbce4dd01` | `b6cda1d1ead27df849eb44c7fe40f0103c2b0367` | Harden Windows bootstrap recovery cleanup | Applied |
 | 3 | `b61cee660654a50d919d3bbd1291b87c411057b6` | `f2b8b8ae324b1ca390b5830dc22a7e4467ed684d` | Fix Windows bootstrap recovery cleanup retries | Applied |
-| 4 | `e7aedd6c3c2a22bd06927cf90f9420a437e410be` | `89b57c50d7c138472ac6b64d3fca80db5a8537f` | Fix bootstrap directory create-raise cleanup | Applied |
+| 4 | `e7aedd6c3c2a22bd06927cf90f9420a437e410be` | `89b57c50d7c138472ac6b64d3fca80db5a8537f2` | Fix bootstrap directory create-raise cleanup | Applied |
 | 5 | `78c2401bf08a9f901af4ca57b1de46b40d75605d` | `5e42b3225a4cb86916f23dfe799009a8fe0b2ee7` | Gate Windows update activation on Core quiescence | Applied |
 | 6 | `6948803a24d581832d5976bf4a6ba590350b9cc7` | `c091b98356aca362b5b0d3fe340f0c055500834c` | Harden Core quiescence and shutdown lifecycles | Applied |
 | 7 | `b5c553ecdd8f85cbd29291e3fad5ceeb10981fcf` | `8c1560c1eca7c726139cfced871460591bdddd06` | Close multipart import activity admission gap | Applied |
