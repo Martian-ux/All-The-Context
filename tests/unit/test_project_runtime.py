@@ -213,7 +213,7 @@ def test_two_provider_anchors_abstain_and_facts_do_not_cross_lineages(tmp_path: 
                     reference="conversations.json#conversation=two&message=anchor",
                 ),
                 _goal(
-                    "This ambiguous goal must be omitted.",
+                    "The ambiguous goal must be omitted.",
                     reference="conversations.json#conversation=one&message=goal",
                 ),
                 _goal(

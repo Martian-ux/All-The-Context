@@ -1672,7 +1672,11 @@ class WindowsApplicationRegistrationTransaction:
         )
         self._build_identity = runtime_build_identity(required=bool(getattr(sys, "frozen", False)))
         self._registry_names = (
-            (*self._REGISTRY_NAMES[:6], *self._BUILD_IDENTITY_REGISTRY_NAMES, *self._REGISTRY_NAMES[6:])
+            (
+                *self._REGISTRY_NAMES[:6],
+                *self._BUILD_IDENTITY_REGISTRY_NAMES,
+                *self._REGISTRY_NAMES[6:],
+            )
             if self._build_identity is not None
             else self._REGISTRY_NAMES
         )
@@ -3513,9 +3517,8 @@ def install_application_entrypoints(executable: Path) -> ApplicationRegistration
 
     if platform.system() != "Windows":
         return None
-    if getattr(sys, "frozen", False):
-        if runtime_build_identity(required=True) is None:
-            raise OSError("The packaged build identity is unavailable")
+    if getattr(sys, "frozen", False) and runtime_build_identity(required=True) is None:
+        raise OSError("The packaged build identity is unavailable")
     target = _absolute_path(executable)
     start_menu, desktop = _windows_locations()
     transaction = WindowsApplicationRegistrationTransaction(

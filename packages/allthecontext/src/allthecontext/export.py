@@ -283,7 +283,8 @@ def _table_names(connection: sqlite3.Connection) -> list[str]:
     return sorted(
         name
         for row in rows
-        if (name := str(row[0])) not in EXCLUDED_TABLES and not name.startswith("context_fts_")
+        if (name := str(row[0])) not in EXCLUDED_TABLES.difference(NON_PORTABLE_SECURITY_TABLES)
+        and not name.startswith("context_fts_")
     )
 
 
@@ -413,6 +414,49 @@ def _without_machine_local_references(table: str, document: dict[str, Any]) -> d
             document["session_id"] = None
         if "submitted_by_client_id" in document:
             document["submitted_by_client_id"] = None
+    if table in {"context_candidates", "context_records"}:
+        # Client ACLs name registrations that are intentionally excluded from
+        # the package.  Carrying those IDs would either fail graph validation
+        # or accidentally bind restored facts to an unrelated destination
+        # principal.  An encrypted export is the explicit portability boundary,
+        # so restore the fact without source-machine authorization state.
+        for field in ("allowed_clients_json", "denied_clients_json"):
+            if field in document:
+                document[field] = "[]"
+    elif table == "context_record_versions":
+        raw_snapshot = document.get("snapshot_json")
+        if isinstance(raw_snapshot, str):
+            try:
+                snapshot = json.loads(raw_snapshot)
+            except (TypeError, ValueError):
+                snapshot = None
+            if isinstance(snapshot, dict):
+                for field in ("allowed_clients", "denied_clients"):
+                    if field in snapshot:
+                        snapshot[field] = []
+                document["snapshot_json"] = json.dumps(
+                    snapshot,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+    elif table == "replication_events":
+        raw_payload = document.get("payload_json")
+        if isinstance(raw_payload, str):
+            try:
+                payload = json.loads(raw_payload)
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                for field in ("allowed_clients", "denied_clients"):
+                    if field in payload:
+                        payload[field] = []
+                document["payload_json"] = json.dumps(
+                    payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
     return document
 
 
@@ -947,6 +991,8 @@ def _require_portable_reference(
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"portable {table}.{column} is not a valid {target} reference")
     if value not in target_ids.get(target, set()):
+        if table == "purge_jobs" and column == "target_id":
+            raise ValueError("portable purge job target_id does not resolve inside the package")
         raise ValueError(f"portable {table}.{column} does not resolve inside the package")
 
 
@@ -1172,7 +1218,7 @@ def _validate_portable_graph(
     purged_source_ids: set[str] = set()
 
     for table in manifest_tables:
-        if table in CAPTURE_RUNTIME_TABLES:
+        if table in CAPTURE_RUNTIME_TABLES or table in NON_PORTABLE_SECURITY_TABLES:
             continue
         if table not in _PORTABLE_ROW_KEYS:
             raise ValueError("portable table has no identity inventory")
@@ -1188,9 +1234,8 @@ def _validate_portable_graph(
             keys.add(key)
             if table == "source_blobs":
                 content_hash = key[0]
-                if (
-                    len(content_hash) != 64
-                    or any(character not in "0123456789abcdef" for character in content_hash)
+                if len(content_hash) != 64 or any(
+                    character not in "0123456789abcdef" for character in content_hash
                 ):
                     raise ValueError("portable source blob hash is not canonical")
                 content = row.get("content")
@@ -1224,7 +1269,7 @@ def _validate_portable_graph(
             raise ValueError("portable table row count does not match its manifest")
 
     for table, (column, id_type) in _PORTABLE_ID_TYPES.items():
-        if table not in manifest_tables:
+        if table not in manifest_tables or table in NON_PORTABLE_SECURITY_TABLES:
             continue
         for key in row_keys[table]:
             # edge_proposal_receipts has a scoped proposal identity; the first
@@ -1275,7 +1320,7 @@ def _validate_portable_graph(
         target_ids["package_vault"] = set()
 
     for table in manifest_tables:
-        if table in CAPTURE_RUNTIME_TABLES:
+        if table in CAPTURE_RUNTIME_TABLES or table in NON_PORTABLE_SECURITY_TABLES:
             continue
         for row in _iter_portable_table_rows(archive, table):
             if "vault_id" in row:
@@ -1293,6 +1338,11 @@ def _validate_portable_graph(
             for ref_table, column, target in PORTABLE_RELATIONAL_REFERENCE_INVENTORY:
                 if ref_table != table or column not in row:
                     continue
+                if target in CAPTURE_RUNTIME_TABLES:
+                    # Capture rows are machine-local runtime evidence. Legacy
+                    # packages may still contain their IDs, but those rows and
+                    # references are discarded before any destination write.
+                    continue
                 if (
                     table == "replication_events"
                     or table in {"context_errors", "context_user_mutations"}
@@ -1308,9 +1358,7 @@ def _validate_portable_graph(
                     target_type = row.get("target_type")
                     if target_type not in {"record", "source"}:
                         raise ValueError("portable purge job target type is invalid")
-                    allowed_target = (
-                        "record_references" if target_type == "record" else "sources"
-                    )
+                    allowed_target = "record_references" if target_type == "record" else "sources"
                 else:
                     allowed_target = {
                         "vaults": "vaults",
@@ -1500,6 +1548,8 @@ def _validate_portable_graph(
             raise ValueError("portable source chunks are not package-contained")
     elif source_chunks:
         raise ValueError("source chunks require source-inclusive package material")
+
+
 def _validate_package_purge_identity(
     archive: zipfile.ZipFile,
     manifest_tables: dict[str, Any],

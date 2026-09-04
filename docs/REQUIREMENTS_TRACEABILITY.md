@@ -48,6 +48,25 @@ object is likewise not an ancestor. It adds single-flight update actions,
 bounded cancellation feedback, protected cancellation API coverage, and
 dashboard error-recovery coverage.
 
+### 2026-09-04 Windows GA convergence integration
+
+The candidate starts from exact `7bfd070fd51541cd77f3cde67576f447cdef50bd`.
+The nine requested source tips resolve to 49 unique, topologically ordered
+patches, each applied exactly once. The durable source/integrated SHA ledger
+and conflict decisions are in
+`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. This table records
+source-contract coverage; it does not promote source tests to artifact,
+release, signing, Defender, clean-machine, provider/client, or
+downloaded-candidate evidence.
+
+| Requirement area | Integrated scope | Status |
+|---|---|---|
+| Windows bootstrap and recovery | Transactional install, retry-bounded cleanup, and failure recovery | Source-integrated; final exact-SHA gates pending |
+| Core lifecycle and runtime readiness | Quiescence, activity admission, shutdown/cancellation, dogfood recovery, and readiness containment | Source-integrated; final exact-SHA gates pending |
+| Windows registration and registry publication | Reversible registration, ownership/recovery boundaries, atomic publication, and cleanup | Source-integrated; final exact-SHA gates pending |
+| Packaged update identity and terminal replay | Immutable build identity, provenance binding, updater replay, and startup dispatch | Source-integrated; final exact-SHA gates pending |
+| Portable memory/export safety | Archive identity, restore graph containment, purge barriers, vault/target binding, and machine-local security exclusion | Source-integrated; final exact-SHA gates pending |
+
 ### 2026-09-03 Windows update evidence wave
 
 | Requirement | Implementation/evidence | Status |

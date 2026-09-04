@@ -2,6 +2,17 @@
 
 ## Current milestone
 
+The current Windows GA convergence candidate is being integrated on branch
+`hardening/windows-ga-convergence-20260904` from exact
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The complete 49-commit ancestry
+union from nine requested source tips is recorded in
+`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. The branch is not a
+release claim: final local gates, exact-artifact decisions, hosted checks,
+signing, publication, Defender, clean-machine, provider/client, and
+downloaded-candidate evidence remain separately bounded. The older
+2026-09-03 protected-main paragraph below is retained as historical context
+until this candidate is pushed and its exact final SHA is recorded.
+
 As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
 boundaries. After one setup opt-in, ordinary user prompts and rendered
@@ -41,6 +52,24 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-09-04 — Windows GA convergence integration candidate
+
+The candidate starts from fetched local and remote `origin/main` at exact
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`, with no open integration PR at
+the time of branch creation. All nine requested source tips were traversed,
+deduplicated, patch-equivalence checked, topologically ordered, and applied
+exactly once. The ledger records every source-to-integrated SHA mapping and
+the four conflict-resolution groups.
+
+The integrated scope covers Windows bootstrap recovery and cleanup, Core
+quiescence/activity and readiness recovery, reversible Windows registration
+and registry publication, immutable packaged build identity and terminal
+replay, portable restore graph/purge barriers, and exclusion of machine-local
+authorization state from portable exports. A stale export regression was
+updated to assert that explicit security boundary. Source-level tests and
+static checks are evidence contracts only; this candidate does not execute,
+install, update, sign, publish, or Defender-scan a candidate artifact.
 
 ### 2026-09-03 — Windows update evidence wave (integration candidate)
 

@@ -194,46 +194,17 @@ def test_restore_rejects_destination_only_source_blob_reference_before_mutation(
         )
 
 
-def test_restore_rejects_indirect_destination_only_source_reference_before_mutation(
-    tmp_path: Path,
-) -> None:
+def test_export_omits_machine_local_ingestion_state_before_restore(tmp_path: Path) -> None:
     source_database = tmp_path / "source.sqlite3"
     _source_store, _source_id, _record_id = _source_inclusive_store(source_database)
     package = tmp_path / "source.atcexp"
     create_export(source_database, package, PASSPHRASE, include_sources=True)
 
-    destination = tmp_path / "destination.sqlite3"
-    destination_store = CoreStore(destination)
-    destination_store.initialize_vault("destination vault")
-    destination_source = destination_store.add_source(
-        b"indirect destination-only source",
-        source_service="destination-only",
-        source_type="private-fixture",
-    )
-    before = destination.read_bytes()
-
-    def point_session_at_destination_source(
-        members: dict[str, bytes], _manifest: dict[str, object]
-    ) -> None:
-        session_name = "tables/ingestion_sessions.jsonl"
-        rows = []
-        for line in members[session_name].splitlines():
-            row = json.loads(line)
-            row["accessible_sources_json"] = json.dumps([destination_source.id])
-            rows.append((json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode())
-        members[session_name] = b"".join(rows)
-
-    tampered = _rewrite_export(
-        package,
-        tmp_path / "indirect-destination-source.atcexp",
-        point_session_at_destination_source,
-    )
-    with pytest.raises(ValueError, match="unresolved package ID"):
-        restore_export(tampered, destination, PASSPHRASE)
-
-    assert destination.read_bytes() == before
-    with destination_store.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM source_records").fetchone()[0] == 1
+    with TemporaryDirectory(prefix="atc-test-export-inspect-session-") as temporary:
+        payload = Path(temporary) / "payload.zip"
+        portable_export._decrypt_file(package, payload, PASSPHRASE)
+        with zipfile.ZipFile(payload) as archive:
+            assert "tables/ingestion_sessions.jsonl" not in archive.namelist()
 
 
 def _rewrite_export(

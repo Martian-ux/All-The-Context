@@ -1,5 +1,27 @@
 # Architecture decisions
 
+## ADR-201: Exact Windows hardening convergence preserves authority boundaries
+
+**Status:** accepted locally on 2026-09-04 from exact base
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`; final pushed SHA and hosted
+checks are still pending. The complete source-to-integrated ledger is
+`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`.
+
+Nine requested worker tips produce 49 unique commits after ancestry union,
+stable patch-equivalence checks, and topological ordering. Every required
+patch is represented exactly once in the candidate ancestry. Conflict
+resolution retains the Core activity/readiness lifecycle gates, the
+reversible Windows registration transaction, the immutable packaged build
+identity, and the portable graph/purge barriers. Machine-local principals,
+credentials, grants, and in-flight ingestion state remain excluded from
+portable exports; legacy archives containing those rows are ignored without
+authority mutation.
+
+This decision records source integration only. It does not grant release,
+signing, publication, Defender, clean-machine, provider/client, or
+downloaded-candidate evidence. Those gates must bind to the final exact
+pushed SHA and their results must be recorded separately.
+
 ## ADR-200: Explicit Windows staging and evidence receipts remain bounded gates
 
 **Status:** accepted locally on 2026-09-03 after integration from exact clean

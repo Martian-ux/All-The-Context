@@ -506,13 +506,12 @@ def prepare_installed_runtime(
     helper_target = result.targets["mcp"]
     recovery_target = result.targets["recovery"]
     update_target = result.targets["updater"]
-    if runtime.executable != app_target:
-        # Shortcut/registry registration is intentionally outside the binary
-        # transaction and runs only after its complete commit.
     # Refresh an existing registration only when its identity is stale. This
     # repairs an older installed registration that may otherwise keep showing
     # beta.3 without rewriting an unregistered current copy on every launch.
     if runtime.executable != app_target or application_entrypoints_need_refresh():
+        # Shortcut/registry registration is intentionally outside the binary
+        # transaction and runs only after its complete commit.
         install_application_entrypoints(app_target)
     installed = RuntimeCommand(
         app_target,
