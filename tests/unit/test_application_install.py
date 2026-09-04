@@ -400,13 +400,29 @@ class _FakeAdvapi:
             raw = int(getattr(handle, "value", handle))
             return self.transactions[raw]
 
-        def create_transaction(*_args: object) -> int:
+        def create_transaction(
+            transaction_attributes: object,
+            uow: object,
+            create_options: int,
+            isolation_level: int,
+            isolation_flags: int,
+            timeout: int,
+            description: object,
+        ) -> int:
+            assert transaction_attributes is None
+            assert uow is None
+            assert create_options == 0
+            assert isolation_level == 0
+            assert isolation_flags == 0
+            assert timeout == 0
+            assert description is None
             raw = self._next_transaction
             self._next_transaction += 1
             self.transactions[raw] = _FakeRegistryTransaction(self.module)
             return raw
 
         def commit_transaction(handle: object) -> int:
+            assert isinstance(handle, ctypes.c_void_p)
             transaction = transaction_for(handle)
             hook = self.commit_hook
             if callable(hook):
@@ -419,11 +435,13 @@ class _FakeAdvapi:
             return 1
 
         def rollback_transaction(handle: object) -> int:
+            assert isinstance(handle, ctypes.c_void_p)
             transaction = transaction_for(handle)
             transaction.rolled_back = True
             return 1
 
         def close_transaction(handle: object) -> int:
+            assert isinstance(handle, ctypes.c_void_p)
             raw = int(getattr(handle, "value", handle))
             self.closed_transaction_handles.append(raw)
             return 1
@@ -434,18 +452,30 @@ class _FakeAdvapi:
         self.CloseHandle = close_transaction
 
         def create_transacted_key(
-            _root: object,
+            root: object,
             name: str,
-            _reserved: int,
-            _class_name: object,
-            _options: int,
-            _access: int,
-            _security: object,
+            reserved: int,
+            class_name: object,
+            options: int,
+            access: int,
+            security: object,
             result_handle: object,
             disposition: object,
             transaction_handle: object,
-            _extended: object,
+            extended: object,
         ) -> int:
+            assert int(getattr(root, "value", root)) == self.module.HKEY_CURRENT_USER
+            assert reserved == 0
+            assert class_name is None
+            assert options == 0
+            assert access & (
+                platform_compat._KEY_WOW64_32KEY | platform_compat._KEY_WOW64_64KEY
+            ) == (platform_compat._REGISTRY_VIEW_MASK)
+            assert security is None
+            assert getattr(result_handle, "_obj", None) is not None
+            assert getattr(disposition, "_obj", None) is not None
+            assert isinstance(transaction_handle, ctypes.c_void_p)
+            assert extended is None
             transaction = transaction_for(transaction_handle)
             ensure_parents(transaction.registry, name)
             created = name not in transaction.registry.keys
@@ -458,14 +488,22 @@ class _FakeAdvapi:
             return 0
 
         def open_transacted_key(
-            _root: object,
+            root: object,
             name: str,
-            _options: int,
-            _access: int,
+            options: int,
+            access: int,
             result_handle: object,
             transaction_handle: object,
-            _extended: object,
+            extended: object,
         ) -> int:
+            assert int(getattr(root, "value", root)) == self.module.HKEY_CURRENT_USER
+            assert options == 0
+            assert access & (
+                platform_compat._KEY_WOW64_32KEY | platform_compat._KEY_WOW64_64KEY
+            ) == (platform_compat._REGISTRY_VIEW_MASK)
+            assert getattr(result_handle, "_obj", None) is not None
+            assert isinstance(transaction_handle, ctypes.c_void_p)
+            assert extended is None
             transaction = transaction_for(transaction_handle)
             if name not in transaction.registry.keys:
                 return 2
@@ -474,13 +512,23 @@ class _FakeAdvapi:
             return 0
 
         def delete_transacted_key(
-            _root: object,
+            root: object,
             name: str,
-            _access: int,
-            _reserved: int,
+            view_flags: int,
+            reserved: int,
             transaction_handle: object,
-            _extended: object,
+            extended: object,
         ) -> int:
+            assert int(getattr(root, "value", root)) == self.module.HKEY_CURRENT_USER
+            assert view_flags in {
+                platform_compat._REGISTRY_VIEW_MASK,
+                platform_compat._KEY_WOW64_32KEY,
+                platform_compat._KEY_WOW64_64KEY,
+            }
+            assert view_flags == platform_compat._REGISTRY_VIEW_MASK
+            assert reserved == 0
+            assert isinstance(transaction_handle, ctypes.c_void_p)
+            assert extended is None
             transaction = transaction_for(transaction_handle)
             hook = self.delete_transacted_hook
             if callable(hook):
@@ -1963,6 +2011,117 @@ def test_registry_adapter_fails_closed_without_native_compare_primitives() -> No
     assert calls == []
 
 
+def test_registry_transaction_rollback_failure_is_single_attempt_and_terminal() -> None:
+    rollback_calls: list[ctypes.c_void_p] = []
+    close_calls: list[ctypes.c_void_p] = []
+
+    def rollback(handle: ctypes.c_void_p) -> int:
+        rollback_calls.append(handle)
+        raise OSError("rollback failure")
+
+    def close(handle: ctypes.c_void_p) -> int:
+        close_calls.append(handle)
+        return 1
+
+    transaction = platform_compat._RegistryTransaction(41, lambda _handle: 1, rollback, close)
+
+    with pytest.raises(OSError, match="rollback failure"):
+        transaction.rollback()
+    with pytest.raises(OSError, match="rollback failure"):
+        transaction.rollback()
+
+    transaction.close()
+
+    assert len(rollback_calls) == 1
+    assert len(close_calls) == 1
+    assert transaction.rollback_attempted is True
+    assert transaction.rolled_back is False
+    assert transaction.closed is True
+    assert transaction.state is platform_compat._RegistryTransactionState.CLOSED
+
+
+def test_registry_transaction_commit_failure_is_single_attempt_before_rollback() -> None:
+    commit_calls: list[ctypes.c_void_p] = []
+    rollback_calls: list[ctypes.c_void_p] = []
+
+    def commit(handle: ctypes.c_void_p) -> int:
+        commit_calls.append(handle)
+        raise OSError("commit conflict")
+
+    def rollback(handle: ctypes.c_void_p) -> int:
+        rollback_calls.append(handle)
+        return 1
+
+    transaction = platform_compat._RegistryTransaction(44, commit, rollback, lambda _handle: 1)
+
+    with pytest.raises(OSError, match="commit conflict"):
+        transaction.commit()
+    with pytest.raises(OSError, match="commit conflict"):
+        transaction.commit()
+    transaction.rollback()
+    transaction.close()
+
+    assert len(commit_calls) == 1
+    assert len(rollback_calls) == 1
+    assert transaction.committed is False
+    assert transaction.rolled_back is True
+    assert transaction.state is platform_compat._RegistryTransactionState.CLOSED
+
+
+def test_registry_transaction_close_failure_retains_handle_ownership_without_retry() -> None:
+    close_calls: list[ctypes.c_void_p] = []
+
+    def close(handle: ctypes.c_void_p) -> int:
+        close_calls.append(handle)
+        raise OSError("close failure")
+
+    transaction = platform_compat._RegistryTransaction(
+        42, lambda _handle: 1, lambda _handle: 1, close
+    )
+
+    with pytest.raises(OSError, match="close failure"):
+        transaction.close()
+    with pytest.raises(OSError, match="close failure"):
+        transaction.close()
+    with pytest.raises(OSError, match="close failure"):
+        transaction.rollback()
+
+    assert len(close_calls) == 1
+    assert transaction.close_attempted is True
+    assert transaction.closed is False
+    assert transaction.state is platform_compat._RegistryTransactionState.CLOSE_FAILED
+
+
+def test_run_registry_transaction_preserves_operation_and_cleanup_failures() -> None:
+    rollback_calls: list[ctypes.c_void_p] = []
+    close_calls: list[ctypes.c_void_p] = []
+
+    def rollback(handle: ctypes.c_void_p) -> int:
+        rollback_calls.append(handle)
+        raise OSError("rollback failure")
+
+    def close(handle: ctypes.c_void_p) -> int:
+        close_calls.append(handle)
+        raise OSError("close failure")
+
+    transaction = platform_compat._RegistryTransaction(43, lambda _handle: 1, rollback, close)
+    adapter = platform_compat.WindowsRegistryAdapter(SimpleNamespace())
+    adapter._begin_registry_transaction = lambda: transaction  # type: ignore[method-assign]
+
+    def operation(_transaction: object) -> None:
+        raise RuntimeError("operation failure")
+
+    with pytest.raises(RuntimeError, match="operation failure") as raised:
+        adapter._run_registry_transaction(operation)
+
+    assert len(rollback_calls) == 1
+    assert len(close_calls) == 1
+    assert any("rollback failed" in note for note in raised.value.__notes__)
+    assert any("close failed" in note for note in raised.value.__notes__)
+    assert transaction.closed is False
+    assert transaction.state is platform_compat._RegistryTransactionState.CLOSE_FAILED
+
+
 def test_stock_winreg_forward_install_uses_native_new_key_disposition(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2097,6 +2256,8 @@ def test_stock_pyhkey_has_no_path_metadata_and_native_handles_are_closed(
     assert not hasattr(_StockPyHKEY, "path")
     assert stock.closed_handles
     assert len(stock.closed_handles) == len(set(stock.closed_handles))
+    assert len(native.closed_transaction_handles) == len(native.transactions)
+    assert len(native.closed_transaction_handles) == len(set(native.closed_transaction_handles))
 
 
 def test_stock_transaction_commit_conflict_rolls_back_and_retains_vendor_data(

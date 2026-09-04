@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 import threading
-from contextlib import suppress
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
 
@@ -27,6 +27,12 @@ _KEY_CREATE_SUB_KEY = 0x0004
 _KEY_READ = 0x20019
 _KEY_ALL_ACCESS = 0xF003F
 _DELETE = 0x00010000
+# RegDeleteKeyTransactedW's samDesired is not a normal access mask.  It only
+# accepts zero or one of these view selectors.  The rest of this adapter uses
+# the process/default registry view, so keep that choice explicit and shared.
+_KEY_WOW64_64KEY = 0x0100
+_KEY_WOW64_32KEY = 0x0200
+_REGISTRY_VIEW_MASK = 0
 _FILE_READ_ATTRIBUTES = 0x00000080
 _SYNCHRONIZE = 0x00100000
 _FILE_SHARE_READ = 0x00000001
@@ -220,39 +226,124 @@ def replace_file_durably(source: Path, destination: Path) -> None:
         os.close(directory_fd)
 
 
+class _RegistryTransactionState(StrEnum):
+    """Observable states for the owner of one native KTM handle."""
+
+    ACTIVE = "active"
+    COMMITTED = "committed"
+    ROLLED_BACK = "rolled_back"
+    COMMIT_FAILED = "commit_failed"
+    ROLLBACK_FAILED = "rollback_failed"
+    CLOSED = "closed"
+    CLOSE_FAILED = "close_failed"
+
+
 class _RegistryTransaction:
-    """Small owner for one native KTM transaction handle."""
+    """Own one native KTM handle with single-attempt terminal operations.
+
+    A failed native cleanup call is retained as evidence and never retried by
+    this owner.  Retrying a close or rollback after an uncertain native result
+    can target a reused handle, so callers must retain their durable recovery
+    evidence instead of trying to make this handle look clean.
+    """
 
     def __init__(self, handle: int, commit: Any, rollback: Any, close: Any) -> None:
         self.handle = handle
         self._commit = commit
         self._rollback = rollback
         self._close = close
+        self.state = _RegistryTransactionState.ACTIVE
         self.committed = False
+        self.rolled_back = False
         self.closed = False
+        self.commit_attempted = False
+        self.rollback_attempted = False
+        self.close_attempted = False
+        self.commit_error: BaseException | None = None
+        self.rollback_error: BaseException | None = None
+        self.close_error: BaseException | None = None
+
+    def _raise_inactive(self) -> None:
+        raise OSError("registry transaction is no longer active")
 
     def commit(self) -> None:
-        result = int(self._commit(ctypes.c_void_p(self.handle)))
-        if not result:
-            _raise_windows_error(ctypes.get_last_error(), "unable to commit registry transaction")
+        if self.committed:
+            return
+        if self.commit_attempted:
+            if self.commit_error is not None:
+                raise self.commit_error
+            return
+        if self.state is _RegistryTransactionState.CLOSED:
+            self._raise_inactive()
+        if self.close_attempted:
+            if self.close_error is not None:
+                raise self.close_error
+            self._raise_inactive()
+        if self.rollback_attempted:
+            if self.rollback_error is not None:
+                raise self.rollback_error
+            self._raise_inactive()
+        self.commit_attempted = True
+        try:
+            result = int(self._commit(ctypes.c_void_p(self.handle)))
+            if not result:
+                _raise_windows_error(
+                    ctypes.get_last_error(), "unable to commit registry transaction"
+                )
+        except BaseException as exc:
+            self.commit_error = exc
+            self.state = _RegistryTransactionState.COMMIT_FAILED
+            raise
         self.committed = True
+        self.state = _RegistryTransactionState.COMMITTED
 
     def rollback(self) -> None:
-        if self.committed or self.closed:
+        if self.committed or self.rolled_back:
             return
-        result = int(self._rollback(ctypes.c_void_p(self.handle)))
-        if not result:
-            _raise_windows_error(
-                ctypes.get_last_error(), "unable to roll back registry transaction"
-            )
+        if self.rollback_attempted:
+            if self.rollback_error is not None:
+                raise self.rollback_error
+            return
+        if self.state is _RegistryTransactionState.CLOSED:
+            self._raise_inactive()
+        if self.close_attempted:
+            if self.close_error is not None:
+                raise self.close_error
+            self._raise_inactive()
+        self.rollback_attempted = True
+        try:
+            result = int(self._rollback(ctypes.c_void_p(self.handle)))
+            if not result:
+                _raise_windows_error(
+                    ctypes.get_last_error(), "unable to roll back registry transaction"
+                )
+        except BaseException as exc:
+            self.rollback_error = exc
+            self.state = _RegistryTransactionState.ROLLBACK_FAILED
+            raise
+        self.rolled_back = True
+        self.state = _RegistryTransactionState.ROLLED_BACK
 
     def close(self) -> None:
         if self.closed:
             return
-        result = int(self._close(ctypes.c_void_p(self.handle)))
+        if self.close_attempted:
+            if self.close_error is not None:
+                raise self.close_error
+            return
+        self.close_attempted = True
+        try:
+            result = int(self._close(ctypes.c_void_p(self.handle)))
+            if not result:
+                _raise_windows_error(
+                    ctypes.get_last_error(), "unable to close registry transaction"
+                )
+        except BaseException as exc:
+            self.close_error = exc
+            self.state = _RegistryTransactionState.CLOSE_FAILED
+            raise
         self.closed = True
-        if not result:
-            _raise_windows_error(ctypes.get_last_error(), "unable to close registry transaction")
+        self.state = _RegistryTransactionState.CLOSED
 
 
 class WindowsRegistryAdapter:
@@ -471,6 +562,7 @@ class WindowsRegistryAdapter:
         result_handle = ctypes.c_void_p()
         disposition = ctypes.c_uint32(_REG_OPENED_EXISTING_KEY)
         root = ctypes.c_void_p(int(self._current_user) & 0xFFFFFFFFFFFFFFFF)
+        requested_access = access | _REGISTRY_VIEW_MASK
         if create:
             function.argtypes = (
                 ctypes.c_void_p,
@@ -493,7 +585,7 @@ class WindowsRegistryAdapter:
                     0,
                     None,
                     0,
-                    access,
+                    requested_access,
                     None,
                     ctypes.byref(result_handle),
                     ctypes.byref(disposition),
@@ -517,7 +609,7 @@ class WindowsRegistryAdapter:
                     root,
                     name,
                     0,
-                    access,
+                    requested_access,
                     ctypes.byref(result_handle),
                     ctypes.c_void_p(transaction.handle),
                     None,
@@ -576,7 +668,7 @@ class WindowsRegistryAdapter:
             function(
                 root,
                 name,
-                _DELETE,
+                _REGISTRY_VIEW_MASK,
                 0,
                 ctypes.c_void_p(transaction.handle),
                 None,
@@ -643,6 +735,7 @@ class WindowsRegistryAdapter:
 
     def _run_registry_transaction(self, operation: Any) -> Any:
         transaction = self._begin_registry_transaction()
+        primary_error: BaseException | None = None
         try:
             result = operation(transaction)
             if result is False:
@@ -650,12 +743,27 @@ class WindowsRegistryAdapter:
                 return result
             transaction.commit()
             return result
-        except BaseException:
-            with suppress(BaseException):
-                transaction.rollback()
+        except BaseException as exc:
+            primary_error = exc
+            if not transaction.rollback_attempted:
+                try:
+                    transaction.rollback()
+                except BaseException:
+                    # The original failure remains the operation's public
+                    # error, but its notes retain that native cleanup is
+                    # ambiguous and durable recovery evidence is required.
+                    exc.add_note("registry transaction rollback failed; cleanup is ambiguous")
             raise
         finally:
-            transaction.close()
+            try:
+                transaction.close()
+            except BaseException:
+                if primary_error is not None:
+                    primary_error.add_note(
+                        "registry transaction close failed; cleanup is ambiguous"
+                    )
+                else:
+                    raise
 
     def publish_key_if_absent(
         self,
