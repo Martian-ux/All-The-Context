@@ -3,13 +3,16 @@
 ## Current milestone
 
 The current Windows GA diagnostic integration checkout contains source
-integration commits `6b86129b4d401765cfaf84a4ba196e793bbe9b71` and
-`bfdc503658794dfb80f11bd3765d62f0d836d25b`. The first has exact parent the
+integration commits `6b86129b4d401765cfaf84a4ba196e793bbe9b71`,
+`bfdc503658794dfb80f11bd3765d62f0d836d25b`, and
+`941968d7d5714a6a889b1990ab418b9aa0fc34b3`. The first has exact parent the
 prior pushed and hosted open draft PR #114 head
 `c923224f1cf2d29c495e9bc981a381b99bded2ac`; the second has exact parent
-`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`. Local source repairs
-`5433f8100ba0a3f7aab554cba70f41bd49184309` and
-`5f78aeb861f1e0ae019ee7f048036d1b3f55511e` each have their recorded exact
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`, and the latest has exact parent
+`33bc53769a2dc5d44d0b1ec673fe66595336b835`. Local source repairs
+`5433f8100ba0a3f7aab554cba70f41bd49184309`,
+`5f78aeb861f1e0ae019ee7f048036d1b3f55511e`, and
+`cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2` each have their recorded exact
 parent and were cherry-picked exactly once without conflict. Before the
 ancestry-safe push,
 the remote branch and `refs/pull/114/head` were still c923224, while remote
@@ -33,11 +36,13 @@ adds six closed headless setup subphases plus an `unknown` fallback through an
 optional, exception-contained progress callback at the existing setup seams.
 The follow-on repair guards all six projected setup fields, loads reports with
 a bounded limit-plus-one read, and contains decode, Unicode, JSON, recursion,
-oversize, and non-dict failures in both summary and headless setup paths. The
-report and smoke projection expose only allowlisted authoritative fields; they
-contain no exception text, traceback, stream, path, environment, identity,
-credential, vault, or user-context data. These repairs are diagnostic-only and
-do not claim that the underlying Windows failure is fixed.
+oversize, non-dict, and JSON integer-limit `ValueError` failures in both summary
+and headless setup paths. Only the `json.loads` call is normalized to the
+private parse-error class; decoding, size, and surrounding control flow remain
+unchanged. The report and smoke projection expose only allowlisted authoritative
+fields; they contain no exception text, traceback, stream, path, environment,
+identity, credential, vault, or user-context data. These repairs are
+diagnostic-only and do not claim that the underlying Windows failure is fixed.
 
 The packaged smoke's four-component check uses same-build stable Setup, MCP,
 Recovery, and Updater helper copies to validate crash/rollback/component-set
@@ -65,7 +70,10 @@ The pre-repair full-suite attempt on `2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`
 was intentionally interrupted at approximately 45% after an exact-head
 review finding; it supplies no test result. The follow-on source worker
 reported 129 passed, no skips or warnings, Ruff lint/format over 378 files,
-mypy over 113 files, and `git diff --check` green.
+mypy over 113 files, and `git diff --check` green. The final
+parser-normalization repair worker reported 73 focused tests passed, with no
+skips or warnings; its Ruff/format, mypy, and diff checks were also green. The
+integer-limit coverage is source-level only.
 
 **2026-09-05 — Historical packaged-smoke repair at the then-live PR #114 head**
 

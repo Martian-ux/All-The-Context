@@ -54,6 +54,11 @@ The follow-on source repair
 `2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3` and was cherry-picked exactly once
 without conflict as `bfdc503658794dfb80f11bd3765d62f0d836d25b`; its two-path
 scope closes the remaining setup-report projection boundary.
+The final parser-normalization source repair
+`cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2` has exact parent
+`33bc53769a2dc5d44d0b1ec673fe66595336b835` and was cherry-picked exactly once
+without conflict as `941968d7d5714a6a889b1990ab418b9aa0fc34b3`; its two-path
+scope closes the remaining JSON integer-limit containment boundary.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -126,6 +131,29 @@ candidate claim.
 |---|---|---|
 | Primitive-safe setup-report projection | `scripts/smoke_packaged_first_run.py::project_setup_report_for_diagnostics`; `tests/unit/test_packaged_first_run_diagnostics.py::test_project_setup_report_ignores_non_string_field_shapes`; source `5f78aeb861f1e0ae019ee7f048036d1b3f55511e`; integrated `bfdc503658794dfb80f11bd3765d62f0d836d25b` | Implemented at source level. All six projected setup fields require primitive strings before allowlist membership, so list, dict, boolean, numeric, null, and nested values are ignored without raising or leaking content. |
 | Bounded setup-report loading and failure containment | `scripts/smoke_packaged_first_run.py::_load_setup_report`; `_run_headless_setup`; `tests/unit/test_packaged_first_run_diagnostics.py::test_failure_summary_contains_malformed_and_oversized_reports_without_escape`; `test_headless_setup_fails_closed_for_non_dict_report`; source `5f78aeb861f1e0ae019ee7f048036d1b3f55511e`; integrated `bfdc503658794dfb80f11bd3765d62f0d836d25b` | Implemented at source level. The report is read with a bounded limit-plus-one loader, and decode, Unicode, JSON, recursion, oversize, and non-dict failures become fixed parseability diagnostics in summary and successful headless-setup paths. No raw report, path, identity, credential, stream, or user context is emitted, and broad exceptions are not swallowed. |
+
+The final documentation commit intentionally does not name its own SHA;
+post-push exact-ref verification supplies final SHA evidence. No hosted rerun,
+artifact execution, release, signing, Defender, clean-machine, provider/client,
+or downloaded-candidate acceptance is inferred from this source repair.
+
+### 2026-09-05 Windows GA setup-report integer-limit containment
+
+This final narrow repair starts from exact pre-repair candidate
+`33bc53769a2dc5d44d0b1ec673fe66595336b835`. Source commit
+`cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2` has that exact parent and exactly
+two changed paths; it was cherry-picked once without conflict as
+`941968d7d5714a6a889b1990ab418b9aa0fc34b3`. The source worker reported 73
+focused tests passed with no skips or warnings; Ruff lint/format over 378
+files, mypy over 113 files, and `git diff --check` were green. The repair is
+diagnostic-only and does not establish root cause, hosted success, artifact,
+release, signing, Defender, clean-machine, provider/client, or downloaded-
+candidate acceptance.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| JSON integer-limit parse containment | `scripts/smoke_packaged_first_run.py::_load_setup_report`; `tests/unit/test_packaged_first_run_diagnostics.py::test_failure_summary_contains_integer_limited_report_without_escape`; source `cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2`; integrated `941968d7d5714a6a889b1990ab418b9aa0fc34b3` | Implemented at source level. Only `ValueError` from the enclosed `json.loads` call is normalized to a private parse-error class; a sub-1 MiB 5,000-digit integer under `PYTHONINTMAXSTRDIGITS=4300` is contained as a fixed parseability result without leaking content. |
+| Headless integer-limit failure containment | `scripts/smoke_packaged_first_run.py::_run_headless_setup`; `tests/unit/test_packaged_first_run_diagnostics.py::test_headless_setup_fails_closed_for_integer_limited_report`; source `cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2`; integrated `941968d7d5714a6a889b1990ab418b9aa0fc34b3` | Implemented at source level. The successful return-code-zero headless path contains the same fixed parser error and emits only the bounded diagnostic schema; decoding, size checks, and surrounding control flow are unchanged, with no raw report, path, identity, credential, stream, or user-context leakage. |
 
 The final documentation commit intentionally does not name its own SHA;
 post-push exact-ref verification supplies final SHA evidence. No hosted rerun,

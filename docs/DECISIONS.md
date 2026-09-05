@@ -3,8 +3,11 @@
 ## ADR-208: Windows GA packaged-update diagnostics and transaction contracts
 
 **Status:** accepted locally on 2026-09-05 for source-integration commit
-`bfdc503658794dfb80f11bd3765d62f0d836d25b`, whose exact parent is the prior
+`941968d7d5714a6a889b1990ab418b9aa0fc34b3`, whose exact parent is the prior
 diagnostic documentation candidate
+`33bc53769a2dc5d44d0b1ec673fe66595336b835`; that candidate has exact parent
+source integration `bfdc503658794dfb80f11bd3765d62f0d836d25b`, whose exact
+parent is diagnostic documentation candidate
 `2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`; that candidate has exact parent
 the prior pushed and hosted open draft PR #114 head
 `c923224f1cf2d29c495e9bc981a381b99bded2ac`. Remote `main` remains
@@ -45,6 +48,18 @@ loader; decode, Unicode, JSON, recursion, oversize, and non-dict report
 failures are contained without changing product behavior or swallowing broad
 exceptions.
 
+The final parser-normalization source repair
+`cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2` has exact parent
+`33bc53769a2dc5d44d0b1ec673fe66595336b835` and was cherry-picked exactly once
+without conflict as `941968d7d5714a6a889b1990ab418b9aa0fc34b3`. It changes only
+`scripts/smoke_packaged_first_run.py` and
+`tests/unit/test_packaged_first_run_diagnostics.py`. It normalizes only
+`ValueError` raised by the immediately enclosed `json.loads` call into a
+private parse-error class; decoding, size checks, and surrounding control flow
+remain outside that normalization. Both report-loader callers contain the
+fixed error, including the CPython integer-conversion-limit case, without
+swallowing broad exceptions or exposing report content.
+
 The inherited packaged-update child still publishes one atomic, bounded,
 content-free failure report at the validated transaction path. This repair
 checks every decoded scalar field as a string before allowlist membership or
@@ -82,7 +97,9 @@ The follow-on source worker reported 129 passed with no skips or warnings;
 Ruff lint/format over 378 files, mypy over 113 files, and `git diff --check`
 were green. The repair is diagnostic-only and does not establish root cause,
 hosted success, artifact, release, signing, Defender, or clean-machine
-evidence.
+evidence. The final parser-normalization repair worker reported 73 focused
+tests passed with no skips or warnings, with Ruff/format, mypy, and diff checks
+green. The integer-limit evidence remains source-level only.
 
 ## ADR-207: Windows GA follow-up requires exact source integration and process-lock shutdown evidence
 
