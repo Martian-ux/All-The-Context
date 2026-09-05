@@ -151,9 +151,16 @@ non-Windows identity deletion fails closed without a pathname fallback while
 real Windows handle deletion remains unchanged.
 
 This repair set narrows the next hosted diagnostic stage but does not claim
-that the Windows `setup_io_error` is fixed. Final local gates, exact hosted
-rerun results, artifact, release, signing, Defender, clean-machine,
-provider/client, and downloaded-candidate evidence remain separately bounded.
+that the Windows `setup_io_error` is fixed. On committed code head
+`2057a0e59c4012cba416d6d82d48a801a9cca563`, the focused suite passed 178 tests
+with 6 expected host-capability skips in 22.45 seconds, and sequential full
+pytest passed 3,097 tests with 20 expected capability skips and 3 warnings
+from 3,117 collected in 725.64 seconds. Ruff lint/format, default/Linux/
+Win32 mypy, documentation, 48 Action pins, acceptance receipt templates,
+collection parity, release-keyring audit, and zero-finding tree/history
+security scans passed. These are local source evidence; exact hosted rerun
+results, artifact, release, signing, Defender, clean-machine, provider/client,
+and downloaded-candidate evidence remain separately bounded.
 
 ### 2026-09-04 — Cross-platform Windows last-error compatibility repair
 

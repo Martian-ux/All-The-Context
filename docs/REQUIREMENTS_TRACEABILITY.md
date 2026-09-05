@@ -123,9 +123,14 @@ evidence.
 | Identity-bound deletion portability | `platform_compat.py::delete_file_by_identity`; `tests/unit/test_platform_compat.py`; source `778f0c5f565ef3d9e34ec2f5379591e647b9e462`, integrated `dfb801ee0d4cd481382d716d7ca66fcc9bef306c` | Corrected at source level. Real Windows handle deletion is retained; unsupported non-Windows hosts fail closed without the invalid Linux `unlinkat(..., AT_EMPTY_PATH)` or unsafe pathname fallback. |
 | Packaged setup diagnostic containment | `desktop.py`; `scripts/smoke_packaged_first_run.py`; `tests/unit/test_desktop_runtime.py`; `tests/unit/test_packaged_first_run_diagnostics.py`; source `7964ee859f2aa3a1520be5730595feb05e5ede22`, integrated `9f1654b137646dc373e3566de75f8b7b2f4a31e5` | Corrected at source level. Only the closed setup error-code and stage vocabularies are projected, and raw error text remains excluded. The hosted Windows `setup_io_error` is narrowed diagnostically, not fixed or accepted. |
 
-The three repairs were cherry-picked exactly once in the listed order. Final
-local gate counts and any hosted rerun remain bound to the later final
-committed SHA.
+The three repairs were cherry-picked exactly once in the listed order. Local
+validation on committed code head `2057a0e59c4012cba416d6d82d48a801a9cca563`
+passed the focused suite with 178 tests and 6 expected host-capability skips,
+and sequential full pytest with 3,097 passed, 20 expected capability skips,
+3 warnings, 3,117 collected, and 725.64 seconds. Ruff, default/Linux/Win32
+mypy, documentation, Action pins, receipt templates, collection parity,
+keyring audit, and zero-finding repository scans passed. Any hosted rerun
+remains bound to the later pushed SHA and does not inherit local evidence.
 
 ### 2026-09-04 Windows GA convergence integration
 

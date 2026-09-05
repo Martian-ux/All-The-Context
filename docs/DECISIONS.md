@@ -23,6 +23,14 @@ non-Windows identity-deletion path fails closed without a pathname fallback.
 Real Windows handle-bound deletion and the existing setup behavior remain
 unchanged.
 
+Local validation on committed code head
+`2057a0e59c4012cba416d6d82d48a801a9cca563` passed the focused suite with 178
+tests and 6 expected host-capability skips, and sequential full pytest with
+3,097 passed, 20 expected capability skips, 3 warnings, 3,117 collected, and
+725.64 seconds. Ruff, all three mypy platform modes, documentation, Action
+pins, receipt templates, collection parity, keyring audit, and zero-finding
+repository scans also passed. These results are local source evidence only.
+
 The same hosted run's Windows desktop job remains a `setup_io_error`; this
 repair only makes the next diagnostic stage observable and does not claim that
 the hosted setup failure is fixed. Source, hosted, artifact, release, signing,
