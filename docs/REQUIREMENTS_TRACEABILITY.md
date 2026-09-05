@@ -35,6 +35,9 @@ ADR-204 and adds two exact source repairs on top of PR #114 head
 The exact-head reviewer repair follow-up is covered by ADR-205 and adds three
 exact source repairs on top of PR #114 head
 `3983cf3930b9462be8d2d9a175230618f74a4b04`.
+The final Windows GA hosted follow-up is covered by ADR-206 and adds two
+exact source repairs on top of the live PR #114 head
+`fe30fe1719ab2de589e87881a3df40734202c668`.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -55,6 +58,32 @@ worker `14f351741c5b4cb2d2343aeea4cba88a27a4380b`; that original worker
 object is likewise not an ancestor. It adds single-flight update actions,
 bounded cancellation feedback, protected cancellation API coverage, and
 dashboard error-recovery coverage.
+
+### 2026-09-05 Windows GA hosted follow-up repairs
+
+The follow-up starts from exact live PR #114 head
+`fe30fe1719ab2de589e87881a3df40734202c668`, with remote `main` still
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The two clean source commits
+were fetched from local worktrees and cherry-picked exactly once in order as
+`b3acf5f90116e4662b5be9857ae8980367196983` and
+`7fd35728882d0a9379bb5dffc9683df9b1c9f112`. Both source commits have the
+exact live-head parent. This table records source-contract coverage only; it
+does not promote local tests to hosted, artifact, release, signing,
+publication, Defender, clean-machine, provider/client, or downloaded-
+candidate evidence.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Portable Windows startup-registry tests | `tests/unit/test_user_startup.py`; source `1f8e5e3a349cbb107becae30009ce5bb1f695a79`; integrated `b3acf5f90116e4662b5be9857ae8980367196983` | Corrected at source level. Tests inject the fake through the production `windows_registry()` seam, so simulated Windows coverage does not depend on replacing the unavailable host `winreg` module. |
+| Windows shortcut staging | `application_install.py::_temporary_path`; `tests/unit/test_application_install.py::test_shortcut_temporary_path_preserves_wscript_shortcut_suffix`; source `388d1d7ea530f6a9cdd872fbf408a77c8542de2a`; integrated `7fd35728882d0a9379bb5dffc9683df9b1c9f112` | Corrected at source level. Recoverable temporary names retain the final `.lnk`/`.url` suffix required by WScript.Shell `CreateShortcut`. |
+
+The pre-integration hosted snapshot still had Ubuntu and Windows desktop
+failures. A hosted rerun must bind to the final pushed SHA; no hosted,
+artifact, signing, publication, Defender, clean-machine, provider/client, or
+downloaded-candidate acceptance is credited by these repairs. Unsigned
+community distribution remains the policy, SmartScreen warnings are
+acceptable, paid signing is not required, and Defender quarantine/deletion
+remains a blocker.
 
 ### 2026-09-04 Cross-platform Windows last-error compatibility repair
 

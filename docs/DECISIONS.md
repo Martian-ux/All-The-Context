@@ -1,5 +1,34 @@
 # Architecture decisions
 
+## ADR-206: Windows GA follow-up keeps portability and unsigned-release boundaries explicit
+
+**Status:** accepted locally on 2026-09-05 at pre-documentation integration
+head `7fd35728882d0a9379bb5dffc9683df9b1c9f112`, from exact open draft PR #114
+head `fe30fe1719ab2de589e87881a3df40734202c668`, with remote `main` at
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The two source repairs were
+cherry-picked exactly once in order: source
+`1f8e5e3a349cbb107becae30009ce5bb1f695a79` as integrated
+`b3acf5f90116e4662b5be9857ae8980367196983`, followed by source
+`388d1d7ea530f6a9cdd872fbf408a77c8542de2a` as integrated
+`7fd35728882d0a9379bb5dffc9683df9b1c9f112`. Each source commit has the
+required parent `fe30fe1719ab2de589e87881a3df40734202c668`.
+
+The portable Ubuntu registry regression is corrected at the test boundary:
+the fake is injected through `allthecontext.user_startup.windows_registry`,
+matching the production seam instead of replacing the unavailable `winreg`
+module in `sys.modules`. The Windows shortcut staging regression is corrected
+at the product boundary: the crash-recoverable sibling temporary path keeps
+the final `.lnk` or `.url` suffix required by WScript.Shell's
+`CreateShortcut`.
+
+This decision records source/test repairs only. The pre-integration hosted
+snapshot still contains Ubuntu and Windows desktop failures; a post-push
+hosted rerun is required and no artifact execution, installation, update,
+Defender scan, clean-machine, provider/client, release, or publication result
+is inferred. The distribution policy remains unsigned community release with
+SmartScreen warnings acceptable, no paid-signing requirement, and Defender
+quarantine/deletion unacceptable.
+
 ## ADR-205: Exact-head reviewer repairs preserve portable evidence boundaries
 
 **Status:** accepted locally on 2026-09-04 at pre-documentation integration
