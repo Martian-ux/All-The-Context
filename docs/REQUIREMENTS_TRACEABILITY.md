@@ -29,6 +29,9 @@ the integration ancestry; the final integration commit adds only bounded
 configuration/lifecycle safeguards and documentation.
 The exact-PR hosted repair follow-up is covered by ADR-203 and adds three
 source tips on top of PR #114 head `f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`.
+The hosted-history and packaged-first-run diagnostic follow-up is covered by
+ADR-204 and adds two exact source repairs on top of PR #114 head
+`bd401a77eb824452d84769dd2824c87e095cddce`.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -81,6 +84,23 @@ Focused local validation for this follow-up passed 394 tests with 10 expected
 host-capability skips and no warnings. Default, simulated-Linux, and
 simulated-Win32 mypy checks passed; final full-tree and hosted results remain
 bound to the final exact SHA.
+
+### 2026-09-04 Exact PR #114 hosted follow-up repairs
+
+The follow-up starts at exact PR #114 head
+`bd401a77eb824452d84769dd2824c87e095cddce`. Hosted run `33934027316` failed
+both Python Documentation steps because the checkout was shallow; the Windows
+desktop job also failed its headless setup with exit 1. The remaining early
+jobs were green. The two repairs below are source-contract and diagnostic
+evidence only; a hosted rerun must bind to the final pushed SHA.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Python CI documentation history | `.github/workflows/ci.yml` Python checkout; `tests/unit/test_release_workflow_contracts.py::test_ci_python_documentation_checks_have_full_history_and_pinned_actions`; repair `0f7141e83fad7add4456ed925ddfdb68e23ca261` integrated as `8e09cd7324dcd83cb5a4b0acbe9ae4e3c8194b47` | Corrected with `fetch-depth: 0` after the hosted shallow-checkout failure. Focused evidence passed 21 tests; documentation, 48 Action pins, Ruff, format, and diff checks were green. Hosted success remains pending |
+| Packaged first-run failure diagnosis | `scripts/smoke_packaged_first_run.py`; `tests/unit/test_packaged_first_run_diagnostics.py`; repair `247f74572ae69c87182f59e147ff98fde42f59ff` integrated as `31a9875cb5992704bfbcf6c548b3b453dfe211ea` | Diagnostic-only exposure of the allowlisted `setup_error_code`; focused evidence passed 163 tests with five expected symlink skips, including 16 diagnostic tests. Ruff, format, mypy over 112 source files, documentation, and diff checks were green. It does not fix or claim to fix the unresolved hosted Windows headless setup exit 1 |
+
+The prompt-supplied second source identifier with an extra trailing `f` did
+not resolve; the exact existing commit above was verified and used.
 
 ### 2026-09-04 Windows GA convergence integration
 

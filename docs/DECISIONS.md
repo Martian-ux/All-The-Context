@@ -1,5 +1,26 @@
 # Architecture decisions
 
+## ADR-204: Hosted CI history and packaged first-run diagnosis remain bounded
+
+**Status:** accepted locally on 2026-09-04 at pre-documentation integration
+head `31a9875cb5992704bfbcf6c548b3b453dfe211ea`, from exact open draft PR #114
+head `bd401a77eb824452d84769dd2824c87e095cddce`. Repair commits
+`0f7141e83fad7add4456ed925ddfdb68e23ca261` and
+`247f74572ae69c87182f59e147ff98fde42f59ff` were cherry-picked exactly once
+in that order as `8e09cd7324dcd83cb5a4b0acbe9ae4e3c8194b47` and
+`31a9875cb5992704bfbcf6c548b3b453dfe211ea`.
+
+Hosted run `33934027316` failed both Python Documentation steps because the
+checkout was shallow, and the Windows desktop job failed its headless setup
+with exit 1; the remaining early jobs were green. The CI repair sets
+`fetch-depth: 0` and adds a workflow-contract regression. The packaged
+first-run repair exposes only the already-allowlisted `setup_error_code` in
+terminal JSON after bounded projection. It does not alter setup behavior,
+copy report contents, or resolve the hosted headless setup failure. The
+follow-up therefore remains source and diagnostic evidence only; hosted,
+artifact, release, signing, Defender, clean-machine, provider/client, and
+downloaded-candidate acceptance remain open.
+
 ## ADR-203: Hosted-PR repair evidence stays exact-SHA and fail-closed
 
 **Status:** accepted locally on 2026-09-04 at code head
