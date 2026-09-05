@@ -51,6 +51,7 @@ from allthecontext.credentials import (
 )
 from allthecontext.desktop import (
     _HEADLESS_SETUP_ERROR_CODES,
+    _HEADLESS_SETUP_SUBPHASES,
     WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS,
 )
 from allthecontext.installed_component_manifest import (
@@ -112,6 +113,7 @@ _SAFE_SETUP_REPORT_KEYS = frozenset(
         "error_type",
         "error_code",
         "setup_stage",
+        "setup_subphase",
     }
 )
 _SAFE_SETUP_STAGES = frozenset({"prepare_installed_runtime", "perform_setup", "write_report"})
@@ -661,8 +663,11 @@ def project_setup_report_for_diagnostics(raw: object) -> dict[str, Any]:
     if error_code in _HEADLESS_SETUP_ERROR_CODES:
         projected["error_code"] = error_code
     setup_stage = raw.get("setup_stage")
-    if setup_stage in _SAFE_SETUP_STAGES:
+    if isinstance(setup_stage, str) and setup_stage in _SAFE_SETUP_STAGES:
         projected["setup_stage"] = setup_stage
+    setup_subphase = raw.get("setup_subphase")
+    if isinstance(setup_subphase, str) and setup_subphase in _HEADLESS_SETUP_SUBPHASES:
+        projected["setup_subphase"] = setup_subphase
     projected["sensitive_fields_present"] = {
         key: key in raw and raw.get(key) not in (None, "", [], {})
         for key in _SENSITIVE_SETUP_PRESENCE_KEYS
@@ -774,6 +779,7 @@ def emit_failure_diagnostics(
     setup_report = summary.get("setup_report")
     setup_error_code = setup_report.get("error_code") if isinstance(setup_report, dict) else None
     setup_stage = setup_report.get("setup_stage") if isinstance(setup_report, dict) else None
+    setup_subphase = setup_report.get("setup_subphase") if isinstance(setup_report, dict) else None
     print(
         json.dumps(
             {
@@ -787,6 +793,7 @@ def emit_failure_diagnostics(
                 # hosted failures actionable without copying report contents.
                 "setup_error_code": setup_error_code,
                 "setup_stage": setup_stage,
+                "setup_subphase": setup_subphase,
                 "stdout_present": stdout_present,
                 "stderr_present": stderr_present,
             },

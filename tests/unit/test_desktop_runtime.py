@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import allthecontext
+import allthecontext.desktop as desktop
 import pytest
 from allthecontext.build_identity import make_build_identity
 from allthecontext.config import CoreConfig
@@ -74,6 +76,7 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     launch_environments: list[dict[str, str]] = []
     stopped: list[bool] = []
     registered: list[Path] = []
+    subphases: list[str] = []
 
     class Process:
         pass
@@ -103,6 +106,7 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
             recovery_executable=source_recovery,
         ),
         relaunch_args=(),
+        progress=subphases.append,
     )
 
     assert relaunched is True
@@ -118,6 +122,14 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     assert launch_environments[0]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert stopped == [True]
     assert registered == [installed.executable]
+    assert subphases == [
+        "packaged_component_source_validation",
+        "core_probe",
+        "bootstrap_install_recovery",
+        "entrypoint_refresh_probe",
+        "entrypoint_registration",
+        "installed_runtime_assembly",
+    ]
 
 
 def test_macos_bundle_copy_replaces_existing_copy_atomically(tmp_path: Path) -> None:
@@ -451,6 +463,7 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
     assert payload["error_type"] == "RuntimeError"
     assert payload["error_code"] == "credential_store_unavailable"
     assert payload["setup_stage"] == "prepare_installed_runtime"
+    assert payload["setup_subphase"] == "unknown"
     assert payload["diagnostics_written"] is True
     assert payload["diagnostics_name"] == diagnostics_path.name
     assert "diagnostics_path" not in payload
@@ -490,10 +503,235 @@ def test_headless_setup_failure_reports_perform_setup_stage_without_error_text(
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["error_code"] == "setup_io_error"
     assert payload["setup_stage"] == "perform_setup"
+    assert payload["setup_subphase"] == "unknown"
     captured = capsys.readouterr()
     assert token_canary not in json.dumps(payload)
     assert token_canary not in captured.out
     assert token_canary not in captured.err
+
+
+@pytest.mark.parametrize(
+    "subphase",
+    [
+        "packaged_component_source_validation",
+        "core_probe",
+        "bootstrap_install_recovery",
+        "entrypoint_refresh_probe",
+        "entrypoint_registration",
+        "installed_runtime_assembly",
+    ],
+)
+def test_headless_setup_failure_reports_bounded_prepare_subphase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    subphase: str,
+) -> None:
+    report_path = tmp_path / "setup-report.json"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    path_canary = str(tmp_path / "private" / "vault.sqlite3")
+    token_canary = "atc-setup-subphase-token-never-log"
+
+    monkeypatch.setattr("allthecontext.desktop.RuntimeCommand.current", lambda: runtime)
+
+    def fail_prepare(
+        supplied_runtime: RuntimeCommand,
+        *,
+        relaunch_args: tuple[str, ...] | None,
+        progress,
+    ) -> tuple[RuntimeCommand, bool]:
+        assert supplied_runtime is runtime
+        assert relaunch_args is None
+        progress(subphase)
+        raise OSError(f"injected {path_canary}; token={token_canary}")
+
+    monkeypatch.setattr("allthecontext.desktop.prepare_installed_runtime", fail_prepare)
+    monkeypatch.setattr("allthecontext.desktop._write_failure_diagnostics", lambda _error: None)
+
+    assert main(["--headless-setup", str(report_path)]) == 1
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert set(payload) == {
+        "setup",
+        "error_type",
+        "error_code",
+        "setup_stage",
+        "setup_subphase",
+        "diagnostics_written",
+        "diagnostics_name",
+    }
+    assert payload["setup"] == "failed"
+    assert payload["error_type"] == "OSError"
+    assert payload["error_code"] == "setup_io_error"
+    assert payload["setup_stage"] == "prepare_installed_runtime"
+    assert payload["setup_subphase"] == subphase
+    serialized = json.dumps(payload)
+    assert path_canary not in serialized
+    assert token_canary not in serialized
+
+
+@pytest.mark.parametrize(
+    "failure_subphase",
+    [
+        "packaged_component_source_validation",
+        "core_probe",
+        "bootstrap_install_recovery",
+        "entrypoint_refresh_probe",
+        "entrypoint_registration",
+        "installed_runtime_assembly",
+    ],
+)
+def test_headless_setup_injected_prepare_oserror_reports_exact_subphase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure_subphase: str,
+) -> None:
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    component_paths = {
+        "main": install_dir / "AllTheContext.exe",
+        "mcp": install_dir / "AllTheContextMCP.exe",
+        "recovery": install_dir / "AllTheContextRecovery.exe",
+        "updater": install_dir / "AllTheContextUpdater.exe",
+    }
+    for role, path in component_paths.items():
+        path.write_bytes(role.encode("ascii"))
+    runtime = RuntimeCommand(
+        component_paths["main"],
+        mcp_executable=component_paths["mcp"],
+        update_executable=component_paths["updater"],
+        recovery_executable=component_paths["recovery"],
+    )
+    report_path = tmp_path / "setup-report.json"
+    path_canary = str(tmp_path / "private" / "context.sqlite3")
+    token_canary = "atc-setup-subphase-token-never-log"
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(desktop.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(desktop.RuntimeCommand, "current", lambda: runtime)
+    monkeypatch.setattr(desktop, "_write_failure_diagnostics", lambda _error: None)
+
+    def injected_failure() -> OSError:
+        return OSError(f"injected {path_canary}; token={token_canary}")
+
+    if failure_subphase == "packaged_component_source_validation":
+        original_is_file = Path.is_file
+
+        def fail_source_validation(path: Path) -> bool:
+            if path == component_paths["mcp"]:
+                raise injected_failure()
+            return original_is_file(path)
+
+        monkeypatch.setattr(Path, "is_file", fail_source_validation)
+    elif failure_subphase == "core_probe":
+
+        def fail_core_probe(_config: object) -> object:
+            raise injected_failure()
+
+        monkeypatch.setattr(desktop, "probe_core", fail_core_probe)
+    else:
+        from allthecontext import windows_bootstrap_install as bootstrap
+
+        targets = bootstrap.canonical_targets(install_dir)
+        monkeypatch.setattr(
+            bootstrap,
+            "install_windows_components",
+            lambda *_args, **_kwargs: (
+                (_ for _ in ()).throw(injected_failure())
+                if failure_subphase == "bootstrap_install_recovery"
+                else SimpleNamespace(targets=targets)
+            ),
+        )
+        if failure_subphase == "entrypoint_refresh_probe":
+            monkeypatch.setattr(
+                desktop,
+                "application_entrypoints_need_refresh",
+                lambda: (_ for _ in ()).throw(injected_failure()),
+            )
+        elif failure_subphase == "entrypoint_registration":
+            monkeypatch.setattr(desktop, "application_entrypoints_need_refresh", lambda: True)
+            monkeypatch.setattr(
+                desktop,
+                "install_application_entrypoints",
+                lambda _target: (_ for _ in ()).throw(injected_failure()),
+            )
+        else:
+            monkeypatch.setattr(desktop, "application_entrypoints_need_refresh", lambda: False)
+            original_runtime_command = desktop.RuntimeCommand
+
+            class RaisingRuntimeCommand:
+                @classmethod
+                def current(cls) -> RuntimeCommand:
+                    return runtime
+
+                def __new__(cls, *_args: object, **_kwargs: object) -> RuntimeCommand:
+                    raise injected_failure()
+
+            assert original_runtime_command is RuntimeCommand
+            monkeypatch.setattr(desktop, "RuntimeCommand", RaisingRuntimeCommand)
+
+    assert main(["--headless-setup", str(report_path)]) == 1
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "setup": "failed",
+        "error_type": "OSError",
+        "error_code": "setup_io_error",
+        "setup_stage": "prepare_installed_runtime",
+        "setup_subphase": failure_subphase,
+        "diagnostics_written": False,
+        "diagnostics_name": None,
+    }
+    captured = capsys.readouterr()
+    serialized = json.dumps(payload)
+    assert path_canary not in serialized
+    assert token_canary not in serialized
+    assert path_canary not in captured.err
+    assert token_canary not in captured.err
+
+
+def test_headless_setup_progress_callback_failure_is_contained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_app = tmp_path / "download" / "AllTheContextSetup.exe"
+    source_helper = tmp_path / "bundle" / "AllTheContextMCP.exe"
+    source_recovery = tmp_path / "bundle" / "AllTheContextRecovery.exe"
+    source_updater = tmp_path / "bundle" / "AllTheContextUpdater.exe"
+    source_app.parent.mkdir()
+    source_helper.parent.mkdir()
+    source_app.write_bytes(b"desktop")
+    source_helper.write_bytes(b"mcp")
+    source_recovery.write_bytes(b"recovery")
+    source_updater.write_bytes(b"updater")
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(desktop.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(desktop, "_stop_installed_core_for_upgrade", lambda: None)
+    monkeypatch.setattr(desktop, "install_application_entrypoints", lambda _target: None)
+    monkeypatch.setattr(
+        desktop,
+        "_relaunch_installed_runtime",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def fail_progress(_subphase: str) -> None:
+        raise RuntimeError("diagnostic callback failed")
+
+    installed, relaunched = prepare_installed_runtime(
+        RuntimeCommand(
+            source_app,
+            mcp_executable=source_helper,
+            update_executable=source_updater,
+            recovery_executable=source_recovery,
+        ),
+        relaunch_args=(),
+        progress=fail_progress,
+    )
+
+    assert installed.executable == install_dir / "AllTheContext.exe"
+    assert relaunched is True
 
 
 def test_packaged_update_child_writes_atomic_content_free_failure_report(

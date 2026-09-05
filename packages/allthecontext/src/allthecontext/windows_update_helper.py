@@ -304,17 +304,35 @@ def _read_apply_failure_report(path: Path, expected_attempt: str) -> tuple[str, 
         )
     except HelperError:
         return "invalid", None
+    if set(value) != UPDATE_FAILURE_REPORT_FIELDS:
+        return "invalid", None
+    status = value.get("status")
+    phase = value.get("phase")
+    code = value.get("code")
+    attempt = value.get("attempt")
+    # The report is child-authored and therefore untrusted.  Check primitive
+    # types before any allowlist membership or nonce comparison so nested JSON
+    # values cannot raise from this boundary and bypass transaction rollback.
+    if not isinstance(status, str):
+        return "invalid", None
+    if not isinstance(phase, str):
+        return "invalid", None
+    if not isinstance(code, str):
+        return "invalid", None
+    if not isinstance(attempt, str):
+        return "invalid", None
+    if not isinstance(expected_attempt, str):
+        return "invalid", None
     if (
-        set(value) != UPDATE_FAILURE_REPORT_FIELDS
-        or value.get("status") != UPDATE_FAILURE_REPORT_STATUS
-        or value.get("phase") not in UPDATE_FAILURE_REPORT_PHASES
-        or value.get("code") not in UPDATE_FAILURE_REPORT_CODES
-        or not valid_update_failure_attempt(value.get("attempt"))
+        status != UPDATE_FAILURE_REPORT_STATUS
+        or phase not in UPDATE_FAILURE_REPORT_PHASES
+        or code not in UPDATE_FAILURE_REPORT_CODES
+        or not valid_update_failure_attempt(attempt)
         or not valid_update_failure_attempt(expected_attempt)
-        or not hmac.compare_digest(cast(str, value.get("attempt")), expected_attempt)
+        or not hmac.compare_digest(attempt, expected_attempt)
     ):
         return "invalid", None
-    return "valid", cast(str, value["code"])
+    return "valid", code
 
 
 def journal_failure_diagnostic(path: Path) -> str:

@@ -23,7 +23,7 @@ from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from tkinter import messagebox
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from platformdirs import user_data_path
 
@@ -85,6 +85,27 @@ WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
 )
 MACOS_APP_NAME = "All The Context.app"
 HeadlessSetupStage = Literal["prepare_installed_runtime", "perform_setup", "write_report"]
+HeadlessSetupSubphase = Literal[
+    "packaged_component_source_validation",
+    "core_probe",
+    "bootstrap_install_recovery",
+    "entrypoint_refresh_probe",
+    "entrypoint_registration",
+    "installed_runtime_assembly",
+    "unknown",
+]
+_HEADLESS_SETUP_SUBPHASES: frozenset[str] = frozenset(
+    {
+        "packaged_component_source_validation",
+        "core_probe",
+        "bootstrap_install_recovery",
+        "entrypoint_refresh_probe",
+        "entrypoint_registration",
+        "installed_runtime_assembly",
+        "unknown",
+    }
+)
+HeadlessSetupProgress = Callable[[HeadlessSetupSubphase], None]
 PackagedUpdateFailurePhase = Literal[
     "build_identity",
     "component_bootstrap",
@@ -102,6 +123,12 @@ _HEADLESS_SETUP_ERROR_CODES = frozenset(
         "setup_failed",
     }
 )
+
+
+def _normalize_headless_setup_subphase(value: object) -> HeadlessSetupSubphase:
+    if isinstance(value, str) and value in _HEADLESS_SETUP_SUBPHASES:
+        return cast(HeadlessSetupSubphase, value)
+    return "unknown"
 
 
 def _retire_installed_ai_clients(
@@ -473,6 +500,7 @@ def prepare_installed_runtime(
     runtime: RuntimeCommand,
     *,
     relaunch_args: tuple[str, ...] | None,
+    progress: HeadlessSetupProgress | None = None,
 ) -> tuple[RuntimeCommand, bool]:
     """Install frozen platform bundles per-user and optionally relaunch the stable copy."""
     if not getattr(sys, "frozen", False):
@@ -489,6 +517,7 @@ def prepare_installed_runtime(
         install_windows_components,
     )
 
+    _notify_headless_setup_subphase(progress, "packaged_component_source_validation")
     helper_source = runtime.mcp_executable
     if helper_source is None or not helper_source.is_file():
         raise RuntimeError("The packaged MCP helper is missing. Download the installer again.")
@@ -510,6 +539,7 @@ def prepare_installed_runtime(
 
     # Probe only for lifecycle bookkeeping.  The stop routine independently
     # authenticates and waits for Core to exit before the first target replace.
+    _notify_headless_setup_subphase(progress, "core_probe")
     core_was_running = probe_core(CoreConfig.default()) is not CoreProbe.UNREACHABLE
 
     def restart_prior_core() -> None:
@@ -521,6 +551,7 @@ def prepare_installed_runtime(
         )
         _relaunch_installed_runtime(prior_runtime, ("--core",))
 
+    _notify_headless_setup_subphase(progress, "bootstrap_install_recovery")
     result = install_windows_components(
         sources,
         install_dir,
@@ -536,10 +567,14 @@ def prepare_installed_runtime(
     # Refresh an existing registration only when its identity is stale. This
     # repairs an older installed registration that may otherwise keep showing
     # beta.3 without rewriting an unregistered current copy on every launch.
-    if runtime.executable != app_target or application_entrypoints_need_refresh():
+    _notify_headless_setup_subphase(progress, "entrypoint_refresh_probe")
+    refresh_entrypoints = runtime.executable != app_target or application_entrypoints_need_refresh()
+    if refresh_entrypoints:
         # Shortcut/registry registration is intentionally outside the binary
         # transaction and runs only after its complete commit.
+        _notify_headless_setup_subphase(progress, "entrypoint_registration")
         install_application_entrypoints(app_target)
+    _notify_headless_setup_subphase(progress, "installed_runtime_assembly")
     installed = RuntimeCommand(
         app_target,
         mcp_executable=helper_target,
@@ -551,6 +586,22 @@ def prepare_installed_runtime(
         _relaunch_installed_runtime(installed, relaunch_args)
         return installed, True
     return installed, False
+
+
+def _notify_headless_setup_subphase(
+    progress: HeadlessSetupProgress | None,
+    subphase: HeadlessSetupSubphase,
+) -> None:
+    """Notify the private headless reporter without changing setup control flow."""
+
+    if progress is None:
+        return
+    try:
+        progress(subphase)
+    except Exception:
+        # Diagnostics are strictly best-effort; a reporter failure must not
+        # turn a successful setup into a product failure.
+        return
 
 
 def _dashboard_exposes_import_operations(package_root: Path) -> bool:
@@ -884,11 +935,16 @@ def _headless_setup_error_code(error: Exception) -> str:
 
 
 def _write_headless_setup_failure_report(
-    target: Path, error: Exception, *, setup_stage: HeadlessSetupStage
+    target: Path,
+    error: Exception,
+    *,
+    setup_stage: HeadlessSetupStage,
+    setup_subphase: HeadlessSetupSubphase = "unknown",
 ) -> Path | None:
     """Write a redacted headless failure report when the windowed app has no console."""
 
     error_code = _headless_setup_error_code(error)
+    setup_subphase = _normalize_headless_setup_subphase(setup_subphase)
     # The general graphical diagnostic path accepts a human-facing exception
     # message. Headless setup is automation-facing, so persist only a closed
     # code even if a lower layer accidentally embeds a token, path, or imported
@@ -901,6 +957,7 @@ def _write_headless_setup_failure_report(
         else "Exception",
         "error_code": error_code,
         "setup_stage": setup_stage,
+        "setup_subphase": setup_subphase,
         # Never embed absolute developer paths; only a presence/basename signal.
         "diagnostics_written": diagnostics_path is not None,
         "diagnostics_name": diagnostics_path.name if diagnostics_path is not None else None,
@@ -955,8 +1012,18 @@ def _headless_claude_code_explicit_result(result: object) -> dict[str, Any] | No
 def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
     target = Path(args.headless_setup).expanduser().resolve()
     setup_stage: HeadlessSetupStage = "prepare_installed_runtime"
+    setup_subphase: HeadlessSetupSubphase = "unknown"
+
+    def record_subphase(subphase: HeadlessSetupSubphase) -> None:
+        nonlocal setup_subphase
+        setup_subphase = _normalize_headless_setup_subphase(subphase)
+
     try:
-        installed, _ = prepare_installed_runtime(runtime, relaunch_args=None)
+        installed, _ = prepare_installed_runtime(
+            runtime,
+            relaunch_args=None,
+            progress=record_subphase,
+        )
         setup_stage = "perform_setup"
         setup_kwargs: dict[str, Any] = {
             "vault_name": args.vault_name,
@@ -1007,7 +1074,12 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         # Windowed Windows packages have no console; persist a redacted report so
         # packaged smoke and operators can diagnose fail-closed setup without
         # relying on hidden stderr.
-        report_path = _write_headless_setup_failure_report(target, exc, setup_stage=setup_stage)
+        report_path = _write_headless_setup_failure_report(
+            target,
+            exc,
+            setup_stage=setup_stage,
+            setup_subphase=setup_subphase,
+        )
         error_code = _headless_setup_error_code(exc)
         if report_path is not None:
             print(

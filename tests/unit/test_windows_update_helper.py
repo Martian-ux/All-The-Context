@@ -711,6 +711,72 @@ def test_nonzero_child_report_is_strictly_classified(
     assert not (fixture.journal_path.parent / "apply-report.json").exists()
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("phase", []),
+        ("phase", {}),
+        ("phase", True),
+        ("phase", 1),
+        ("phase", None),
+        ("phase", {"nested": {"value": "component_bootstrap"}}),
+        ("code", []),
+        ("code", {}),
+        ("code", False),
+        ("code", 1.5),
+        ("code", None),
+        ("code", {"nested": {"value": "bootstrap_journal_invalid"}}),
+        ("attempt", []),
+        ("attempt", {}),
+        ("attempt", True),
+        ("attempt", 32),
+        ("attempt", None),
+        ("attempt", {"nested": {"value": "b" * 32}}),
+        ("status", []),
+        ("status", {}),
+        ("status", False),
+        ("status", 1),
+        ("status", None),
+        ("status", {"nested": {"value": "failed"}}),
+    ],
+)
+def test_adversarial_child_failure_report_values_reach_safe_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Any,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _isolate_runtime(monkeypatch, [])
+    _advance_time_for_retry(monkeypatch)
+
+    def run(command: tuple[str, ...], environment: dict[str, str]) -> int:
+        if "--apply-update" not in command:
+            raise AssertionError(command)
+        payload: dict[str, Any] = {
+            "attempt": environment["ATC_UPDATE_ATTEMPT"],
+            "code": "bootstrap_journal_invalid",
+            "phase": "component_bootstrap",
+            "status": "failed",
+        }
+        payload[field] = value
+        Path(command[-1]).write_text(json.dumps(payload), encoding="utf-8")
+        return 1
+
+    monkeypatch.setattr(helper_module, "_run_bounded", run)
+
+    assert run_transaction(fixture.journal_path) == 2
+
+    journal = UpdateJournal.load(fixture.journal_path)
+    assert journal.phase is HelperPhase.ROLLED_BACK
+    assert journal.last_error_code == "child_failure_report_invalid"
+    assert fixture.application.read_bytes() == fixture.old_application
+    assert fixture.mcp.read_bytes() == fixture.old_mcp
+    assert fixture.recovery.read_bytes() == fixture.old_recovery
+    assert fixture.update_helper.read_bytes() == fixture.old_update_helper
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+
+
 def test_zero_exit_report_and_target_mismatch_have_distinct_codes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

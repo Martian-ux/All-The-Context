@@ -351,6 +351,7 @@ def test_project_failed_setup_report_redacts_error_canaries() -> None:
             "error_type": "RuntimeError",
             "error_code": "credential_store_unavailable",
             "setup_stage": "perform_setup",
+            "setup_subphase": "unknown",
             "error": (
                 f"token={TOKEN_CANARY}; {DASHBOARD_CANARY}; "
                 f"client={CLIENT_CANARY}; path={PATH_CANARY}; {RAW_STATEMENT}"
@@ -363,6 +364,7 @@ def test_project_failed_setup_report_redacts_error_canaries() -> None:
     assert projected["error_type"] == "RuntimeError"
     assert projected["error_code"] == "credential_store_unavailable"
     assert projected["setup_stage"] == "perform_setup"
+    assert projected["setup_subphase"] == "unknown"
     assert "error" not in projected
     for canary in (TOKEN_CANARY, TICKET_CANARY, CLIENT_CANARY, PATH_CANARY):
         assert canary not in serialized
@@ -443,6 +445,7 @@ def test_emit_failure_diagnostics_prints_closed_schema_only(
                 "error_type": "RuntimeError",
                 "error_code": "setup_io_error",
                 "setup_stage": "prepare_installed_runtime",
+                "setup_subphase": "core_probe",
                 "error": f"token={TOKEN_CANARY}",
                 "dashboard_url": DASHBOARD_CANARY,
             }
@@ -466,6 +469,7 @@ def test_emit_failure_diagnostics_prints_closed_schema_only(
     assert payload["diagnostics_file"] == path.name
     assert payload["setup_error_code"] == "setup_io_error"
     assert payload["setup_stage"] == "prepare_installed_runtime"
+    assert payload["setup_subphase"] == "core_probe"
     assert payload["stdout_present"] is True
     assert TOKEN_CANARY not in out
     assert DASHBOARD_CANARY not in out
@@ -509,6 +513,7 @@ def test_project_setup_report_discards_unknown_setup_codes_and_stages() -> None:
             "setup": "failed",
             "error_code": "user_context_leak",
             "setup_stage": "unexpected-stage-with-secret-token",
+            "setup_subphase": "unexpected-subphase-with-secret-token",
         }
     )
     assert projected["setup"] == "failed"
@@ -516,6 +521,7 @@ def test_project_setup_report_discards_unknown_setup_codes_and_stages() -> None:
     assert "setup_stage" not in projected
     assert "user_context_leak" not in json.dumps(projected)
     assert "unexpected-stage-with-secret-token" not in json.dumps(projected)
+    assert "unexpected-subphase-with-secret-token" not in json.dumps(projected)
 
 
 def test_remove_work_tree_deletes_credential_bearing_tree(tmp_path: Path) -> None:
