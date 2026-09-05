@@ -35,14 +35,15 @@ ADR-204 and adds two exact source repairs on top of PR #114 head
 The exact-head reviewer repair follow-up is covered by ADR-205 and adds three
 exact source repairs on top of PR #114 head
 `3983cf3930b9462be8d2d9a175230618f74a4b04`.
-The current Windows GA hosted follow-up is covered by ADR-207 and starts from
+The current Windows GA hosted follow-up is covered by ADR-208 and starts from
 the exact live PR #114 head
-`1cf496edf8bdf7a8566328decbd055e8900647cb`. ADR-206 remains historical and
-is superseded for the current head. The two stable source inputs were
-cherry-picked exactly once in order as integrated commits
-`cbf08ea375ee035f018962573f0746665185a26f` and
-`0a0042059b7f7b2e4e74de764c0b755f416a05e7`; the source inputs and their
-exact-parent relationships are retained as provenance for this recorded tree.
+`99fde17d8b850db561db057365efc4225e40b173`. ADR-207 remains historical and is
+superseded for the current head. Source repair
+`7f0677787e339a5fce96e4d21c6acf2cea29003c` was cherry-picked exactly once as
+integrated commit `78e83e1320d263312aa2c7d70a636b951bc7972d`; its exact-parent
+relationship and three-file scope are retained as provenance for this
+recorded tree. Final documentation, exact-tree validation, and the
+ancestry-safe push remain pending at this point.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -79,7 +80,7 @@ provider/client, or downloaded-candidate evidence.
 
 | Requirement area | Implementation/evidence | Status |
 |---|---|---|
-| Windows shortcut staging cleanup coverage | `tests/unit/test_application_install.py::test_shortcut_temporary_path_preserves_wscript_shortcut_suffix`; source `393ec111802ddad1136a0b88f09b159317a77a92`; integrated `cbf08ea375ee035f018962573f0746665185a26f` | Corrected at source-test level. Parameterized `.lnk`/`.url` cases assert parent, deterministic identity, suffix preservation, and cleanup of the actual suffix-preserving temporary path after generator failure. |
+| Windows shortcut staging path contract | `tests/unit/test_application_install.py::test_shortcut_temporary_path_preserves_wscript_shortcut_suffix`; source `393ec111802ddad1136a0b88f09b159317a77a92`; integrated `cbf08ea375ee035f018962573f0746665185a26f` | Corrected at source-test level. Parameterized `.lnk`/`.url` cases assert parent, deterministic identity, and suffix preservation. Generator-failure cleanup, including the `.url` case, is bound to the separate repair row below. |
 | Packaged-smoke Core shutdown handoff | `scripts/smoke_packaged_first_run.py::stop_core`; `tests/unit/test_packaged_first_run_diagnostics.py::test_stop_core_waits_for_process_lock_after_health_disappears`; source `00823fcba2cf9821aaa6319ae3c6e7c4665c5ca9`; integrated `0a0042059b7f7b2e4e74de764c0b755f416a05e7` | Corrected at source-test level. After health disappears, the smoke waits for the installed Core `core.lock` to release, with explicit data-directory handoff and a bounded timeout. Hosted confirmation is pending against the final pushed SHA. |
 
 Prior exact-head evidence on `1cf496edf8bdf7a8566328decbd055e8900647cb`
@@ -93,6 +94,37 @@ provider/client, or downloaded-candidate acceptance is credited by these
 repairs. Unsigned community distribution remains the policy, SmartScreen
 warnings are acceptable, paid signing is not required, and Defender
 quarantine/deletion remains a blocker.
+
+### 2026-09-05 Windows GA packaged-smoke transaction repair
+
+The repair starts from exact live PR #114 head
+`99fde17d8b850db561db057365efc4225e40b173`, with remote `main` at
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. Source
+`7f0677787e339a5fce96e4d21c6acf2cea29003c` has that exact parent and was
+cherry-picked exactly once, without conflict resolution, as integrated commit
+`78e83e1320d263312aa2c7d70a636b951bc7972d`. The source worker reported 325
+passed, 6 expected capability skips, and 76.46 seconds; Ruff lint/format/diff
+and worktree checks were green. These are source-contract results only, not
+hosted or artifact acceptance.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Packaged-smoke four-candidate transaction contract | `scripts/smoke_packaged_first_run.py::prepare_packaged_update_transaction`; `tests/unit/test_packaged_first_run_diagnostics.py::test_packaged_transaction_scopes_disposable_helper_authority`; source `7f0677787e339a5fce96e4d21c6acf2cea29003c`; integrated `78e83e1320d263312aa2c7d70a636b951bc7972d` | Corrected at source-test level. `replacement/` stages `AllTheContextSetup.exe`, `AllTheContextMCP.exe`, `AllTheContextRecovery.exe`, and `AllTheContextUpdater.exe`; the installed-component manifest binds each installed role to the exact staged SHA-256 and size. No product runtime/workflow change is introduced. |
+| Packaged-smoke single overall stop budget | `scripts/smoke_packaged_first_run.py::stop_core`; `tests/unit/test_packaged_first_run_diagnostics.py::test_stop_core_uses_one_overall_deadline_for_lock_timeout`; source `7f0677787e339a5fce96e4d21c6acf2cea29003c`; integrated `78e83e1320d263312aa2c7d70a636b951bc7972d` | Corrected at source-test level. One absolute `CORE_STOP_TIMEOUT_SECONDS=10.0` monotonic deadline covers shutdown request, health polling, and `core.lock` acquisition; the regression proves four seconds remain after two seconds of shutdown and four seconds of health work. |
+| Real application-entrypoint generator-failure cleanup | `tests/unit/test_application_install.py::test_generator_failure_cleans_written_temporary[suffix=.lnk]`; `tests/unit/test_application_install.py::test_generator_failure_cleans_written_temporary[suffix=.url]`; source `7f0677787e339a5fce96e4d21c6acf2cea29003c`; integrated `78e83e1320d263312aa2c7d70a636b951bc7972d` | Corrected at source-test level. The real transaction test parameterizes both suffixes, records the exact temporary path written by the generator, and proves that generator failure removes that path. This replaces the prior `.url` traceability overclaim. |
+
+Prior exact-head evidence on `99fde17d8b850db561db057365efc4225e40b173`
+recorded 3,100 passed, 20 expected capability skips, and three known warnings
+in the local full suite, with all static, security, and evidence gates green.
+CodeQL `33948694420` was fully green. CI `33948695264` was terminal with
+every job green except Windows desktop: native build, resource/credential, and
+packaged console-recovery steps passed; packaged first-run returned `2`
+instead of injected `86` before `binary_replaced`, then cleanup failed. The
+old deterministic transaction contract failed because `replacement/` contained
+only `AllTheContextSetup.exe`. Hosted confirmation against the final pushed
+tree is pending. No hosted success, artifact, release, signing, publication,
+Defender, clean-machine, provider/client, or downloaded-candidate acceptance
+is credited.
 
 ### 2026-09-04 Cross-platform Windows last-error compatibility repair
 

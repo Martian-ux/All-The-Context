@@ -2,36 +2,33 @@
 
 ## Current milestone
 
-The current Windows GA convergence follow-up integration is recorded on branch
-`hardening/windows-ga-convergence-20260904` from exact open draft PR #114
-head `1cf496edf8bdf7a8566328decbd055e8900647cb`, with remote `main` still
-exactly `7bfd070fd51541cd77f3cde67576f447cdef50bd`. The prior 49-commit
+The current Windows GA convergence follow-up is recorded in this integration
+worktree at source integration commit
+`78e83e1320d263312aa2c7d70a636b951bc7972d`, whose exact parent is open draft
+PR #114 head `99fde17d8b850db561db057365efc4225e40b173`. The remote branch and
+live `refs/pull/114/head` remain at that parent while documentation, final
+exact-tree validation, and the ancestry-safe push are pending; remote `main`
+remains exactly `7bfd070fd51541cd77f3cde67576f447cdef50bd`. The prior 49-commit
 ancestry union from nine requested source tips and the earlier exact-head
 reviewer repairs remain recorded in
-`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. This recorded tree
-contains two additional source repairs, cherry-picked exactly once in order:
-stable source `393ec111802ddad1136a0b88f09b159317a77a92` as integrated commit
-`cbf08ea375ee035f018962573f0746665185a26f`, then stable source
-`00823fcba2cf9821aaa6319ae3c6e7c4665c5ca9` as integrated commit
-`0a0042059b7f7b2e4e74de764c0b755f416a05e7`. Both source commits have the
-exact parent `1cf496edf8bdf7a8566328decbd055e8900647cb`; no conflict
-resolution was needed. Final exact-tree validation and the ancestry-safe push
-are intentionally reported separately by the integration owner. The branch is
-not a release claim: exact-artifact decisions,
-hosted checks, signing, publication, Defender, clean-machine, provider/client,
-and downloaded-candidate evidence remain separately bounded.
+`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. The new source repair
+`7f0677787e339a5fce96e4d21c6acf2cea29003c` was cherry-picked exactly once as
+`78e83e1320d263312aa2c7d70a636b951bc7972d`; no conflict resolution was needed.
+The branch is not a release claim: exact-artifact decisions, hosted checks,
+signing, publication, Defender, clean-machine, provider/client, and
+downloaded-candidate evidence remain separately bounded.
 
-The first source repair expands shortcut staging cleanup coverage for both
-`.lnk` and `.url` targets and asserts that generator failure removes the
-actual suffix-preserving temporary path, which the legacy `*.atc-new` glob
-could not observe. The second source/test repair makes packaged-smoke
-`stop_core` wait for the installed Core process lock after its health listener
-disappears, with an explicit data-directory handoff and a bounded ten-second
-lock-release wait; its regression holds and then releases that lock while the
-health endpoint is already unavailable. These are source and test repairs
-only. The distribution policy remains unsigned: SmartScreen reputation
-warnings are acceptable for the community package, while Defender quarantine
-or deletion remains a blocker; paid signing is not required.
+The integrated source/test repair stages the packaged update's Setup, MCP,
+Recovery, and Updater siblings under `replacement/` and binds the installed-
+component manifest to each exact staged hash and size. It also makes
+`stop_core` use one absolute `CORE_STOP_TIMEOUT_SECONDS=10.0` monotonic
+deadline across shutdown request, health polling, and process-lock acquisition.
+The real application-entrypoint generator-failure regression is parameterized
+for both `.lnk` and `.url` and asserts cleanup of the exact temporary path.
+These are source and test repairs only; no product runtime or workflow change
+is introduced. The distribution policy remains unsigned: SmartScreen
+reputation warnings are acceptable for the community package, while Defender
+quarantine or deletion remains a blocker; paid signing is not required.
 
 Prior exact-head evidence on `1cf496edf8bdf7a8566328decbd055e8900647cb`
 passed the full local suite with 3,098 passed, 20 expected capability skips,
@@ -43,6 +40,30 @@ shutdown handoff observed around that evidence and awaits hosted confirmation;
 no hosted rerun or artifact result is credited yet. Full-tree gates and exact
 hosted results are credited only when bound to the final committed and pushed
 tree.
+
+**2026-09-05 — Windows GA repair at exact PR #114 head**
+
+Prior exact-head evidence on `99fde17d8b850db561db057365efc4225e40b173`
+recorded local full-suite evidence of 3,100 passed, 20 expected capability
+skips, and three known warnings, with all static, security, and evidence gates
+green. CodeQL run `33948694420` was fully green. CI run `33948695264` was
+terminal with every job green except Windows desktop: native build,
+resource/credential, and packaged console-recovery steps passed, but packaged
+first-run returned `2` instead of injected `86` before `binary_replaced`, and
+cleanup then failed. The old deterministic transaction contract also failed
+because `replacement/` contained only `AllTheContextSetup.exe`.
+
+Source repair `7f0677787e339a5fce96e4d21c6acf2cea29003c` has exact parent
+`99fde17d8b850db561db057365efc4225e40b173`, changes only the packaged-smoke
+script and its two unit-test files, and was cherry-picked without conflict as
+integrated commit `78e83e1320d263312aa2c7d70a636b951bc7972d`. The source worker
+reported 325 passed, 6 expected skips, and 76.46 seconds, with Ruff
+lint/format/diff green and a clean worktree. The integrated repair adds the
+four-candidate staging/manifest contract, the single overall ten-second Core
+stop budget, and real `.lnk`/`.url` generator-failure cleanup coverage. It is
+source-level evidence only; hosted confirmation on the final pushed tree is
+pending, and no hosted success, artifact, release, signing, Defender,
+clean-machine, provider/client, or downloaded-candidate acceptance is claimed.
 
 As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory

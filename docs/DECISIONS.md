@@ -1,5 +1,43 @@
 # Architecture decisions
 
+## ADR-208: Windows GA repair closes packaged transaction and overall-stop contracts
+
+**Status:** accepted locally on 2026-09-05 for the source-integrated tree at
+`78e83e1320d263312aa2c7d70a636b951bc7972d`, whose exact parent is open draft
+PR #114 head `99fde17d8b850db561db057365efc4225e40b173`; remote `main` remains
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. Final documentation, exact-tree
+validation, and the ancestry-safe push are not self-asserted by this decision,
+and the final pushed SHA is intentionally not named here.
+
+Source repair `7f0677787e339a5fce96e4d21c6acf2cea29003c` was cherry-picked
+exactly once as `78e83e1320d263312aa2c7d70a636b951bc7972d`, without conflict
+resolution. Its scope is exactly `scripts/smoke_packaged_first_run.py`,
+`tests/unit/test_packaged_first_run_diagnostics.py`, and
+`tests/unit/test_application_install.py`; it changes no product runtime or
+workflow.
+
+The packaged update transaction must stage all four candidate siblings:
+Setup, MCP, Recovery, and Updater. The installed-component manifest records
+the exact SHA-256 and size of each staged candidate, so the transaction
+contract cannot pass with only the Setup replacement present. `stop_core`
+uses one absolute `CORE_STOP_TIMEOUT_SECONDS=10.0` monotonic deadline across
+the shutdown request, health polling, and process-lock acquisition. Its
+regression consumes two seconds in shutdown and four seconds in health work,
+then proves that only four seconds remain for lock acquisition. The real
+application-entrypoint generator-failure cleanup regression covers both
+`.lnk` and `.url` and asserts the exact suffix-preserving temporary path.
+
+Prior exact-head evidence on `99fde17d8b850db561db057365efc4225e40b173`
+recorded local full-suite evidence of 3,100 passed, 20 expected capability
+skips, and three known warnings, with static, security, and evidence gates
+green. CodeQL `33948694420` was fully green. CI `33948695264` was terminal
+with only Windows desktop non-green: its native build, resource/credential,
+and packaged console-recovery steps passed, while packaged first-run returned
+`2` instead of injected `86` before `binary_replaced` and cleanup failed. The
+repair is awaiting hosted confirmation; no hosted success or artifact,
+release, signing, publication, Defender, clean-machine, provider/client, or
+downloaded-candidate result is inferred.
+
 ## ADR-207: Windows GA follow-up requires exact source integration and process-lock shutdown evidence
 
 **Status:** accepted locally on 2026-09-05 for this recorded integration tree;
