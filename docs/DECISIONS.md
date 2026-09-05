@@ -1,42 +1,68 @@
 # Architecture decisions
 
-## ADR-208: Windows GA repair closes packaged transaction and overall-stop contracts
+## ADR-208: Windows GA packaged-update diagnostics and transaction contracts
 
-**Status:** accepted locally on 2026-09-05 for the source-integrated tree at
-`78e83e1320d263312aa2c7d70a636b951bc7972d`, whose exact parent is open draft
-PR #114 head `99fde17d8b850db561db057365efc4225e40b173`; remote `main` remains
-`7bfd070fd51541cd77f3cde67576f447cdef50bd`. Final documentation, exact-tree
-validation, and the ancestry-safe push are not self-asserted by this decision,
-and the final pushed SHA is intentionally not named here.
+**Status:** accepted locally on 2026-09-05 for source-integration commit
+`dac9e60165aefa2f3bfeac71ee90ef552f2dade5`, whose exact parent is the live open
+draft PR #114 head `f6d53e5215ce9082fabb0d02357274d2adfc9695`; remote `main`
+remains `7bfd070fd51541cd77f3cde67576f447cdef50bd`. Final documentation,
+exact-tree validation, and the ancestry-safe push are not self-asserted by this
+decision, and the final pushed SHA is intentionally not named here.
 
-Source repair `7f0677787e339a5fce96e4d21c6acf2cea29003c` was cherry-picked
-exactly once as `78e83e1320d263312aa2c7d70a636b951bc7972d`, without conflict
-resolution. Its scope is exactly `scripts/smoke_packaged_first_run.py`,
+The preceding packaged-smoke source repair
+`7f0677787e339a5fce96e4d21c6acf2cea29003c` was integrated exactly once as
+`78e83e1320d263312aa2c7d70a636b951bc7972d` on then-live head
+`99fde17d8b850db561db057365efc4225e40b173`. It established the four-candidate
+staging/manifest contract, the single overall stop budget, and real `.lnk`/
+`.url` generator-failure cleanup. That SHA is historical provenance, not the
+current live head.
+
+The current diagnostic source repair
+`43acc25b8417c31ea9c96027acc7058d3b428365` has exact parent
+`f6d53e5215ce9082fabb0d02357274d2adfc9695` and was cherry-picked exactly once,
+without conflict resolution, as
+`dac9e60165aefa2f3bfeac71ee90ef552f2dade5`. Its scope is exactly
+`packages/allthecontext/src/allthecontext/desktop.py`,
+`packages/allthecontext/src/allthecontext/windows_update_diagnostics.py`,
+`packages/allthecontext/src/allthecontext/windows_update_helper.py`,
+`scripts/smoke_packaged_first_run.py`,
+`tests/unit/test_desktop_runtime.py`,
 `tests/unit/test_packaged_first_run_diagnostics.py`, and
-`tests/unit/test_application_install.py`; it changes no product runtime or
-workflow.
+`tests/unit/test_windows_update_helper.py`; it changes no documentation,
+workflow, or release file.
 
-The packaged update transaction must stage all four candidate siblings:
-Setup, MCP, Recovery, and Updater. The installed-component manifest records
-the exact SHA-256 and size of each staged candidate, so the transaction
-contract cannot pass with only the Setup replacement present. `stop_core`
-uses one absolute `CORE_STOP_TIMEOUT_SECONDS=10.0` monotonic deadline across
-the shutdown request, health polling, and process-lock acquisition. Its
-regression consumes two seconds in shutdown and four seconds in health work,
-then proves that only four seconds remain for lock acquisition. The real
-application-entrypoint generator-failure cleanup regression covers both
-`.lnk` and `.url` and asserts the exact suffix-preserving temporary path.
+The packaged update child publishes one atomic, bounded, content-free failure
+report at the validated transaction path. Each child attempt receives a fixed-
+shape opaque nonce; the helper clears the report before every attempt and
+accepts it only when status, phase, code, size, shape, and nonce are all
+allowlisted and valid. Missing, malformed, oversized, stale, wrong-attempt,
+or unallowlisted reports fail closed with distinct fixed helper codes. A safe
+bootstrap code is retained through the rollback journal/state. The report and
+smoke projection never include exception text, traceback, stdout/stderr,
+paths, environment, identities, credentials, vault state, or user context.
+The smoke projects only authoritative allowlisted phase/code values. This is
+diagnostic-only: it preserves rollback authority and exposes the failure class,
+but does not repair or claim to repair the underlying Windows defect.
 
-Prior exact-head evidence on `99fde17d8b850db561db057365efc4225e40b173`
-recorded local full-suite evidence of 3,100 passed, 20 expected capability
-skips, and three known warnings, with static, security, and evidence gates
-green. CodeQL `33948694420` was fully green. CI `33948695264` was terminal
-with only Windows desktop non-green: its native build, resource/credential,
-and packaged console-recovery steps passed, while packaged first-run returned
-`2` instead of injected `86` before `binary_replaced` and cleanup failed. The
-repair is awaiting hosted confirmation; no hosted success or artifact,
-release, signing, publication, Defender, clean-machine, provider/client, or
-downloaded-candidate result is inferred.
+The packaged smoke's four-component validation uses same-build stable Setup,
+MCP, Recovery, and Updater helper copies to validate crash/rollback/component-
+set handling and exact hash binding. It therefore does not establish
+independent candidate provenance or no-substitution evidence. The retained
+`CORE_STOP_TIMEOUT_SECONDS=10.0` monotonic deadline spans shutdown request,
+health polling, and process-lock acquisition; the real generator-failure
+regression covers both `.lnk` and `.url` and the exact temporary path.
+
+The pre-diagnostic hosted head `f6d53e5215ce9082fabb0d02357274d2adfc9695` had
+green CodeQL `33951715661`. CI `33951716842` had every completed
+non-Windows-desktop job green; Windows desktop `101267644727` failed after
+native build, resources/credentials, and console recovery passed because
+packaged updater exit `2` occurred before injected `86`, followed by cleanup
+failure. The exact-head review verdict was `FINDINGS`: hosted P1 for stale
+live-head/document chronology and unsupported independent candidate provenance
+from same-build stable helper copies. One-deadline and `.lnk`/.url cleanup code
+passed review. Hosted rerun on the pushed diagnostic tree must prove stable
+phase/code reporting; no hosted success, artifact, release, signing, Defender,
+clean-machine, provider/client, or downloaded-candidate result is inferred.
 
 ## ADR-207: Windows GA follow-up requires exact source integration and process-lock shutdown evidence
 
