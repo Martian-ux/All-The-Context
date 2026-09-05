@@ -239,6 +239,7 @@ def test_project_failed_setup_report_redacts_error_canaries() -> None:
             "setup": "failed",
             "error_type": "RuntimeError",
             "error_code": "credential_store_unavailable",
+            "setup_stage": "perform_setup",
             "error": (
                 f"token={TOKEN_CANARY}; {DASHBOARD_CANARY}; "
                 f"client={CLIENT_CANARY}; path={PATH_CANARY}; {RAW_STATEMENT}"
@@ -250,6 +251,7 @@ def test_project_failed_setup_report_redacts_error_canaries() -> None:
     assert projected["setup"] == "failed"
     assert projected["error_type"] == "RuntimeError"
     assert projected["error_code"] == "credential_store_unavailable"
+    assert projected["setup_stage"] == "perform_setup"
     assert "error" not in projected
     for canary in (TOKEN_CANARY, TICKET_CANARY, CLIENT_CANARY, PATH_CANARY):
         assert canary not in serialized
@@ -328,7 +330,8 @@ def test_emit_failure_diagnostics_prints_closed_schema_only(
             {
                 "setup": "failed",
                 "error_type": "RuntimeError",
-                "error_code": "registration_key_create_failed",
+                "error_code": "setup_io_error",
+                "setup_stage": "prepare_installed_runtime",
                 "error": f"token={TOKEN_CANARY}",
                 "dashboard_url": DASHBOARD_CANARY,
             }
@@ -350,11 +353,27 @@ def test_emit_failure_diagnostics_prints_closed_schema_only(
     payload = json.loads(out)
     assert payload["packaged_first_run_failure"] is True
     assert payload["diagnostics_file"] == path.name
-    assert payload["setup_error_code"] == "registration_key_create_failed"
+    assert payload["setup_error_code"] == "setup_io_error"
+    assert payload["setup_stage"] == "prepare_installed_runtime"
     assert payload["stdout_present"] is True
     assert TOKEN_CANARY not in out
     assert DASHBOARD_CANARY not in out
     assert TOKEN_CANARY not in path.read_text(encoding="utf-8")
+
+
+def test_project_setup_report_discards_unknown_setup_codes_and_stages() -> None:
+    projected = smoke.project_setup_report_for_diagnostics(
+        {
+            "setup": "failed",
+            "error_code": "user_context_leak",
+            "setup_stage": "unexpected-stage-with-secret-token",
+        }
+    )
+    assert projected["setup"] == "failed"
+    assert "error_code" not in projected
+    assert "setup_stage" not in projected
+    assert "user_context_leak" not in json.dumps(projected)
+    assert "unexpected-stage-with-secret-token" not in json.dumps(projected)
 
 
 def test_remove_work_tree_deletes_credential_bearing_tree(tmp_path: Path) -> None:

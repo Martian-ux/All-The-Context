@@ -75,6 +75,15 @@ WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS * WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS / 1000
 )
 MACOS_APP_NAME = "All The Context.app"
+HeadlessSetupStage = Literal["prepare_installed_runtime", "perform_setup", "write_report"]
+_HEADLESS_SETUP_ERROR_CODES = frozenset(
+    {
+        "credential_store_unavailable",
+        "setup_io_error",
+        "setup_invalid_value",
+        "setup_failed",
+    }
+)
 
 
 def _retire_installed_ai_clients(
@@ -765,7 +774,9 @@ def _headless_setup_error_code(error: Exception) -> str:
     return "setup_failed"
 
 
-def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path | None:
+def _write_headless_setup_failure_report(
+    target: Path, error: Exception, *, setup_stage: HeadlessSetupStage
+) -> Path | None:
     """Write a redacted headless failure report when the windowed app has no console."""
 
     error_code = _headless_setup_error_code(error)
@@ -780,6 +791,7 @@ def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path
         if type(error).__name__ in {"RuntimeError", "OSError", "ValueError"}
         else "Exception",
         "error_code": error_code,
+        "setup_stage": setup_stage,
         # Never embed absolute developer paths; only a presence/basename signal.
         "diagnostics_written": diagnostics_path is not None,
         "diagnostics_name": diagnostics_path.name if diagnostics_path is not None else None,
@@ -833,8 +845,10 @@ def _headless_claude_code_explicit_result(result: object) -> dict[str, Any] | No
 
 def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
     target = Path(args.headless_setup).expanduser().resolve()
+    setup_stage: HeadlessSetupStage = "prepare_installed_runtime"
     try:
         installed, _ = prepare_installed_runtime(runtime, relaunch_args=None)
+        setup_stage = "perform_setup"
         setup_kwargs: dict[str, Any] = {
             "vault_name": args.vault_name,
             "timezone": args.timezone or local_timezone(),
@@ -876,6 +890,7 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         hermes_result = getattr(result, "hermes", None)
         report["hermes"] = asdict(hermes_result) if hermes_result else None
         report["startup"] = asdict(result.startup) if result.startup else None
+        setup_stage = "write_report"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
         return 0
@@ -883,7 +898,7 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         # Windowed Windows packages have no console; persist a redacted report so
         # packaged smoke and operators can diagnose fail-closed setup without
         # relying on hidden stderr.
-        report_path = _write_headless_setup_failure_report(target, exc)
+        report_path = _write_headless_setup_failure_report(target, exc, setup_stage=setup_stage)
         error_code = _headless_setup_error_code(exc)
         if report_path is not None:
             print(

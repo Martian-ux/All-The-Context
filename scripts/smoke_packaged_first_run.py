@@ -49,7 +49,10 @@ from allthecontext.credentials import (
     DEVELOPMENT_FALLBACK_ENV,
     FALLBACK_CREDENTIAL_STORAGE,
 )
-from allthecontext.desktop import WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS
+from allthecontext.desktop import (
+    _HEADLESS_SETUP_ERROR_CODES,
+    WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS,
+)
 from allthecontext.installed_component_manifest import (
     CHECKSUM_FILE_NAME,
     MANIFEST_FILE_NAME,
@@ -105,7 +108,11 @@ _SAFE_SETUP_REPORT_KEYS = frozenset(
         "credential_storage",
         "error_type",
         "error_code",
+        "setup_stage",
     }
+)
+_SAFE_SETUP_STAGES = frozenset(
+    {"prepare_installed_runtime", "perform_setup", "write_report"}
 )
 _SENSITIVE_SETUP_PRESENCE_KEYS = (
     "dashboard_url",
@@ -598,8 +605,11 @@ def project_setup_report_for_diagnostics(raw: object) -> dict[str, Any]:
     if error_type in {"RuntimeError", "OSError", "ValueError", "Exception"}:
         projected["error_type"] = error_type[:80]
     error_code = raw.get("error_code")
-    if isinstance(error_code, str) and _CLOSED_DIAGNOSTIC_CODE.fullmatch(error_code):
+    if error_code in _HEADLESS_SETUP_ERROR_CODES:
         projected["error_code"] = error_code
+    setup_stage = raw.get("setup_stage")
+    if setup_stage in _SAFE_SETUP_STAGES:
+        projected["setup_stage"] = setup_stage
     projected["sensitive_fields_present"] = {
         key: key in raw and raw.get(key) not in (None, "", [], {})
         for key in _SENSITIVE_SETUP_PRESENCE_KEYS
@@ -710,6 +720,7 @@ def emit_failure_diagnostics(
     # Print only the filename and closed outcome fields — never raw streams or reports.
     setup_report = summary.get("setup_report")
     setup_error_code = setup_report.get("error_code") if isinstance(setup_report, dict) else None
+    setup_stage = setup_report.get("setup_stage") if isinstance(setup_report, dict) else None
     print(
         json.dumps(
             {
@@ -722,6 +733,7 @@ def emit_failure_diagnostics(
                 # to the closed diagnostic vocabulary; exposing it here makes
                 # hosted failures actionable without copying report contents.
                 "setup_error_code": setup_error_code,
+                "setup_stage": setup_stage,
                 "stdout_present": stdout_present,
                 "stderr_present": stderr_present,
             },

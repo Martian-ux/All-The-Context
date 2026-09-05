@@ -446,6 +446,7 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
     assert payload["setup"] == "failed"
     assert payload["error_type"] == "RuntimeError"
     assert payload["error_code"] == "credential_store_unavailable"
+    assert payload["setup_stage"] == "prepare_installed_runtime"
     assert payload["diagnostics_written"] is True
     assert payload["diagnostics_name"] == diagnostics_path.name
     assert "diagnostics_path" not in payload
@@ -461,6 +462,34 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
         assert evidence not in json.dumps(payload)
         assert evidence not in captured.err
         assert evidence not in captured.out
+
+
+def test_headless_setup_failure_reports_perform_setup_stage_without_error_text(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report_path = tmp_path / "setup-report.json"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    token_canary = "atc-stage-canary-token-never-log"
+    monkeypatch.setattr("allthecontext.desktop.RuntimeCommand.current", lambda: runtime)
+    monkeypatch.setattr(
+        "allthecontext.desktop.prepare_installed_runtime",
+        lambda *_args, **_kwargs: (runtime, False),
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop.perform_setup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError(f"setup failed with token={token_canary}")
+        ),
+    )
+
+    assert main(["--headless-setup", str(report_path), "--no-claude"]) == 1
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["error_code"] == "setup_io_error"
+    assert payload["setup_stage"] == "perform_setup"
+    captured = capsys.readouterr()
+    assert token_canary not in json.dumps(payload)
+    assert token_canary not in captured.out
+    assert token_canary not in captured.err
 
 
 @pytest.mark.parametrize(
