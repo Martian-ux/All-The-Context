@@ -1049,13 +1049,19 @@ def test_install_entrypoints_uses_reversible_registration_transaction(
     assert len(calls) == 3
 
 
-def test_shortcut_temporary_path_preserves_wscript_shortcut_suffix() -> None:
-    temporary = application_install.WindowsApplicationRegistrationTransaction._temporary_path(
-        Path("All The Context.lnk")
-    )
+@pytest.mark.parametrize("suffix", (".lnk", ".url"))
+def test_shortcut_temporary_path_preserves_wscript_shortcut_suffix(suffix: str) -> None:
+    target = Path(f"All The Context{suffix}")
+    temporary_path = application_install.WindowsApplicationRegistrationTransaction._temporary_path
+    temporary = temporary_path(target)
 
-    assert temporary.name == ".All The Context.atc-new.lnk"
-    assert temporary.suffix == ".lnk"
+    assert temporary.name == f".All The Context.atc-new{suffix}"
+    assert temporary.parent == target.parent
+    assert temporary.suffix == suffix
+    assert temporary == temporary_path(target)
+    assert temporary != target
+    other_suffix = ".url" if suffix == ".lnk" else ".lnk"
+    assert temporary != temporary_path(Path(f"All The Context{other_suffix}"))
 
 
 def test_failed_compensation_retains_bounded_retryable_status(
@@ -2921,9 +2927,13 @@ def test_interrupted_uninstall_replays_only_owned_entries(
 def test_generator_failure_cleans_written_temporary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    transaction, _executable, start_menu, _desktop, _registry = _make_transaction(
+    transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
         monkeypatch, tmp_path
     )
+    launcher = transaction._shortcut_plans()[0].path
+    temporary = transaction._temporary_path(launcher)
+    written_paths: list[Path] = []
+    legacy_glob_matches: list[Path] = []
 
     def write_then_fail(
         path: Path,
@@ -2934,13 +2944,19 @@ def test_generator_failure_cleans_written_temporary(
     ) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"{arguments}|{description}".encode())
+        written_paths.append(path)
+        legacy_glob_matches.extend(path.parent.rglob("*.atc-new"))
         raise OSError("generator failed after writing")
 
     monkeypatch.setattr(application_install, "_create_windows_shortcut", write_then_fail)
     with pytest.raises(application_install.WindowsRegistrationError):
         transaction.apply(transaction.snapshot())
 
-    assert not list(start_menu.rglob("*.atc-new"))
+    # The legacy glob misses the suffix-preserving artifact, so it cannot
+    # prove that cleanup removed the actual temporary shortcut.
+    assert written_paths == [temporary]
+    assert legacy_glob_matches == []
+    assert not temporary.exists()
 
 
 def test_install_root_mismatch_is_rejected_before_registration(
