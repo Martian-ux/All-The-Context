@@ -8,11 +8,34 @@ acceptance evidence.
 ## Follow-up exact PR #114 repair integration — 2026-09-04
 
 This follow-up was performed in a clean detached worktree from exact PR #114
-head `f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`, with remote `main` exactly
-`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The shared checkout was dirty
+head (reachable commit) `f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`, with remote
+`main` exactly (reachable commit) `7bfd070fd51541cd77f3cde67576f447cdef50bd`.
+The shared checkout was dirty
 and was not edited, staged, committed, cleaned, reset, or used for the work.
 
-| Order | Source tip | Integrated commit | Result |
+## Validation contract
+
+Every full hexadecimal commit token in this ledger is declared by its table
+column or its same-line label:
+
+- `Local-only source tip (not expected to resolve)` is provenance from the
+  original worker worktrees. It is validated without Git-object lookup by
+  requiring lowercase 40-character format, sequential row numbering, one
+  source token per row, uniqueness within each source table, and a paired
+  reachable integrated commit in the follow-up and topological patch tables.
+- `Reachable integrated commit (ancestor of checked-out HEAD)` is repository
+  evidence. It must be a commit object reachable from the exact checked-out
+  `HEAD`, not merely an object present in a loose or shared object store.
+- Any full hexadecimal token outside those declarations fails closed as
+  unclassified. Local-only source tips are not acceptance evidence and are
+  intentionally not required to resolve in a fresh clone.
+
+The source-tip rows in the required-source table must also occur in the
+topological patch table, preserving the declared source-to-integration
+lineage. The validator derives each table's count from its sequential row
+numbers rather than trusting the prose summary.
+
+| Order | Local-only source tip (not expected to resolve) | Reachable integrated commit (ancestor of checked-out HEAD) | Result |
 |---:|---|---|---|
 | 1 | `af9f9111649a7bdc64b99494f92ed379aea33906` | `a2c751882436233cd89179d49f8fedd422f8b72f` | Applied exactly once |
 | 2 | `094cbf1216d779162accf6e0e8eed8be17feeeb1` | `81f50e7fcf5447ea6a3d508ce7e512896ddf9c5b` | Applied exactly once |
@@ -29,16 +52,16 @@ from the strict comparable-profile `< 5000 ms` observational gate.
 
 | Check | Result |
 |---|---|
-| Requested base | `7bfd070fd51541cd77f3cde67576f447cdef50bd` |
-| Local `refs/remotes/origin/main` before mutation | `7bfd070fd51541cd77f3cde67576f447cdef50bd` |
-| Remote `git ls-remote origin refs/heads/main` before mutation | `7bfd070fd51541cd77f3cde67576f447cdef50bd` |
+| Requested base (reachable commit) | `7bfd070fd51541cd77f3cde67576f447cdef50bd` |
+| Local `refs/remotes/origin/main` before mutation (reachable commit) | `7bfd070fd51541cd77f3cde67576f447cdef50bd` |
+| Remote `git ls-remote origin refs/heads/main` before mutation (reachable commit) | `7bfd070fd51541cd77f3cde67576f447cdef50bd` |
 | Starting worktree | Clean, detached at the exact base |
 | Open PR check before mutation | No open PR targeting `main` |
 | Integration branch | `hardening/windows-ga-convergence-20260904` |
 | Required source tips | 9 tips listed below |
 | Union result | 49 unique source commits; no duplicate stable patch IDs |
 | Patch-equivalence check | No source commit was already patch-equivalent on exact `origin/main` |
-| Shared ancestry | Tips 1–5, 7–9 share parent `58a2410a7e92484a3fd81d0126b7d1ae6dc631e9`; tip 6 is based directly on the requested base |
+| Shared ancestry | Tips 1–5, 7–9 share local-only source parent (not expected to resolve) `58a2410a7e92484a3fd81d0126b7d1ae6dc631e9`; tip 6 is based directly on the requested base |
 
 The union was topologically ordered from the exact base. Every row below was
 cherry-picked once. `Applied` means the source change is represented in the
@@ -47,7 +70,7 @@ same SHA or patch ID after conflict resolution.
 
 ## Required source tips
 
-| Lane | Source tip | Scope |
+| Lane | Local-only source tip (not expected to resolve) | Scope |
 |---|---|---|
 | 1 | `e7aedd6c3c2a22bd06927cf90f9420a437e410be` | Windows bootstrap recovery |
 | 2 | `bfb662588361d2e0841300cc2699652f6f32aff9` | Dogfood runtime recovery/readiness |
@@ -61,7 +84,7 @@ same SHA or patch ID after conflict resolution.
 
 ## Topological patch ledger
 
-| # | Source commit | Integrated commit | Subject | Result |
+| # | Local-only source tip (not expected to resolve) | Reachable integrated commit (ancestor of checked-out HEAD) | Subject | Result |
 |---:|---|---|---|---|
 | 1 | `25a59f3c3d3c8f03869f4cecc6c8ae2b51324763` | `29471c7ed6db887f1a315d8e9ee13590196d6b42` | Harden Windows bootstrap installation transaction | Applied |
 | 2 | `19aedd5c0e33cc5977eae572bff8078bbce4dd01` | `b6cda1d1ead27df849eb44c7fe40f0103c2b0367` | Harden Windows bootstrap recovery cleanup | Applied |
@@ -138,13 +161,12 @@ same SHA or patch ID after conflict resolution.
 
 ## Evidence status
 
-Final local source head before this evidence update:
-`5c79ada65b912daf40d16be04bb137946296db7b`.
+Final local source head before this evidence update (reachable commit) `5c79ada65b912daf40d16be04bb137946296db7b`.
 
 | Gate | Result |
 |---|---|
-| Full pytest after functional integration (`c8b51a0`) | 3,069 passed, 19 capability skips, 3 warnings; 3,088 collected |
-| Post-scan fixture regression at `5c79ada` | 47 passed, 3 capability skips |
+| Full pytest after functional integration (reachable commit `c8b51a04ae7a886d3a7ae0d7f529bde8b03b3638`) | 3,069 passed, 19 capability skips, 3 warnings; 3,088 collected |
+| Post-scan fixture regression at reachable commit `5c79ada65b912daf40d16be04bb137946296db7b` | 47 passed, 3 capability skips |
 | `python -m ruff check .` | Passed |
 | `python -m ruff format --check .` | Passed; 376 files formatted |
 | `python -m mypy packages/allthecontext/src` | Passed; 112 source files |
@@ -163,9 +185,7 @@ for clean-machine acceptance by this integration worker.
 
 The named branch was pushed and exactly one draft PR was created:
 [#114 — Windows GA hardening convergence](https://github.com/Martian-ux/All-The-Context/pull/114).
-The initial hosted snapshot below is bound to head
-`55af6fcce79ac0c4e4d5a0ac02dce58fc781e99e` and base
-`7bfd070fd51541cd77f3cde67576f447cdef50bd`:
+The initial hosted snapshot below is bound to head (reachable commit) `55af6fcce79ac0c4e4d5a0ac02dce58fc781e99e` and base (reachable commit) `7bfd070fd51541cd77f3cde67576f447cdef50bd`:
 
 | Hosted field | Snapshot |
 |---|---|
