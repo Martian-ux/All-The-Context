@@ -75,7 +75,7 @@ from smoke_desktop_artifact import artifact_executable
 # Explicit, isolated, non-secret smoke only. Production installs never set this.
 ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
 WINDOWS_INSTALL_REMOVAL_OBSERVATION_SECONDS = WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS + 5.0
-CORE_LOCK_RELEASE_TIMEOUT_SECONDS = 10.0
+CORE_STOP_TIMEOUT_SECONDS = 10.0
 
 
 @contextmanager
@@ -206,13 +206,18 @@ def browser_session_from_handoff_html(handoff_html: str) -> str | None:
     return html.unescape(match.group(1))
 
 
-def wait_for_core_lock_release(data_dir: Path) -> None:
+def wait_for_core_lock_release(data_dir: Path, *, deadline: float | None = None) -> None:
     """Wait for the Core process, not just its HTTP listener, to finish exiting."""
 
+    if deadline is None:
+        deadline = time.monotonic() + CORE_STOP_TIMEOUT_SECONDS
+    timeout = deadline - time.monotonic()
+    if timeout <= 0:
+        raise RuntimeError("installed Core did not release its process lock")
     lock = FileLock(str(data_dir / "core.lock"))
     acquired = False
     try:
-        lock.acquire(timeout=CORE_LOCK_RELEASE_TIMEOUT_SECONDS)
+        lock.acquire(timeout=timeout)
         acquired = True
     except FileLockTimeout as exc:
         raise RuntimeError("installed Core did not release its process lock") from exc
@@ -227,17 +232,19 @@ def stop_core(base_url: str, admin_token: str, *, data_dir: Path | None = None) 
         if not configured_data_dir:
             raise RuntimeError("packaged smoke Core data directory is unavailable")
         data_dir = Path(configured_data_dir).expanduser().resolve()
+    deadline = time.monotonic() + CORE_STOP_TIMEOUT_SECONDS
     with suppress(OSError, httpx.HTTPError):
         api_request(f"{base_url}/v1/admin/shutdown", admin_token, method="POST")
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("installed Core did not shut down within ten seconds")
         try:
-            _read_http_response(f"{base_url}/health", timeout=0.2)
+            _read_http_response(f"{base_url}/health", timeout=min(0.2, remaining))
         except (OSError, httpx.HTTPError):
-            wait_for_core_lock_release(data_dir)
+            wait_for_core_lock_release(data_dir, deadline=deadline)
             return
-        time.sleep(0.1)
-    raise RuntimeError("installed Core did not shut down within ten seconds")
+        time.sleep(min(0.1, remaining))
 
 
 def wait_for_core(base_url: str, admin_token: str) -> None:
@@ -332,11 +339,17 @@ def prepare_packaged_update_transaction(
         raise RuntimeError("installed update, MCP, or recovery helper is missing")
     shutil.copy2(stable_helper, transaction_helper)
     replacement = replacement_dir / "AllTheContextSetup.exe"
+    candidate_mcp = replacement_dir / "AllTheContextMCP.exe"
+    candidate_recovery = replacement_dir / "AllTheContextRecovery.exe"
+    candidate_update_helper = replacement_dir / "AllTheContextUpdater.exe"
     rollback_app = rollback_dir / "AllTheContext.exe"
     rollback_mcp = rollback_dir / "AllTheContextMCP.exe"
     rollback_recovery = rollback_dir / "AllTheContextRecovery.exe"
     rollback_update_helper = rollback_dir / "AllTheContextUpdater.exe"
     shutil.copy2(release_app, replacement)
+    shutil.copy2(stable_mcp, candidate_mcp)
+    shutil.copy2(stable_recovery, candidate_recovery)
+    shutil.copy2(stable_helper, candidate_update_helper)
     shutil.copy2(installed_app, rollback_app)
     shutil.copy2(stable_mcp, rollback_mcp)
     shutil.copy2(stable_recovery, rollback_recovery)
@@ -378,6 +391,9 @@ def prepare_packaged_update_transaction(
     state_temporary.replace(state_path)
 
     replacement_digest, replacement_size = sha256_file(replacement)
+    candidate_mcp_digest, candidate_mcp_size = sha256_file(candidate_mcp)
+    candidate_recovery_digest, candidate_recovery_size = sha256_file(candidate_recovery)
+    candidate_update_digest, candidate_update_size = sha256_file(candidate_update_helper)
     rollback_digest, rollback_size = sha256_file(rollback_app)
     rollback_mcp_digest, rollback_mcp_size = sha256_file(rollback_mcp)
     rollback_recovery_digest, rollback_recovery_size = sha256_file(rollback_recovery)
@@ -400,22 +416,22 @@ def prepare_packaged_update_transaction(
                 "authenticode": {"status": "not-present"},
                 "filename": "AllTheContextMCP.exe",
                 "role": "mcp",
-                "sha256": rollback_mcp_digest,
-                "size": rollback_mcp_size,
+                "sha256": candidate_mcp_digest,
+                "size": candidate_mcp_size,
             },
             {
                 "authenticode": {"status": "not-present"},
                 "filename": "AllTheContextRecovery.exe",
                 "role": "recovery",
-                "sha256": rollback_recovery_digest,
-                "size": rollback_recovery_size,
+                "sha256": candidate_recovery_digest,
+                "size": candidate_recovery_size,
             },
             {
                 "authenticode": {"status": "not-present"},
                 "filename": "AllTheContextUpdater.exe",
                 "role": "updater",
-                "sha256": rollback_update_digest,
-                "size": rollback_update_size,
+                "sha256": candidate_update_digest,
+                "size": candidate_update_size,
             },
         ],
         "manifest_type": "installed-component",

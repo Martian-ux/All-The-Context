@@ -2924,13 +2924,24 @@ def test_interrupted_uninstall_replays_only_owned_entries(
     assert transaction._load_journal() is None
 
 
+@pytest.mark.parametrize("suffix", (".lnk", ".url"))
 def test_generator_failure_cleans_written_temporary(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suffix: str
 ) -> None:
     transaction, _executable, _start_menu, _desktop, _registry = _make_transaction(
         monkeypatch, tmp_path
     )
-    launcher = transaction._shortcut_plans()[0].path
+    plans = tuple(
+        application_install._ShortcutPlan(
+            plan.name,
+            plan.path.with_suffix(suffix),
+            plan.arguments,
+            plan.description,
+        )
+        for plan in transaction._shortcut_plans()
+    )
+    monkeypatch.setattr(transaction, "_shortcut_plans", lambda: plans)
+    launcher = plans[0].path
     temporary = transaction._temporary_path(launcher)
     written_paths: list[Path] = []
     legacy_glob_matches: list[Path] = []

@@ -89,6 +89,52 @@ def test_stop_core_waits_for_process_lock_after_health_disappears(
     assert not holder.is_alive()
 
 
+def test_stop_core_uses_one_overall_deadline_for_lock_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    clock = {"now": 100.0}
+    lock_timeouts: list[float] = []
+
+    def monotonic() -> float:
+        return clock["now"]
+
+    def sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    def delayed_shutdown(*_args: object, **_kwargs: object) -> None:
+        clock["now"] += 2.0
+
+    def delayed_health(*_args: object, **_kwargs: object) -> object:
+        clock["now"] += 4.0
+        raise OSError("health is unavailable")
+
+    class LockedFile:
+        def __init__(self, _path: str) -> None:
+            pass
+
+        def acquire(self, *, timeout: float) -> None:
+            lock_timeouts.append(timeout)
+            clock["now"] += timeout
+            raise smoke.FileLockTimeout(self)
+
+        def release(self) -> None:
+            raise AssertionError("a timed-out lock must not be released")
+
+    monkeypatch.setattr(smoke.time, "monotonic", monotonic)
+    monkeypatch.setattr(smoke.time, "sleep", sleep)
+    monkeypatch.setattr(smoke, "api_request", delayed_shutdown)
+    monkeypatch.setattr(smoke, "_read_http_response", delayed_health)
+    monkeypatch.setattr(smoke, "FileLock", LockedFile)
+
+    with pytest.raises(RuntimeError, match="process lock"):
+        smoke.stop_core("http://127.0.0.1:7337", "token", data_dir=data_dir)
+
+    assert lock_timeouts == [4.0]
+    assert clock["now"] == 110.0
+
+
 def test_packaged_transaction_scopes_disposable_helper_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -176,6 +222,28 @@ def test_packaged_transaction_scopes_disposable_helper_authority(
             (journal_path.parent / smoke.MANIFEST_FILE_NAME).read_text(encoding="utf-8")
         )
         assert component["source_commit"] == "c" * 40
+        replacement_dir = journal_path.parent / "replacement"
+        candidate_paths = {
+            name: replacement_dir / name
+            for name in (
+                "AllTheContextSetup.exe",
+                "AllTheContextMCP.exe",
+                "AllTheContextRecovery.exe",
+                "AllTheContextUpdater.exe",
+            )
+        }
+        assert all(path.is_file() for path in candidate_paths.values())
+        components = {item["filename"]: item for item in component["components"]}
+        manifest_names = {
+            "AllTheContextSetup.exe": "AllTheContext.exe",
+            "AllTheContextMCP.exe": "AllTheContextMCP.exe",
+            "AllTheContextRecovery.exe": "AllTheContextRecovery.exe",
+            "AllTheContextUpdater.exe": "AllTheContextUpdater.exe",
+        }
+        for name, path in candidate_paths.items():
+            digest, size = smoke.sha256_file(path)
+            assert components[manifest_names[name]]["sha256"] == digest
+            assert components[manifest_names[name]]["size"] == size
         journal.application_path = str(work / "outside" / "AllTheContext.exe")
         with pytest.raises(HelperError, match="application_state_untrusted"):
             journal.validate(journal_path, boundary_code="application_state_untrusted")
