@@ -48,6 +48,36 @@ DASHBOARD_CANARY = (
 RAW_STATEMENT = "User said their password is hunter2-never-store"
 
 
+def _run_json_limit_child(source: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+    loader = """
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
+sys.path.insert(0, str(root / "packages" / "allthecontext" / "src"))
+spec = importlib.util.spec_from_file_location(
+    "smoke_packaged_first_run_child", root / "scripts" / "smoke_packaged_first_run.py"
+)
+assert spec is not None and spec.loader is not None
+smoke = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(smoke)
+"""
+    environment = os.environ.copy()
+    environment["PYTHONINTMAXSTRDIGITS"] = "4300"
+    return subprocess.run(
+        [sys.executable, "-c", loader + source, str(ROOT), *arguments],
+        cwd=ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_stop_core_waits_for_process_lock_after_health_disappears(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -443,6 +473,38 @@ def test_failure_summary_contains_malformed_and_oversized_reports_without_escape
     assert oversized_canary not in serialized
 
 
+def test_failure_summary_contains_integer_limited_report_without_escape(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    report = work / "setup-report.json"
+    large_integer = "7" * 5_000
+    canary = "integer-report-canary"
+    report.write_text(
+        '{"canary":"' + canary + '","large_integer":' + large_integer + "}",
+        encoding="utf-8",
+    )
+    assert report.stat().st_size < smoke._MAX_SETUP_REPORT_BYTES
+
+    completed = _run_json_limit_child(
+        """
+report = Path(sys.argv[2])
+summary = smoke.build_failure_diagnostic_summary(
+    phase="integer-limited setup report",
+    return_code=1,
+    work=report.parent,
+    report_path=report,
+)
+print(json.dumps(summary))
+""",
+        str(report),
+    )
+
+    summary = json.loads(completed.stdout)
+    assert summary["setup_report"] == {"parseable": False, "present": True}
+    assert large_integer not in completed.stdout
+    assert canary not in completed.stdout
+
+
 def test_emit_failure_diagnostics_contains_non_dict_report_without_escape(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -497,6 +559,72 @@ def test_headless_setup_fails_closed_for_non_dict_report(
     assert len(diagnostic_files) == 1
     body = diagnostic_files[0].read_text(encoding="utf-8")
     assert "headless-canary" not in body
+    assert json.loads(body)["setup_report"] == {"parseable": False, "present": True}
+
+
+def test_headless_setup_fails_closed_for_integer_limited_report(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    report = work / "setup-report.json"
+    large_integer = "7" * 5_000
+    canary = "headless-integer-report-canary"
+    report.write_text(
+        '{"canary":"' + canary + '","large_integer":' + large_integer + "}",
+        encoding="utf-8",
+    )
+    assert report.stat().st_size < smoke._MAX_SETUP_REPORT_BYTES
+    diagnostics_root = tmp_path / "diagnostics"
+    completed = _run_json_limit_child(
+        """
+report = Path(sys.argv[2])
+diagnostics_root = Path(sys.argv[3])
+smoke.subprocess.run = lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "", "")
+try:
+    smoke._run_headless_setup(
+        executable=Path("fake.exe"),
+        report_path=report,
+        environment={},
+        extra_args=[],
+        work=report.parent,
+        diagnostics_root=diagnostics_root,
+        label="headless setup",
+    )
+except SystemExit as exc:
+    print(json.dumps({"message": str(exc)}))
+else:
+    raise AssertionError("headless setup unexpectedly accepted the report")
+""",
+        str(report),
+        str(diagnostics_root),
+    )
+
+    printed = json.loads(completed.stdout.splitlines()[0])
+    assert set(printed) == {
+        "diagnostics_file",
+        "packaged_first_run_failure",
+        "phase",
+        "return_code",
+        "setup_error_code",
+        "setup_report_present",
+        "setup_stage",
+        "setup_subphase",
+        "stderr_present",
+        "stdout_present",
+    }
+    assert printed["packaged_first_run_failure"] is True
+    assert printed["return_code"] == 0
+    assert printed["setup_report_present"] is True
+    assert printed["setup_error_code"] is None
+    assert printed["setup_stage"] is None
+    assert printed["setup_subphase"] is None
+    assert "parseable setup report" in completed.stdout
+    assert large_integer not in completed.stdout
+    assert canary not in completed.stdout
+    diagnostic_files = list(diagnostics_root.glob("*.json"))
+    assert len(diagnostic_files) == 1
+    body = diagnostic_files[0].read_text(encoding="utf-8")
+    assert large_integer not in body
+    assert canary not in body
     assert json.loads(body)["setup_report"] == {"parseable": False, "present": True}
 
 

@@ -141,6 +141,10 @@ class _SetupReportTooLarge(ValueError):
     """The imported setup report exceeded the bounded diagnostics input."""
 
 
+class _SetupReportParseError(ValueError):
+    """The bounded JSON parser rejected the imported setup report."""
+
+
 def _load_setup_report(path: Path) -> object:
     """Load an imported setup report with a bounded read and JSON parse."""
 
@@ -148,7 +152,11 @@ def _load_setup_report(path: Path) -> object:
         content = handle.read(_MAX_SETUP_REPORT_BYTES + 1)
     if len(content) > _MAX_SETUP_REPORT_BYTES:
         raise _SetupReportTooLarge
-    return json.loads(content.decode("utf-8"))
+    decoded = content.decode("utf-8")
+    try:
+        return json.loads(decoded)
+    except ValueError as exc:
+        raise _SetupReportParseError from exc
 
 
 def packaged_smoke_parent(
@@ -751,6 +759,7 @@ def build_failure_diagnostic_summary(
             json.JSONDecodeError,
             RecursionError,
             _SetupReportTooLarge,
+            _SetupReportParseError,
         ):
             summary["setup_report"] = {"parseable": False, "present": True}
         else:
@@ -968,6 +977,7 @@ def _run_headless_setup(
         json.JSONDecodeError,
         RecursionError,
         _SetupReportTooLarge,
+        _SetupReportParseError,
     ):
         emit_failure_diagnostics(
             phase=label,
