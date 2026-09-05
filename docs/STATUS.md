@@ -3,11 +3,15 @@
 ## Current milestone
 
 The current Windows GA diagnostic integration checkout contains source
-integration commit `6b86129b4d401765cfaf84a4ba196e793bbe9b71`, whose exact
-parent is the prior pushed and hosted open draft PR #114 head
-`c923224f1cf2d29c495e9bc981a381b99bded2ac`. Local source repair
-`5433f8100ba0a3f7aab554cba70f41bd49184309` has that exact parent and was
-cherry-picked exactly once without conflict. Before the ancestry-safe push,
+integration commits `6b86129b4d401765cfaf84a4ba196e793bbe9b71` and
+`bfdc503658794dfb80f11bd3765d62f0d836d25b`. The first has exact parent the
+prior pushed and hosted open draft PR #114 head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac`; the second has exact parent
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`. Local source repairs
+`5433f8100ba0a3f7aab554cba70f41bd49184309` and
+`5f78aeb861f1e0ae019ee7f048036d1b3f55511e` each have their recorded exact
+parent and were cherry-picked exactly once without conflict. Before the
+ancestry-safe push,
 the remote branch and `refs/pull/114/head` were still c923224, while remote
 `main` and the PR base remained exactly
 `7bfd070fd51541cd77f3cde67576f447cdef50bd`. The final documentation commit
@@ -21,16 +25,19 @@ that older SHA is not the current live head. No release claim is made: exact-
 artifact, hosted, signing, publication, Defender, clean-machine,
 provider/client, and downloaded-candidate evidence remain separately bounded.
 
-The local repair adds strict primitive-type validation before child-failure
+The first repair adds strict primitive-type validation before child-failure
 report membership and nonce comparison, so nested, boolean, numeric, null, and
 other untrusted scalar values fail closed as
 `child_failure_report_invalid` while rollback authority is retained. It also
 adds six closed headless setup subphases plus an `unknown` fallback through an
 optional, exception-contained progress callback at the existing setup seams.
-The report and smoke projection expose only allowlisted authoritative fields;
-they contain no exception text, traceback, stream, path, environment,
-identity, credential, vault, or user-context data. This is diagnostic-only and
-does not claim that the underlying Windows failure is fixed.
+The follow-on repair guards all six projected setup fields, loads reports with
+a bounded limit-plus-one read, and contains decode, Unicode, JSON, recursion,
+oversize, and non-dict failures in both summary and headless setup paths. The
+report and smoke projection expose only allowlisted authoritative fields; they
+contain no exception text, traceback, stream, path, environment, identity,
+credential, vault, or user-context data. These repairs are diagnostic-only and
+do not claim that the underlying Windows failure is fixed.
 
 The packaged smoke's four-component check uses same-build stable Setup, MCP,
 Recovery, and Updater helper copies to validate crash/rollback/component-set
@@ -54,6 +61,11 @@ Windows desktop job `101276839940`, which failed before the updater at
 c923224 did not change setup behavior. The new subphase is a diagnostic
 classification only, not root-cause evidence, hosted success, artifact proof,
 or a claim that the Windows setup failure is fixed. No release claim is made.
+The pre-repair full-suite attempt on `2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`
+was intentionally interrupted at approximately 45% after an exact-head
+review finding; it supplies no test result. The follow-on source worker
+reported 129 passed, no skips or warnings, Ruff lint/format over 378 files,
+mypy over 113 files, and `git diff --check` green.
 
 **2026-09-05 — Historical packaged-smoke repair at the then-live PR #114 head**
 

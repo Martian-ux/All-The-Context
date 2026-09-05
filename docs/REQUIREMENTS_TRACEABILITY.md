@@ -49,6 +49,11 @@ without conflict as source integration commit
 `6b86129b4d401765cfaf84a4ba196e793bbe9b71`. The final documentation commit
 intentionally does not name its own SHA; post-push exact-ref verification
 supplies final SHA evidence.
+The follow-on source repair
+`5f78aeb861f1e0ae019ee7f048036d1b3f55511e` has exact parent
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3` and was cherry-picked exactly once
+without conflict as `bfdc503658794dfb80f11bd3765d62f0d836d25b`; its two-path
+scope closes the remaining setup-report projection boundary.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -101,6 +106,31 @@ before the updater at `setup_stage=prepare_installed_runtime` with
 c923224 did not change setup behavior. The new subphase is diagnostic only and
 does not establish root cause, hosted success, artifact proof, or release
 acceptance. Post-push exact-ref verification remains the final SHA evidence.
+
+### 2026-09-05 Windows GA setup-report projection boundary repair
+
+This follow-on starts from exact pre-repair diagnostic candidate
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`. Source commit
+`5f78aeb861f1e0ae019ee7f048036d1b3f55511e` has that exact parent and exactly
+two changed paths; it was cherry-picked once without conflict as
+`bfdc503658794dfb80f11bd3765d62f0d836d25b`. The source worker reported 129
+passed with no skips or warnings; Ruff lint/format over 378 files, mypy over
+113 files, and `git diff --check` were green. The earlier full-suite attempt
+on the pre-repair candidate was intentionally interrupted at approximately
+45% after an exact-head review finding and supplies no test result. This
+repair remains diagnostic-only and makes no root-cause, hosted, artifact,
+release, signing, Defender, clean-machine, provider/client, or downloaded-
+candidate claim.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Primitive-safe setup-report projection | `scripts/smoke_packaged_first_run.py::project_setup_report_for_diagnostics`; `tests/unit/test_packaged_first_run_diagnostics.py::test_project_setup_report_ignores_non_string_field_shapes`; source `5f78aeb861f1e0ae019ee7f048036d1b3f55511e`; integrated `bfdc503658794dfb80f11bd3765d62f0d836d25b` | Implemented at source level. All six projected setup fields require primitive strings before allowlist membership, so list, dict, boolean, numeric, null, and nested values are ignored without raising or leaking content. |
+| Bounded setup-report loading and failure containment | `scripts/smoke_packaged_first_run.py::_load_setup_report`; `_run_headless_setup`; `tests/unit/test_packaged_first_run_diagnostics.py::test_failure_summary_contains_malformed_and_oversized_reports_without_escape`; `test_headless_setup_fails_closed_for_non_dict_report`; source `5f78aeb861f1e0ae019ee7f048036d1b3f55511e`; integrated `bfdc503658794dfb80f11bd3765d62f0d836d25b` | Implemented at source level. The report is read with a bounded limit-plus-one loader, and decode, Unicode, JSON, recursion, oversize, and non-dict failures become fixed parseability diagnostics in summary and successful headless-setup paths. No raw report, path, identity, credential, stream, or user context is emitted, and broad exceptions are not swallowed. |
+
+The final documentation commit intentionally does not name its own SHA;
+post-push exact-ref verification supplies final SHA evidence. No hosted rerun,
+artifact execution, release, signing, Defender, clean-machine, provider/client,
+or downloaded-candidate acceptance is inferred from this source repair.
 
 ### 2026-09-05 Windows GA hosted follow-up repairs
 

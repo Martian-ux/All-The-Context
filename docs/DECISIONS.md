@@ -3,12 +3,12 @@
 ## ADR-208: Windows GA packaged-update diagnostics and transaction contracts
 
 **Status:** accepted locally on 2026-09-05 for source-integration commit
-`6b86129b4d401765cfaf84a4ba196e793bbe9b71`, whose exact parent is the prior
-pushed and hosted open draft PR #114 head
-`c923224f1cf2d29c495e9bc981a381b99bded2ac`; remote `main` remains
-`7bfd070fd51541cd77f3cde67576f447cdef50bd`. Local source repair
-`5433f8100ba0a3f7aab554cba70f41bd49184309` has that exact parent and was
-cherry-picked exactly once without conflict. The final documentation commit
+`bfdc503658794dfb80f11bd3765d62f0d836d25b`, whose exact parent is the prior
+diagnostic documentation candidate
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`; that candidate has exact parent
+the prior pushed and hosted open draft PR #114 head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac`. Remote `main` remains
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The final documentation commit
 does not name its own SHA; post-push exact-ref verification supplies final SHA
 evidence.
 
@@ -33,6 +33,17 @@ without conflict resolution, as
 `tests/unit/test_packaged_first_run_diagnostics.py`, and
 `tests/unit/test_windows_update_helper.py`; it changes no documentation,
 workflow, or release file.
+
+The follow-on source repair
+`5f78aeb861f1e0ae019ee7f048036d1b3f55511e` has exact parent
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3` and was cherry-picked exactly once
+without conflict as `bfdc503658794dfb80f11bd3765d62f0d836d25b`. It changes only
+`scripts/smoke_packaged_first_run.py` and
+`tests/unit/test_packaged_first_run_diagnostics.py`. The repair adds primitive
+string guards for all six projected setup fields and a bounded setup-report
+loader; decode, Unicode, JSON, recursion, oversize, and non-dict report
+failures are contained without changing product behavior or swallowing broad
+exceptions.
 
 The inherited packaged-update child still publishes one atomic, bounded,
 content-free failure report at the validated transaction path. This repair
@@ -64,6 +75,14 @@ before the updater, at `setup_stage=prepare_installed_runtime` with
 c923224 did not change setup behavior. The new subphase is diagnostic only;
 it is not root-cause, hosted, artifact, release, signing, Defender,
 clean-machine, provider/client, or downloaded-candidate evidence.
+The pre-repair full-suite attempt on
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3` was intentionally interrupted at
+approximately 45% after an exact-head review finding and supplies no result.
+The follow-on source worker reported 129 passed with no skips or warnings;
+Ruff lint/format over 378 files, mypy over 113 files, and `git diff --check`
+were green. The repair is diagnostic-only and does not establish root cause,
+hosted success, artifact, release, signing, Defender, or clean-machine
+evidence.
 
 ## ADR-207: Windows GA follow-up requires exact source integration and process-lock shutdown evidence
 
