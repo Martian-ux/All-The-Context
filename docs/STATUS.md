@@ -3,11 +3,11 @@
 ## Current milestone
 
 The current Windows GA convergence follow-up is being integrated on branch
-`hardening/windows-ga-convergence-20260904` from the exact open draft PR #114
-head `bd401a77eb824452d84769dd2824c87e095cddce`. The prior 49-commit ancestry
+`hardening/windows-ga-convergence-20260904` from exact open draft PR #114
+head `3983cf3930b9462be8d2d9a175230618f74a4b04`. The prior 49-commit ancestry
 union from nine requested source tips remains recorded in
 `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`; this follow-up adds
-two exact hosted-PR repairs on top of that already-integrated PR head. The
+three exact reviewer repairs on top of that already-integrated PR head. The
 branch is not a release claim: exact-artifact decisions, hosted checks,
 signing, publication, Defender, clean-machine, provider/client, and
 downloaded-candidate evidence remain separately bounded.
@@ -123,6 +123,37 @@ mypy over 112 source files, documentation, and diff checks were green. This
 is diagnostic-only: it does not fix or claim to fix the unresolved hosted
 Windows headless setup exit 1. The hosted rerun and final exact-SHA gates
 remain pending.
+
+### 2026-09-04 — PR #114 exact-head reviewer repairs
+
+Hosted run `33937672313` on exact PR head `3983cf3930b9462be8d2d9a175230618f74a4b04`
+failed both Python Documentation jobs because the convergence ledger named
+49 local-only source-tip objects that are not reachable from a fresh remote
+clone. The Windows desktop job again failed packaged headless setup, now
+classified as `setup_io_error`; all CodeQL, dashboard, repository-security,
+and Ubuntu desktop jobs passed. The exact-head reviewer found one P1
+provenance defect and two P2 fail-closed defects: the ledger required remote
+resolution for local-only tips, diagnostic projection accepted arbitrary
+lowercase tokens, and Linux attempted unsupported `unlinkat(...,
+AT_EMPTY_PATH)` identity deletion.
+
+Starting from exact PR head `3983cf3930b9462be8d2d9a175230618f74a4b04`, the
+integrator cherry-picked exactly once, in order, source repairs
+`df58c6c5a2e5b1691b969c6d89fa703fafe0d420`,
+`778f0c5f565ef3d9e34ec2f5379591e647b9e462`, and
+`7964ee859f2aa3a1520be5730595feb05e5ede22`, producing integrated commits
+`c04d7b5d881cb029e155eb89191c01776eafd4f6`,
+`dfb801ee0d4cd481382d716d7ca66fcc9bef306c`, and
+`9f1654b137646dc373e3566de75f8b7b2f4a31e5`. The ledger now distinguishes
+portable local-only source provenance from reachable integrated ancestors;
+diagnostics use a closed error-code and setup-stage vocabulary; and
+non-Windows identity deletion fails closed without a pathname fallback while
+real Windows handle deletion remains unchanged.
+
+This repair set narrows the next hosted diagnostic stage but does not claim
+that the Windows `setup_io_error` is fixed. Final local gates, exact hosted
+rerun results, artifact, release, signing, Defender, clean-machine,
+provider/client, and downloaded-candidate evidence remain separately bounded.
 
 ### 2026-09-04 — Cross-platform Windows last-error compatibility repair
 

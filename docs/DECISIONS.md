@@ -1,5 +1,34 @@
 # Architecture decisions
 
+## ADR-205: Exact-head reviewer repairs preserve portable evidence boundaries
+
+**Status:** accepted locally on 2026-09-04 at pre-documentation integration
+head `9f1654b137646dc373e3566de75f8b7b2f4a31e5`, from exact open draft PR #114
+head `3983cf3930b9462be8d2d9a175230618f74a4b04`. Source repairs
+`df58c6c5a2e5b1691b969c6d89fa703fafe0d420`,
+`778f0c5f565ef3d9e34ec2f5379591e647b9e462`, and
+`7964ee859f2aa3a1520be5730595feb05e5ede22` were cherry-picked exactly once
+in that order as `c04d7b5d881cb029e155eb89191c01776eafd4f6`,
+`dfb801ee0d4cd481382d716d7ca66fcc9bef306c`, and
+`9f1654b137646dc373e3566de75f8b7b2f4a31e5`.
+
+Hosted run `33937672313` exposed three exact-head reviewer findings: fresh
+remote clones could not resolve local-only convergence-ledger source tips;
+diagnostic projection accepted arbitrary lowercase tokens; and Linux used
+unsupported `unlinkat(..., AT_EMPTY_PATH)` for identity deletion. The ledger
+now validates local-only source tips structurally and requires every declared
+integrated commit to be a reachable ancestor of `HEAD`. Setup diagnostics
+project only a closed error-code and setup-stage vocabulary, while the
+non-Windows identity-deletion path fails closed without a pathname fallback.
+Real Windows handle-bound deletion and the existing setup behavior remain
+unchanged.
+
+The same hosted run's Windows desktop job remains a `setup_io_error`; this
+repair only makes the next diagnostic stage observable and does not claim that
+the hosted setup failure is fixed. Source, hosted, artifact, release, signing,
+Defender, clean-machine, provider/client, and downloaded-candidate evidence
+remain distinct gates.
+
 ## ADR-204: Hosted CI history and packaged first-run diagnosis remain bounded
 
 **Status:** accepted locally on 2026-09-04 at pre-documentation integration

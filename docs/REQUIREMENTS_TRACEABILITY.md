@@ -32,6 +32,9 @@ source tips on top of PR #114 head `f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`.
 The hosted-history and packaged-first-run diagnostic follow-up is covered by
 ADR-204 and adds two exact source repairs on top of PR #114 head
 `bd401a77eb824452d84769dd2824c87e095cddce`.
+The exact-head reviewer repair follow-up is covered by ADR-205 and adds three
+exact source repairs on top of PR #114 head
+`3983cf3930b9462be8d2d9a175230618f74a4b04`.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -101,6 +104,28 @@ evidence only; a hosted rerun must bind to the final pushed SHA.
 
 The prompt-supplied second source identifier with an extra trailing `f` did
 not resolve; the exact existing commit above was verified and used.
+
+### 2026-09-04 Exact PR #114 reviewer repairs
+
+This repair starts from exact PR #114 head
+`3983cf3930b9462be8d2d9a175230618f74a4b04`. Hosted run `33937672313` failed
+both Python Documentation jobs on remote-unresolvable local-only ledger tips
+and failed the Windows desktop job at packaged setup with `setup_io_error`.
+The exact-head reviewer findings and source-to-integrated mappings are bound
+to the three repair commits below. This table records source-contract
+coverage; it does not promote local tests to hosted, artifact, release,
+signing, Defender, clean-machine, provider/client, or downloaded-candidate
+evidence.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Portable convergence-ledger provenance | `scripts/check_docs.py::convergence_ledger_failures`; `tests/unit/test_docs.py`; `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`; source `df58c6c5a2e5b1691b969c6d89fa703fafe0d420`, integrated `c04d7b5d881cb029e155eb89191c01776eafd4f6` | Corrected at source level. Local-only source tips use format/count/uniqueness/lineage checks without Git resolution; declared integrated commits must be commit objects reachable from checked-out `HEAD`; unclassified long hexadecimal tokens fail closed. |
+| Identity-bound deletion portability | `platform_compat.py::delete_file_by_identity`; `tests/unit/test_platform_compat.py`; source `778f0c5f565ef3d9e34ec2f5379591e647b9e462`, integrated `dfb801ee0d4cd481382d716d7ca66fcc9bef306c` | Corrected at source level. Real Windows handle deletion is retained; unsupported non-Windows hosts fail closed without the invalid Linux `unlinkat(..., AT_EMPTY_PATH)` or unsafe pathname fallback. |
+| Packaged setup diagnostic containment | `desktop.py`; `scripts/smoke_packaged_first_run.py`; `tests/unit/test_desktop_runtime.py`; `tests/unit/test_packaged_first_run_diagnostics.py`; source `7964ee859f2aa3a1520be5730595feb05e5ede22`, integrated `9f1654b137646dc373e3566de75f8b7b2f4a31e5` | Corrected at source level. Only the closed setup error-code and stage vocabularies are projected, and raw error text remains excluded. The hosted Windows `setup_io_error` is narrowed diagnostically, not fixed or accepted. |
+
+The three repairs were cherry-picked exactly once in the listed order. Final
+local gate counts and any hosted rerun remain bound to the later final
+committed SHA.
 
 ### 2026-09-04 Windows GA convergence integration
 
