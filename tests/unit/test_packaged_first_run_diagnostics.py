@@ -472,6 +472,37 @@ def test_emit_failure_diagnostics_prints_closed_schema_only(
     assert TOKEN_CANARY not in path.read_text(encoding="utf-8")
 
 
+def test_packaged_update_failure_diagnostic_projects_only_journal_evidence(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "application_path": PATH_CANARY,
+                "last_error_code": "child_failure_report_invalid",
+                "phase": "rolled_back",
+                "schema_version": 3,
+                "user_context": RAW_STATEMENT,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    diagnostic = smoke.packaged_update_failure_diagnostic(journal, 2)
+
+    assert json.loads(diagnostic) == {
+        "journal": {
+            "last_error_code": "child_failure_report_invalid",
+            "phase": "rolled_back",
+            "schema_version": 3,
+        },
+        "return_code": 2,
+    }
+    assert PATH_CANARY not in diagnostic
+    assert RAW_STATEMENT not in diagnostic
+
+
 def test_project_setup_report_discards_unknown_setup_codes_and_stages() -> None:
     projected = smoke.project_setup_report_for_diagnostics(
         {

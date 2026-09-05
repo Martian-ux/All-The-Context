@@ -64,6 +64,15 @@ from .models import ClientCreate
 from .platform_compat import windows_creation_flags
 from .storage import CoreStore, StorageError
 from .user_startup import remove_user_startup
+from .windows_update_diagnostics import (
+    SAFE_BOOTSTRAP_FAILURE_CODES,
+    UPDATE_FAILURE_REPORT_CODES,
+    UPDATE_FAILURE_REPORT_FIELDS,
+    UPDATE_FAILURE_REPORT_MAX_BYTES,
+    UPDATE_FAILURE_REPORT_PHASES,
+    UPDATE_FAILURE_REPORT_STATUS,
+    valid_update_failure_attempt,
+)
 
 WINDOWS_APP_NAME = "AllTheContext.exe"
 WINDOWS_MCP_NAME = "AllTheContextMCP.exe"
@@ -76,6 +85,15 @@ WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
 )
 MACOS_APP_NAME = "All The Context.app"
 HeadlessSetupStage = Literal["prepare_installed_runtime", "perform_setup", "write_report"]
+PackagedUpdateFailurePhase = Literal[
+    "build_identity",
+    "component_bootstrap",
+    "component_digest",
+    "component_presence",
+    "entrypoint_registration",
+    "internal",
+    "report_write",
+]
 _HEADLESS_SETUP_ERROR_CODES = frozenset(
     {
         "credential_store_unavailable",
@@ -622,56 +640,147 @@ def _update_report_path(value: str, operation: str, expected_name: str) -> Path:
     return target
 
 
+def _packaged_update_failure_code(error: Exception, phase: PackagedUpdateFailurePhase) -> str:
+    """Map a child exception to the closed update diagnostic vocabulary."""
+
+    if phase == "component_bootstrap":
+        # BootstrapInstallError deliberately exposes a separate fixed code.  Do
+        # not inspect arbitrary exception attributes or copy exception text.
+        from .windows_bootstrap_install import BootstrapInstallError
+
+        if isinstance(error, BootstrapInstallError) and error.code in SAFE_BOOTSTRAP_FAILURE_CODES:
+            return error.code
+        return "component_bootstrap_failed"
+    if phase == "build_identity":
+        return "build_identity_invalid"
+    if phase == "entrypoint_registration":
+        return "entrypoint_registration_failed"
+    if phase == "component_presence":
+        return "component_presence_invalid"
+    if phase == "component_digest":
+        return "component_digest_invalid"
+    if phase == "report_write":
+        return "report_write_failed"
+    return "internal_failure"
+
+
+def _write_packaged_update_failure_report(
+    report_path: Path,
+    *,
+    attempt: str,
+    phase: PackagedUpdateFailurePhase,
+    code: str,
+) -> None:
+    """Atomically publish one bounded, content-free child failure report."""
+
+    if (
+        not valid_update_failure_attempt(attempt)
+        or phase not in UPDATE_FAILURE_REPORT_PHASES
+        or code not in UPDATE_FAILURE_REPORT_CODES
+    ):
+        raise RuntimeError("The packaged update failure report is invalid")
+    payload = {
+        "attempt": attempt,
+        "code": code,
+        "phase": phase,
+        "status": UPDATE_FAILURE_REPORT_STATUS,
+    }
+    if set(payload) != UPDATE_FAILURE_REPORT_FIELDS:
+        raise RuntimeError("The packaged update failure report shape is invalid")
+    raw = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(raw) > UPDATE_FAILURE_REPORT_MAX_BYTES:
+        raise RuntimeError("The packaged update failure report is too large")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{report_path.name}.", suffix=".atc-new", dir=report_path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(report_path)
+    except BaseException:
+        with suppress(OSError):
+            temporary.unlink()
+        raise
+
+
 def _apply_packaged_update(report_value: str) -> int:
     if platform.system() != "Windows" or not getattr(sys, "frozen", False):
         raise RuntimeError("Packaged update application is available only on Windows")
     operation = _valid_update_operation()
     report_path = _update_report_path(report_value, operation, "apply-report.json")
-    build_identity = runtime_build_identity(required=True)
-    if build_identity is None:
-        raise RuntimeError("The packaged build identity is unavailable")
-    installed, _ = prepare_installed_runtime(RuntimeCommand.current(), relaunch_args=None)
-    install_application_entrypoints(installed.executable)
-    app_digest, app_size = _file_digest(installed.executable)
-    helper = installed.mcp_executable
-    if helper is None or not helper.is_file():
-        raise RuntimeError("The installed MCP helper is unavailable after update")
-    helper_digest, helper_size = _file_digest(helper)
-    update_helper = installed.update_executable
-    if update_helper is None or not update_helper.is_file():
-        raise RuntimeError("The installed update helper is unavailable after update")
-    update_helper_digest, update_helper_size = _file_digest(update_helper)
-    recovery = installed.recovery_executable
-    if recovery is None or not recovery.is_file():
-        raise RuntimeError("The installed recovery helper is unavailable after update")
-    recovery_digest, recovery_size = _file_digest(recovery)
-    payload = {
-        "status": "installed",
-        "version": build_identity.version,
-        "channel": build_identity.channel,
-        "source_commit": build_identity.source_commit,
-        "build_identity": build_identity.as_dict(),
-        "build_identity_sha256": build_identity.sha256,
-        "application": str(installed.executable),
-        "application_sha256": app_digest,
-        "application_size": app_size,
-        "mcp": str(helper),
-        "mcp_sha256": helper_digest,
-        "mcp_size": helper_size,
-        "recovery": str(recovery),
-        "recovery_sha256": recovery_digest,
-        "recovery_size": recovery_size,
-        "update_helper": str(update_helper),
-        "update_helper_sha256": update_helper_digest,
-        "update_helper_size": update_helper_size,
-    }
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
+    attempt = os.environ.get("ATC_UPDATE_ATTEMPT", "")
+    if not valid_update_failure_attempt(attempt):
+        raise RuntimeError("The packaged update attempt identity is invalid")
+    phase: PackagedUpdateFailurePhase = "build_identity"
     try:
-        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(report_path)
-    finally:
-        temporary.unlink(missing_ok=True)
+        build_identity = runtime_build_identity(required=True)
+        if build_identity is None:
+            raise RuntimeError("The packaged build identity is unavailable")
+
+        phase = "component_bootstrap"
+        installed, _ = prepare_installed_runtime(RuntimeCommand.current(), relaunch_args=None)
+
+        phase = "entrypoint_registration"
+        install_application_entrypoints(installed.executable)
+
+        phase = "component_presence"
+        helper = installed.mcp_executable
+        update_helper = installed.update_executable
+        recovery = installed.recovery_executable
+        components = (installed.executable, helper, recovery, update_helper)
+        if any(component is None or not component.is_file() for component in components):
+            raise RuntimeError("An installed update component is unavailable")
+        assert helper is not None
+        assert update_helper is not None
+        assert recovery is not None
+
+        phase = "component_digest"
+        app_digest, app_size = _file_digest(installed.executable)
+        helper_digest, helper_size = _file_digest(helper)
+        update_helper_digest, update_helper_size = _file_digest(update_helper)
+        recovery_digest, recovery_size = _file_digest(recovery)
+        payload = {
+            "status": "installed",
+            "version": build_identity.version,
+            "channel": build_identity.channel,
+            "source_commit": build_identity.source_commit,
+            "build_identity": build_identity.as_dict(),
+            "build_identity_sha256": build_identity.sha256,
+            "application": str(installed.executable),
+            "application_sha256": app_digest,
+            "application_size": app_size,
+            "mcp": str(helper),
+            "mcp_sha256": helper_digest,
+            "mcp_size": helper_size,
+            "recovery": str(recovery),
+            "recovery_sha256": recovery_digest,
+            "recovery_size": recovery_size,
+            "update_helper": str(update_helper),
+            "update_helper_sha256": update_helper_digest,
+            "update_helper_size": update_helper_size,
+        }
+        phase = "report_write"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
+        try:
+            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+            temporary.replace(report_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except Exception as error:
+        failure_code = _packaged_update_failure_code(error, phase)
+        with suppress(Exception):
+            _write_packaged_update_failure_report(
+                report_path,
+                attempt=attempt,
+                phase=phase,
+                code=failure_code,
+            )
+        return 1
     return 0
 
 

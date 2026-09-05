@@ -490,9 +490,28 @@ def _fake_commands(
     health_result: int = 0,
     hostile_report_phase: str | None = None,
     hostile_report: bytes | None = None,
+    apply_result: int = 0,
+    apply_failure_code: str | None = None,
+    apply_failure_attempt: str | None = None,
 ) -> Callable[[tuple[str, ...], dict[str, str]], int]:
-    def run(command: tuple[str, ...], _environment: dict[str, str]) -> int:
+    def run(command: tuple[str, ...], environment: dict[str, str]) -> int:
         if "--apply-update" in command:
+            report = Path(command[-1])
+            if apply_result != 0:
+                if apply_failure_code is not None:
+                    report.write_text(
+                        json.dumps(
+                            {
+                                "attempt": apply_failure_attempt
+                                or environment["ATC_UPDATE_ATTEMPT"],
+                                "code": apply_failure_code,
+                                "phase": "component_bootstrap",
+                                "status": "failed",
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                return apply_result
             fixture.application.write_bytes(fixture.replacement)
             fixture.mcp.write_bytes(b"new mcp binary")
             fixture.recovery.write_bytes(b"new recovery helper binary")
@@ -501,7 +520,6 @@ def _fake_commands(
             mcp_digest, mcp_size = _digest(fixture.mcp)
             recovery_digest, recovery_size = _digest(fixture.recovery)
             update_digest, update_size = _digest(fixture.update_helper)
-            report = Path(command[-1])
             if hostile_report_phase == "apply":
                 assert hostile_report is not None
                 report.write_bytes(hostile_report)
@@ -581,6 +599,200 @@ def _isolate_runtime(monkeypatch: pytest.MonkeyPatch, launched: list[str]) -> No
         "_launch_core",
         lambda journal: launched.append(journal.current_version),
     )
+
+
+def _advance_time_for_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = {"now": 100.0}
+
+    def monotonic() -> float:
+        return clock["now"]
+
+    def sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(helper_module.time, "monotonic", monotonic)
+    monkeypatch.setattr(helper_module.time, "sleep", sleep)
+
+
+def test_child_failure_report_code_persists_through_rollback_without_user_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    _advance_time_for_retry(monkeypatch)
+    monkeypatch.setattr(
+        helper_module,
+        "_run_bounded",
+        _fake_commands(
+            fixture,
+            apply_result=1,
+            apply_failure_code="bootstrap_journal_invalid",
+        ),
+    )
+
+    assert run_transaction(fixture.journal_path) == 2
+
+    journal = UpdateJournal.load(fixture.journal_path)
+    assert journal.phase is HelperPhase.ROLLED_BACK
+    assert journal.last_error_code == "bootstrap_journal_invalid"
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert "diagnostic code: bootstrap_journal_invalid" in state["last_error"]
+    assert fixture.application.read_bytes() == fixture.old_application
+    assert fixture.mcp.read_bytes() == fixture.old_mcp
+    assert fixture.recovery.read_bytes() == fixture.old_recovery
+    assert fixture.update_helper.read_bytes() == fixture.old_update_helper
+    with sqlite3.connect(fixture.database) as connection:
+        assert connection.execute("SELECT value FROM facts").fetchall() == [("before",)]
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+    assert launched == ["0.1.0"]
+
+
+@pytest.mark.parametrize(
+    ("report_kind", "expected_code"),
+    [
+        ("missing", "child_failure_report_missing"),
+        ("malformed", "child_failure_report_invalid"),
+        ("unallowlisted", "child_failure_report_invalid"),
+        ("oversized", "child_failure_report_invalid"),
+        ("wrong_attempt", "child_failure_report_invalid"),
+    ],
+)
+def test_nonzero_child_report_is_strictly_classified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report_kind: str,
+    expected_code: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _advance_time_for_retry(monkeypatch)
+
+    def run(command: tuple[str, ...], environment: dict[str, str]) -> int:
+        if "--apply-update" not in command:
+            raise AssertionError(command)
+        report = Path(command[-1])
+        if report_kind == "malformed":
+            report.write_bytes(b"{ malformed")
+        elif report_kind == "unallowlisted":
+            report.write_text(
+                json.dumps(
+                    {
+                        "attempt": environment["ATC_UPDATE_ATTEMPT"],
+                        "code": "token_leak",
+                        "phase": "component_bootstrap",
+                        "status": "failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        elif report_kind == "oversized":
+            report.write_bytes(b"{" + b"x" * helper_module.UPDATE_FAILURE_REPORT_MAX_BYTES + b"}")
+        elif report_kind == "wrong_attempt":
+            report.write_text(
+                json.dumps(
+                    {
+                        "attempt": "f" * 32,
+                        "code": "bootstrap_journal_invalid",
+                        "phase": "component_bootstrap",
+                        "status": "failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 1
+
+    monkeypatch.setattr(helper_module, "_run_bounded", run)
+    journal = UpdateJournal.load(fixture.journal_path)
+
+    with pytest.raises(HelperError) as raised:
+        helper_module._apply_replacement(journal, fixture.journal_path)
+
+    assert raised.value.code == expected_code
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+
+
+def test_zero_exit_report_and_target_mismatch_have_distinct_codes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        helper_module,
+        "_run_bounded",
+        lambda _command, _environment: 0,
+    )
+    journal = UpdateJournal.load(fixture.journal_path)
+
+    with pytest.raises(HelperError) as raised:
+        helper_module._apply_replacement(journal, fixture.journal_path)
+
+    assert raised.value.code == "child_zero_target_digest_mismatch"
+
+    fixture = _transaction(tmp_path / "matching", monkeypatch)
+
+    def match_without_report(command: tuple[str, ...], _environment: dict[str, str]) -> int:
+        if "--apply-update" in command:
+            fixture.application.write_bytes(fixture.replacement)
+        return 0
+
+    monkeypatch.setattr(helper_module, "_run_bounded", match_without_report)
+    journal = UpdateJournal.load(fixture.journal_path)
+    with pytest.raises(HelperError) as raised:
+        helper_module._apply_replacement(journal, fixture.journal_path)
+    assert raised.value.code == "child_zero_report_missing"
+
+
+def test_zero_exit_target_mismatch_exhausts_the_absolute_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _advance_time_for_retry(monkeypatch)
+    monkeypatch.setattr(helper_module, "PARENT_EXIT_TIMEOUT_SECONDS", 1)
+
+    def run(command: tuple[str, ...], _environment: dict[str, str]) -> int:
+        if "--apply-update" in command:
+            Path(command[-1]).write_text(json.dumps({"status": "installed"}), encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(helper_module, "_run_bounded", run)
+    journal = UpdateJournal.load(fixture.journal_path)
+    with pytest.raises(HelperError) as raised:
+        helper_module._apply_replacement(journal, fixture.journal_path)
+    assert raised.value.code == "binary_cutover_deadline"
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+
+
+def test_retry_rejects_stale_report_and_success_clears_failure_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    seen_preexisting: list[bool] = []
+    attempts = 0
+    successful_child = _fake_commands(fixture)
+
+    def run(command: tuple[str, ...], environment: dict[str, str]) -> int:
+        nonlocal attempts
+        if "--apply-update" not in command:
+            return successful_child(command, environment)
+        attempts += 1
+        report = Path(command[-1])
+        seen_preexisting.append(report.exists())
+        if attempts == 1:
+            fixture.application.write_bytes(b"not the target")
+            report.write_text(json.dumps({"status": "installed"}), encoding="utf-8")
+            return 0
+        return successful_child(command, environment)
+
+    monkeypatch.setattr(helper_module, "_run_bounded", run)
+    _isolate_runtime(monkeypatch, [])
+    journal = UpdateJournal.load(fixture.journal_path)
+
+    helper_module._apply_replacement(journal, fixture.journal_path)
+
+    assert attempts == 2
+    assert seen_preexisting == [False, False]
+    assert journal.phase is HelperPhase.BINARY_REPLACED
+    assert journal.last_error_code is None
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
 
 
 def _prepare_interrupted_packaged_terminal_replay(

@@ -6,13 +6,16 @@ from pathlib import Path
 
 import allthecontext
 import pytest
+from allthecontext.build_identity import make_build_identity
 from allthecontext.config import CoreConfig
 from allthecontext.credentials import DevelopmentFileCredentialStore
 from allthecontext.desktop import (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS,
     WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS,
     WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS,
+    _apply_packaged_update,
     _copy_macos_bundle_atomically,
+    _packaged_update_failure_code,
     _run_silent_internal_mode,
     _schedule_windows_install_removal,
     _stop_installed_core_for_upgrade,
@@ -27,6 +30,7 @@ from allthecontext.instance_identity import ensure_instance_secret
 from allthecontext.models import ClientCreate
 from allthecontext.release_manifest import ManifestError
 from allthecontext.storage import CoreStore
+from allthecontext.windows_bootstrap_install import BootstrapInstallError
 
 
 def test_bundled_dashboard_contains_direct_core_mobile_boundary() -> None:
@@ -490,6 +494,85 @@ def test_headless_setup_failure_reports_perform_setup_stage_without_error_text(
     assert token_canary not in json.dumps(payload)
     assert token_canary not in captured.out
     assert token_canary not in captured.err
+
+
+def test_packaged_update_child_writes_atomic_content_free_failure_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "data")
+    operation = "a" * 24
+    attempt = "b" * 32
+    report_path = config.data_dir / "updates" / "transactions" / operation / "apply-report.json"
+    path_canary = str(tmp_path / "private" / "context.sqlite3")
+    token_canary = "atc-child-failure-token-never-log"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    monkeypatch.setattr("allthecontext.desktop.CoreConfig.default", lambda: config)
+    monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Windows")
+    monkeypatch.setattr("allthecontext.desktop.sys.frozen", True, raising=False)
+    monkeypatch.setenv("ATC_UPDATE_OPERATION", operation)
+    monkeypatch.setenv("ATC_UPDATE_ATTEMPT", attempt)
+    monkeypatch.setattr("allthecontext.desktop.RuntimeCommand.current", lambda: runtime)
+    monkeypatch.setattr(
+        "allthecontext.desktop.runtime_build_identity",
+        lambda **_: make_build_identity(
+            version=allthecontext.__version__,
+            platform_name="windows",
+            architecture="x86_64",
+            source_commit="c" * 40,
+        ),
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop.prepare_installed_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            BootstrapInstallError(
+                "bootstrap_journal_invalid",
+                f"{token_canary} at {path_canary}",
+            )
+        ),
+    )
+
+    assert _apply_packaged_update(str(report_path)) == 1
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "attempt": attempt,
+        "code": "bootstrap_journal_invalid",
+        "phase": "component_bootstrap",
+        "status": "failed",
+    }
+    assert not list(report_path.parent.glob("*.atc-new"))
+    serialized = json.dumps(payload)
+    assert token_canary not in serialized
+    assert path_canary not in serialized
+
+
+def test_packaged_update_maps_unallowlisted_bootstrap_code_to_fixed_category() -> None:
+    error = BootstrapInstallError(
+        "token_exfiltration",
+        "token=atc-child-token at C:\\Users\\canary\\private",
+    )
+
+    assert _packaged_update_failure_code(error, "component_bootstrap") == (
+        "component_bootstrap_failed"
+    )
+
+
+def test_packaged_update_does_not_write_when_report_path_is_untrusted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "data")
+    operation = "a" * 24
+    report_path = tmp_path / "outside-apply-report.json"
+    monkeypatch.setattr("allthecontext.desktop.CoreConfig.default", lambda: config)
+    monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Windows")
+    monkeypatch.setattr("allthecontext.desktop.sys.frozen", True, raising=False)
+    monkeypatch.setenv("ATC_UPDATE_OPERATION", operation)
+    monkeypatch.setenv("ATC_UPDATE_ATTEMPT", "b" * 32)
+
+    with pytest.raises(RuntimeError, match="report path is invalid"):
+        _apply_packaged_update(str(report_path))
+
+    assert not report_path.exists()
 
 
 @pytest.mark.parametrize(

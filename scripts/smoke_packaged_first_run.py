@@ -554,6 +554,21 @@ def run_packaged_rollback_smoke(
     )
 
 
+def packaged_update_failure_diagnostic(journal: Path, return_code: int) -> str:
+    """Project authoritative updater evidence without copying child output."""
+
+    try:
+        evidence = json.loads(journal_failure_diagnostic(journal))
+    except (TypeError, json.JSONDecodeError):
+        evidence = {"journal_status": "diagnostic_unavailable"}
+    if not isinstance(evidence, dict):
+        evidence = {"journal_status": "diagnostic_invalid"}
+    return json.dumps(
+        {"journal": evidence, "return_code": return_code},
+        sort_keys=True,
+    )
+
+
 _PACKAGED_MCP_PROFILE = "codex_read"
 _PACKAGED_MCP_TOOLS = frozenset(
     {
@@ -1281,7 +1296,7 @@ def main() -> int:
         if interrupted.returncode != 86:
             raise SystemExit(
                 f"packaged updater did not stop at the injected crash point: "
-                f"{interrupted.returncode}"
+                f"{packaged_update_failure_diagnostic(crash_journal, interrupted.returncode)}"
             )
         if json.loads(crash_journal.read_text(encoding="utf-8")).get("phase") != (
             "binary_replaced"

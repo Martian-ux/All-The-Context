@@ -53,6 +53,16 @@ from .installed_component_manifest import (
 )
 from .platform_compat import windows_dll, windows_registry
 from .release_manifest import ManifestError, ReleaseVersion, load_keyring, verify_manifest
+from .windows_update_diagnostics import (
+    JOURNAL_DIAGNOSTIC_CODES,
+    JOURNAL_DIAGNOSTIC_PHASES,
+    UPDATE_FAILURE_REPORT_CODES,
+    UPDATE_FAILURE_REPORT_FIELDS,
+    UPDATE_FAILURE_REPORT_MAX_BYTES,
+    UPDATE_FAILURE_REPORT_PHASES,
+    UPDATE_FAILURE_REPORT_STATUS,
+    valid_update_failure_attempt,
+)
 
 JOURNAL_SCHEMA_VERSION = 3
 LEGACY_JOURNAL_SCHEMA_VERSION = 2
@@ -281,6 +291,32 @@ def _read_json(
     return cast(dict[str, Any], value)
 
 
+def _read_apply_failure_report(path: Path, expected_attempt: str) -> tuple[str, str | None]:
+    """Read only a failure report bound to the just-completed child attempt."""
+
+    try:
+        if _plain_file_stat_if_present(path, "transaction_report_untrusted") is None:
+            return "missing", None
+        value = _read_json(
+            path,
+            UPDATE_FAILURE_REPORT_MAX_BYTES,
+            boundary_code="transaction_report_untrusted",
+        )
+    except HelperError:
+        return "invalid", None
+    if (
+        set(value) != UPDATE_FAILURE_REPORT_FIELDS
+        or value.get("status") != UPDATE_FAILURE_REPORT_STATUS
+        or value.get("phase") not in UPDATE_FAILURE_REPORT_PHASES
+        or value.get("code") not in UPDATE_FAILURE_REPORT_CODES
+        or not valid_update_failure_attempt(value.get("attempt"))
+        or not valid_update_failure_attempt(expected_attempt)
+        or not hmac.compare_digest(cast(str, value.get("attempt")), expected_attempt)
+    ):
+        return "invalid", None
+    return "valid", cast(str, value["code"])
+
+
 def journal_failure_diagnostic(path: Path) -> str:
     """Return bounded, non-sensitive updater state for operational failures."""
     try:
@@ -289,11 +325,13 @@ def journal_failure_diagnostic(path: Path) -> str:
         return json.dumps({"journal_status": error.code}, sort_keys=True)
     last_error_code = value.get("last_error_code")
     if last_error_code is not None and (
-        not isinstance(last_error_code, str) or len(last_error_code) > 64
+        not isinstance(last_error_code, str)
+        or len(last_error_code) > 64
+        or last_error_code not in JOURNAL_DIAGNOSTIC_CODES
     ):
         last_error_code = "invalid"
     phase = value.get("phase")
-    if not isinstance(phase, str) or len(phase) > 64:
+    if not isinstance(phase, str) or len(phase) > 64 or phase not in JOURNAL_DIAGNOSTIC_PHASES:
         phase = "invalid"
     schema_version = value.get("schema_version")
     if (
@@ -2580,22 +2618,54 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
     journal.phase = HelperPhase.CUTOVER_STARTED
     journal.save(journal_path)
     report = journal_path.parent / "apply-report.json"
-    _unlink_plain_file_if_present(report, "transaction_report_untrusted")
     environment = _child_environment(journal)
     deadline = time.monotonic() + PARENT_EXIT_TIMEOUT_SECONDS
     while True:
+        # A report belongs to exactly one child attempt.  Removing it before
+        # launch prevents a stale or planted report from being consumed after a
+        # later retry.
+        _unlink_plain_file_if_present(report, "transaction_report_untrusted")
+        attempt = secrets.token_hex(16)
+        attempt_environment = environment.copy()
+        attempt_environment["ATC_UPDATE_ATTEMPT"] = attempt
         code = _run_bounded(
             (str(journal.replacement_path), "--apply-update", str(report)),
-            environment,
+            attempt_environment,
         )
         _validate_install_targets(journal, "install_target_untrusted")
-        if code == 0 and _verified(
+        target_verified = _verified(
             application, journal.replacement_sha256, journal.replacement_size
-        ):
-            break
-        if time.monotonic() >= deadline:
-            raise HelperError("binary_cutover_failed")
-        time.sleep(0.25)
+        )
+        if code != 0:
+            report_status, failure_code = _read_apply_failure_report(report, attempt)
+            _unlink_plain_file_if_present(report, "transaction_report_untrusted")
+            if report_status == "valid":
+                assert failure_code is not None
+                raise HelperError(failure_code)
+            if report_status == "missing":
+                raise HelperError("child_failure_report_missing")
+            raise HelperError("child_failure_report_invalid")
+        if not target_verified:
+            if _plain_file_stat_if_present(report, "transaction_report_untrusted") is None:
+                raise HelperError("child_zero_target_digest_mismatch")
+            try:
+                candidate_report = _read_json(
+                    report,
+                    MAX_JOURNAL_BYTES,
+                    boundary_code="transaction_report_untrusted",
+                )
+            except HelperError as exc:
+                raise HelperError("apply_report_invalid") from exc
+            if candidate_report.get("status") != "installed":
+                raise HelperError("apply_report_invalid")
+            if time.monotonic() >= deadline:
+                _unlink_plain_file_if_present(report, "transaction_report_untrusted")
+                raise HelperError("binary_cutover_deadline")
+            time.sleep(0.25)
+            continue
+        if _plain_file_stat_if_present(report, "transaction_report_untrusted") is None:
+            raise HelperError("child_zero_report_missing")
+        break
     _validate_component_manifest(journal)
     try:
         value = _read_json(report, MAX_JOURNAL_BYTES)
@@ -3019,6 +3089,20 @@ def _update_state(
     _atomic_json(path, value, boundary_code="application_state_untrusted")
 
 
+def _state_error_with_code(message: str, error_code: str | None) -> str:
+    """Add only a bounded code to the generic user-facing update outcome."""
+
+    if (
+        isinstance(error_code, str)
+        and len(error_code) <= 64
+        and error_code
+        and error_code.replace("_", "").isalnum()
+        and error_code in JOURNAL_DIAGNOSTIC_CODES
+    ):
+        return f"{message} (diagnostic code: {error_code})"
+    return message
+
+
 def _record_post_commit_degraded_state(journal: UpdateJournal) -> None:
     """Record a non-authority-changing terminal follow-up failure.
 
@@ -3033,7 +3117,7 @@ def _record_post_commit_degraded_state(journal: UpdateJournal) -> None:
         _update_state(
             journal,
             phase="installed" if journal.phase is HelperPhase.COMMITTED else "rolled_back",
-            error=POST_COMMIT_DEGRADED_ERROR,
+            error=_state_error_with_code(POST_COMMIT_DEGRADED_ERROR, journal.last_error_code),
             clear_transaction=True,
         )
     except Exception:
@@ -3114,7 +3198,7 @@ def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code
     _update_state(
         journal,
         phase="rolled_back",
-        error=message,
+        error=_state_error_with_code(message, error_code),
         clear_transaction=False,
     )
     _fault_after_abort_state()
@@ -3125,7 +3209,7 @@ def _abort_before_cutover(journal: UpdateJournal, journal_path: Path, error_code
     _finish_terminal_handoff(
         journal,
         launch_core=not _process_exists(journal.parent_pid),
-        state_error=message,
+        state_error=_state_error_with_code(message, error_code),
     )
 
 
@@ -3141,13 +3225,17 @@ def _rollback(journal: UpdateJournal, journal_path: Path, error_code: str) -> No
         _update_state(
             journal,
             phase="rolled_back",
-            error=message,
+            error=_state_error_with_code(message, error_code),
             clear_transaction=False,
         )
         journal.phase = HelperPhase.ROLLED_BACK
         seal_terminal_recovery_authority(journal)
         journal.save(journal_path)
-        _finish_terminal_handoff(journal, launch_core=True, state_error=message)
+        _finish_terminal_handoff(
+            journal,
+            launch_core=True,
+            state_error=_state_error_with_code(message, error_code),
+        )
     except (OSError, HelperError, sqlite3.Error) as exc:
         journal.phase = HelperPhase.ROLLING_BACK
         journal.last_error_code = "rollback_retry_required"
