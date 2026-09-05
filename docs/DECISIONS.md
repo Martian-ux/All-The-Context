@@ -1,17 +1,55 @@
 # Architecture decisions
 
-## ADR-206: Windows GA follow-up keeps portability and unsigned-release boundaries explicit
+## ADR-207: Windows GA follow-up requires exact source integration and process-lock shutdown evidence
 
-**Status:** accepted locally on 2026-09-05 at pre-documentation integration
-head `7fd35728882d0a9379bb5dffc9683df9b1c9f112`, from exact open draft PR #114
-head `fe30fe1719ab2de589e87881a3df40734202c668`, with remote `main` at
-`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The two source repairs were
-cherry-picked exactly once in order: source
+**Status:** accepted locally on 2026-09-05 for this recorded integration tree;
+final exact-tree validation and the ancestry-safe push are intentionally not
+self-asserted by this decision; the integration report binds their results to
+the final committed tree. The
+follow-up starts from exact open draft PR #114 head
+`1cf496edf8bdf7a8566328decbd055e8900647cb`, with remote `main` at
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. Stable source commit
+`393ec111802ddad1136a0b88f09b159317a77a92` was cherry-picked exactly once as
+`cbf08ea375ee035f018962573f0746665185a26f`; stable source commit
+`00823fcba2cf9821aaa6319ae3c6e7c4665c5ca9` was then cherry-picked exactly
+once as `0a0042059b7f7b2e4e74de764c0b755f416a05e7`. Each source commit has
+the exact live-head parent, and the two picks required no conflict
+resolution. These integrated commit SHAs are provenance for the recorded
+tree; this decision does not self-assert a final pushed SHA.
+
+The shortcut test repair covers both WScript shortcut suffixes and proves
+cleanup of the actual recoverable temporary path after a generator writes and
+then fails. The packaged-smoke repair carries the installed Core data
+directory into every shutdown call and, once health is unavailable, waits for
+the process-owned `core.lock` to be released before returning. A focused
+regression holds that lock while simulating an unavailable health endpoint,
+then releases it and verifies the stop path completes. This closes the
+smoke-observation handoff contract at source level without executing a
+candidate artifact or changing installed-product authority.
+
+Prior exact-head evidence on `1cf496edf8bdf7a8566328decbd055e8900647cb`
+passed 3,098 tests with 20 expected capability skips and three known
+warnings; CodeQL `33945244693` was green. CI `33945245778` failed only in
+Windows desktop updater crash recovery because the injected
+`binary_replaced` path returned exit `2` rather than the expected injected exit
+`86`. The `00823fc` source/test repair is awaiting hosted confirmation. No
+artifact execution, installation, update, Defender scan, clean-machine,
+provider/client, signing, release, publication, or downloaded-candidate
+result is inferred.
+
+## ADR-206: Prior Windows GA follow-up keeps portability and unsigned-release boundaries explicit
+
+**Status:** historical source decision from 2026-09-05, superseded for the
+current PR head by ADR-207. At that earlier integration stage, open draft PR
+#114 was at `fe30fe1719ab2de589e87881a3df40734202c668`, with remote `main` at
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The two earlier source repairs
+were cherry-picked exactly once in order: source
 `1f8e5e3a349cbb107becae30009ce5bb1f695a79` as integrated
 `b3acf5f90116e4662b5be9857ae8980367196983`, followed by source
 `388d1d7ea530f6a9cdd872fbf408a77c8542de2a` as integrated
-`7fd35728882d0a9379bb5dffc9683df9b1c9f112`. Each source commit has the
-required parent `fe30fe1719ab2de589e87881a3df40734202c668`.
+`7fd35728882d0a9379bb5dffc9683df9b1c9f112`. Each source commit had the
+required parent `fe30fe1719ab2de589e87881a3df40734202c668`; those facts are
+historical provenance, not the current live-head claim.
 
 The portable Ubuntu registry regression is corrected at the test boundary:
 the fake is injected through `allthecontext.user_startup.windows_registry`,

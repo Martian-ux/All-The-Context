@@ -2,46 +2,47 @@
 
 ## Current milestone
 
-The current Windows GA convergence follow-up is being integrated on branch
+The current Windows GA convergence follow-up integration is recorded on branch
 `hardening/windows-ga-convergence-20260904` from exact open draft PR #114
-head `fe30fe1719ab2de589e87881a3df40734202c668`, with remote `main` still
+head `1cf496edf8bdf7a8566328decbd055e8900647cb`, with remote `main` still
 exactly `7bfd070fd51541cd77f3cde67576f447cdef50bd`. The prior 49-commit
 ancestry union from nine requested source tips and the earlier exact-head
 reviewer repairs remain recorded in
-`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`; this follow-up adds
-two exact source repairs on top of that live PR head. The local code head
-before this documentation update is
-`7fd35728882d0a9379bb5dffc9683df9b1c9f112`. The branch is not a release
-claim: exact-artifact decisions, hosted checks, signing, publication,
-Defender, clean-machine, provider/client, and downloaded-candidate evidence
-remain separately bounded.
+`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. This recorded tree
+contains two additional source repairs, cherry-picked exactly once in order:
+stable source `393ec111802ddad1136a0b88f09b159317a77a92` as integrated commit
+`cbf08ea375ee035f018962573f0746665185a26f`, then stable source
+`00823fcba2cf9821aaa6319ae3c6e7c4665c5ca9` as integrated commit
+`0a0042059b7f7b2e4e74de764c0b755f416a05e7`. Both source commits have the
+exact parent `1cf496edf8bdf7a8566328decbd055e8900647cb`; no conflict
+resolution was needed. Final exact-tree validation and the ancestry-safe push
+are intentionally reported separately by the integration owner. The branch is
+not a release claim: exact-artifact decisions,
+hosted checks, signing, publication, Defender, clean-machine, provider/client,
+and downloaded-candidate evidence remain separately bounded.
 
-The two source commits were fetched from clean local source worktrees and
-cherry-picked exactly once, in order: portable startup-registry fake
-injection, source `1f8e5e3a349cbb107becae30009ce5bb1f695a79`, integrated as
-`b3acf5f90116e4662b5be9857ae8980367196983`; then Windows shortcut staging
-suffix repair, source `388d1d7ea530f6a9cdd872fbf408a77c8542de2a`, integrated as
-`7fd35728882d0a9379bb5dffc9683df9b1c9f112`. Both source commits have parent
-`fe30fe1719ab2de589e87881a3df40734202c668`.
+The first source repair expands shortcut staging cleanup coverage for both
+`.lnk` and `.url` targets and asserts that generator failure removes the
+actual suffix-preserving temporary path, which the legacy `*.atc-new` glob
+could not observe. The second source/test repair makes packaged-smoke
+`stop_core` wait for the installed Core process lock after its health listener
+disappears, with an explicit data-directory handoff and a bounded ten-second
+lock-release wait; its regression holds and then releases that lock while the
+health endpoint is already unavailable. These are source and test repairs
+only. The distribution policy remains unsigned: SmartScreen reputation
+warnings are acceptable for the community package, while Defender quarantine
+or deletion remains a blocker; paid signing is not required.
 
-The Ubuntu registry-test portability failure came from patching
-`sys.modules["winreg"]` while the production boundary resolves the injectable
-`windows_registry()` seam; the test now injects its fake through that seam.
-The Windows shortcut failure came from a recoverable temporary name ending in
-`.atc-new`, which WScript.Shell does not accept for `CreateShortcut`; the
-temporary name now preserves the final `.lnk`/`.url` suffix. These are source
-and test repairs only. The pre-integration hosted snapshot still had Ubuntu
-and Windows desktop failures, so no hosted rerun or artifact result is
-credited here. Distribution remains unsigned by policy: SmartScreen
-reputation warnings are acceptable for the community package, while Defender
-quarantine or deletion remains a blocker. Paid signing is not required.
-
-The prior exact `bd401a7` validation passed 3,088 tests with 19 expected
-capability skips and three warnings; its focused registration, bootstrap,
-runtime, platform, packaged-first-run, build, and zero-dashboard suite passed
-394 tests with 10 expected host-capability skips and no warnings. The final
-full-tree gates and exact hosted results are recorded only when bound to the
-final committed/pushed SHA.
+Prior exact-head evidence on `1cf496edf8bdf7a8566328decbd055e8900647cb`
+passed the full local suite with 3,098 passed, 20 expected capability skips,
+and three known warnings. CodeQL run `33945244693` was green. CI run
+`33945245778` failed only in Windows desktop updater crash recovery: the
+injected `binary_replaced` path produced exit `2` instead of the expected
+injected exit `86`. The `00823fc` source/test repair targets the packaged Core
+shutdown handoff observed around that evidence and awaits hosted confirmation;
+no hosted rerun or artifact result is credited yet. Full-tree gates and exact
+hosted results are credited only when bound to the final committed and pushed
+tree.
 
 As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
