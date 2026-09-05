@@ -6,7 +6,6 @@ import ctypes
 import importlib
 import os
 import subprocess
-import sys
 import threading
 from collections.abc import Callable
 from enum import StrEnum
@@ -42,11 +41,8 @@ _FILE_SHARE_DELETE = 0x00000004
 _OPEN_EXISTING = 3
 _FILE_ATTRIBUTE_NORMAL = 0x00000080
 _FILE_DISPOSITION_INFO = 4
-_AT_EMPTY_PATH = 0x1000
 _MOVEFILE_REPLACE_EXISTING = 0x00000001
 _MOVEFILE_WRITE_THROUGH = 0x00000008
-_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_O_PATH = getattr(os, "O_PATH", 0)
 
 _REGISTRY_MUTATION_LOCK = threading.RLock()
 
@@ -178,38 +174,17 @@ def _delete_file_by_windows_handle(
             close_handle(handle)
 
 
-def _delete_file_by_linux_fd(
-    path: Path,
-    expected: tuple[int, int, int, int, int, int],
-) -> None:
-    """Use Linux's fd-bound unlinkat where the host provides it."""
-
-    flags = _O_PATH | _O_NOFOLLOW
-    if not flags:
-        raise OSError("fd-bound deletion is unavailable")
-    fd = os.open(path, flags)
-    try:
-        if not _same_identity(os.fstat(fd), expected):
-            raise OSError("file identity changed")
-        libc = ctypes.CDLL(None, use_errno=True)
-        unlinkat = libc.unlinkat
-        unlinkat.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int)
-        unlinkat.restype = ctypes.c_int
-        if unlinkat(fd, b"", _AT_EMPTY_PATH) != 0:
-            error = ctypes.get_errno()
-            raise OSError(error, "unable to delete file")
-    finally:
-        os.close(fd)
-
-
 def delete_file_by_identity(path: Path, identity: object) -> None:
-    """Delete one already-validated file object, or fail closed."""
+    """Delete one already-validated file object, or fail closed.
+
+    Windows has a handle-bound delete primitive.  Linux ``unlinkat`` is
+    pathname-based and does not support ``AT_EMPTY_PATH`` for deleting an
+    already-open file, so Linux deliberately has no path-based fallback here.
+    """
 
     expected = _identity_tuple(identity)
     if os.name == "nt":
         _delete_file_by_windows_handle(Path(path), expected)
-    elif os.name == "posix" and sys.platform.startswith("linux"):
-        _delete_file_by_linux_fd(Path(path), expected)
     else:
         raise OSError("identity-bound file deletion is unavailable")
 
