@@ -13,6 +13,7 @@ from allthecontext.packaged_provider_acceptance import (
     _successful_payload,
     run_packaged_provider_acceptance,
 )
+from allthecontext.provider_ingestion import PARSER_VERSION
 from allthecontext.provider_shapes import frozen_provider_shapes
 from allthecontext.storage import CoreStore
 
@@ -52,10 +53,13 @@ def _safe_packaged_failure_code(report: Path) -> str:
     if (
         not isinstance(payload, dict)
         or set(payload) != _PACKAGED_FAILURE_REPORT_KEYS
+        or type(payload.get("schema_version")) is not int
         or payload.get("schema_version") != 1
         or payload.get("status") != "failed"
         or payload.get("operation_status") != "failed"
         or payload.get("content_free") is not True
+        or type(payload.get("aggregate_parser_version")) is not str
+        or payload.get("aggregate_parser_version") != PARSER_VERSION
     ):
         return "failure_report_invalid"
     code = payload.get("error_code")
@@ -249,39 +253,94 @@ def test_packaged_reconciler_rejects_explicitly_incomplete_coverage() -> None:
         )
 
 
-def test_packaged_failure_diagnostic_is_closed_and_content_free(tmp_path: Path) -> None:
+def _packaged_failure_payload() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "status": "failed",
+        "operation_status": "failed",
+        "error_code": "data_dir_cleanup_failed",
+        "content_free": True,
+        "aggregate_parser_version": PARSER_VERSION,
+    }
+
+
+def test_packaged_failure_diagnostic_accepts_exact_schema_and_parser_version(
+    tmp_path: Path,
+) -> None:
     report = tmp_path / "report.json"
-    report.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "status": "failed",
-                "operation_status": "failed",
-                "error_code": "data_dir_cleanup_failed",
-                "content_free": True,
-                "aggregate_parser_version": "synthetic",
-            }
-        ),
-        encoding="utf-8",
-    )
+    report.write_text(json.dumps(_packaged_failure_payload()), encoding="utf-8")
     assert _safe_packaged_failure_code(report) == "data_dir_cleanup_failed"
 
-    report.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "status": "failed",
-                "operation_status": "failed",
-                "error_code": "unexpected-secret-path",
-                "content_free": True,
-                "aggregate_parser_version": "synthetic",
-            }
-        ),
-        encoding="utf-8",
-    )
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", True),
+        ("schema_version", 1.0),
+        ("schema_version", "1"),
+        ("schema_version", None),
+        ("schema_version", []),
+        ("schema_version", {}),
+        ("schema_version", 2),
+        ("aggregate_parser_version", None),
+        ("aggregate_parser_version", True),
+        ("aggregate_parser_version", 1),
+        ("aggregate_parser_version", 1.0),
+        ("aggregate_parser_version", []),
+        ("aggregate_parser_version", {}),
+        ("aggregate_parser_version", "provider-archives-v1"),
+        ("aggregate_parser_version", "fictional-secret-parser"),
+    ],
+)
+def test_packaged_failure_diagnostic_rejects_untrusted_schema_fields(
+    tmp_path: Path, field: str, value: Any
+) -> None:
+    report = tmp_path / "report.json"
+    payload = _packaged_failure_payload()
+    payload[field] = value
+    report.write_text(json.dumps(payload), encoding="utf-8")
+
+    code = _safe_packaged_failure_code(report)
+    assert code == "failure_report_invalid"
+    assert code in _PACKAGED_FAILURE_CODES | {
+        "failure_report_unavailable",
+        "failure_report_invalid",
+        "failure_code_invalid",
+    }
+
+
+@pytest.mark.parametrize("mutation", ["extra", "missing", "raw"])
+def test_packaged_failure_diagnostic_rejects_non_exact_report_shape(
+    tmp_path: Path, mutation: str
+) -> None:
+    report = tmp_path / "report.json"
+    payload = _packaged_failure_payload()
+    if mutation == "extra":
+        payload["unexpected"] = "fictional imported content"
+    elif mutation == "missing":
+        del payload["aggregate_parser_version"]
+    else:
+        payload["raw_content"] = "fictional imported content"
+    report.write_text(json.dumps(payload), encoding="utf-8")
+
+    code = _safe_packaged_failure_code(report)
+    assert code == "failure_report_invalid"
+    assert "fictional" not in code
+
+
+def test_packaged_failure_diagnostic_keeps_unknown_code_fixed_and_content_free(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.json"
+    payload = _packaged_failure_payload()
+    payload["error_code"] = "unexpected-secret-path"
+    report.write_text(json.dumps(payload), encoding="utf-8")
     assert _safe_packaged_failure_code(report) == "failure_code_invalid"
 
-    report.write_text('{"secret": "fictional imported content"}', encoding="utf-8")
+    report.write_text(
+        json.dumps({"raw_content": "fictional imported content"}),
+        encoding="utf-8",
+    )
     assert _safe_packaged_failure_code(report) == "failure_report_invalid"
 
 
