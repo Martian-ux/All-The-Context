@@ -1049,6 +1049,15 @@ def test_install_entrypoints_uses_reversible_registration_transaction(
     assert len(calls) == 3
 
 
+def test_shortcut_temporary_path_preserves_wscript_shortcut_suffix() -> None:
+    temporary = application_install.WindowsApplicationRegistrationTransaction._temporary_path(
+        Path("All The Context.lnk")
+    )
+
+    assert temporary.name == ".All The Context.atc-new.lnk"
+    assert temporary.suffix == ".lnk"
+
+
 def test_failed_compensation_retains_bounded_retryable_status(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -2594,8 +2594,9 @@ class WindowsApplicationRegistrationTransaction:
     @staticmethod
     def _temporary_path(path: Path) -> Path:
         # A fixed sibling is recoverable after a process crash and is not an
-        # attacker-selected path read from the journal.
-        return path.with_name(f".{path.name}.atc-new")
+        # attacker-selected path read from the journal. WScript.Shell's
+        # CreateShortcut also requires the final suffix to remain .lnk/.url.
+        return path.with_name(f".{path.stem}.atc-new{path.suffix}")
 
     @staticmethod
     def _canonical_temporary_path(path: Path) -> Path:
