@@ -80,6 +80,7 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--release-notes-url", required=True)
     create.add_argument("--key-id", required=True)
     create.add_argument("--private-key", type=Path, required=True)
+    create.add_argument("--source-commit", required=True)
     create.add_argument("--repository-root", type=Path, default=REPOSITORY_ROOT)
     create.add_argument("--output", type=Path, required=True)
     verify = commands.add_parser("verify", help="verify signature, trust, channel, and policy")
@@ -111,6 +112,7 @@ def main() -> int:
                 release_notes_url=arguments.release_notes_url,
                 key_id=arguments.key_id,
                 private_key=load_encrypted_private_key_interactive(private_key_path),
+                source_commit=arguments.source_commit,
             )
             _write_json(arguments.output, manifest)
             return 0

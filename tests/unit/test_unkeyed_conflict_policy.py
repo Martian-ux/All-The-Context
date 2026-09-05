@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from allthecontext.export import create_export, restore_export
 from allthecontext.memory_policy import archive_lineage_key, classify_sensitivity
 from allthecontext.models import (
     CandidateInput,
@@ -15,6 +16,7 @@ from allthecontext.models import (
     ObservationDisposition,
     Sensitivity,
 )
+from allthecontext.recovery_admin import carry_forward_purge_tombstones
 from allthecontext.storage import CoreStore
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "b102_chronological_conflicts.json"
@@ -210,6 +212,408 @@ def test_exact_unkeyed_reinforce_does_not_duplicate_current(tmp_path: Path) -> N
     assert first.disposition == ObservationDisposition.APPLIED
     assert second.disposition == ObservationDisposition.REINFORCED
     assert second.record_id == first.record_id
+
+
+def test_source_less_archive_reimport_routes_around_user_superseder(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    original = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-user-superseder-original",
+    )[0]
+    assert original.disposition == ObservationDisposition.APPLIED
+    assert original.record_id is not None
+
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["fiction-archive"],
+        unavailable_sources=[],
+        idempotency_key="source-less-user-superseder-correction",
+    )
+    submitted = store.submit_batch(
+        str(session["session_id"]),
+        "source-less-user-superseder-correction-batch",
+        [
+            CandidateInput(
+                kind="interaction_preference",
+                content="I prefer detailed answers.",
+                observed_at="2025-01-01T00:00:00+00:00",
+                explicit_user_statement=True,
+                supersedes=original.record_id,
+            )
+        ],
+    )
+    corrected = store.approve_candidate(str(submitted["candidate_ids"][0]))
+    assert corrected.supersedes == original.record_id
+    stale = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-user-superseder-stale",
+    )[0]
+
+    assert stale.disposition == ObservationDisposition.IGNORED
+    assert stale.record_id == corrected.id
+    assert store.get_record(corrected.id).content == "I prefer detailed answers."
+
+
+def test_source_less_archive_correction_and_slot_change_block_stale_replay(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    original = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-correction-original",
+    )[0]
+    assert original.record_id is not None
+
+    corrected = store.correct_record(
+        original.record_id,
+        content="I prefer dark mode.",
+        reason="source-less slot-changing correction",
+        entity_key="user",
+        attribute_key="style",
+    )
+    stale = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-correction-stale",
+    )[0]
+
+    assert corrected.entity_key == "user"
+    assert corrected.attribute_key == "style"
+    assert stale.disposition == ObservationDisposition.IGNORED
+    assert stale.record_id == original.record_id
+    assert store.get_record(original.record_id).content == "I prefer dark mode."
+    assert store.status()["counts"]["active_records"] == 1
+
+
+def test_source_less_archive_delete_blocks_stale_replay(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    original = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-delete-original",
+    )[0]
+    assert original.record_id is not None
+
+    store.delete_record(original.record_id, reason="source-less deletion barrier")
+    replays = [
+        _import_archive_statements(
+            store,
+            kind="interaction_preference",
+            statements=[
+                {
+                    "content": "I prefer concise answers.",
+                    "observed_at": "2024-01-01T00:00:00+00:00",
+                }
+            ],
+            scenario_id=f"source-less-delete-replay-{index}",
+        )[0]
+        for index in ("one", "two")
+    ]
+
+    assert all(item.disposition == ObservationDisposition.IGNORED for item in replays)
+    assert all(item.record_id == original.record_id for item in replays)
+    assert store.get_memory_truth(original.record_id).status.value == "deleted"
+    assert store.status()["counts"]["active_records"] == 0
+
+
+def test_source_less_archive_ambiguity_fails_closed_without_replacement(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first_statement = {
+        "content": "I prefer dark mode.",
+        "observed_at": "2024-01-01T00:00:00+00:00",
+    }
+    second_statement = {
+        "content": "I prefer light mode.",
+        "observed_at": "2024-01-01T00:00:00+00:00",
+    }
+    first = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[first_statement],
+        scenario_id="source-less-ambiguity-first",
+    )[0]
+    second = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[second_statement],
+        scenario_id="source-less-ambiguity-second",
+    )[0]
+    assert first.record_id is not None and second.record_id is not None
+    assert first.record_id != second.record_id
+
+    for record_id, content in (
+        (first.record_id, "I prefer high contrast mode."),
+        (second.record_id, "I prefer dim mode."),
+    ):
+        store.correct_record(
+            record_id,
+            content=content,
+            reason="source-less ambiguity correction",
+            entity_key="user",
+            attribute_key="style",
+        )
+
+    stale = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[first_statement],
+        scenario_id="source-less-ambiguity-stale",
+    )[0]
+
+    assert stale.disposition == ObservationDisposition.TENTATIVE
+    assert stale.record_id is None
+    assert store.status()["counts"]["active_records"] == 2
+
+
+def test_source_less_archive_purge_barrier_survives_restart_and_restore(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "core.db"
+    store = _store(tmp_path)
+    original = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-purge-original",
+    )[0]
+    assert original.record_id is not None
+    export_path = tmp_path / "before-source-less-purge.atcexp"
+    create_export(database, export_path, "source-less-purge-passphrase")
+
+    store.correct_record(
+        original.record_id,
+        content="I prefer dark mode.",
+        reason="source-less purge correction",
+        entity_key="user",
+        attribute_key="style",
+    )
+    store.delete_record(original.record_id, reason="source-less purge deletion")
+    store.purge(
+        "record",
+        original.record_id,
+        confirmation=store.purge_confirmation_phrase("record", original.record_id),
+        compact=False,
+    )
+
+    restarted = CoreStore(database)
+    restarted.initialize_vault()
+    with restarted.connect() as connection:
+        barrier_count = connection.execute(
+            "SELECT COUNT(*) FROM archive_source_less_purge_barriers"
+        ).fetchone()[0]
+        barrier = connection.execute("SELECT * FROM archive_source_less_purge_barriers").fetchone()
+    assert barrier_count == 1
+    assert barrier is not None
+    assert set(barrier.keys()) == {"vault_id", "source_kind", "barrier_digest", "purged_at"}
+    assert "concise" not in repr(tuple(barrier))
+    assert "dark mode" not in repr(tuple(barrier))
+
+    replay = _import_archive_statements(
+        restarted,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-purge-replay",
+    )[0]
+    assert replay.disposition == ObservationDisposition.IGNORED
+    assert replay.record_id is None
+    assert restarted.status()["counts"]["active_records"] == 0
+
+    isolated_database = tmp_path / "isolated.db"
+    isolated = CoreStore(isolated_database)
+    isolated.initialize_vault()
+    carried = carry_forward_purge_tombstones(database, isolated_database)
+    assert carried["carried_archive_source_less_purge_barriers"] == 1
+    restore_export(export_path, isolated_database, "source-less-purge-passphrase")
+    restored = _import_archive_statements(
+        isolated,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-purge-restore-replay",
+    )[0]
+    assert restored.disposition == ObservationDisposition.IGNORED
+    assert restored.record_id is None
+    assert isolated.status()["counts"]["active_records"] == 0
+
+
+@pytest.mark.parametrize("mutation", ["correction", "delete", "purge"])
+def test_source_less_archive_default_export_preserves_stale_replay_barrier(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    database = tmp_path / "core.db"
+    store = _store(tmp_path)
+    original = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id=f"default-export-{mutation}-original",
+    )[0]
+    assert original.record_id is not None
+
+    if mutation == "correction":
+        store.correct_record(
+            original.record_id,
+            content="I prefer dark mode.",
+            reason="default export correction",
+            entity_key="user",
+            attribute_key="style",
+        )
+    elif mutation == "delete":
+        store.delete_record(original.record_id, reason="default export deletion")
+    else:
+        store.purge(
+            "record",
+            original.record_id,
+            confirmation=store.purge_confirmation_phrase("record", original.record_id),
+            compact=False,
+        )
+
+    export_path = tmp_path / f"default-{mutation}.atcexp"
+    manifest = create_export(database, export_path, "default-export-passphrase")
+    assert manifest["include_sources"] is False
+    assert manifest["tables"].get("archive_source_less_purge_barriers", 0) == (
+        1 if mutation == "purge" else 0
+    )
+
+    isolated_database = tmp_path / f"isolated-{mutation}.db"
+    isolated = CoreStore(isolated_database)
+    isolated.migrate()
+    restore_export(export_path, isolated_database, "default-export-passphrase")
+    restore_export(export_path, isolated_database, "default-export-passphrase")
+
+    replays = [
+        _import_archive_statements(
+            isolated,
+            kind="interaction_preference",
+            statements=[
+                {
+                    "content": "I prefer concise answers.",
+                    "observed_at": "2024-01-01T00:00:00+00:00",
+                }
+            ],
+            scenario_id=f"default-export-{mutation}-replay-{index}",
+        )[0]
+        for index in ("one", "two")
+    ]
+
+    assert all(item.disposition == ObservationDisposition.IGNORED for item in replays)
+    if mutation == "purge":
+        assert all(item.record_id is None for item in replays)
+        assert isolated.status()["counts"]["active_records"] == 0
+    else:
+        assert all(item.record_id == original.record_id for item in replays)
+        assert isolated.status()["counts"]["active_records"] == (
+            1 if mutation == "correction" else 0
+        )
+
+
+def test_source_less_archive_barriers_do_not_collide_across_kind_or_claim(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    original = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer concise answers.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-isolation-original",
+    )[0]
+    assert original.record_id is not None
+    store.correct_record(
+        original.record_id,
+        content="I prefer dark mode.",
+        reason="source-less isolation correction",
+        entity_key="user",
+        attribute_key="style",
+    )
+
+    different_kind = _import_archive_statements(
+        store,
+        kind="goal",
+        statements=[
+            {
+                "content": "My goal is to write fiction in Boston.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-isolation-kind",
+    )[0]
+    different_claim = _import_archive_statements(
+        store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer Python examples for project Alpha.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+        scenario_id="source-less-isolation-claim",
+    )[0]
+
+    assert different_kind.disposition == ObservationDisposition.APPLIED
+    assert different_claim.disposition == ObservationDisposition.APPLIED
+    assert different_kind.record_id not in {None, original.record_id}
+    assert different_claim.record_id not in {None, original.record_id}
+    assert store.status()["counts"]["active_records"] == 3
 
 
 def test_different_kinds_do_not_collide(tmp_path: Path) -> None:

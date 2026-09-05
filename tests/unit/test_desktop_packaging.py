@@ -270,6 +270,50 @@ def test_linux_portable_package_is_reproducible_and_self_describing(tmp_path: Pa
         verify_package(first_dir, platform_name="linux", architecture="arm64")
 
 
+def test_smoke_source_commit_requires_complete_native_identity(tmp_path: Path) -> None:
+    executable = tmp_path / "build" / "all-the-context"
+    executable.parent.mkdir()
+    executable.write_bytes(b"source-bound-linux-executable")
+    output = tmp_path / "output"
+    source_commit = "a" * 40
+    _package, _checksum, _notice, report = build_platform_package(
+        executable,
+        output,
+        version="0.1.0-beta.1",
+        platform_name="linux",
+        architecture="x86_64",
+        source_commit=source_commit,
+    )
+
+    assert verify_package(output, platform_name="linux", source_commit=source_commit)
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    payload.pop("build_identity")
+    report.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="complete build identity"):
+        verify_package(output, platform_name="linux", source_commit=source_commit)
+
+
+def test_smoke_package_report_rejects_float_schema_version(tmp_path: Path) -> None:
+    executable = tmp_path / "build" / "all-the-context"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"float-schema-version-package")
+    output = tmp_path / "output"
+    _package, _checksum, _notice, report = build_platform_package(
+        executable,
+        output,
+        version="0.1.0-beta.1",
+        platform_name="linux",
+        architecture="x86_64",
+    )
+
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    payload["schema_version"] = 1.0
+    report.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="wrong platform"):
+        verify_package(output, platform_name="linux")
+
+
 def test_windows_direct_package_preserves_self_installer(tmp_path: Path) -> None:
     executable = tmp_path / "AllTheContextSetup.exe"
     executable.write_bytes(b"windows-self-installer")

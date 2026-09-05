@@ -7,6 +7,7 @@ turns the resulting decision into current context.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -271,13 +272,13 @@ _KIND_FRAMING = {
         flags=re.IGNORECASE,
     ),
     "interaction_preference": re.compile(
-        r"^(?:i (?:prefer|like|love|hate|dislike)|i do not like|i don't like|"
+        r"^(?:i (?:prefer|like|love|hate|dislike)|i do not like|i don['\u2019]t like|"
         r"my preference is|please always|please never|"
         r"when you (?:answer|respond)|prefer)\s+",
         flags=re.IGNORECASE,
     ),
     "preference": re.compile(
-        r"^(?:i (?:prefer|like|love|hate|dislike)|i do not like|i don't like|"
+        r"^(?:i (?:prefer|like|love|hate|dislike)|i do not like|i don['\u2019]t like|"
         r"my preference is|please always|please never|prefer)\s+",
         flags=re.IGNORECASE,
     ),
@@ -362,6 +363,76 @@ _PREFERENCE_STYLE_VALUES = frozenset(
 )
 _PREFERENCE_THEME_VALUES = frozenset({"dark", "light"})
 
+# Archive extraction is intentionally lexical and conservative. These markers
+# are not an instruction parser: they only identify text that is too
+# referentially incomplete or too task-local to become current memory.
+_ARCHIVE_UNRESOLVED_REFERENCE = re.compile(
+    r"\b(?:this|that|these|those|it|its|they|them|their|same|above|below|here|there)\b",
+    flags=re.IGNORECASE,
+)
+_ARCHIVE_TRANSIENT_OR_TASK = re.compile(
+    r"\b(?:today|tonight|tomorrow|yesterday|right now|this chat|this conversation|"
+    r"this request|this task|for this task|for this request|one[- ]off|temporary|temporarily)\b",
+    flags=re.IGNORECASE,
+)
+_ARCHIVE_INERT_COMMAND = re.compile(
+    r"(?:\b(?:can|could|would|will) you\b|"
+    r"\bplease\s+(?:write|explain|help|make|create|generate|summarize|fix|debug|refactor)\b|"
+    r"\b(?:i|we)\s+(?:want|need|would like|would love|prefer)\s+you\s+to\b|"
+    r"\b(?:ignore|disregard|override|bypass)\s+(?:all\s+)?(?:previous|earlier|above|prior|"
+    r"system|developer)?\s*instructions?\b)",
+    flags=re.IGNORECASE,
+)
+_ARCHIVE_DURABLE_PREFERENCE_SIGNAL = re.compile(
+    r"(?:^\s*(?:preference|preferences)\s*:\s*(?:"
+    r"(?:i|we)\b|prefer\b|(?:please\s+)?(?:always|never)\b|"
+    r"(?:please\s+)?(?:do not|don't|avoid|use|keep|include|mention)\b)|"
+    r"^\s*(?:i|we)\s+(?:(?:always|never|usually|generally|normally|typically)\s+)?"
+    r"(?:prefer|like|love|hate|dislike)\b|"
+    r"^\s*(?:i|we)\s+(?:(?:always|never|usually|generally|normally|typically)\s+)?"
+    r"(?:do not|don['\u2019]t)\s+like\b|"
+    r"^\s*prefer\b|"
+    r"^\s*(?:i|we)\s+(?:always|never|usually|generally|normally|typically)\s+want\b|"
+    r"^\s*my\s+preference\s+is\b|"
+    r"^\s*(?:please\s+)?(?:always|never)\b|"
+    r"^\s*(?:please\s+)?(?:do not|don't|avoid)\s+"
+    r"(?:using|use|including|include|mentioning|mention)\b|"
+    r"\bwhen you\s+(?:answer|respond)\b|"
+    r"\bi want (?:answers?|responses?)\s+to\b)",
+    flags=re.IGNORECASE,
+)
+_ARCHIVE_VAGUE_PREFERENCE_VALUES = frozenset(
+    {
+        "brief",
+        "concise",
+        "detailed",
+        "verbose",
+        "simple",
+        "complex",
+        "quick",
+        "thorough",
+        "dark",
+        "light",
+        "short",
+        "long",
+    }
+)
+_ARCHIVE_CONTRACTION_REPLACEMENTS = (
+    (re.compile(r"\bi['\u2019]m\b", flags=re.IGNORECASE), "i am"),
+    (re.compile(r"\bwe['\u2019]re\b", flags=re.IGNORECASE), "we are"),
+    (re.compile(r"\b(?:don't|don\u2019t)\b", flags=re.IGNORECASE), "do not"),
+    (re.compile(r"\b(?:can't|can\u2019t)\b", flags=re.IGNORECASE), "cannot"),
+)
+_ARCHIVE_WRAPPER_QUOTES = {
+    '"': '"',
+    "'": "'",
+    "\u201c": "\u201d",
+    "\u2018": "\u2019",
+    "\u00ab": "\u00bb",
+    "\u300c": "\u300d",
+    "\u300e": "\u300f",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class LiveUserClaim:
@@ -372,6 +443,346 @@ class LiveUserClaim:
     value: str
     attribute_key: str
     structured_value: dict[str, str]
+
+
+def normalize_imported_text(value: str) -> str:
+    """Normalize archive wrapper artifacts while retaining the inner wording."""
+
+    normalized = unicodedata.normalize("NFKC", value).strip()
+    while len(normalized) >= 2:
+        closing = _ARCHIVE_WRAPPER_QUOTES.get(normalized[0])
+        if closing is None or normalized[-1] != closing:
+            break
+        inner = normalized[1:-1].strip()
+        if not inner:
+            break
+        normalized = inner
+    return " ".join(normalized.split())
+
+
+_ARCHIVE_PROVENANCE_V1_PREFIX = "archive-provenance-v1:"
+_ARCHIVE_PROVENANCE_V2_PREFIX = "archive-provenance-v2:"
+
+
+def _canonical_import_reference_atom(value: str) -> str:
+    """Normalize reference presentation without deleting identity punctuation."""
+
+    normalized = normalize_imported_text(value)
+    if "#" not in normalized:
+        return normalized
+    base, fragment = normalized.split("#", 1)
+    parts = fragment.split("&")
+    pairs: list[tuple[str, str]] = []
+    remainder: list[str] = []
+    for part in parts:
+        if "=" not in part:
+            remainder.append(normalize_imported_text(part))
+            continue
+        key, item = part.split("=", 1)
+        pairs.append((normalize_imported_text(key), normalize_imported_text(item)))
+    if not pairs or remainder:
+        return normalized
+    pairs.sort()
+    return base.strip() + "#" + "&".join(f"{key}={item}" for key, item in pairs)
+
+
+_MAX_PROVENANCE_COUNT = 1_000_000_000_000
+
+
+def _provenance_count(value: object, default: int = 0) -> int | None:
+    if value is None:
+        return default
+    if type(value) is not int or value < 0 or value > _MAX_PROVENANCE_COUNT:
+        return None
+    return value
+
+
+def _add_provenance_count(first: int, second: int) -> int:
+    return min(_MAX_PROVENANCE_COUNT, first + second)
+
+
+def _structured_import_references(
+    value: str,
+) -> tuple[set[str], int, int, int] | None:
+    """Read both structured provenance and the original pipe format."""
+
+    prefix: str | None = None
+    for candidate in (_ARCHIVE_PROVENANCE_V2_PREFIX, _ARCHIVE_PROVENANCE_V1_PREFIX):
+        if value.startswith(candidate):
+            prefix = candidate
+            break
+    if prefix is None:
+        return None
+    payload = value[len(prefix) :]
+    try:
+        decoded = json.loads(payload)
+    except (TypeError, ValueError):
+        decoded = None
+    if isinstance(decoded, dict) and decoded.get("format") == "archive-provenance-v2":
+        references = decoded.get("references")
+        overflow = _provenance_count(decoded.get("overflow_count"))
+        empty_count = _provenance_count(decoded.get("empty_count"))
+        malformed_count = _provenance_count(decoded.get("malformed_count"))
+        if (
+            isinstance(references, list)
+            and overflow is not None
+            and empty_count is not None
+            and malformed_count is not None
+            and all(isinstance(reference, str) for reference in references)
+        ):
+            nonempty = [reference for reference in references if reference]
+            return (
+                {_canonical_import_reference_atom(reference) for reference in nonempty},
+                overflow,
+                _add_provenance_count(empty_count, len(references) - len(nonempty)),
+                malformed_count,
+            )
+    if prefix == _ARCHIVE_PROVENANCE_V1_PREFIX:
+        parts = payload.split("|")
+        return (
+            {_canonical_import_reference_atom(reference) for reference in parts if reference},
+            0,
+            sum(not bool(reference) for reference in parts),
+            0,
+        )
+    return None
+
+
+def normalized_import_source_reference(value: str) -> str:
+    """Return a delimiter-safe, formatting-stable source-reference identity."""
+
+    normalized = normalize_imported_text(value)
+    parsed = _structured_import_references(normalized)
+    if parsed is None:
+        return _canonical_import_reference_atom(normalized)
+    references, overflow, empty_count, malformed_count = parsed
+    return json.dumps(
+        {
+            "format": "archive-provenance-v2",
+            "references": sorted(references),
+            "overflow_count": overflow,
+            "empty_count": empty_count,
+            "malformed_count": malformed_count,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def normalized_import_identity_reference(value: str) -> str:
+    """Select the stable primary address from a possibly merged provenance value."""
+
+    normalized = normalize_imported_text(value)
+    parsed = _structured_import_references(normalized)
+    if parsed is None:
+        return _canonical_import_reference_atom(normalized)
+    references, _overflow, _empty_count, _malformed_count = parsed
+    if references:
+        return sorted(references)[0]
+    return normalized_import_source_reference(normalized)
+
+
+def archive_import_identity(
+    source_id: str | None,
+    source_reference: str | None,
+    kind: str,
+    content: str,
+) -> str | None:
+    """Derive a stable source-item identity without mutable slots."""
+
+    if source_id is None or source_reference is None:
+        return None
+    normalized_kind, value_identity = normalized_import_candidate_key(kind, content)
+    material = json.dumps(
+        [
+            "archive-import-identity-v2",
+            unicodedata.normalize("NFKC", source_id).strip(),
+            normalized_import_identity_reference(source_reference),
+            normalized_kind,
+            value_identity,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return sha256(material.encode("utf-8")).hexdigest()
+
+
+def _archive_statement_has_resolved_naming_object(value: str) -> bool:
+    """Allow the established ``naming it <name>`` construction only."""
+
+    return (
+        re.search(
+            r"\b(?:name|naming|call|called)\s+(?:it|this|that)\s+[A-Za-z0-9]",
+            value,
+            flags=re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def is_self_contained_archive_statement(kind: str, content: str) -> bool:
+    """Return whether imported text has a durable, self-contained claim shape.
+
+    This is a bounded admission predicate for Core's archive path. It does not
+    infer entities or resolve pronouns; ambiguous text is refused from current
+    context and can remain only as non-current evidence at the storage layer.
+    """
+
+    normalized = normalize_imported_text(content)
+    if not normalized or normalized.endswith("?"):
+        return False
+    if _ARCHIVE_INERT_COMMAND.search(normalized) or _ARCHIVE_TRANSIENT_OR_TASK.search(normalized):
+        return False
+    normalized_kind = kind.strip().casefold()
+    recognizable_preference = (
+        normalized_kind
+        in {
+            "preference",
+            "preferences",
+            "interaction_preference",
+            "editor_preference",
+        }
+        and _ARCHIVE_DURABLE_PREFERENCE_SIGNAL.search(normalized) is not None
+    )
+    if _ARCHIVE_UNRESOLVED_REFERENCE.search(normalized):
+        resolved_exception = (
+            (
+                normalized_kind == "project_decision"
+                and _archive_statement_has_resolved_naming_object(normalized)
+            )
+            or (
+                normalized_kind == "constraint"
+                and re.search(r"\bthis\s+[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?", normalized) is not None
+            )
+            or (
+                normalized_kind
+                in {"preference", "preferences", "interaction_preference", "editor_preference"}
+                and not recognizable_preference
+                and re.search(
+                    r"\b(?:this|that|it)\s+(?!is\b|was\b|seems?\b|looks?\b|"
+                    r"feels?\b|sounds?\b)[A-Za-z0-9]+",
+                    normalized,
+                    flags=re.IGNORECASE,
+                )
+                is not None
+            )
+        )
+        if not resolved_exception:
+            return False
+
+    if normalized_kind in {
+        "preference",
+        "preferences",
+        "interaction_preference",
+        "editor_preference",
+    }:
+        if not recognizable_preference:
+            # A type label from an archive extractor is not evidence of a
+            # preference. Legacy staged rows are handled by the explicit
+            # ``LEGACY_MIGRATION`` origin, which is intentionally outside this
+            # provider-archive admission gate.
+            return False
+        framed = normalized
+        framing = _KIND_FRAMING.get("interaction_preference")
+        if framing is not None:
+            framed = framing.sub("", framed, count=1).strip()
+        value_tokens = [
+            token
+            for token in re.findall(r"[A-Za-z0-9]+", framed.casefold())
+            if token
+            not in {
+                "i",
+                "we",
+                "my",
+                "our",
+                "please",
+                "always",
+                "never",
+                "usually",
+                "generally",
+                "normally",
+                "typically",
+                "prefer",
+                "like",
+                "love",
+                "hate",
+                "dislike",
+                "preference",
+                "preferences",
+                "do",
+                "not",
+                "avoid",
+                "use",
+                "using",
+                "include",
+                "including",
+                "mention",
+                "mentioning",
+                "when",
+                "you",
+                "respond",
+                "want",
+                "to",
+            }
+        ]
+        # A bare style adjective is not a complete preference object. A
+        # concrete object/value (``concise answers``, ``dark mode``, ``Python``)
+        # remains admissible.
+        return bool(value_tokens) and not (
+            len(value_tokens) == 1 and value_tokens[0] in _ARCHIVE_VAGUE_PREFERENCE_VALUES
+        )
+    if normalized_kind in {"fact", "personal_detail", "personal_context"}:
+        # Labeled facts are accepted only when they contain a concrete,
+        # self-contained statement; referential and transient forms returned
+        # above are deliberately not repaired by this heuristic.
+        return len(re.findall(r"[A-Za-z0-9]+", normalized)) >= 2
+    return True
+
+
+def normalized_import_candidate_key(kind: str, content: str) -> tuple[str, str]:
+    """Return a semantic import key for punctuation/framing variants."""
+
+    normalized = normalize_imported_text(content).casefold()
+    for pattern, replacement in _ARCHIVE_CONTRACTION_REPLACEMENTS:
+        normalized = pattern.sub(replacement, normalized)
+    framing = _KIND_FRAMING.get(kind.strip().casefold())
+    if framing is not None:
+        normalized = framing.sub("", normalized, count=1).strip()
+    # Keep Unicode letters, digits, symbols, and meaningful punctuation. Only
+    # sentence-final punctuation is presentation noise; removing punctuation
+    # everywhere would merge materially distinct values such as ``C`` and
+    # ``C++``. The stored first candidate remains unchanged.
+    return kind.strip().casefold(), _import_fingerprint(normalized, strip_sentence_end=True)
+
+
+def normalized_import_slot_key(value: str | None) -> str | None:
+    """Normalize punctuation-only differences in an import lineage slot."""
+
+    if value is None:
+        return None
+    normalized = _import_fingerprint(normalize_imported_text(value), strip_sentence_end=True)
+    return normalized or None
+
+
+def _import_fingerprint(value: str, *, strip_sentence_end: bool = False) -> str:
+    """Build a deterministic Unicode-aware identity fingerprint.
+
+    NFKC and casefold remove equivalent presentation forms, and whitespace is
+    canonicalized. Internal punctuation and all non-ASCII characters remain
+    part of the identity. Only explicit sentence terminators at the end are
+    omitted when requested so ``C`` and ``C++`` cannot collide.
+    """
+
+    normalized = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+    if strip_sentence_end:
+        while normalized and (
+            normalized[-1] in ".!?"
+            or ord(normalized[-1]) in {0x3002, 0xFF01, 0xFF1F, 0xFF61, 0x2026}
+        ):
+            normalized = normalized[:-1]
+        normalized = normalized.rstrip()
+    return normalized
 
 
 def _claim_value(value: str) -> str:
@@ -730,6 +1141,17 @@ class AutomaticMemoryPolicy:
                 ObservationDisposition.APPLIED,
                 "explicit user correction applied automatically",
                 availability,
+            )
+
+        if (
+            origin == ObservationOrigin.ARCHIVE_IMPORT
+            and candidate.source_type == "provider_archive"
+            and not is_self_contained_archive_statement(candidate.kind, candidate.content)
+        ):
+            return decide(
+                ObservationDisposition.TENTATIVE,
+                "archive evidence lacks a self-contained durable claim",
+                Availability.LOCAL,
             )
 
         if (

@@ -71,7 +71,6 @@ def test_generated_codex_profiles_exist_with_closed_runtime_tools(monkeypatch) -
         CODEX_READ_HOOK_TOOL,
         "search_context",
         "get_context_item",
-        "context_status",
     }
 
     monkeypatch.setenv("ATC_MCP_PROFILE", CODEX_EXPLICIT_PROFILE)

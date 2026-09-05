@@ -45,7 +45,7 @@ def _archive_record(store: CoreStore, source_id: str, *, key: str, content: str)
         f"authority-batch-{key}",
         [
             CandidateInput(
-                kind="preference",
+                kind="fact",
                 content=content,
                 source_id=source_id,
                 source_reference=f"message:{key}",
@@ -78,7 +78,7 @@ def _publish_rebuild(
         f"authority-rebuild-batch-{key}",
         [
             CandidateInput(
-                kind="preference",
+                kind="fact",
                 content=content,
                 source_id=source_id,
                 source_reference=f"message:{key}",
@@ -226,7 +226,7 @@ def test_forged_authenticated_ledger_row_is_ignored_and_rebuild_reuses_id(
         "forged-rebuild-batch",
         [
             CandidateInput(
-                kind="preference",
+                kind="fact",
                 content="I prefer concise answers.",
                 source_id=source.id,
                 source_reference="message:forged",
@@ -345,7 +345,12 @@ def test_isolated_restore_carries_local_barrier_idempotently_and_handles_purge(
         source_service="fixture-provider",
         source_type="provider_archive",
     )
-    record_id = _archive_record(store, source.id, key="carry", content="Carry this memory.")
+    record_id = _archive_record(
+        store,
+        source.id,
+        key="carry",
+        content="Carry the synthetic memory.",
+    )
     package = tmp_path / "before-mutation.atcexp"
     create_export(active / "core.sqlite3", package, PASSPHRASE, include_sources=True)
     store.delete_record(record_id, reason="destination-only barrier")
@@ -488,7 +493,7 @@ def test_legacy_inference_is_source_typed_and_excludes_manual_and_rebuild_histor
         "automatic-rebuild-batch",
         [
             CandidateInput(
-                kind="preference",
+                kind="fact",
                 content="Automatic lineage.",
                 source_id=automatic_source.id,
                 source_reference="message:automatic",

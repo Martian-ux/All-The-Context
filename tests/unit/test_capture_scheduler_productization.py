@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import sqlite3
 import sys
 import threading
 import time
@@ -11,27 +13,32 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from allthecontext import cli
+from allthecontext import capture_runtime, cli
 from allthecontext.capture import (
+    CaptureCapabilityManifest,
     CaptureCoordinator,
     CaptureError,
     CaptureEvent,
     CapturePage,
     DeterministicFakeAdapter,
     IdempotentFakeSink,
+    capture_executable_capability_error,
 )
 from allthecontext.capture_runtime import (
     AUTHORIZATION_FILENAME,
     SCHEDULER_CONFIG_FILENAME,
+    authorization_path,
     authorize_local_workspace,
     scheduler_config_path,
     write_scheduler_enabled,
 )
 from allthecontext.capture_scheduler import (
     CAPTURE_SCHEDULER_ENABLED_ENV,
+    RUNTIME_READINESS_ERROR_CODE,
     UPDATE_HEALTH_OPERATION_ENV,
     CoreCaptureScheduler,
     SchedulerConfig,
+    _is_transient_sqlite_contention,
     scheduler_update_health_forced_off,
 )
 from allthecontext.config import CoreConfig
@@ -106,6 +113,12 @@ def _event(event_id: str = "scheduler-product-event") -> CaptureEvent:
 def _open_process_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(CAPTURE_SCHEDULER_ENABLED_ENV, "1")
     monkeypatch.delenv(UPDATE_HEALTH_OPERATION_ENV, raising=False)
+
+
+def _sqlite_operational_error(message: str, code: int) -> sqlite3.OperationalError:
+    error = sqlite3.OperationalError(message)
+    error.sqlite_errorcode = code
+    return error
 
 
 def _wait_until(predicate: Any, *, timeout: float = 5.0, interval: float = 0.01) -> None:
@@ -330,6 +343,446 @@ def test_refresh_after_authorization_matches_admin_run(
         assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
         assert report.results[0].status == "completed"
         assert report.results[0].applied_events == 5
+
+
+def test_scheduler_recovers_exhausted_adapter_unavailable_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorized = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        source_id = str(authorized["id"])
+        service.capture.enable(source_id)
+
+        authorization_path(config.data_dir).write_text("{not-json", encoding="utf-8")
+        assert capture_runtime.refresh_local_workspace_adapter(service.capture, config) is False
+        for _ in range(3):
+            service.capture._mark_unavailable(source_id)
+        exhausted = service.capture.get_source(source_id)
+        assert exhausted.lifecycle_state == "degraded"
+        assert exhausted.retry_count == 3
+        assert exhausted.last_error_code == "capture_adapter_unavailable"
+        readiness = service.capture_scheduler.readiness()
+        source_readiness = readiness["capture"]["sources"][0]
+        assert source_readiness["retry_exhausted"] is True
+        assert source_readiness["retry_reason_code"] == "capture_retry_exhausted"
+        assert "capture_adapter_unavailable" in readiness["capture"]["reason_codes"]
+
+        restored = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        assert restored["id"] == source_id
+
+        write_scheduler_enabled(config.data_dir, enabled=True)
+        report = service.capture_scheduler.run_cycle()
+        recovered = service.capture.get_source(source_id)
+
+    assert report.results[0].status == "completed"
+    assert recovered.lifecycle_state == "enabled"
+    assert recovered.retry_count == 0
+    assert recovered.next_retry_at is None
+    assert recovered.last_error_code is None
+
+
+def test_adapter_refresh_retries_transient_registration_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        original = capture_runtime._try_register_authorized_adapter
+        calls = 0
+
+        def fail_once(coordinator: Any, candidate: CoreConfig) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return False
+            return original(coordinator, candidate)
+
+        monkeypatch.setattr(capture_runtime, "_try_register_authorized_adapter", fail_once)
+        assert capture_runtime.refresh_local_workspace_adapter(service.capture, config) is True
+
+    assert calls == 2
+
+
+def test_authenticated_status_exposes_readiness_but_health_stays_liveness_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        _principal, token = service.store.create_client(
+            ClientCreate(name="readiness-reader", scopes=["context:status"], auto_approve=False)
+        )
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            health = client.get("/health")
+            status = client.get(
+                "/v1/context/status",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok", "component": "core"}
+    assert status.status_code == 200, status.text
+    assert status.json()["ready"] is True
+    readiness = status.json()["runtime_readiness"]
+    assert readiness["scheduler"]["alive"] is False
+    assert readiness["scheduler"]["worker_state"] == "not_started"
+    assert readiness["capture"]["state"] == "healthy"
+    assert readiness["project_projection"] == {
+        "available": True,
+        "reason_code": None,
+        "state": "available",
+    }
+    assert "scheduler" not in health.json()
+    _assert_no_root_leak(status.json(), workspace, config.data_dir)
+
+
+def test_partial_capture_cannot_report_top_level_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorized = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        source_id = str(authorized["id"])
+        service.capture.enable(source_id)
+        assert capture_runtime.refresh_local_workspace_adapter(service.capture, config) is True
+        _principal, token = service.store.create_client(
+            ClientCreate(
+                name="partial-readiness-reader",
+                scopes=["context:status"],
+                auto_approve=False,
+            )
+        )
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            health = client.get("/health")
+            status = client.get(
+                "/v1/context/status",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert health.json() == {"status": "ok", "component": "core"}
+    assert status.status_code == 200, status.text
+    body = status.json()
+    assert body["ready"] is False
+    assert body["runtime_readiness"]["state"] == "degraded"
+    assert body["runtime_readiness"]["capture"]["state"] == "degraded"
+    assert "partial_coverage" in body["runtime_readiness"]["capture"]["reason_codes"]
+
+
+def test_readiness_uses_runner_capability_predicate_for_unknown_egress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    source_id = coordinator.create_source(
+        provider="synthetic-network",
+        account_label="synthetic-network-account",
+        local_only_acknowledged=True,
+    ).id
+    coordinator.enable(source_id)
+    manifest = CaptureCapabilityManifest(
+        provider="synthetic-network",
+        availability="partial",
+        coverage="partial",
+        coverage_reason="synthetic_unknown_egress",
+        network_access="unknown",
+        data_egress=None,
+        health="degraded",
+    )
+    adapter = DeterministicFakeAdapter((CapturePage(generation=1),), capability_manifest=manifest)
+    coordinator.register_adapter("synthetic-network", adapter)
+    scheduler = CoreCaptureScheduler(coordinator, config)
+
+    try:
+        result = coordinator.run(source_id)
+        readiness = scheduler.readiness()
+        source_readiness = readiness["capture"]["sources"][0]
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+    assert capture_executable_capability_error(manifest) == "capture_capability_invalid"
+    assert result.status == "skipped"
+    assert result.error_code == "capture_capability_invalid"
+    assert source_readiness["adapter_available"] is False
+    assert source_readiness["reason_code"] == "capture_capability_invalid"
+    assert readiness["capture"]["state"] == "degraded"
+    assert "synthetic_unknown_egress" not in json.dumps(readiness)
+
+
+def test_worker_failure_is_content_free_and_restartable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(coordinator, config, scheduler_config=SchedulerConfig())
+    write_scheduler_enabled(config.data_dir, enabled=True)
+
+    def boom() -> bool:
+        raise TypeError("private raw failure must not be surfaced")
+
+    observed: list[type[BaseException]] = []
+    monkeypatch.setattr(
+        threading,
+        "excepthook",
+        lambda args: observed.append(args.exc_type),
+    )
+
+    try:
+        scheduler.start()
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        failed = scheduler.status()
+        assert failed["running"] is False
+        assert failed["worker_failure_code"] == "worker_failed"
+        assert failed["worker_restartable"] is True
+        assert "private raw failure" not in json.dumps(failed)
+        assert observed == []
+
+        monkeypatch.setattr(scheduler, "dispatch_allowed", lambda: True)
+        scheduler.start()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "running")
+        recovered = scheduler.status()
+        assert recovered["worker_restart_count"] == 2
+        assert recovered["worker_generation"] == 2
+        assert recovered["worker_failure_code"] is None
+        assert recovered["worker_failure_generation"] is None
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+
+def test_worker_failure_stays_bound_until_current_generation_is_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(coordinator, config, scheduler_config=SchedulerConfig())
+    write_scheduler_enabled(config.data_dir, enabled=True)
+    entered_start = threading.Event()
+    release_start = threading.Event()
+
+    def boom() -> bool:
+        raise TypeError(r"C:\private\scheduler-internal.py")
+
+    try:
+        scheduler.start()
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
+        failed = scheduler.status()
+        assert failed["worker_generation"] == 1
+        assert failed["worker_failure_generation"] == 1
+
+        original_mark = scheduler._mark_worker_running
+
+        def delayed_mark(generation: int, current: threading.Thread) -> bool:
+            entered_start.set()
+            assert release_start.wait(timeout=5)
+            return original_mark(generation, current)
+
+        monkeypatch.setattr(scheduler, "_mark_worker_running", delayed_mark)
+        monkeypatch.setattr(scheduler, "dispatch_allowed", lambda: True)
+        scheduler.start()
+        assert entered_start.wait(timeout=5)
+        starting = scheduler.status()
+        assert starting["worker_state"] == "starting"
+        assert starting["worker_generation"] == 2
+        assert starting["worker_failure_code"] == "worker_failed"
+        assert starting["worker_failure_generation"] == 1
+
+        scheduler.start()
+        assert scheduler.status()["worker_restart_count"] == 2
+        release_start.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "running")
+        recovered = scheduler.status()
+        assert recovered["worker_failure_code"] is None
+        assert recovered["worker_failure_generation"] is None
+        assert recovered["worker_generation"] == 2
+
+        with scheduler._lifecycle_lock:
+            scheduler._record_worker_failure_locked(
+                TypeError(r"C:\private\stale-worker.py"),
+                generation=1,
+                current=None,
+            )
+        current = scheduler.status()
+        assert current["worker_state"] == "running"
+        assert current["worker_failure_code"] is None
+    finally:
+        release_start.set()
+        scheduler.shutdown()
+        store.close()
+
+
+def test_restart_failure_remains_current_until_a_later_restart_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(coordinator, config, scheduler_config=SchedulerConfig())
+    write_scheduler_enabled(config.data_dir, enabled=True)
+
+    def boom() -> bool:
+        raise TypeError(r"C:\private\restart-failure.py")
+
+    try:
+        scheduler.start()
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        monkeypatch.setattr(scheduler, "dispatch_allowed", lambda: True)
+        original_run_cycle = scheduler.run_cycle
+
+        def cycle_boom() -> Any:
+            raise TypeError(r"C:\private\restart-cycle.py")
+
+        monkeypatch.setattr(scheduler, "run_cycle", cycle_boom)
+        scheduler.start()
+        _wait_until(
+            lambda: (
+                scheduler.status()["worker_state"] == "failed"
+                and scheduler.status()["worker_generation"] == 2
+            )
+        )
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        failed_again = scheduler.status()
+        assert failed_again["worker_restart_count"] == 2
+        assert failed_again["worker_failure_code"] == "worker_failed"
+        assert failed_again["worker_failure_generation"] == 2
+
+        monkeypatch.setattr(scheduler, "run_cycle", original_run_cycle)
+        scheduler.start()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "running")
+        assert scheduler.status()["worker_failure_code"] is None
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+
+def test_readiness_contains_unexpected_source_access_failure_without_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(coordinator, config)
+    private_path = r"C:\private\readiness-state.sqlite3"
+
+    def boom(*, full_scan: bool = False) -> Any:
+        del full_scan
+        raise TypeError(private_path)
+
+    monkeypatch.setattr(scheduler._scheduler, "_sources", boom)
+    try:
+        readiness = scheduler.readiness()
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+    assert readiness["capture"] == {
+        "inspected_source_count": 0,
+        "reason_codes": [RUNTIME_READINESS_ERROR_CODE],
+        "source_total": None,
+        "sources": [],
+        "state": "unavailable",
+        "truncated": False,
+    }
+    assert private_path not in json.dumps(readiness)
+
+
+def test_authenticated_context_status_contains_scheduler_readiness_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    private_path = r"C:\private\context-status.sqlite3"
+    with CoreService(config) as service:
+        _principal, token = service.store.create_client(
+            ClientCreate(name="readiness-failure-reader", scopes=["context:status"])
+        )
+
+        def boom() -> dict[str, Any]:
+            raise TypeError(private_path)
+
+        monkeypatch.setattr(service.capture_scheduler, "readiness", boom)
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            response = client.get(
+                "/v1/context/status",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            health = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready"] is False
+    assert body["runtime_readiness"]["state"] == "degraded"
+    assert body["runtime_readiness"]["reason_code"] == RUNTIME_READINESS_ERROR_CODE
+    assert private_path not in response.text
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok", "component": "core"}
 
 
 def test_invalid_scheduler_config_fail_closes_without_killing_core(tmp_path: Path) -> None:
@@ -574,6 +1027,82 @@ def test_bounded_join_returns_during_in_flight_cycle(
     finally:
         release.set()
         scheduler.shutdown()
+        store.close()
+
+
+def test_loop_converges_when_gate_closes_between_dispatch_and_activity_enter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    clock = _MutableClock()
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(
+        coordinator,
+        config,
+        scheduler_config=SchedulerConfig(poll_interval_seconds=1),
+        clock=clock,
+    )
+    write_scheduler_enabled(config.data_dir, enabled=True)
+    enter_started = threading.Event()
+    allow_enter = threading.Event()
+    shutdown_entered = threading.Event()
+    release_shutdown = threading.Event()
+    observed: list[BaseException | None] = []
+    shutdown_errors: list[BaseException] = []
+    original_enter = scheduler.activity_gate._enter
+    calling_thread_id = threading.get_ident()
+
+    def blocked_enter(owner: object, lease: Any = None) -> None:
+        if threading.get_ident() == calling_thread_id:
+            original_enter(owner, lease)
+            return
+        enter_started.set()
+        if not allow_enter.wait(timeout=5):
+            raise AssertionError("scheduler activity enter was not released")
+        original_enter(owner, lease)
+
+    monkeypatch.setattr(scheduler.activity_gate, "_enter", blocked_enter)
+
+    def hook(args: threading.ExceptHookArgs) -> None:
+        observed.append(args.exc_value)
+
+    monkeypatch.setattr(threading, "excepthook", hook)
+
+    async def hold_gate_shutdown() -> None:
+        async with scheduler.activity_gate.shutdown_async():
+            shutdown_entered.set()
+            await asyncio.to_thread(release_shutdown.wait, 5.0)
+
+    def close_gate() -> None:
+        try:
+            asyncio.run(hold_gate_shutdown())
+        except BaseException as error:
+            shutdown_errors.append(error)
+
+    gate_closer = threading.Thread(target=close_gate)
+    try:
+        scheduler.start()
+        assert enter_started.wait(timeout=5)
+        gate_closer.start()
+        assert shutdown_entered.wait(timeout=5)
+        allow_enter.set()
+        scheduler.shutdown()
+        release_shutdown.set()
+        gate_closer.join(timeout=5)
+        assert gate_closer.is_alive() is False
+        assert shutdown_errors == []
+        assert observed == []
+        assert scheduler.status()["running"] is False
+    finally:
+        allow_enter.set()
+        release_shutdown.set()
+        scheduler.shutdown()
+        if gate_closer.ident is not None:
+            gate_closer.join(timeout=5)
         store.close()
 
 
@@ -941,6 +1470,122 @@ def test_run_cycle_expected_errors_are_content_free_not_fake_success(
             service.capture_scheduler.run_cycle()
 
 
+@pytest.mark.parametrize(
+    ("message", "code"),
+    [
+        ("database is busy", sqlite3.SQLITE_BUSY),
+        ("database is locked", sqlite3.SQLITE_BUSY_SNAPSHOT),
+        ("database table is locked", sqlite3.SQLITE_LOCKED_SHAREDCACHE),
+    ],
+)
+def test_sqlite_contention_uses_primary_code_for_extended_errors(message: str, code: int) -> None:
+    assert _is_transient_sqlite_contention(_sqlite_operational_error(message, code)) is True
+
+
+def test_sqlite_contention_rejects_unexpected_errors_even_with_locking_text() -> None:
+    assert (
+        _is_transient_sqlite_contention(
+            _sqlite_operational_error("database table is locked", sqlite3.SQLITE_READONLY)
+        )
+        is False
+    )
+    assert _is_transient_sqlite_contention(sqlite3.OperationalError("database is locked")) is False
+
+
+def test_run_cycle_contains_only_transient_sqlite_contention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    with CoreService(config) as service:
+        write_scheduler_enabled(config.data_dir, enabled=True)
+
+        def raise_locked() -> Any:
+            raise _sqlite_operational_error(
+                "database table is locked", sqlite3.SQLITE_LOCKED_SHAREDCACHE
+            )
+
+        monkeypatch.setattr(service.capture_scheduler._scheduler, "run_once", raise_locked)
+        report = service.capture_scheduler.run_cycle()
+
+        assert report.plan.enabled is True
+        assert report.dispatched == ()
+        assert report.results == ()
+        assert report.health.state == "unavailable"
+        assert report.health.reason_codes == ("capture_failed",)
+
+        def raise_disk_io() -> Any:
+            raise _sqlite_operational_error("disk I/O error", sqlite3.SQLITE_IOERR)
+
+        monkeypatch.setattr(service.capture_scheduler._scheduler, "run_once", raise_disk_io)
+        with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+            service.capture_scheduler.run_cycle()
+
+
+def test_transient_sqlite_contention_keeps_loop_alive_for_workspace_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        authorized = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        source_id = str(authorized["id"])
+        service.capture.enable(source_id)
+        write_scheduler_enabled(config.data_dir, enabled=True)
+
+        original_list_sources = service.capture.list_sources
+        attempts = 0
+        first_contention = threading.Event()
+
+        def list_sources_with_one_transient_lock(
+            *, limit: int = 100, offset: int = 0
+        ) -> tuple[list[Any], int]:
+            nonlocal attempts
+            attempts += 1
+            if attempts <= 2:
+                first_contention.set()
+                raise _sqlite_operational_error(
+                    "database table is locked", sqlite3.SQLITE_LOCKED_SHAREDCACHE
+                )
+            return original_list_sources(limit=limit, offset=offset)
+
+        monkeypatch.setattr(service.capture, "list_sources", list_sources_with_one_transient_lock)
+        service.capture_scheduler._scheduler.config = SchedulerConfig(
+            enabled=False,
+            poll_interval_seconds=1,
+            incremental_interval_seconds=300,
+            max_sources_per_cycle=500,
+            max_source_pages_per_cycle=1,
+            max_health_pages=4,
+            max_workers=1,
+        )
+        try:
+            service.capture_scheduler.start()
+            _wait_until(lambda: first_contention.is_set())
+            assert service.capture_scheduler.status()["running"] is True
+
+            service.capture_scheduler._wakeup.set()
+            _wait_until(
+                lambda: (
+                    LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
+                    and service.capture.status(source_id).get("last_run", {}).get("state")
+                    == "completed"
+                )
+            )
+            assert service.capture_scheduler.status()["running"] is True
+            assert attempts >= 3
+        finally:
+            service.capture_scheduler.shutdown()
+
+
 def test_loop_keeps_running_after_expected_capture_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -979,7 +1624,7 @@ def test_loop_keeps_running_after_expected_capture_error(
         store.close()
 
 
-def test_loop_does_not_swallow_programmer_error(
+def test_loop_contains_programmer_error_without_excepthook(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1016,8 +1661,52 @@ def test_loop_does_not_swallow_programmer_error(
         scheduler._wakeup.set()
         _wait_until(lambda: scheduler.status()["running"] is False)
         assert scheduler._thread is None or scheduler._thread.is_alive() is False
-        assert observed
-        assert isinstance(observed[0], TypeError)
+        assert observed == []
+        assert scheduler.status()["worker_failure_code"] == "worker_failed"
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+
+def test_loop_contains_noncontention_sqlite_error_without_excepthook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    clock = _MutableClock()
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(
+        coordinator,
+        config,
+        scheduler_config=SchedulerConfig(poll_interval_seconds=1),
+        clock=clock,
+    )
+    write_scheduler_enabled(config.data_dir, enabled=True)
+
+    def boom() -> bool:
+        raise _sqlite_operational_error("database table is locked", sqlite3.SQLITE_READONLY)
+
+    observed: list[BaseException | None] = []
+
+    def hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is sqlite3.OperationalError:
+            observed.append(args.exc_value)
+            return
+        threading.__excepthook__(args)
+
+    monkeypatch.setattr(threading, "excepthook", hook)
+    try:
+        scheduler.start()
+        _wait_until(lambda: scheduler.status()["running"] is True)
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        assert scheduler._thread is None or scheduler._thread.is_alive() is False
+        assert observed == []
+        assert scheduler.status()["worker_failure_code"] == "capture_failed"
     finally:
         scheduler.shutdown()
         store.close()

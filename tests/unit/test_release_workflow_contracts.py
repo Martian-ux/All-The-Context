@@ -207,6 +207,18 @@ def test_ci_declares_matrix_security_and_parity_job_names() -> None:
         assert forbidden not in text
 
 
+def test_ci_python_documentation_checks_have_full_history_and_pinned_actions() -> None:
+    python_job = _job_bodies(_read(WORKFLOWS / "ci.yml"))["python"]
+    steps = _step_blocks(python_job)
+    checkout_steps = [step for step in steps if _is_checkout(step)]
+
+    assert len(checkout_steps) == 1
+    checkout = checkout_steps[0]
+    assert re.search(r"(?m)^\s+-\s+uses:\s+actions/checkout@[0-9a-f]{40}\s+# pin:", checkout)
+    assert re.search(r"(?m)^\s+fetch-depth:\s+0\s*$", _step_section(checkout, "with"))
+    assert any("python scripts/check_docs.py" in step for step in steps)
+
+
 def test_ci_dashboard_audit_runs_only_on_node_22() -> None:
     dashboard = _job_bodies(_read(WORKFLOWS / "ci.yml"))["dashboard"]
     steps = _step_blocks(dashboard)

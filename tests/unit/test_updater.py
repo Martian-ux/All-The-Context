@@ -16,6 +16,7 @@ from typing import Any, cast
 import allthecontext.updater as updater_module
 import allthecontext.windows_update_helper as update_helper_module
 import pytest
+from allthecontext.build_identity import BuildIdentity
 from allthecontext.installed_component_manifest import (
     CHECKSUM_FILE_NAME,
     MANIFEST_FILE_NAME,
@@ -677,6 +678,31 @@ def test_valid_n_minus_one_update_download_backup_and_handoff(tmp_path: Path) ->
     assert backup.is_file()
     with sqlite3.connect(backup) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
+
+
+def test_install_readiness_check_runs_under_exclusive_gate_before_mutation(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, installer = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    assert manager.download()["phase"] == "ready"
+    state_before = manager.state_path.read_bytes()
+    observed_gate = False
+
+    def refuse_busy_install() -> None:
+        nonlocal observed_gate
+        observed_gate = not manager._operation_gate.acquire(blocking=False)
+        raise UpdateError("Update activation deferred until Core activity is quiescent")
+
+    with pytest.raises(UpdateError, match="Core activity is quiescent"):
+        manager.install(readiness_check=refuse_busy_install)
+
+    assert observed_gate is True
+    assert manager.state.phase is UpdatePhase.READY
+    assert manager.state_path.read_bytes() == state_before
+    assert installer.handed_off is False
+    assert not (manager.config.data_dir / "backups").exists()
 
 
 def test_equal_version_is_truthfully_current_and_can_be_disabled(tmp_path: Path) -> None:
@@ -1452,6 +1478,18 @@ def test_clear_error_rejects_tampered_retirement_tombstone(
     assert _RECOVERY_AUTHORITY_VALUES[f"transaction:{operation}"]
 
 
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_retirement_tombstone_rejects_non_integer_schema_version(
+    tmp_path: Path, schema_version: object
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _ = _completed_manager(tmp_path, manifest, artifact, keyring)
+    _tombstone, payload = manager._ensure_retirement_tombstone()
+    payload["schema_version"] = schema_version
+
+    assert manager._retirement_tombstone_payload(payload) is None
+
+
 def test_clear_error_clears_ordinary_non_recovery_error(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
@@ -1559,6 +1597,22 @@ def test_frozen_windows_startup_accepts_retirement_tombstone_after_credential_re
     monkeypatch.setenv("ATC_CORE_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(update_helper_module.platform, "system", lambda: "Windows")
     monkeypatch.setattr(update_helper_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(update_helper_module, "_packaged_helper_runtime", lambda: False)
+    packaged_identity = BuildIdentity(
+        version="0.1.0",
+        channel="stable",
+        platform="windows",
+        architecture="x86_64",
+        source_commit="0" * 40,
+    )
+    monkeypatch.setattr(
+        update_helper_module,
+        "runtime_build_identity",
+        lambda **_: packaged_identity,
+    )
+    state = json.loads(manager.state_path.read_text(encoding="utf-8"))
+    state["current_source_commit"] = packaged_identity.source_commit
+    manager.state_path.write_text(json.dumps(state), encoding="utf-8")
 
     assert tombstone.is_file()
     assert (manager.state_path.parent / "transactions" / operation).is_dir()

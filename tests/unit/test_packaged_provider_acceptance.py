@@ -16,6 +16,53 @@ from allthecontext.packaged_provider_acceptance import (
 from allthecontext.provider_shapes import frozen_provider_shapes
 from allthecontext.storage import CoreStore
 
+_PACKAGED_FAILURE_CODES = frozenset(
+    {
+        "provider_invalid",
+        "provider_not_mandatory",
+        "export_missing_or_empty",
+        "data_dir_not_empty",
+        "data_dir_unavailable",
+        "import_operation_failed",
+        "import_failed",
+        "import_operation_incomplete",
+        "import_acceptance_reconcile_failed",
+        "data_dir_cleanup_failed",
+    }
+)
+_PACKAGED_FAILURE_REPORT_KEYS = frozenset(
+    {
+        "schema_version",
+        "status",
+        "operation_status",
+        "error_code",
+        "content_free",
+        "aggregate_parser_version",
+    }
+)
+
+
+def _safe_packaged_failure_code(report: Path) -> str:
+    """Return only a fixed diagnostic token from the content-free report."""
+
+    try:
+        payload = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return "failure_report_unavailable"
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != _PACKAGED_FAILURE_REPORT_KEYS
+        or payload.get("schema_version") != 1
+        or payload.get("status") != "failed"
+        or payload.get("operation_status") != "failed"
+        or payload.get("content_free") is not True
+    ):
+        return "failure_report_invalid"
+    code = payload.get("error_code")
+    if isinstance(code, str) and code in _PACKAGED_FAILURE_CODES:
+        return code
+    return "failure_code_invalid"
+
 
 def _chatgpt_export(path: Path) -> str:
     shape = next(
@@ -202,6 +249,42 @@ def test_packaged_reconciler_rejects_explicitly_incomplete_coverage() -> None:
         )
 
 
+def test_packaged_failure_diagnostic_is_closed_and_content_free(tmp_path: Path) -> None:
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "failed",
+                "operation_status": "failed",
+                "error_code": "data_dir_cleanup_failed",
+                "content_free": True,
+                "aggregate_parser_version": "synthetic",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _safe_packaged_failure_code(report) == "data_dir_cleanup_failed"
+
+    report.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "failed",
+                "operation_status": "failed",
+                "error_code": "unexpected-secret-path",
+                "content_free": True,
+                "aggregate_parser_version": "synthetic",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _safe_packaged_failure_code(report) == "failure_code_invalid"
+
+    report.write_text('{"secret": "fictional imported content"}', encoding="utf-8")
+    assert _safe_packaged_failure_code(report) == "failure_report_invalid"
+
+
 def test_packaged_surface_imports_through_core_without_content_in_report(
     tmp_path: Path,
 ) -> None:
@@ -291,14 +374,13 @@ def test_packaged_surface_removes_its_disposable_vault(
         "allthecontext.packaged_provider_acceptance._make_temp_data_dir",
         fake_data_dir,
     )
-    assert (
-        run_packaged_provider_acceptance(
-            report_path=report,
-            export_path=export,
-            provider="chatgpt",
-        )
-        == 0
+    result = run_packaged_provider_acceptance(
+        report_path=report,
+        export_path=export,
+        provider="chatgpt",
     )
+    if result != 0:
+        pytest.fail(f"packaged provider acceptance failed: {_safe_packaged_failure_code(report)}")
     assert not disposable.exists()
 
 

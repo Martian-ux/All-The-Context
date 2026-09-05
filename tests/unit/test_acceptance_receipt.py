@@ -97,6 +97,16 @@ def test_template_receipt_is_not_run_and_not_pass() -> None:
     assert receipt["status"] != "pass"
 
 
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_receipt_schemas_reject_non_integer_versions(schema_version: object) -> None:
+    with pytest.raises(ManifestError, match="schema_version"):
+        validate_receipt(_receipt(schema_version=schema_version))
+    bundle = _s06_bundle(version="0.1.0-beta.7")
+    bundle["schema_version"] = schema_version
+    with pytest.raises(ManifestError, match="schema_version"):
+        validate_receipt_bundle(bundle)
+
+
 def test_receipt_rejects_secret_fields_and_absolute_paths() -> None:
     with pytest.raises(ManifestError, match=r"unknown fields|content-free"):
         validate_receipt(_receipt(password="nope"))

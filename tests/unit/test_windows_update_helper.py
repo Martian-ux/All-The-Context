@@ -13,6 +13,7 @@ from typing import Any
 
 import allthecontext.windows_update_helper as helper_module
 import pytest
+from allthecontext.build_identity import BuildIdentity
 from allthecontext.installed_component_manifest import (
     CHECKSUM_FILE_NAME,
     MANIFEST_FILE_NAME,
@@ -37,6 +38,7 @@ from allthecontext.windows_update_helper import (
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 _RECOVERY_AUTHORITY_VALUES: dict[str, str] = {}
+TEST_SOURCE_COMMIT = "0" * 40
 
 
 class _RecoveryAuthorityStore:
@@ -57,6 +59,17 @@ def _use_test_recovery_authority(monkeypatch: pytest.MonkeyPatch) -> None:
         helper_module,
         "_recovery_authority_store",
         lambda: _RecoveryAuthorityStore(),
+    )
+    monkeypatch.setattr(
+        helper_module,
+        "runtime_build_identity",
+        lambda **_: BuildIdentity(
+            version="0.1.0",
+            channel="stable",
+            platform="windows",
+            architecture="x86_64",
+            source_commit=TEST_SOURCE_COMMIT,
+        ),
     )
 
 
@@ -119,6 +132,7 @@ def _signed_staging(
         release_notes_url="https://updates.example.test/releases/v0.2.0",
         key_id="test-release-key",
         private_key=private_key,
+        source_commit=TEST_SOURCE_COMMIT,
     )
     manifest_path = staging_dir / "manifest.json"
     manifest_path.write_text(
@@ -134,6 +148,8 @@ def _signed_staging(
             "pending_handoff_identity": None,
             "completed_handoff_identity": None,
             "offered_version": manifest["version"],
+            "current_source_commit": TEST_SOURCE_COMMIT,
+            "offered_source_commit": TEST_SOURCE_COMMIT,
             "mandatory": manifest["mandatory"],
             "release_notes_url": manifest["release_notes_url"],
             "downloaded_path": str(artifact),
@@ -286,7 +302,9 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
             {
                 "phase": "restart_required",
                 "current_version": "0.1.0",
+                "current_source_commit": TEST_SOURCE_COMMIT,
                 "offered_version": "0.2.0",
+                "offered_source_commit": TEST_SOURCE_COMMIT,
                 "mandatory": False,
                 "release_notes_url": None,
                 "downloaded_path": str(updates / "staging" / operation_id / "artifact.zip"),
@@ -307,6 +325,10 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         phase=HelperPhase.PREPARED,
         current_version="0.1.0",
         target_version="0.2.0",
+        current_source_commit=TEST_SOURCE_COMMIT,
+        target_source_commit=TEST_SOURCE_COMMIT,
+        rollback_source_commit=TEST_SOURCE_COMMIT,
+        recovery_source_commit=TEST_SOURCE_COMMIT,
         parent_pid=0,
         application_path=str(application),
         replacement_path=str(replacement_path),
@@ -468,9 +490,28 @@ def _fake_commands(
     health_result: int = 0,
     hostile_report_phase: str | None = None,
     hostile_report: bytes | None = None,
+    apply_result: int = 0,
+    apply_failure_code: str | None = None,
+    apply_failure_attempt: str | None = None,
 ) -> Callable[[tuple[str, ...], dict[str, str]], int]:
-    def run(command: tuple[str, ...], _environment: dict[str, str]) -> int:
+    def run(command: tuple[str, ...], environment: dict[str, str]) -> int:
         if "--apply-update" in command:
+            report = Path(command[-1])
+            if apply_result != 0:
+                if apply_failure_code is not None:
+                    report.write_text(
+                        json.dumps(
+                            {
+                                "attempt": apply_failure_attempt
+                                or environment["ATC_UPDATE_ATTEMPT"],
+                                "code": apply_failure_code,
+                                "phase": "component_bootstrap",
+                                "status": "failed",
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                return apply_result
             fixture.application.write_bytes(fixture.replacement)
             fixture.mcp.write_bytes(b"new mcp binary")
             fixture.recovery.write_bytes(b"new recovery helper binary")
@@ -479,7 +520,6 @@ def _fake_commands(
             mcp_digest, mcp_size = _digest(fixture.mcp)
             recovery_digest, recovery_size = _digest(fixture.recovery)
             update_digest, update_size = _digest(fixture.update_helper)
-            report = Path(command[-1])
             if hostile_report_phase == "apply":
                 assert hostile_report is not None
                 report.write_bytes(hostile_report)
@@ -559,6 +599,346 @@ def _isolate_runtime(monkeypatch: pytest.MonkeyPatch, launched: list[str]) -> No
         "_launch_core",
         lambda journal: launched.append(journal.current_version),
     )
+
+
+def _advance_time_for_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = {"now": 100.0}
+
+    def monotonic() -> float:
+        return clock["now"]
+
+    def sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(helper_module.time, "monotonic", monotonic)
+    monkeypatch.setattr(helper_module.time, "sleep", sleep)
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    [
+        "bootstrap_journal_invalid",
+        "component_bootstrap_source_invalid",
+        "component_bootstrap_core_probe_failed",
+        "component_bootstrap_transaction_failed",
+    ],
+)
+def test_child_failure_report_code_persists_through_rollback_without_user_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_code: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    _advance_time_for_retry(monkeypatch)
+    monkeypatch.setattr(
+        helper_module,
+        "_run_bounded",
+        _fake_commands(
+            fixture,
+            apply_result=1,
+            apply_failure_code=failure_code,
+        ),
+    )
+
+    assert run_transaction(fixture.journal_path) == 2
+
+    journal = UpdateJournal.load(fixture.journal_path)
+    assert journal.phase is HelperPhase.ROLLED_BACK
+    assert journal.last_error_code == failure_code
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert f"diagnostic code: {failure_code}" in state["last_error"]
+    assert fixture.application.read_bytes() == fixture.old_application
+    assert fixture.mcp.read_bytes() == fixture.old_mcp
+    assert fixture.recovery.read_bytes() == fixture.old_recovery
+    assert fixture.update_helper.read_bytes() == fixture.old_update_helper
+    with sqlite3.connect(fixture.database) as connection:
+        assert connection.execute("SELECT value FROM facts").fetchall() == [("before",)]
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+    assert launched == ["0.1.0"]
+
+
+@pytest.mark.parametrize(
+    ("report_kind", "expected_code"),
+    [
+        ("missing", "child_failure_report_missing"),
+        ("malformed", "child_failure_report_invalid"),
+        ("unallowlisted", "child_failure_report_invalid"),
+        ("oversized", "child_failure_report_invalid"),
+        ("wrong_attempt", "child_failure_report_invalid"),
+    ],
+)
+def test_nonzero_child_report_is_strictly_classified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report_kind: str,
+    expected_code: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _advance_time_for_retry(monkeypatch)
+
+    def run(command: tuple[str, ...], environment: dict[str, str]) -> int:
+        if "--apply-update" not in command:
+            raise AssertionError(command)
+        report = Path(command[-1])
+        if report_kind == "malformed":
+            report.write_bytes(b"{ malformed")
+        elif report_kind == "unallowlisted":
+            report.write_text(
+                json.dumps(
+                    {
+                        "attempt": environment["ATC_UPDATE_ATTEMPT"],
+                        "code": "token_leak",
+                        "phase": "component_bootstrap",
+                        "status": "failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        elif report_kind == "oversized":
+            report.write_bytes(b"{" + b"x" * helper_module.UPDATE_FAILURE_REPORT_MAX_BYTES + b"}")
+        elif report_kind == "wrong_attempt":
+            report.write_text(
+                json.dumps(
+                    {
+                        "attempt": "f" * 32,
+                        "code": "bootstrap_journal_invalid",
+                        "phase": "component_bootstrap",
+                        "status": "failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 1
+
+    monkeypatch.setattr(helper_module, "_run_bounded", run)
+    journal = UpdateJournal.load(fixture.journal_path)
+
+    with pytest.raises(HelperError) as raised:
+        helper_module._apply_replacement(journal, fixture.journal_path)
+
+    assert raised.value.code == expected_code
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("phase", []),
+        ("phase", {}),
+        ("phase", True),
+        ("phase", 1),
+        ("phase", None),
+        ("phase", {"nested": {"value": "component_bootstrap"}}),
+        ("code", []),
+        ("code", {}),
+        ("code", False),
+        ("code", 1.5),
+        ("code", None),
+        ("code", {"nested": {"value": "bootstrap_journal_invalid"}}),
+        ("attempt", []),
+        ("attempt", {}),
+        ("attempt", True),
+        ("attempt", 32),
+        ("attempt", None),
+        ("attempt", {"nested": {"value": "b" * 32}}),
+        ("status", []),
+        ("status", {}),
+        ("status", False),
+        ("status", 1),
+        ("status", None),
+        ("status", {"nested": {"value": "failed"}}),
+    ],
+)
+def test_adversarial_child_failure_report_values_reach_safe_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Any,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _isolate_runtime(monkeypatch, [])
+    _advance_time_for_retry(monkeypatch)
+
+    def run(command: tuple[str, ...], environment: dict[str, str]) -> int:
+        if "--apply-update" not in command:
+            raise AssertionError(command)
+        payload: dict[str, Any] = {
+            "attempt": environment["ATC_UPDATE_ATTEMPT"],
+            "code": "bootstrap_journal_invalid",
+            "phase": "component_bootstrap",
+            "status": "failed",
+        }
+        payload[field] = value
+        Path(command[-1]).write_text(json.dumps(payload), encoding="utf-8")
+        return 1
+
+    monkeypatch.setattr(helper_module, "_run_bounded", run)
+
+    assert run_transaction(fixture.journal_path) == 2
+
+    journal = UpdateJournal.load(fixture.journal_path)
+    assert journal.phase is HelperPhase.ROLLED_BACK
+    assert journal.last_error_code == "child_failure_report_invalid"
+    assert fixture.application.read_bytes() == fixture.old_application
+    assert fixture.mcp.read_bytes() == fixture.old_mcp
+    assert fixture.recovery.read_bytes() == fixture.old_recovery
+    assert fixture.update_helper.read_bytes() == fixture.old_update_helper
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+
+
+def test_zero_exit_report_and_target_mismatch_have_distinct_codes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        helper_module,
+        "_run_bounded",
+        lambda _command, _environment: 0,
+    )
+    journal = UpdateJournal.load(fixture.journal_path)
+
+    with pytest.raises(HelperError) as raised:
+        helper_module._apply_replacement(journal, fixture.journal_path)
+
+    assert raised.value.code == "child_zero_target_digest_mismatch"
+
+    fixture = _transaction(tmp_path / "matching", monkeypatch)
+
+    def match_without_report(command: tuple[str, ...], _environment: dict[str, str]) -> int:
+        if "--apply-update" in command:
+            fixture.application.write_bytes(fixture.replacement)
+        return 0
+
+    monkeypatch.setattr(helper_module, "_run_bounded", match_without_report)
+    journal = UpdateJournal.load(fixture.journal_path)
+    with pytest.raises(HelperError) as raised:
+        helper_module._apply_replacement(journal, fixture.journal_path)
+    assert raised.value.code == "child_zero_report_missing"
+
+
+def test_zero_exit_target_mismatch_exhausts_the_absolute_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _advance_time_for_retry(monkeypatch)
+    monkeypatch.setattr(helper_module, "PARENT_EXIT_TIMEOUT_SECONDS", 1)
+
+    def run(command: tuple[str, ...], _environment: dict[str, str]) -> int:
+        if "--apply-update" in command:
+            Path(command[-1]).write_text(json.dumps({"status": "installed"}), encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(helper_module, "_run_bounded", run)
+    journal = UpdateJournal.load(fixture.journal_path)
+    with pytest.raises(HelperError) as raised:
+        helper_module._apply_replacement(journal, fixture.journal_path)
+    assert raised.value.code == "binary_cutover_deadline"
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+
+
+def test_retry_rejects_stale_report_and_success_clears_failure_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    seen_preexisting: list[bool] = []
+    attempts = 0
+    successful_child = _fake_commands(fixture)
+
+    def run(command: tuple[str, ...], environment: dict[str, str]) -> int:
+        nonlocal attempts
+        if "--apply-update" not in command:
+            return successful_child(command, environment)
+        attempts += 1
+        report = Path(command[-1])
+        seen_preexisting.append(report.exists())
+        if attempts == 1:
+            fixture.application.write_bytes(b"not the target")
+            report.write_text(json.dumps({"status": "installed"}), encoding="utf-8")
+            return 0
+        return successful_child(command, environment)
+
+    monkeypatch.setattr(helper_module, "_run_bounded", run)
+    _isolate_runtime(monkeypatch, [])
+    journal = UpdateJournal.load(fixture.journal_path)
+
+    helper_module._apply_replacement(journal, fixture.journal_path)
+
+    assert attempts == 2
+    assert seen_preexisting == [False, False]
+    assert journal.phase is HelperPhase.BINARY_REPLACED
+    assert journal.last_error_code is None
+    assert not (fixture.journal_path.parent / "apply-report.json").exists()
+
+
+def _prepare_interrupted_packaged_terminal_replay(
+    fixture: TransactionFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path, str, str]:
+    old_source = TEST_SOURCE_COMMIT
+    new_source = "b" * 40
+    journal = UpdateJournal.load(fixture.journal_path)
+    component = json.loads(fixture.component_manifest.read_text(encoding="utf-8"))
+    component["source_commit"] = new_source
+    component_raw = canonical_json(component)
+    fixture.component_manifest.write_bytes(component_raw)
+    fixture.component_manifest.with_name(CHECKSUM_FILE_NAME).write_bytes(
+        f"{hashlib.sha256(component_raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    )
+    journal.target_source_commit = new_source
+    journal.component_manifest_sha256 = hashlib.sha256(component_raw).hexdigest()
+    journal.component_manifest_size = len(component_raw)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "offered_source_commit": new_source,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    journal.save(fixture.journal_path)
+    helper_module.bind_recovery_authority(journal, fixture.journal_path)
+    helper_module.bind_handoff_state(journal, fixture.journal_path)
+
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: False)
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    original_update_state = helper_module._update_state
+    crashed = False
+
+    def crash_after_terminal_journal(
+        current: UpdateJournal,
+        *,
+        phase: str,
+        error: str | None,
+        clear_transaction: bool,
+    ) -> None:
+        nonlocal crashed
+        if clear_transaction and current.phase is HelperPhase.COMMITTED and not crashed:
+            crashed = True
+            raise SystemExit(86)
+        original_update_state(
+            current,
+            phase=phase,
+            error=error,
+            clear_transaction=clear_transaction,
+        )
+
+    monkeypatch.setattr(helper_module, "_update_state", crash_after_terminal_journal)
+    with pytest.raises(SystemExit, match="86"):
+        run_transaction(fixture.journal_path)
+    assert crashed is True
+    target_helper = Path(journal.stable_update_helper_path)
+    old_helper = Path(journal.helper_path)
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: True)
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    return target_helper, old_helper, old_source, new_source
 
 
 def _install_new_component_targets(fixture: TransactionFixture) -> None:
@@ -645,6 +1025,7 @@ def test_independent_helper_commits_after_real_state_and_database_transition(
     state["handoff_identity"] = helper_module.journal_handoff_identity(
         UpdateJournal.load(fixture.journal_path)
     )
+    state["completed_handoff_identity"] = None
     fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
     assert run_transaction(fixture.journal_path) == 0
     replayed_state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
@@ -809,6 +1190,382 @@ def test_crash_after_committed_journal_publication_replays_without_rollback(
     )
     assert fixture.application.read_bytes() == fixture.replacement
     assert launched == ["0.1.0"]
+
+
+def test_terminal_replay_rebinds_to_new_packaged_identity_after_cutover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    old_source = TEST_SOURCE_COMMIT
+    new_source = "b" * 40
+    unrelated_source = "c" * 40
+    journal = UpdateJournal.load(fixture.journal_path)
+    component = json.loads(fixture.component_manifest.read_text(encoding="utf-8"))
+    component["source_commit"] = new_source
+    component_raw = canonical_json(component)
+    fixture.component_manifest.write_bytes(component_raw)
+    fixture.component_manifest.with_name(CHECKSUM_FILE_NAME).write_bytes(
+        f"{hashlib.sha256(component_raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    )
+    journal.target_source_commit = new_source
+    journal.component_manifest_sha256 = hashlib.sha256(component_raw).hexdigest()
+    journal.component_manifest_size = len(component_raw)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "offered_source_commit": new_source,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    journal.save(fixture.journal_path)
+    helper_module.bind_recovery_authority(journal, fixture.journal_path)
+    helper_module.bind_handoff_state(journal, fixture.journal_path)
+
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: False)
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    original_update_state = helper_module._update_state
+    crashed = False
+
+    def crash_after_terminal_journal(
+        current: UpdateJournal,
+        *,
+        phase: str,
+        error: str | None,
+        clear_transaction: bool,
+    ) -> None:
+        nonlocal crashed
+        if clear_transaction and current.phase is HelperPhase.COMMITTED and not crashed:
+            crashed = True
+            raise SystemExit(86)
+        original_update_state(
+            current,
+            phase=phase,
+            error=error,
+            clear_transaction=clear_transaction,
+        )
+
+    monkeypatch.setattr(helper_module, "_update_state", crash_after_terminal_journal)
+    with pytest.raises(SystemExit, match="86"):
+        run_transaction(fixture.journal_path)
+    assert crashed is True
+    assert json.loads(fixture.state_path.read_text(encoding="utf-8"))["current_source_commit"] == (
+        new_source
+    )
+
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: True)
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: unrelated_source)
+    with pytest.raises(HelperError, match="journal_identity_invalid"):
+        UpdateJournal.load(fixture.journal_path)
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: new_source)
+    assert run_transaction(fixture.journal_path) == 0
+    replayed = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert replayed["transaction_path"] is None
+    assert replayed["current_source_commit"] == new_source
+    assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.COMMITTED
+
+
+def test_packaged_terminal_replay_dispatches_old_helper_to_target_and_rejects_bad_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    old_source = TEST_SOURCE_COMMIT
+    new_source = "b" * 40
+    journal = UpdateJournal.load(fixture.journal_path)
+    component = json.loads(fixture.component_manifest.read_text(encoding="utf-8"))
+    component["source_commit"] = new_source
+    component_raw = canonical_json(component)
+    fixture.component_manifest.write_bytes(component_raw)
+    fixture.component_manifest.with_name(CHECKSUM_FILE_NAME).write_bytes(
+        f"{hashlib.sha256(component_raw).hexdigest()}  {MANIFEST_FILE_NAME}\n".encode("ascii")
+    )
+    journal.target_source_commit = new_source
+    journal.component_manifest_sha256 = hashlib.sha256(component_raw).hexdigest()
+    journal.component_manifest_size = len(component_raw)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "offered_source_commit": new_source,
+            "handoff_identity": None,
+            "pending_handoff_identity": None,
+            "completed_handoff_identity": None,
+        }
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    journal.save(fixture.journal_path)
+    helper_module.bind_recovery_authority(journal, fixture.journal_path)
+    helper_module.bind_handoff_state(journal, fixture.journal_path)
+
+    launched: list[str] = []
+    _isolate_runtime(monkeypatch, launched)
+    monkeypatch.setattr(helper_module, "_run_bounded", _fake_commands(fixture))
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: False)
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    original_update_state = helper_module._update_state
+    crashed = False
+
+    def crash_after_terminal_journal(
+        current: UpdateJournal,
+        *,
+        phase: str,
+        error: str | None,
+        clear_transaction: bool,
+    ) -> None:
+        nonlocal crashed
+        if clear_transaction and current.phase is HelperPhase.COMMITTED and not crashed:
+            crashed = True
+            raise SystemExit(86)
+        original_update_state(
+            current,
+            phase=phase,
+            error=error,
+            clear_transaction=clear_transaction,
+        )
+
+    monkeypatch.setattr(helper_module, "_update_state", crash_after_terminal_journal)
+    with pytest.raises(SystemExit, match="86"):
+        run_transaction(fixture.journal_path)
+    assert crashed is True
+    assert fixture.application.read_bytes() == fixture.replacement
+    target_helper = Path(journal.stable_update_helper_path)
+    old_helper = Path(journal.helper_path)
+
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: True)
+    dispatched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal_path: dispatched.append((helper, journal_path)),
+    )
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: new_source)
+    helper_module.launch_recovery_helper(old_helper, fixture.journal_path)
+    assert dispatched == [(target_helper, fixture.journal_path)]
+    dispatched.clear()
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    monkeypatch.setattr(helper_module.sys, "executable", str(old_helper))
+    assert run_transaction(fixture.journal_path) == 0
+    assert dispatched == [(target_helper, fixture.journal_path)]
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: new_source)
+    assert run_transaction(fixture.journal_path) == 0
+    assert json.loads(fixture.state_path.read_text(encoding="utf-8"))["transaction_path"] is None
+
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: old_source)
+    monkeypatch.setattr(helper_module.sys, "executable", str(tmp_path / "unrelated.exe"))
+    with pytest.raises(HelperError, match="recovery_helper_untrusted"):
+        run_transaction(fixture.journal_path)
+
+    monkeypatch.setattr(helper_module.sys, "executable", str(old_helper))
+    old_helper_bytes = old_helper.read_bytes()
+    old_helper.write_bytes(b"tampered old helper")
+    with pytest.raises(HelperError, match="journal_digest_invalid"):
+        run_transaction(fixture.journal_path)
+    old_helper.write_bytes(old_helper_bytes)
+
+    target_helper_bytes = target_helper.read_bytes()
+    target_helper.write_bytes(b"stale target helper")
+    with pytest.raises(HelperError, match="component_manifest_invalid"):
+        run_transaction(fixture.journal_path)
+    target_helper.write_bytes(target_helper_bytes)
+
+
+def test_packaged_core_start_guard_dispatches_authenticated_terminal_replay_to_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    target_helper, _old_helper, old_source, new_source = (
+        _prepare_interrupted_packaged_terminal_replay(fixture, monkeypatch)
+    )
+    assert old_source != new_source
+    state_before = fixture.state_path.read_bytes()
+    journal_before = fixture.journal_path.read_bytes()
+    dispatched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal_path: dispatched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert dispatched == [(target_helper, fixture.journal_path)]
+    assert fixture.state_path.read_bytes() == state_before
+    assert fixture.journal_path.read_bytes() == journal_before
+
+    dispatched.clear()
+    assert ensure_recovery_before_core() is False
+    assert dispatched == [(target_helper, fixture.journal_path)]
+
+    dispatched.clear()
+    monkeypatch.setattr(helper_module, "_packaged_source_commit", lambda: new_source)
+    assert ensure_recovery_before_core() is False
+    assert dispatched == [(target_helper, fixture.journal_path)]
+
+
+@pytest.mark.parametrize("tampered_target", ["manifest", "updater", "old_helper"])
+def test_packaged_core_start_guard_rejects_tampered_terminal_component(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tampered_target: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    target_helper, old_helper, _old_source, _new_source = (
+        _prepare_interrupted_packaged_terminal_replay(fixture, monkeypatch)
+    )
+    if tampered_target == "manifest":
+        fixture.component_manifest.write_bytes(
+            fixture.component_manifest.read_bytes() + b"tampered"
+        )
+    elif tampered_target == "updater":
+        target_helper.write_bytes(b"tampered target updater")
+    else:
+        old_helper.write_bytes(b"tampered old updater")
+    dispatched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal_path: dispatched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert dispatched == []
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "helper_launch_failed"
+
+
+def test_source_mode_does_not_enter_packaged_terminal_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _target_helper, _old_helper, _old_source, _new_source = (
+        _prepare_interrupted_packaged_terminal_replay(fixture, monkeypatch)
+    )
+    monkeypatch.setattr(helper_module.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(helper_module, "_packaged_helper_runtime", lambda: False)
+    dispatched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal_path: dispatched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is True
+    assert dispatched == []
+
+
+@pytest.mark.parametrize("tampered", ["journal", "state"])
+def test_packaged_core_start_guard_rejects_tampered_terminal_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tampered: str,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _target_helper, _old_helper, _old_source, _new_source = (
+        _prepare_interrupted_packaged_terminal_replay(fixture, monkeypatch)
+    )
+    if tampered == "journal":
+        journal = json.loads(fixture.journal_path.read_text(encoding="utf-8"))
+        journal["recovery_authority_mac"] = "0" * 64
+        fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
+    else:
+        state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+        state["handoff_identity"] = "0" * 64
+        fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    dispatched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal_path: dispatched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert dispatched == []
+
+
+@pytest.mark.parametrize("journal_phase", [HelperPhase.BINARY_REPLACED, HelperPhase.ROLLED_BACK])
+def test_packaged_core_start_guard_does_not_replay_noncommitted_or_rollback_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    journal_phase: HelperPhase,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _target_helper, _old_helper, _old_source, _new_source = (
+        _prepare_interrupted_packaged_terminal_replay(fixture, monkeypatch)
+    )
+    journal = UpdateJournal.load(fixture.journal_path, terminal_replay=True)
+    if journal_phase is HelperPhase.ROLLED_BACK:
+        journal.phase = journal_phase
+        journal.terminal_authority_mac = None
+        helper_module.seal_terminal_recovery_authority(journal)
+        journal.save(fixture.journal_path)
+        state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+        state.update(
+            {
+                "phase": "rolled_back",
+                "current_version": journal.current_version,
+                "current_source_commit": journal.current_source_commit,
+            }
+        )
+        fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    else:
+        journal.phase = journal_phase
+        journal.save(fixture.journal_path)
+    dispatched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal_path: dispatched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    if journal_phase is HelperPhase.ROLLED_BACK:
+        assert dispatched == [(_old_helper, fixture.journal_path)]
+    else:
+        assert dispatched == []
+    if journal_phase is not HelperPhase.ROLLED_BACK:
+        diagnostic = json.loads(
+            (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert diagnostic["status"] == "blocked"
+
+
+def test_packaged_core_start_guard_rejects_stale_terminal_transaction_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    _target_helper, _old_helper, _old_source, _new_source = (
+        _prepare_interrupted_packaged_terminal_replay(fixture, monkeypatch)
+    )
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["transaction_path"] = str(
+        fixture.state_path.parent / "transactions" / ("b" * 24) / "journal.json"
+    )
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    dispatched: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal_path: dispatched.append((helper, journal_path)),
+    )
+
+    assert ensure_recovery_before_core() is False
+    assert dispatched == []
 
 
 @pytest.mark.parametrize("hostile_report_phase", ["apply", "diagnostics", "health"])
@@ -2864,6 +3621,8 @@ def test_terminal_journal_requires_state_first_terminal_phase(
         ("core_port", True),
         ("replacement_size", "large"),
         ("schema_version", 99),
+        ("schema_version", True),
+        ("schema_version", 1.0),
     ],
 )
 def test_malformed_journal_values_fail_closed(
@@ -2878,6 +3637,37 @@ def test_malformed_journal_values_fail_closed(
     fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
     with pytest.raises(HelperError):
         UpdateJournal.load(fixture.journal_path)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "current_source_commit",
+        "target_source_commit",
+        "rollback_source_commit",
+        "recovery_source_commit",
+    ],
+)
+@pytest.mark.parametrize("value", [None, "b" * 40, "a" * 39, True])
+def test_frozen_helper_rejects_missing_or_conflicting_journal_source_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Any,
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    journal = json.loads(fixture.journal_path.read_text(encoding="utf-8"))
+    journal[field] = value
+    fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    if field == "target_source_commit" and isinstance(value, str) and len(value) == 40:
+        journal_value = UpdateJournal.load(fixture.journal_path)
+        with pytest.raises(HelperError, match="component_manifest_invalid"):
+            helper_module._validate_component_manifest(journal_value)
+    else:
+        with pytest.raises(HelperError, match="journal_identity_invalid"):
+            UpdateJournal.load(fixture.journal_path)
 
 
 def test_journal_failure_diagnostic_is_bounded_and_non_sensitive(tmp_path: Path) -> None:

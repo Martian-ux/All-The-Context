@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -27,13 +28,10 @@ import uvicorn
 from fastapi import (
     Depends,
     FastAPI,
-    File,
-    Form,
     Header,
     HTTPException,
     Query,
     Request,
-    UploadFile,
 )
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -42,7 +40,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 from starlette.background import BackgroundTask
-from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .. import __version__
@@ -54,13 +52,17 @@ from ..browser_session import (
     BrowserSessions,
     BrowserSessionTickets,
 )
+from ..build_identity import runtime_build_identity, runtime_build_identity_status
 from ..capture import CaptureError, CaptureRunResult
 from ..capture_runtime import (
     authorize_local_workspace,
     refresh_local_workspace_adapter,
     reject_reserved_workspace_provider,
 )
-from ..capture_scheduler import scheduler_update_health_forced_off
+from ..capture_scheduler import (
+    RUNTIME_READINESS_ERROR_CODE,
+    scheduler_update_health_forced_off,
+)
 from ..claude_code_config import (
     ClaudeCodeConfigResult,
     claude_code_is_detected,
@@ -178,6 +180,14 @@ _CLAUDE_CODE_MEMORY_VALIDATION_ROUTES = {
     "/v1/claude-code/memory/correct": "correct",
     "/v1/claude-code/memory/forget": "forget",
 }
+UPDATE_ACTIVATION_BUSY_REASON = "Update activation deferred until Core activity is quiescent"
+
+
+class _UploadCancelled:
+    __slots__ = ()
+
+
+_UPLOAD_CANCELLED = _UploadCancelled()
 
 
 class _LifecycleBodyTooLarge(Exception):
@@ -376,6 +386,7 @@ def create_app(
     update_manager: UpdateManager | None = None,
 ) -> FastAPI:
     active_config = config or CoreConfig.default()
+    build_identity = runtime_build_identity(required=bool(getattr(sys, "frozen", False)))
     core = service or CoreService(active_config)
     # Legacy Edge stores exist only for isolated cleanup of pre-V1 residual state.
     # Ordinary Core operation never starts the sync worker, enrolls, connects, or
@@ -389,6 +400,7 @@ def create_app(
             keyring_path=default_update.keyring_path,
             manifest_urls=default_update.manifest_urls,
             current_version=default_update.current_version,
+            current_source_commit=default_update.current_source_commit,
             platform_name=default_update.platform_name,
             architecture=default_update.architecture,
         ),
@@ -403,6 +415,7 @@ def create_app(
     )
     operation_observer_executor: ThreadPoolExecutor | None = None
     operation_observer_executor_lock = threading.Lock()
+    recovery_timer: threading.Timer | None = None
 
     def get_operation_observer_executor() -> ThreadPoolExecutor:
         nonlocal operation_observer_executor
@@ -416,48 +429,71 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        nonlocal operation_observer_executor
+        nonlocal operation_observer_executor, recovery_timer
         observer_executor = get_operation_observer_executor()
+        recovery_lock = threading.Lock()
+        recovery_stopping = threading.Event()
         try:
-            await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
+            await core.activity_gate.run_in_threadpool(core.store.resume_purge_jobs, limit=1)
             if not scheduler_update_health_forced_off():
-                await run_in_threadpool(core.capture_scheduler.start)
+                await core.activity_gate.run_in_threadpool(core.capture_scheduler.start)
                 if (
                     updates.preferences.enabled
                     and updates.preferences.channel in updates.config.manifest_urls
                 ):
                     update_automation.start()
                 if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
-                    recovery = threading.Timer(1.0, updates.recover_after_restart)
-                    recovery.daemon = True
-                    recovery.start()
+
+                    def recover_after_restart() -> None:
+                        with recovery_lock:
+                            if recovery_stopping.is_set():
+                                return
+                            updates.recover_after_restart()
+
+                    recovery_timer = threading.Timer(1.0, recover_after_restart)
+                    recovery_timer.daemon = True
+                    recovery_timer.start()
             # Never start the legacy Edge network worker. Cleanup routes construct
             # outbound contacts only when an operator explicitly decommissions an
             # already-configured residual connection.
             yield
         finally:
-            try:
-                await run_in_threadpool(update_automation.shutdown)
-            finally:
+            # Close only while the gate owns its exclusive writer barrier. The
+            # barrier rejects new activity first, drains all existing task and
+            # worker leases, and then keeps Core.close isolated from readers.
+            async with core.activity_gate.shutdown_async():
+                if recovery_timer is not None:
+                    timer = recovery_timer
+                    recovery_timer = None
+                    with recovery_lock:
+                        recovery_stopping.set()
+                        timer.cancel()
+                    timer.join()
                 try:
-                    await run_in_threadpool(core.capture_scheduler.shutdown)
+                    await core.activity_gate.run_in_threadpool(update_automation.shutdown)
                 finally:
                     try:
-                        await asyncio.get_running_loop().run_in_executor(
-                            observer_executor,
-                            core.store.close_import_operation_observer,
-                        )
+                        await core.activity_gate.run_in_threadpool(core.capture_scheduler.shutdown)
                     finally:
                         try:
-                            observer_executor.shutdown(wait=True, cancel_futures=True)
+                            await asyncio.get_running_loop().run_in_executor(
+                                observer_executor,
+                                core.store.close_import_operation_observer,
+                            )
                         finally:
-                            with operation_observer_executor_lock:
-                                if operation_observer_executor is observer_executor:
-                                    operation_observer_executor = None
+                            try:
+                                observer_executor.shutdown(wait=True, cancel_futures=True)
+                            finally:
+                                with operation_observer_executor_lock:
+                                    if operation_observer_executor is observer_executor:
+                                        operation_observer_executor = None
+                                await core.activity_gate.run_in_threadpool(
+                                    core.close, close_observer=False
+                                )
 
     app = FastAPI(
         title="All The Context Core",
-        version=__version__,
+        version=build_identity.version if build_identity is not None else __version__,
         docs_url="/docs",
         redoc_url=None,
         lifespan=lifespan,
@@ -631,8 +667,10 @@ def create_app(
             raise HTTPException(status_code=422, detail="unknown client scope")
 
     @app.get("/health")
-    def health(challenge: str | None = None) -> dict[str, str]:
-        result = {"status": "ok", "component": "core"}
+    def health(challenge: str | None = None) -> dict[str, Any]:
+        result: dict[str, Any] = {"status": "ok", "component": "core"}
+        if build_identity is not None:
+            result["build_identity"] = build_identity.as_dict()
         if challenge is not None:
             try:
                 result["proof"] = instance_proof(active_config, challenge, instance_secret)
@@ -885,7 +923,106 @@ def create_app(
     @app.get("/v1/context/status")
     def context_status(principal: Principal) -> dict[str, Any]:
         require(principal, "context:status")
-        return core.store.status()
+        try:
+            result = core.store.status()
+            result["build_identity"] = runtime_build_identity_status()
+            runtime = core.capture_scheduler.readiness()
+            scheduler = dict(runtime["scheduler"])
+            scheduler["alive"] = scheduler["running"]
+            try:
+                build_project_runtime(
+                    core.store,
+                    character_budget=RUNTIME_MAX_CAPSULE_CHARS,
+                    item_budget=RUNTIME_MAX_CAPSULE_ITEMS,
+                    principal=principal,
+                )
+                project_projection = {
+                    "available": True,
+                    "reason_code": None,
+                    "state": "available",
+                }
+            except ProjectRuntimeError:
+                project_projection = {
+                    "available": False,
+                    "reason_code": "project_projection_unavailable",
+                    "state": "unavailable",
+                }
+            capture = runtime["capture"]
+            readiness_state = "ready"
+            scheduler_degraded = (
+                scheduler["reason_code"] == RUNTIME_READINESS_ERROR_CODE
+                or not scheduler["config_valid"]
+                or scheduler["worker_state"] == "failed"
+                or scheduler["worker_failure_code"] is not None
+                or scheduler["last_cycle_reason_code"] is not None
+                or (scheduler["dispatch_allowed"] and scheduler["worker_state"] != "running")
+                or (scheduler["dispatch_allowed"] and not scheduler["alive"])
+                or (
+                    scheduler["dispatch_allowed"]
+                    and scheduler["adapter_refresh_state"] == "unavailable"
+                )
+                or (
+                    scheduler["durable_enabled"]
+                    and not scheduler["process_gate"]
+                    and not scheduler["update_health_forced_off"]
+                )
+            )
+            if (
+                scheduler_degraded
+                or capture["state"] != "healthy"
+                or not project_projection["available"]
+            ):
+                readiness_state = "degraded"
+            result["ready"] = readiness_state == "ready"
+            result["runtime_readiness"] = {
+                "capture": capture,
+                "project_projection": project_projection,
+                "scheduler": scheduler,
+                "state": readiness_state,
+            }
+            return result
+        except Exception:
+            # This route is authenticated, but every readiness dependency is
+            # still untrusted runtime state. Keep failures content-free and
+            # deterministic; liveness remains the separate /health contract.
+            return {
+                "ready": False,
+                "build_identity": runtime_build_identity_status(),
+                "runtime_readiness": {
+                    "capture": {
+                        "inspected_source_count": 0,
+                        "reason_codes": [RUNTIME_READINESS_ERROR_CODE],
+                        "source_total": None,
+                        "sources": [],
+                        "state": "unavailable",
+                        "truncated": False,
+                    },
+                    "project_projection": {
+                        "available": False,
+                        "reason_code": RUNTIME_READINESS_ERROR_CODE,
+                        "state": "unavailable",
+                    },
+                    "scheduler": {
+                        "config_valid": False,
+                        "dispatch_allowed": False,
+                        "durable_enabled": False,
+                        "enabled": False,
+                        "max_workers": 1,
+                        "process_gate": False,
+                        "reason_code": RUNTIME_READINESS_ERROR_CODE,
+                        "running": False,
+                        "update_health_forced_off": False,
+                        "worker_failure_code": None,
+                        "worker_failure_generation": None,
+                        "worker_generation": 0,
+                        "worker_restart_count": 0,
+                        "worker_restartable": False,
+                        "worker_state": "failed",
+                    },
+                    "reason_code": RUNTIME_READINESS_ERROR_CODE,
+                    "state": "degraded",
+                },
+            }
 
     @app.get("/v1/context/coverage")
     def context_truth_coverage(principal: Principal) -> dict[str, Any]:
@@ -973,7 +1110,7 @@ def create_app(
 
         # Bounded queue bridges the async request body to the sync Core worker.
         # maxsize keeps memory within the import RSS envelope.
-        chunk_queue: Queue[bytes | None] = Queue(maxsize=8)
+        chunk_queue: Queue[bytes | _UploadCancelled | None] = Queue(maxsize=8)
         stream_error: list[BaseException] = []
         stop_pump = threading.Event()
 
@@ -986,6 +1123,34 @@ def create_app(
                 except Full:
                     continue
             return False
+
+        request_aborted = threading.Event()
+
+        def _signal_worker_end(*, cancel_operation: bool = False) -> None:
+            """Wake the sync iterator even when the bounded queue is full."""
+            stop_pump.set()
+            if cancel_operation:
+                request_aborted.set()
+                core.import_operations.cancel_registry.request_cancel(operation_id)
+            # A sentinel must be visible to the worker, not left behind a full
+            # queue. A producer already in put() will observe stop_pump and any
+            # late item is drained by the worker's finally block.
+            while True:
+                try:
+                    chunk_queue.get_nowait()
+                except Empty:
+                    break
+            end_marker: _UploadCancelled | None = _UPLOAD_CANCELLED if cancel_operation else None
+            while True:
+                try:
+                    chunk_queue.put_nowait(end_marker)
+                    break
+                except Full:
+                    # A producer that was already inside Queue.put may win
+                    # one final race after stop_pump is set. Remove that item
+                    # and retry until the sentinel is definitely queued.
+                    with suppress(Empty):
+                        chunk_queue.get_nowait()
 
         async def _pump() -> None:
             try:
@@ -1007,9 +1172,14 @@ def create_app(
                             return
                 await asyncio.to_thread(_put_bounded, None)
             except BaseException as error:
-                stream_error.append(error)
-                with suppress(Exception):
-                    await asyncio.to_thread(_put_bounded, None)
+                if isinstance(error, asyncio.CancelledError):
+                    stream_error.append(
+                        ImportCancelledError("multipart upload request was canceled")
+                    )
+                    _signal_worker_end(cancel_operation=True)
+                else:
+                    stream_error.append(error)
+                    _signal_worker_end()
 
         pump_task = asyncio.create_task(_pump())
 
@@ -1036,6 +1206,8 @@ def create_app(
                                 "import cancelled by operator request"
                             ) from None
                         continue
+                    if item is _UPLOAD_CANCELLED:
+                        raise ImportCancelledError("multipart upload request was canceled")
                     if item is None:
                         if stream_error:
                             raise stream_error[0]
@@ -1060,9 +1232,22 @@ def create_app(
                             break
 
         try:
-            return await run_in_threadpool(run_upload)
+            cancel_options: dict[str, Any] = {
+                "_atc_cancel_callback": lambda: _signal_worker_end(cancel_operation=True),
+                "_atc_drain_on_cancel": True,
+            }
+            return await core.activity_gate.run_in_threadpool(
+                run_upload,
+                **cancel_options,
+            )
+        except asyncio.CancelledError:
+            # The gate helper has already drained a started worker. This flag
+            # also covers cancellation while admission was still pending, when
+            # no worker lease existed yet.
+            request_aborted.set()
+            raise
         finally:
-            stop_pump.set()
+            _signal_worker_end(cancel_operation=request_aborted.is_set())
             if not pump_task.done():
                 pump_task.cancel()
             # CancelledError is BaseException (not Exception) on supported Python.
@@ -1074,8 +1259,19 @@ def create_app(
                 pass
             except Exception:
                 pass
+            if request_aborted.is_set():
+                # Persist cancellation for an operation whose worker never
+                # started, or whose bridge was canceled before it could observe
+                # the sentinel. Terminal workers make this idempotent.
+                with suppress(BaseException):
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            core.import_operations.cancel_operation,
+                            operation_id,
+                        )
+                    )
             # Drain so no blocked threadpool put remains after disconnect/cancel.
-            with suppress(Exception):
+            with suppress(BaseException):
                 while True:
                     try:
                         chunk_queue.get_nowait()
@@ -1090,58 +1286,82 @@ def create_app(
     @app.post("/v1/admin/import-operations/{operation_id}/retry")
     async def retry_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        return await run_in_threadpool(core.import_operations.retry_operation, operation_id)
+        return await core.activity_gate.run_in_threadpool(
+            core.import_operations.retry_operation, operation_id
+        )
 
     @app.post("/v1/admin/import")
     async def import_source(
+        http_request: Request,
         principal: Principal,
-        file: Annotated[UploadFile, File()],
-        source_service: Annotated[str, Form()] = "auto",
-        provider: Annotated[str | None, Form()] = None,
     ) -> dict[str, Any]:
         """Compatibility multipart import. Prefer the import-operations API."""
         require(principal, "admin")
-        safe_name = Path(file.filename or "import.txt").name
-        # Multipart UploadFile is async-only; stage to a temp path with bounded reads,
-        # then stream through the operation lifecycle so the same cancel/progress rules apply.
-        with tempfile.TemporaryDirectory(
-            prefix="atc-import-", dir=active_config.data_dir
-        ) as temporary_directory:
-            upload_path = Path(temporary_directory) / "source-upload"
-            total = 0
-            with upload_path.open("wb") as destination:
-                while chunk := await file.read(1024 * 1024):
-                    total += len(chunk)
-                    if total > active_config.max_import_bytes:
-                        raise InvalidStateError("import exceeds configured size limit")
-                    destination.write(chunk)
-            operation = core.import_operations.start_operation(
-                declared_byte_size=total,
-                filename=safe_name,
-                source_service=source_service,
-                provider=provider,
-            )
+        # FastAPI's File/Form parameters parse multipart before entering this
+        # handler. Parse explicitly after admission so receive, parser spool,
+        # compatibility staging, and the already-gated import helpers share one
+        # Core activity section and updater activation can fence the whole path.
+        async with core.activity_gate.activity_async():
+            # Keep form() evaluation inside the already-admitted scope. The
+            # parser owns spooled files until the whole compatibility path ends.
+            form = await http_request.form()
+            try:
+                file_value = form.get("file")
+                if not isinstance(file_value, StarletteUploadFile):
+                    raise HTTPException(status_code=422, detail="Field 'file' is required")
+                source_service_value = form.get("source_service", "auto")
+                if not isinstance(source_service_value, str):
+                    raise HTTPException(status_code=422, detail="Invalid source_service field")
+                provider_value = form.get("provider")
+                if provider_value is not None and not isinstance(provider_value, str):
+                    raise HTTPException(status_code=422, detail="Invalid provider field")
 
-            def file_iter() -> Any:
-                with upload_path.open("rb") as handle:
-                    while chunk := handle.read(1024 * 1024):
-                        yield chunk
+                safe_name = Path(file_value.filename or "import.txt").name
+                # Multipart UploadFile is async-only; stage to a temp path with bounded reads,
+                # then stream through the operation lifecycle so the same cancel/progress
+                # rules apply.
+                with tempfile.TemporaryDirectory(
+                    prefix="atc-import-", dir=active_config.data_dir
+                ) as temporary_directory:
+                    upload_path = Path(temporary_directory) / "source-upload"
+                    total = 0
+                    with upload_path.open("wb") as destination:
+                        while chunk := await file_value.read(1024 * 1024):
+                            total += len(chunk)
+                            if total > active_config.max_import_bytes:
+                                raise InvalidStateError("import exceeds configured size limit")
+                            destination.write(chunk)
+                    operation = core.import_operations.start_operation(
+                        declared_byte_size=total,
+                        filename=safe_name,
+                        source_service=source_service_value,
+                        provider=provider_value,
+                    )
 
-            finished = await run_in_threadpool(
-                core.import_operations.accept_upload,
-                str(operation["operation_id"]),
-                file_iter(),
-                expected_size=total,
-                process_after=True,
-            )
-            result = finished.get("result")
-            if isinstance(result, dict):
-                return result
-            if finished.get("status") == "complete" and finished.get("source_id"):
-                return await run_in_threadpool(
-                    core.imports.reprocess_source, str(finished["source_id"])
-                )
-            raise InvalidStateError(str(finished.get("error_message") or "import operation failed"))
+                    def file_iter() -> Any:
+                        with upload_path.open("rb") as handle:
+                            while chunk := handle.read(1024 * 1024):
+                                yield chunk
+
+                    finished = await core.activity_gate.run_in_threadpool(
+                        core.import_operations.accept_upload,
+                        str(operation["operation_id"]),
+                        file_iter(),
+                        expected_size=total,
+                        process_after=True,
+                    )
+                    result = finished.get("result")
+                    if isinstance(result, dict):
+                        return result
+                    if finished.get("status") == "complete" and finished.get("source_id"):
+                        return await core.activity_gate.run_in_threadpool(
+                            core.imports.reprocess_source, str(finished["source_id"])
+                        )
+                    raise InvalidStateError(
+                        str(finished.get("error_message") or "import operation failed")
+                    )
+            finally:
+                await form.close()
 
     @app.get("/v1/admin/candidates", deprecated=True, tags=["legacy compatibility"])
     def list_candidates(
@@ -1353,7 +1573,7 @@ def create_app(
             refresh_local_workspace_adapter(core.capture, active_config)
             return core.capture.run(source_id)
 
-        result = await run_in_threadpool(run_now)
+        result = await core.activity_gate.run_in_threadpool(run_now)
         return result.model_dump(mode="json")
 
     @app.post("/v1/admin/sources/{source_id}/reprocess")
@@ -1363,7 +1583,7 @@ def create_app(
         rebuild: bool = False,
     ) -> dict[str, Any]:
         require(principal, "admin")
-        return await run_in_threadpool(
+        return await core.activity_gate.run_in_threadpool(
             partial(core.imports.reprocess_source, source_id, rebuild=rebuild)
         )
 
@@ -1632,7 +1852,7 @@ def create_app(
             )
             os.close(descriptor)
             temporary_path = Path(raw_path)
-            await run_in_threadpool(
+            await core.activity_gate.run_in_threadpool(
                 create_export,
                 active_config.database_path,
                 temporary_path,
@@ -2273,6 +2493,24 @@ def create_app(
         except UpdateError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    def ensure_update_activation_ready() -> None:
+        """Refuse explicit activation while Core-owned work is still active."""
+
+        try:
+            imports = core.import_operations.activity_snapshot()
+            direct_imports = core.imports.activity_snapshot()
+            capture = core.capture_scheduler.activity_snapshot()
+        except (OSError, sqlite3.Error, StorageError) as error:
+            raise UpdateError(UPDATE_ACTIVATION_BUSY_REASON) from error
+        if (
+            bool(imports.get("active"))
+            or bool(direct_imports.get("active"))
+            or bool(capture.get("foreground_run_active"))
+            or bool(capture.get("scheduled_cycle_active"))
+            or bool(capture.get("durable_lease_active"))
+        ):
+            raise UpdateError(UPDATE_ACTIVATION_BUSY_REASON)
+
     @app.post("/v1/admin/updates/check")
     def check_for_updates(principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
@@ -2319,7 +2557,22 @@ def create_app(
     @app.post("/v1/admin/updates/install")
     def install_update(principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        status = update_action(updates.install)
+
+        def install_when_ready() -> dict[str, Any]:
+            # The first observation gives the explicit route an immediate
+            # content-free refusal. UpdateManager repeats the same callback
+            # after acquiring its exclusive operation gate and before any
+            # install state, backup, credential, or helper mutation.
+            ensure_update_activation_ready()
+            # Keep the Core activity barrier through that final check and the
+            # first updater mutation. New imports, scheduler cycles, and
+            # capture leases must wait until activation has committed its
+            # installing/recovery handoff or refused it.
+            with core.activity_gate.exclusive():
+                ensure_update_activation_ready()
+                return updates.install(readiness_check=ensure_update_activation_ready)
+
+        status = update_action(install_when_ready)
         if (
             status.get("phase") == UpdatePhase.RESTART_REQUIRED.value
             and status.get("automatic_install_supported") is True
@@ -2364,6 +2617,7 @@ def run_update_health_check(report_path: Path) -> int:
     """Start the real loopback Core once, prove health, and shut down cleanly."""
 
     config = CoreConfig.default()
+    build_identity = runtime_build_identity(required=bool(getattr(sys, "frozen", False)))
     finished = threading.Event()
     healthy = threading.Event()
     servers: list[uvicorn.Server] = []
@@ -2376,7 +2630,14 @@ def run_update_health_check(report_path: Path) -> int:
                 request = urllib.request.Request(url, headers={"Accept": "application/json"})
                 with urllib.request.urlopen(request, timeout=1) as response:
                     value = json.loads(response.read(4097).decode("utf-8"))
-                if value == {"status": "ok", "component": "core"}:
+                if (
+                    value.get("status") == "ok"
+                    and value.get("component") == "core"
+                    and (
+                        build_identity is None
+                        or value.get("build_identity") == build_identity.as_dict()
+                    )
+                ):
                     healthy.set()
                     if servers:
                         servers[0].should_exit = True
@@ -2438,11 +2699,15 @@ def run_update_health_check(report_path: Path) -> int:
     except (OSError, sqlite3.Error, ValueError):
         success = False
 
-    payload = (
-        {"component": "core", "health": "ok", "version": __version__}
-        if success
-        else {"component": "core", "health": "failed", "version": __version__}
-    )
+    payload: dict[str, Any] = {
+        "component": "core",
+        "health": "ok" if success else "failed",
+        "version": build_identity.version if build_identity is not None else __version__,
+    }
+    if build_identity is not None:
+        payload["build_identity"] = build_identity.as_dict()
+        payload["source_commit"] = build_identity.source_commit
+        payload["build_identity_sha256"] = build_identity.sha256
     report_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
     try:

@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import json
 import plistlib
+import re
 import shutil
 import subprocess
 import tarfile
@@ -13,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from allthecontext.build_identity import BuildIdentity, BuildIdentityError
 from allthecontext.macos_bundle import validate_macos_bundle_links
 from allthecontext.release_manifest import sha256_file
 
@@ -303,6 +305,7 @@ def verify_package(
     *,
     platform_name: str,
     architecture: str | None = None,
+    source_commit: str | None = None,
 ) -> dict[str, Any]:
     directory = directory.expanduser().resolve(strict=True)
     requested_architecture = architecture
@@ -332,9 +335,17 @@ def verify_package(
         "macos": "all-the-context-recovery",
         "linux": "all-the-context",
     }
-    if set(report) != expected_keys:
+    optional_keys = {"channel", "source_commit", "build_identity", "build_identity_sha256"}
+    report_fields = set(report)
+    if source_commit is not None and report_fields != expected_keys | optional_keys:
+        raise RuntimeError("package report must contain its complete build identity")
+    if report_fields != expected_keys and report_fields != expected_keys | optional_keys:
         raise RuntimeError("package report has an unexpected schema")
-    if report["schema_version"] != 1 or report["platform"] != platform_name:
+    if (
+        type(report["schema_version"]) is not int
+        or report["schema_version"] != 1
+        or report["platform"] != platform_name
+    ):
         raise RuntimeError("package report identifies the wrong platform")
     reported_architecture = report.get("architecture")
     if reported_architecture not in {"arm64", "x86_64"}:
@@ -344,6 +355,23 @@ def verify_package(
     version = report.get("version")
     if not isinstance(version, str) or not version:
         raise RuntimeError("package report version is invalid")
+    if source_commit is not None and re.fullmatch(r"[0-9a-f]{40}", source_commit) is None:
+        raise RuntimeError("package report verification source commit is malformed")
+    if report_fields == expected_keys | optional_keys:
+        try:
+            identity = BuildIdentity.from_mapping(report["build_identity"])
+        except (BuildIdentityError, TypeError) as exc:
+            raise RuntimeError("package report build identity is invalid") from exc
+        if (
+            report.get("channel") != identity.channel
+            or report.get("version") != identity.version
+            or report.get("platform") != identity.platform
+            or report.get("architecture") != identity.architecture
+            or report.get("source_commit") != identity.source_commit
+            or report.get("build_identity_sha256") != identity.sha256
+            or (source_commit is not None and identity.source_commit != source_commit)
+        ):
+            raise RuntimeError("package report build identity contradicts its fields")
     if report["trust"] != "unsigned-community":
         raise RuntimeError("package report does not disclose unsigned trust")
     if report.get("recovery_surface") != expected_recovery_surface.get(platform_name):
@@ -383,11 +411,13 @@ def main() -> int:
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--platform", choices=("windows", "macos", "linux"), required=True)
     parser.add_argument("--architecture", choices=("arm64", "x86_64"))
+    parser.add_argument("--source-commit")
     arguments = parser.parse_args()
     report = verify_package(
         arguments.directory,
         platform_name=arguments.platform,
         architecture=arguments.architecture,
+        source_commit=arguments.source_commit,
     )
     print(
         json.dumps(

@@ -503,7 +503,11 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         missing = sorted(required - set(value))
         raise ManifestError(f"acceptance receipt is missing fields: {', '.join(missing)}")
     schema_version = value.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != RECEIPT_SCHEMA_VERSION:
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != RECEIPT_SCHEMA_VERSION
+    ):
         raise ManifestError("acceptance receipt schema_version must be integer 1")
     if value.get("content_free") is not True:
         raise ManifestError("acceptance receipt must declare content_free=true")
@@ -746,7 +750,11 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
         missing = sorted(required - set(value))
         raise ManifestError(f"acceptance receipt bundle is missing fields: {', '.join(missing)}")
     bundle_schema = value.get("schema_version")
-    if isinstance(bundle_schema, bool) or bundle_schema != RECEIPT_SCHEMA_VERSION:
+    if (
+        isinstance(bundle_schema, bool)
+        or not isinstance(bundle_schema, int)
+        or bundle_schema != RECEIPT_SCHEMA_VERSION
+    ):
         raise ManifestError("acceptance receipt bundle schema_version must be integer 1")
     source_commit = value.get("source_commit")
     candidate_sha256 = value.get("candidate_sha256")

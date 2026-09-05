@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from .build_identity import BuildIdentity, BuildIdentityError
 from .exact_source_gate import load_matrix_evidence
 from .release_manifest import (
     ARCHITECTURES,
@@ -111,17 +112,10 @@ def _descriptor_path(
     *,
     seen_names: set[str] | None = None,
 ) -> Path:
-    if not isinstance(descriptor, dict) or set(descriptor) != {"name", "sha256", "size"}:
-        raise ManifestError(f"candidate {field} descriptor is malformed")
-    name = descriptor.get("name")
-    digest = descriptor.get("sha256")
-    size = descriptor.get("size")
-    if not isinstance(name, str) or SAFE_FILE_NAME.fullmatch(name) is None:
-        raise ManifestError(f"candidate {field} name is unsafe")
-    if not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
-        raise ManifestError(f"candidate {field} digest is malformed")
-    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
-        raise ManifestError(f"candidate {field} size is malformed")
+    descriptor_value = _descriptor_value(descriptor, field)
+    name = cast(str, descriptor_value["name"])
+    digest = cast(str, descriptor_value["sha256"])
+    size = cast(int, descriptor_value["size"])
     if seen_names is not None:
         if name in seen_names or name.casefold() in {item.casefold() for item in seen_names}:
             raise ManifestError(f"candidate descriptor file is duplicated: {name}")
@@ -133,6 +127,23 @@ def _descriptor_path(
     if actual_digest != digest or actual_size != size:
         raise ManifestError(f"candidate {field} does not match its digest and size: {name}")
     return path
+
+
+def _descriptor_value(descriptor: object, field: str) -> dict[str, Any]:
+    """Validate a content-free candidate descriptor without reading its file."""
+
+    if not isinstance(descriptor, dict) or set(descriptor) != {"name", "sha256", "size"}:
+        raise ManifestError(f"candidate {field} descriptor is malformed")
+    name = descriptor.get("name")
+    digest = descriptor.get("sha256")
+    size = descriptor.get("size")
+    if not isinstance(name, str) or SAFE_FILE_NAME.fullmatch(name) is None:
+        raise ManifestError(f"candidate {field} name is unsafe")
+    if not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
+        raise ManifestError(f"candidate {field} digest is malformed")
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise ManifestError(f"candidate {field} size is malformed")
+    return {"name": name, "sha256": digest, "size": size}
 
 
 def _validate_checksum(archive: Path, checksum: Path) -> None:
@@ -153,6 +164,7 @@ def _validate_direct_package_report(
     *,
     version: str,
     target: ReleaseTarget,
+    source_commit: str | None = None,
 ) -> None:
     value = _read_json_object(report)
     required = {
@@ -170,6 +182,7 @@ def _validate_direct_package_report(
         "recovery_surface",
         "recovery_console_helper",
     }
+    optional = {"channel", "source_commit", "build_identity", "build_identity_sha256"}
     expected_recovery_surface = {
         "windows": "embedded-console-helper",
         "macos": "bundled-console-helper",
@@ -182,8 +195,12 @@ def _validate_direct_package_report(
     }[target.platform]
     digest, size = sha256_file(direct_package)
     source = value.get("source")
+    report_fields = set(value)
+    expected_fields = required | optional if source_commit is not None else required
     if (
-        set(value) != required
+        report_fields != expected_fields
+        or isinstance(value.get("schema_version"), bool)
+        or not isinstance(value.get("schema_version"), int)
         or value.get("schema_version") != 1
         or value.get("version") != version
         or value.get("platform") != target.platform
@@ -200,6 +217,21 @@ def _validate_direct_package_report(
         or SAFE_FILE_NAME.fullmatch(source) is None
     ):
         raise ManifestError("direct native package report does not match its package")
+    if report_fields == required | optional:
+        try:
+            identity = BuildIdentity.from_mapping(value["build_identity"])
+        except (BuildIdentityError, TypeError) as exc:
+            raise ManifestError("direct native package build identity is invalid") from exc
+        if (
+            value.get("channel") != identity.channel
+            or value.get("source_commit") != identity.source_commit
+            or value.get("build_identity_sha256") != identity.sha256
+            or identity.version != version
+            or identity.platform != target.platform
+            or identity.architecture != target.architecture
+            or (source_commit is not None and identity.source_commit != source_commit)
+        ):
+            raise ManifestError("direct native package build identity does not match its report")
     try:
         notice_text = notice.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
@@ -391,7 +423,11 @@ def _validate_component_inventory_pair(
     if set(inventory) != INVENTORY_ALLOWED_KEYS:
         raise ManifestError("component inventory fields or schema are invalid")
     schema_version = inventory.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != 1:
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != 1
+    ):
         raise ManifestError("component inventory schema_version must be integer 1")
     if inventory.get("source_commit") != source_commit:
         raise ManifestError("component inventory source_commit does not match the candidate")
@@ -561,6 +597,7 @@ def assemble_candidate(
             paths["direct_package_report"],
             version=version,
             target=target,
+            source_commit=source_commit,
         )
         artifacts.append(
             {
@@ -627,6 +664,7 @@ def verify_candidate(
     if (
         set(candidate) != required
         or isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
         or schema_version != (CANDIDATE_SCHEMA_VERSION)
     ):
         raise ManifestError("release candidate inventory fields or schema are invalid")
@@ -735,6 +773,7 @@ def verify_candidate(
             paths["direct_package_report"],
             version=version,
             target=target,
+            source_commit=source_commit,
         )
     if targets != sorted(targets):
         raise ManifestError("release candidate targets must use deterministic ordering")
@@ -754,6 +793,102 @@ def verify_candidate(
         raise ManifestError("release candidate checksum sidecar is required")
     _validate_checksum(candidate_path, checksum_path)
     return candidate
+
+
+def _validate_published_candidate_inventory(
+    candidate: Mapping[str, Any],
+    *,
+    version: str,
+    source_commit: str,
+) -> dict[ReleaseTarget, dict[str, Any]]:
+    """Validate the content-free candidate inventory copied to the beta site."""
+
+    required = {
+        "schema_version",
+        "version",
+        "channel",
+        "tag",
+        "source_commit",
+        "source_evidence",
+        "unsigned_community_build",
+        "artifacts",
+    }
+    schema_version = candidate.get("schema_version")
+    if (
+        set(candidate) != required
+        or isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != CANDIDATE_SCHEMA_VERSION
+        or candidate.get("version") != version
+        or candidate.get("channel") != "beta"
+        or candidate.get("tag") != f"v{version}"
+        or candidate.get("source_commit") != source_commit
+        or candidate.get("unsigned_community_build") is not True
+    ):
+        raise ManifestError("published candidate inventory identity is invalid")
+    source_evidence = candidate.get("source_evidence")
+    if not isinstance(source_evidence, dict) or set(source_evidence) != set(SOURCE_EVIDENCE_FIELDS):
+        raise ManifestError("published candidate source evidence is malformed")
+    for field in SOURCE_EVIDENCE_FIELDS:
+        descriptor = _descriptor_value(source_evidence.get(field), f"source_evidence.{field}")
+        if descriptor["name"] != SOURCE_EVIDENCE_FILE_NAMES[field]:
+            raise ManifestError(f"published source evidence file name is wrong for {field}")
+
+    artifact_fields = {
+        "platform",
+        "architecture",
+        "direct_package",
+        "direct_package_checksum",
+        "direct_package_notice",
+        "direct_package_report",
+        "direct_package_sbom",
+        "direct_package_provenance_bundle",
+        "direct_package_sbom_bundle",
+        "ota_archive",
+        "ota_checksum",
+        "ota_sbom",
+        "ota_provenance_bundle",
+        "ota_sbom_bundle",
+        "ota_manifest_eligible",
+    }
+    artifacts = candidate.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ManifestError("published candidate artifact inventory is empty")
+    inventory: dict[ReleaseTarget, dict[str, Any]] = {}
+    targets: list[ReleaseTarget] = []
+    for raw_artifact in artifacts:
+        if not isinstance(raw_artifact, dict) or set(raw_artifact) != artifact_fields:
+            raise ManifestError("published candidate artifact entry is malformed")
+        platform_name = raw_artifact.get("platform")
+        architecture = raw_artifact.get("architecture")
+        if not isinstance(platform_name, str) or not isinstance(architecture, str):
+            raise ManifestError("published candidate target values must be strings")
+        target = ReleaseTarget.parse(f"{platform_name}:{architecture}")
+        if target in inventory:
+            raise ManifestError("published candidate targets must be unique")
+        targets.append(target)
+        if not isinstance(raw_artifact.get("ota_manifest_eligible"), bool):
+            raise ManifestError("published candidate OTA eligibility must be a boolean")
+        expected_archive = archive_name(version, target)
+        expected_provenance, expected_sbom_bundle = attestation_names(expected_archive)
+        expected_names = {
+            "ota_archive": expected_archive,
+            "ota_checksum": f"{expected_archive}.sha256",
+            "ota_sbom": f"{expected_archive}.spdx.json",
+            "ota_provenance_bundle": expected_provenance,
+            "ota_sbom_bundle": expected_sbom_bundle,
+            **direct_package_names(version, target),
+        }
+        for field, expected_name in expected_names.items():
+            descriptor = _descriptor_value(raw_artifact.get(field), field)
+            if descriptor["name"] != expected_name:
+                raise ManifestError("published candidate file names do not match their target")
+        inventory[target] = raw_artifact
+    if targets != sorted(targets):
+        raise ManifestError("published candidate targets must use deterministic ordering")
+    if not any(artifact["ota_manifest_eligible"] is True for artifact in inventory.values()):
+        raise ManifestError("published candidate has no OTA-eligible target")
+    return inventory
 
 
 def validate_github_release_state(
@@ -1080,7 +1215,12 @@ def prepare_beta_channel(
         target = ReleaseTarget(cast(str, artifact["platform"]), cast(str, artifact["architecture"]))
         manifest_path = release_dir / signed_manifest_name("beta", target)
         manifest = _read_json_object(manifest_path)
-        verify_manifest(manifest, keyring, expected_channel="beta")
+        verify_manifest(
+            manifest,
+            keyring,
+            expected_channel="beta",
+            require_source_commit=True,
+        )
         archive = cast(dict[str, Any], artifact["ota_archive"])
         expected_url = f"https://github.com/{repository}/releases/download/{tag}/{archive['name']}"
         expected_notes = f"https://github.com/{repository}/releases/tag/{tag}"
@@ -1092,6 +1232,7 @@ def prepare_beta_channel(
             or manifest.get("release_notes_url") != expected_notes
             or manifest.get("sha256") != archive["sha256"]
             or manifest.get("size") != archive["size"]
+            or manifest.get("source_commit") != source_commit
         ):
             raise ManifestError(f"signed manifest does not match candidate: {manifest_path.name}")
         destination = (
@@ -1120,6 +1261,7 @@ def prepare_beta_channel(
         "candidate_sha256": candidate_sha256,
         "channel": "beta",
         "manifests": manifest_entries,
+        "repository": repository,
         "schema_version": 1,
         "source_commit": source_commit,
         "version": version,
@@ -1146,9 +1288,13 @@ def verify_beta_channel_site(site_dir: Path, *, keyring_path: Path) -> dict[str,
         "source_commit",
         "candidate_sha256",
         "manifests",
+        "repository",
     }
+    repository = index.get("repository")
     if (
         set(index) != required
+        or isinstance(index.get("schema_version"), bool)
+        or not isinstance(index.get("schema_version"), int)
         or index.get("schema_version") != 1
         or index.get("channel") != "beta"
         or not isinstance(index.get("version"), str)
@@ -1157,12 +1303,26 @@ def verify_beta_channel_site(site_dir: Path, *, keyring_path: Path) -> dict[str,
         or COMMIT.fullmatch(cast(str, index["source_commit"])) is None
         or not isinstance(index.get("candidate_sha256"), str)
         or SHA256.fullmatch(cast(str, index["candidate_sha256"])) is None
+        or not isinstance(repository, str)
+        or REPOSITORY.fullmatch(repository) is None
     ):
         raise ManifestError("beta channel index is malformed")
     candidate = site_dir / "beta" / CANDIDATE_FILE_NAME
     candidate_digest, _ = sha256_file(candidate)
     if candidate_digest != index["candidate_sha256"]:
         raise ManifestError("published candidate inventory digest is wrong")
+    candidate_value = _read_json_object(candidate)
+    if (
+        candidate_value.get("channel") != index["channel"]
+        or candidate_value.get("version") != index["version"]
+        or candidate_value.get("source_commit") != index["source_commit"]
+    ):
+        raise ManifestError("published candidate identity differs from the beta channel index")
+    candidate_inventory = _validate_published_candidate_inventory(
+        candidate_value,
+        version=cast(str, index["version"]),
+        source_commit=cast(str, index["source_commit"]),
+    )
     keyring = load_keyring(keyring_path)
     entries = index.get("manifests")
     if not isinstance(entries, list) or not entries:
@@ -1187,5 +1347,38 @@ def verify_beta_channel_site(site_dir: Path, *, keyring_path: Path) -> dict[str,
         digest, _ = sha256_file(path)
         if digest != entry.get("sha256"):
             raise ManifestError("beta channel manifest digest is wrong")
-        verify_manifest(_read_json_object(path), keyring, expected_channel="beta")
+        manifest = _read_json_object(path)
+        verify_manifest(
+            manifest,
+            keyring,
+            expected_channel="beta",
+            require_source_commit=True,
+        )
+        artifact = candidate_inventory.get(target)
+        if artifact is None or artifact.get("ota_manifest_eligible") is not True:
+            raise ManifestError("beta channel target is not in the candidate OTA inventory")
+        archive = _descriptor_value(artifact.get("ota_archive"), "ota_archive")
+        expected_tag = f"v{index['version']}"
+        expected_url = (
+            f"https://github.com/{repository}/releases/download/{expected_tag}/{archive['name']}"
+        )
+        expected_notes = f"https://github.com/{repository}/releases/tag/{expected_tag}"
+        if (
+            manifest.get("version") != index["version"]
+            or manifest.get("platform") != target.platform
+            or manifest.get("architecture") != target.architecture
+            or manifest.get("source_commit") != index["source_commit"]
+            or manifest.get("url") != expected_url
+            or manifest.get("release_notes_url") != expected_notes
+            or manifest.get("sha256") != archive["sha256"]
+            or manifest.get("size") != archive["size"]
+        ):
+            raise ManifestError("beta channel manifest does not match candidate inventory")
+    eligible_targets = {
+        target
+        for target, artifact in candidate_inventory.items()
+        if artifact.get("ota_manifest_eligible") is True
+    }
+    if seen_targets != eligible_targets:
+        raise ManifestError("beta channel targets differ from candidate OTA inventory")
     return index

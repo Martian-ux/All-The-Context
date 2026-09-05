@@ -22,9 +22,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+from .activity import CoreActivityGate
 from .ids import new_id, utc_now
 from .secret_boundary import contains_secret_like_text
 from .storage import (
+    MAX_ACTIVITY_SNAPSHOT_ITEMS,
     ConflictError,
     CoreStore,
     NotFoundError,
@@ -879,6 +881,36 @@ class CaptureCapabilityManifest:
         }
 
 
+def capture_executable_capability_error(
+    manifest: CaptureCapabilityManifest,
+) -> str | None:
+    """Return the bounded reason that would prevent an adapter run.
+
+    This is deliberately shared by the runner and all content-free readiness
+    projections. Legacy fetch-only adapters retain their narrow compatibility
+    exception; every current manifest must prove its network/egress posture
+    before it is considered executable.
+    """
+
+    if manifest.availability == "unavailable" or manifest.health == "unavailable":
+        return "capture_adapter_unavailable"
+    if not manifest.legacy_compatibility and (
+        manifest.network_access == "unknown" or manifest.data_egress is None
+    ):
+        return "capture_capability_invalid"
+    if not manifest.legacy_compatibility and manifest.authorization == "unknown":
+        return "capture_capability_invalid"
+    if manifest.authorization == "reauthorization_required":
+        return "capture_reauthorization_required"
+    if manifest.authorization == "unauthorized":
+        return "capture_authorization_unavailable"
+    if not manifest.legacy_compatibility and manifest.connection == "unknown":
+        return "capture_capability_invalid"
+    if manifest.connection == "disconnected":
+        return "capture_disconnected"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class CaptureRunResult:
     run_id: str
@@ -1010,9 +1042,16 @@ def ensure_capture_schema(connection: Any, *, through_version: int | None = None
 class CaptureLedger:
     """Typed repository for migration-015 capture state."""
 
-    def __init__(self, store: CoreStore, *, clock: Callable[[], str] = utc_now) -> None:
+    def __init__(
+        self,
+        store: CoreStore,
+        *,
+        clock: Callable[[], str] = utc_now,
+        activity_gate: CoreActivityGate | None = None,
+    ) -> None:
         self.store = store
         self.clock = clock
+        self.activity_gate = activity_gate or CoreActivityGate()
 
     @staticmethod
     def _scopes_from_row(row: Any) -> tuple[str, ...]:
@@ -1233,7 +1272,32 @@ class CaptureLedger:
                 changed += 1
         return changed
 
+    def active_lease_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free durable capture lease activity."""
+
+        now = self.clock()
+        vault_id = self.store.vault_id()
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT 1 FROM capture_runs AS r "
+                "JOIN capture_sources AS s ON s.id=r.source_id "
+                "WHERE s.vault_id=? AND r.state='running' AND r.lease_expires_at>? "
+                "LIMIT ?",
+                (vault_id, now, MAX_ACTIVITY_SNAPSHOT_ITEMS + 1),
+            ).fetchall()
+        truncated = len(rows) > MAX_ACTIVITY_SNAPSHOT_ITEMS
+        count = min(len(rows), MAX_ACTIVITY_SNAPSHOT_ITEMS)
+        return {
+            "active": count > 0,
+            "count": count,
+            "truncated": truncated,
+        }
+
     def begin_run(self, source_id: str) -> tuple[CaptureRunHandle, CaptureSource, int]:
+        with self.activity_gate.activity():
+            return self._begin_run(source_id)
+
+    def _begin_run(self, source_id: str) -> tuple[CaptureRunHandle, CaptureSource, int]:
         self.recover_expired_runs()
         now = self.clock()
         run_id = new_id()
@@ -1555,10 +1619,12 @@ class CaptureLedger:
                 and str(stored["order_key"]) == event.order_key
             )
             payload_matches = str(stored["payload_hash"]) == event.normalized()[1]
+            vault_id = CoreStore._vault_id_tx(connection)
             purged = (
                 connection.execute(
-                    "SELECT 1 FROM purge_tombstones WHERE stable_id=? AND target_type='record'",
-                    (canonical_record_id,),
+                    "SELECT 1 FROM purge_tombstones WHERE vault_id=? AND target_type='record' "
+                    "AND stable_id=?",
+                    (vault_id, canonical_record_id),
                 ).fetchone()
                 is not None
             )
@@ -1823,6 +1889,22 @@ class CaptureLedger:
             lag_pages=lag_pages,
         )
 
+    def recover_adapter_unavailable(self, source_id: str) -> CaptureSource:
+        """Reset one adapter-unavailable retry state after runtime recovery."""
+
+        now = self.clock()
+        with self.store.transaction() as connection:
+            updated = connection.execute(
+                "UPDATE capture_sources SET lifecycle_state='enabled',retry_count=0,"
+                "next_retry_at=NULL,last_error_code=NULL,last_error_at=NULL,updated_at=? "
+                "WHERE id=? AND lifecycle_state='degraded' "
+                "AND last_error_code='capture_adapter_unavailable'",
+                (now, source_id),
+            )
+            if updated.rowcount not in {0, 1}:
+                raise CaptureError("capture_failed")
+        return self.get_source(source_id)
+
     def stale_result(
         self,
         handle: CaptureRunHandle,
@@ -1910,8 +1992,10 @@ class CaptureCoordinator:
         sink: CaptureApplicationSink | None = None,
         backoff: BackoffPolicy | None = None,
         clock: Callable[[], str] = utc_now,
+        activity_gate: CoreActivityGate | None = None,
     ) -> None:
-        self.ledger = CaptureLedger(store, clock=clock)
+        self.activity_gate = activity_gate or CoreActivityGate()
+        self.ledger = CaptureLedger(store, clock=clock, activity_gate=self.activity_gate)
         self.sink = sink
         self.backoff = backoff or BackoffPolicy()
         self.adapters: dict[str, CaptureProviderAdapter] = {}
@@ -1932,6 +2016,17 @@ class CaptureCoordinator:
 
     def status(self, source_id: str) -> dict[str, Any]:
         return self.ledger.status(source_id)
+
+    def activity_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free foreground and durable run activity."""
+
+        leases = self.ledger.active_lease_snapshot()
+        return {
+            "foreground_run_active": self._run_lock.locked(),
+            "durable_lease_active": bool(leases["active"]),
+            "durable_lease_count": int(leases["count"]),
+            "durable_lease_truncated": bool(leases["truncated"]),
+        }
 
     def capability_manifest(self, source_id: str) -> CaptureCapabilityManifest:
         """Return the registered adapter's bounded capability declaration."""
@@ -1974,6 +2069,41 @@ class CaptureCoordinator:
 
     def revoke(self, source_id: str) -> CaptureSource:
         return self.ledger.transition(source_id, "revoked")
+
+    def recover_available_adapters(self, *, provider: str | None = None) -> tuple[str, ...]:
+        """Clear adapter-unavailable degradation after validated recovery.
+
+        Adapter registration is an ephemeral runtime concern. The source
+        lifecycle remains Core-owned, so recovery is performed through the
+        ledger and only for sources whose last durable failure was the bounded
+        ``capture_adapter_unavailable`` condition.
+        """
+
+        sources, _total = self.list_sources(limit=500, offset=0)
+        recovered: list[str] = []
+        for source in sources:
+            if (
+                source.lifecycle_state != "degraded"
+                or source.last_error_code != "capture_adapter_unavailable"
+                or (provider is not None and source.provider != provider)
+            ):
+                continue
+            adapter = self.adapters.get(source.provider)
+            if adapter is None:
+                continue
+            try:
+                manifest = self._adapter_manifest(adapter, source)
+            except CaptureError:
+                continue
+            if (
+                capture_executable_capability_error(manifest) is not None
+                or manifest.authorization != "authorized"
+                or manifest.connection != "connected"
+            ):
+                continue
+            self.ledger.recover_adapter_unavailable(source.id)
+            recovered.append(source.id)
+        return tuple(recovered)
 
     def _adapter_page(
         self,
@@ -2192,6 +2322,10 @@ class CaptureCoordinator:
         return len(event_ids), applied, duplicates, pending_cursor
 
     def run(self, source_id: str) -> CaptureRunResult:
+        with self.activity_gate.activity():
+            return self._run(source_id)
+
+    def _run(self, source_id: str) -> CaptureRunResult:
         source = self.get_source(source_id)
         if source.lifecycle_state in {"disabled", "paused", "revoked"}:
             return self.ledger.skipped_result(source_id, "capture_source_not_enabled")
@@ -2205,25 +2339,11 @@ class CaptureCoordinator:
             manifest = self._adapter_manifest(adapter, source)
         except CaptureError as error:
             return self.ledger.skipped_result(source_id, error.code)
-        if manifest.availability == "unavailable" or manifest.health == "unavailable":
-            self._mark_unavailable(source_id)
-            return self.ledger.skipped_result(source_id, "capture_adapter_unavailable")
-        if not manifest.legacy_compatibility and (
-            manifest.network_access == "unknown" or manifest.data_egress is None
-        ):
-            # Explicit unknown posture is observable for reconciliation, but it
-            # is not executable because its privacy boundary is unproven.
-            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
-        if not manifest.legacy_compatibility and manifest.authorization == "unknown":
-            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
-        if manifest.authorization == "reauthorization_required":
-            return self.ledger.skipped_result(source_id, "capture_reauthorization_required")
-        if manifest.authorization == "unauthorized":
-            return self.ledger.skipped_result(source_id, "capture_authorization_unavailable")
-        if not manifest.legacy_compatibility and manifest.connection == "unknown":
-            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
-        if manifest.connection == "disconnected":
-            return self.ledger.skipped_result(source_id, "capture_disconnected")
+        capability_error = capture_executable_capability_error(manifest)
+        if capability_error is not None:
+            if capability_error == "capture_adapter_unavailable":
+                self._mark_unavailable(source_id)
+            return self.ledger.skipped_result(source_id, capability_error)
         if (
             not manifest.legacy_compatibility
             and source.retry_count >= manifest.retry_policy.max_attempts
@@ -2576,5 +2696,6 @@ __all__ = [
     "DeterministicFakeAdapter",
     "DeterministicFakeSink",
     "IdempotentFakeSink",
+    "capture_executable_capability_error",
     "ensure_capture_schema",
 ]

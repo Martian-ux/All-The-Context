@@ -292,8 +292,10 @@ def validate_windows_acceptance(
     required = set(WINDOWS_ACCEPTANCE_ALLOWED_KEYS)
     if set(record) != required:
         raise ManifestError("Windows acceptance is missing fields")
-    if record.get("schema_version") != WINDOWS_ACCEPTANCE_SCHEMA_VERSION or isinstance(
-        record.get("schema_version"), bool
+    if (
+        isinstance(record.get("schema_version"), bool)
+        or not isinstance(record.get("schema_version"), int)
+        or record.get("schema_version") != WINDOWS_ACCEPTANCE_SCHEMA_VERSION
     ):
         raise ManifestError("Windows acceptance schema_version must be integer 1")
     if record.get("platform") != "windows" or record.get("architecture") != "x86_64":

@@ -418,7 +418,11 @@ def validate_matrix_evidence(
         missing = sorted(required_fields - set(value))
         raise ManifestError(f"matrix evidence is missing fields: {', '.join(missing)}")
     schema_version = value.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != 1:
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != 1
+    ):
         raise ManifestError("matrix evidence schema_version must be integer 1")
     evidence_commit = value.get("source_commit")
     if not isinstance(evidence_commit, str) or evidence_commit != source_commit:

@@ -16,6 +16,7 @@ from allthecontext.acceptance_receipt import (
     SOURCE_ALLOWED_PUBLICATION_GATES,
     candidate_inventory_digests,
 )
+from allthecontext.build_identity import make_build_identity
 from allthecontext.exact_source_gate import (
     CANONICAL_CI_WORKFLOW_NAME,
     CANONICAL_CI_WORKFLOW_PATH,
@@ -160,10 +161,19 @@ def _candidate_dir(tmp_path: Path) -> Path:
         notice = release_dir / names["direct_package_notice"]
         notice.write_text("IMPORTANT: unsigned community build\n", encoding="utf-8")
         is_windows = target.platform == "windows"
+        identity = make_build_identity(
+            version=VERSION,
+            source_commit=SOURCE,
+            platform_name=target.platform,
+            architecture=target.architecture,
+        )
         (release_dir / names["direct_package_report"]).write_text(
             json.dumps(
                 {
                     "architecture": target.architecture,
+                    "build_identity": identity.as_dict(),
+                    "build_identity_sha256": identity.sha256,
+                    "channel": identity.channel,
                     "format": "exe" if is_windows else "tar.gz",
                     "notice": notice.name,
                     "package": direct_package.name,
@@ -177,6 +187,7 @@ def _candidate_dir(tmp_path: Path) -> Path:
                     "schema_version": 1,
                     "sha256": digest,
                     "size": size,
+                    "source_commit": identity.source_commit,
                     "source": source.name,
                     "trust": "unsigned-community",
                     "version": VERSION,
