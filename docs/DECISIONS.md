@@ -1,5 +1,35 @@
 # Architecture decisions
 
+## ADR-203: Hosted-PR repair evidence stays exact-SHA and fail-closed
+
+**Status:** accepted locally on 2026-09-04 at code head
+`9e2d1e609f677992567aec98a0c3988d57414046`, from exact PR #114 head
+`f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`. The three requested source tips
+were cherry-picked exactly once in the requested order, producing
+`a2c751882436233cd89179d49f8fedd422f8b72f`,
+`81f50e7fcf5447ea6a3d508ce7e512896ddf9c5b`, and
+`9e2d1e609f677992567aec98a0c3988d57414046`. The exact starting and
+source-to-integrated mappings are recorded in
+`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`.
+
+The registration repair keeps file deletion and replacement injectable for
+cross-platform tests, while production unsupported hosts fail closed. A
+non-Windows modeled provider must expose an explicit last-error getter;
+real-Windows calls use the native thread error. `winreg` is imported only
+after the runtime Windows guard. Stock CPython without a constructible raw
+`PyHKEY` uses forward-only publication for a newly created key and refuses
+existing-key mutation or cleanup unless atomic compare operations are
+available. The zero-dashboard scorecard separates deterministic functional
+gates from host-sensitive restart timing; the comparable-profile operational
+gate remains strict, non-empty, finite, non-negative, and `< 5000 ms` for both
+measurements.
+
+Focused local validation passed 394 tests with 10 expected host-capability
+skips and no warnings; the three mypy platform modes and Ruff lint passed.
+This is source evidence only. It grants no artifact, hosted, release,
+signing, Defender, clean-machine, provider/client, or downloaded-candidate
+acceptance.
+
 ## ADR-202: Win32 last-error reads stay behind a typed compatibility boundary
 
 **Status:** accepted locally on 2026-09-04 at exact candidate head

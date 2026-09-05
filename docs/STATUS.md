@@ -2,29 +2,23 @@
 
 ## Current milestone
 
-The current Windows GA convergence candidate is being integrated on branch
-`hardening/windows-ga-convergence-20260904` from exact
-`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The complete 49-commit ancestry
-union from nine requested source tips is recorded in
-`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. The branch is not a
-release claim: final local gates, exact-artifact decisions, hosted checks,
+The current Windows GA convergence follow-up is being integrated on branch
+`hardening/windows-ga-convergence-20260904` from the exact open draft PR #114
+head `f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`. The prior 49-commit ancestry
+union from nine requested source tips remains recorded in
+`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`; this follow-up adds
+three exact hosted-PR repairs on top of that already-integrated PR head. The
+branch is not a release claim: exact-artifact decisions, hosted checks,
 signing, publication, Defender, clean-machine, provider/client, and
-downloaded-candidate evidence remain separately bounded. The older
-2026-09-03 protected-main paragraph below is retained as historical context
-until this candidate is pushed and its exact final SHA is recorded.
+downloaded-candidate evidence remain separately bounded.
 
-The final local source head before this evidence update is
-`5c79ada65b912daf40d16be04bb137946296db7b`. Functional integration passed the
-full 3,088-test suite (3,069 passed, 19 capability skips, 3 warnings), and the
-post-scan Windows fixture regression passed 47 tests with 3 capability skips.
-Ruff, format, mypy, docs, Actions pins, collection parity, runner architecture,
-and committed-tree/history security scans are green. Native artifact creation
-is intentionally unavailable on this host because the reproducibility gate
-requires Python 3.12.10 and uv 0.11.32; the host has Python 3.14.3 and uv
-0.12.9. Draft PR [#114](https://github.com/Martian-ux/All-The-Context/pull/114)
-is open and remains intentionally draft. Its initial hosted snapshot has
-CI/CodeQL jobs queued or in progress; no hosted result is being treated as a
-release or artifact claim.
+The local code head before this documentation update is
+`9e2d1e609f677992567aec98a0c3988d57414046`. The focused registration,
+bootstrap, runtime, platform, packaged-first-run, build, and zero-dashboard
+suite passed 394 tests with 10 expected host-capability skips and no warnings.
+Default, simulated-Linux, and simulated-Win32 mypy checks passed on 112 source
+files, and Ruff lint passed. The final full-tree gates and exact hosted results
+are recorded only when bound to the final committed/pushed SHA.
 
 As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
@@ -83,6 +77,29 @@ authorization state from portable exports. A stale export regression was
 updated to assert that explicit security boundary. Source-level tests and
 static checks are evidence contracts only; this candidate does not execute,
 install, update, sign, publish, or Defender-scan a candidate artifact.
+
+### 2026-09-04 — PR #114 hosted fix integration
+
+This follow-up starts from the live PR #114 head
+`f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`, with remote `main` still exactly
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. In a clean detached worktree,
+the integrator cherry-picked exactly once, in order:
+`af9f9111649a7bdc64b99494f92ed379aea33906`,
+`094cbf1216d779162accf6e0e8eed8be17feeeb1`, and
+`98f0d39bfc6482962c2d213ce265c233a07c8d55`, producing integrated commits
+`a2c751882436233cd89179d49f8fedd422f8b72f`,
+`81f50e7fcf5447ea6a3d508ce7e512896ddf9c5b`, and
+`9e2d1e609f677992567aec98a0c3988d57414046`.
+
+The repair preserves injectable cross-platform file deletion/replacement,
+explicit modeled-provider Win32 last-error reads on non-Windows, real-Windows
+fail-closed behavior, guarded `winreg` import, stock-CPython forward-only
+fresh-key registration, atomic-only existing-key mutation/cleanup, and the
+exact-40/resolving SHA ledger check. Zero-dashboard functional gates no longer
+depend on host-sensitive restart wall time; the separate operational gate
+remains fail-closed for comparable profiles and requires both measurements to
+be strictly below 5,000 ms. The source evidence is not artifact, release,
+Defender, clean-machine, provider/client, or downloaded-candidate evidence.
 
 ### 2026-09-04 — Cross-platform Windows last-error compatibility repair
 

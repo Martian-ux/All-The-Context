@@ -5,6 +5,26 @@ This ledger records the exact-source integration performed on branch
 signing, clean-machine, Defender, provider/client, or downloaded-candidate
 acceptance evidence.
 
+## Follow-up exact PR #114 repair integration — 2026-09-04
+
+This follow-up was performed in a clean detached worktree from exact PR #114
+head `f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`, with remote `main` exactly
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The shared checkout was dirty
+and was not edited, staged, committed, cleaned, reset, or used for the work.
+
+| Order | Source tip | Integrated commit | Result |
+|---:|---|---|---|
+| 1 | `af9f9111649a7bdc64b99494f92ed379aea33906` | `a2c751882436233cd89179d49f8fedd422f8b72f` | Applied exactly once |
+| 2 | `094cbf1216d779162accf6e0e8eed8be17feeeb1` | `81f50e7fcf5447ea6a3d508ce7e512896ddf9c5b` | Applied exactly once |
+| 3 | `98f0d39bfc6482962c2d213ce265c233a07c8d55` | `9e2d1e609f677992567aec98a0c3988d57414046` | Applied exactly once |
+
+The resulting code preserves injectable cross-platform file deletion and
+replacement, explicit modeled Linux-provider last-error behavior and
+real-Windows fail-closed behavior, guarded `winreg` loading, stock-CPython
+forward-only fresh-key registration, atomic fail-closed existing-key
+mutation/cleanup, and the zero-dashboard separation of functional evidence
+from the strict comparable-profile `< 5000 ms` observational gate.
+
 ## Exact starting state
 
 | Check | Result |

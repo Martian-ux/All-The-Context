@@ -27,6 +27,8 @@ The Windows hardening wave integration and check-only updater boundary are
 covered by ADR-199. Its four cherry-picked worker commits are preserved in
 the integration ancestry; the final integration commit adds only bounded
 configuration/lifecycle safeguards and documentation.
+The exact-PR hosted repair follow-up is covered by ADR-203 and adds three
+source tips on top of PR #114 head `f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -57,6 +59,28 @@ dashboard error-recovery coverage.
 The repair is source/test evidence only and does not claim native service,
 process, registry, task, artifact, signing, publication, Defender,
 clean-machine, provider/client, or downloaded-candidate acceptance.
+
+### 2026-09-04 Exact PR #114 hosted repair follow-up
+
+The follow-up begins at exact PR #114 head
+`f21f7edcbdd31d8d5e639eaa9da647f4b83e8532` and remote `main`
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The three source tips were
+cherry-picked exactly once, in order, and are recorded with their integrated
+SHAs in the convergence ledger. This table records source-contract coverage;
+it does not promote local tests to hosted, artifact, release, signing,
+Defender, clean-machine, provider/client, or downloaded-candidate evidence.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Cross-platform file replacement/deletion and Win32 last-error behavior | `application_install.py` injectable file-operation seams; `platform_compat.py` explicit modeled provider and native Windows last-error boundary; registration/platform regressions | Implemented at source level. Simulated Windows registration tests retain a provider seam; unsupported production hosts fail closed, modeled non-Windows providers must expose last-error, and real Windows remains native. |
+| Windows registry import and mutation safety | Guarded `windows_registry()` import; stock-CPython fresh-key forward-only path; atomic-only existing-key mutation, cleanup, and ownership checks; application-install regressions | Implemented at source level. A stock runtime without raw `PyHKEY` support does not enter KTM publication; existing-key mutation/cleanup is refused without atomic provider primitives. |
+| Zero-dashboard evidence boundary | `experimental_zero_dashboard_harness.py::evaluate_zero_dashboard_operational_acceptance`; `tests/unit/test_zero_dashboard_harness.py` | Implemented at source level. Functional gates exclude host-sensitive restart wall time; the comparable-profile observational gate is non-empty and fail-closed with finite, non-negative measurements strictly below 5,000 ms. |
+| Exact convergence ledger integrity | `scripts/check_docs.py::convergence_ledger_failures`; `tests/unit/test_docs.py`; corrected 40-character integrated SHA in `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md` | Implemented at source level. Long hexadecimal ledger tokens must be exactly 40 hex characters and resolve as local commits. |
+
+Focused local validation for this follow-up passed 394 tests with 10 expected
+host-capability skips and no warnings. Default, simulated-Linux, and
+simulated-Win32 mypy checks passed; final full-tree and hosted results remain
+bound to the final exact SHA.
 
 ### 2026-09-04 Windows GA convergence integration
 
