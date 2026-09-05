@@ -3,11 +3,14 @@
 ## ADR-208: Windows GA packaged-update diagnostics and transaction contracts
 
 **Status:** accepted locally on 2026-09-05 for source-integration commit
-`dac9e60165aefa2f3bfeac71ee90ef552f2dade5`, whose exact parent is the live open
-draft PR #114 head `f6d53e5215ce9082fabb0d02357274d2adfc9695`; remote `main`
-remains `7bfd070fd51541cd77f3cde67576f447cdef50bd`. Final documentation,
-exact-tree validation, and the ancestry-safe push are not self-asserted by this
-decision, and the final pushed SHA is intentionally not named here.
+`6b86129b4d401765cfaf84a4ba196e793bbe9b71`, whose exact parent is the prior
+pushed and hosted open draft PR #114 head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac`; remote `main` remains
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. Local source repair
+`5433f8100ba0a3f7aab554cba70f41bd49184309` has that exact parent and was
+cherry-picked exactly once without conflict. The final documentation commit
+does not name its own SHA; post-push exact-ref verification supplies final SHA
+evidence.
 
 The preceding packaged-smoke source repair
 `7f0677787e339a5fce96e4d21c6acf2cea29003c` was integrated exactly once as
@@ -18,31 +21,31 @@ staging/manifest contract, the single overall stop budget, and real `.lnk`/
 current live head.
 
 The current diagnostic source repair
-`43acc25b8417c31ea9c96027acc7058d3b428365` has exact parent
-`f6d53e5215ce9082fabb0d02357274d2adfc9695` and was cherry-picked exactly once,
+`5433f8100ba0a3f7aab554cba70f41bd49184309` has exact parent
+`c923224f1cf2d29c495e9bc981a381b99bded2ac` and was cherry-picked exactly once,
 without conflict resolution, as
-`dac9e60165aefa2f3bfeac71ee90ef552f2dade5`. Its scope is exactly
+`6b86129b4d401765cfaf84a4ba196e793bbe9b71`. Its scope is exactly
 `packages/allthecontext/src/allthecontext/desktop.py`,
-`packages/allthecontext/src/allthecontext/windows_update_diagnostics.py`,
 `packages/allthecontext/src/allthecontext/windows_update_helper.py`,
 `scripts/smoke_packaged_first_run.py`,
 `tests/unit/test_desktop_runtime.py`,
+`tests/unit/test_headless_local_source_setup.py`,
 `tests/unit/test_packaged_first_run_diagnostics.py`, and
 `tests/unit/test_windows_update_helper.py`; it changes no documentation,
 workflow, or release file.
 
-The packaged update child publishes one atomic, bounded, content-free failure
-report at the validated transaction path. Each child attempt receives a fixed-
-shape opaque nonce; the helper clears the report before every attempt and
-accepts it only when status, phase, code, size, shape, and nonce are all
-allowlisted and valid. Missing, malformed, oversized, stale, wrong-attempt,
-or unallowlisted reports fail closed with distinct fixed helper codes. A safe
-bootstrap code is retained through the rollback journal/state. The report and
-smoke projection never include exception text, traceback, stdout/stderr,
-paths, environment, identities, credentials, vault state, or user context.
-The smoke projects only authoritative allowlisted phase/code values. This is
-diagnostic-only: it preserves rollback authority and exposes the failure class,
-but does not repair or claim to repair the underlying Windows defect.
+The inherited packaged-update child still publishes one atomic, bounded,
+content-free failure report at the validated transaction path. This repair
+checks every decoded scalar field as a string before allowlist membership or
+nonce comparison; nested, boolean, numeric, and null values therefore fail
+closed as `child_failure_report_invalid`, while `run_transaction` preserves
+rollback authority. It also reports six fixed headless setup subphases plus an
+`unknown` fallback through an optional callback whose exceptions are contained.
+The report and smoke projection never include exception text, traceback,
+stdout/stderr, paths, environment, identities, credentials, vault state, or
+user context. This is diagnostic-only: it preserves rollback authority and
+exposes failure classification, but does not repair or claim to repair the
+underlying Windows defect.
 
 The packaged smoke's four-component validation uses same-build stable Setup,
 MCP, Recovery, and Updater helper copies to validate crash/rollback/component-
@@ -52,17 +55,15 @@ independent candidate provenance or no-substitution evidence. The retained
 health polling, and process-lock acquisition; the real generator-failure
 regression covers both `.lnk` and `.url` and the exact temporary path.
 
-The pre-diagnostic hosted head `f6d53e5215ce9082fabb0d02357274d2adfc9695` had
-green CodeQL `33951715661`. CI `33951716842` had every completed
-non-Windows-desktop job green; Windows desktop `101267644727` failed after
-native build, resources/credentials, and console recovery passed because
-packaged updater exit `2` occurred before injected `86`, followed by cleanup
-failure. The exact-head review verdict was `FINDINGS`: hosted P1 for stale
-live-head/document chronology and unsupported independent candidate provenance
-from same-build stable helper copies. One-deadline and `.lnk`/.url cleanup code
-passed review. Hosted rerun on the pushed diagnostic tree must prove stable
-phase/code reporting; no hosted success, artifact, release, signing, Defender,
-clean-machine, provider/client, or downloaded-candidate result is inferred.
+Terminal hosted validation for prior pushed/hosted head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac` is CI `33955088215`: Windows/Ubuntu
+Python, Ubuntu desktop, dashboard, repository-security, and parity jobs passed;
+CodeQL `33955085969` passed. Only Windows desktop job `101276839940` failed,
+before the updater, at `setup_stage=prepare_installed_runtime` with
+`setup_error_code=setup_io_error`. It supplied no updater-child evidence, and
+c923224 did not change setup behavior. The new subphase is diagnostic only;
+it is not root-cause, hosted, artifact, release, signing, Defender,
+clean-machine, provider/client, or downloaded-candidate evidence.
 
 ## ADR-207: Windows GA follow-up requires exact source integration and process-lock shutdown evidence
 

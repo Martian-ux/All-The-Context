@@ -2,13 +2,17 @@
 
 ## Current milestone
 
-The current Windows GA diagnostic integration is recorded by source
-integration commit `dac9e60165aefa2f3bfeac71ee90ef552f2dade5`, whose exact
-parent is the live open draft PR #114 head
-`f6d53e5215ce9082fabb0d02357274d2adfc9695`. The remote branch and live
-`refs/pull/114/head` remain at that pre-diagnostic parent while the final
-documentation, exact-tree validation, and ancestry-safe push are pending;
-remote `main` remains exactly `7bfd070fd51541cd77f3cde67576f447cdef50bd`.
+The current Windows GA diagnostic integration checkout contains source
+integration commit `6b86129b4d401765cfaf84a4ba196e793bbe9b71`, whose exact
+parent is the prior pushed and hosted open draft PR #114 head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac`. Local source repair
+`5433f8100ba0a3f7aab554cba70f41bd49184309` has that exact parent and was
+cherry-picked exactly once without conflict. Before the ancestry-safe push,
+the remote branch and `refs/pull/114/head` were still c923224, while remote
+`main` and the PR base remained exactly
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The final documentation commit
+intentionally does not name its own SHA; post-push exact-ref verification
+supplies the final SHA evidence.
 The preceding 49-commit ancestry union and exact-head repairs remain recorded
 in `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. The earlier
 packaged-smoke repair `78e83e1320d263312aa2c7d70a636b951bc7972d` is historical
@@ -17,15 +21,14 @@ that older SHA is not the current live head. No release claim is made: exact-
 artifact, hosted, signing, publication, Defender, clean-machine,
 provider/client, and downloaded-candidate evidence remain separately bounded.
 
-The diagnostic source repair `43acc25b8417c31ea9c96027acc7058d3b428365` was
-cherry-picked exactly once as `dac9e60165aefa2f3bfeac71ee90ef552f2dade5`,
-without conflict resolution. It adds a bounded atomic nonce-bound child-failure
-report at the validated transaction path, a closed phase/code vocabulary, and
-strict helper consumption. Each retry clears the report first; stale,
-malformed, unallowlisted, oversized, or wrong-attempt reports fail closed;
-safe child codes persist through the rollback journal/state; and the smoke
-projection exposes only allowlisted authoritative phase/code values. The
-report contains no exception text, traceback, stream, path, environment,
+The local repair adds strict primitive-type validation before child-failure
+report membership and nonce comparison, so nested, boolean, numeric, null, and
+other untrusted scalar values fail closed as
+`child_failure_report_invalid` while rollback authority is retained. It also
+adds six closed headless setup subphases plus an `unknown` fallback through an
+optional, exception-contained progress callback at the existing setup seams.
+The report and smoke projection expose only allowlisted authoritative fields;
+they contain no exception text, traceback, stream, path, environment,
 identity, credential, vault, or user-context data. This is diagnostic-only and
 does not claim that the underlying Windows failure is fixed.
 
@@ -34,23 +37,23 @@ Recovery, and Updater helper copies to validate crash/rollback/component-set
 handling and exact hash binding. It does not establish independent candidate
 provenance or no-substitution evidence. The source-level smoke repair also
 preserves one absolute `CORE_STOP_TIMEOUT_SECONDS=10.0` monotonic deadline
-across shutdown request, health polling, and process-lock acquisition, plus
-The integrated tree also preserves real `.lnk` and `.url` generator-failure
+across shutdown request, health polling, and process-lock acquisition, and the
+integrated tree also preserves real `.lnk` and `.url` generator-failure
 cleanup of the exact temporary path.
 The distribution policy remains unsigned: SmartScreen reputation warnings are
 acceptable for the community package, while Defender quarantine or deletion
 remains a blocker; paid signing is not required.
 
-The current pre-diagnostic hosted head `f6d53e5215ce9082fabb0d02357274d2adfc9695`
-had green CodeQL run `33951715661`. CI run `33951716842` had every completed
-non-Windows-desktop job green; Windows desktop run `101267644727` was terminally
-failed after native build, resources/credentials, and console recovery passed,
-because packaged updater exit `2` occurred before injected `86`, followed by
-cleanup failure. The exact-head review verdict was `FINDINGS`: hosted P1 for
-stale live-head/document chronology and unsupported independent candidate
-provenance from same-build stable helper copies. The one-deadline and `.lnk`/
-`.url` cleanup code passed review. Hosted rerun on the pushed diagnostic tree
-must still prove stable phase/code projection; no hosted success is credited.
+The terminal hosted validation for prior pushed/hosted head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac` was CI run `33955088215`, with
+green Windows/Ubuntu Python, Ubuntu desktop, dashboard, repository-security,
+and parity jobs. CodeQL run `33955085969` was green. The only failure was
+Windows desktop job `101276839940`, which failed before the updater at
+`setup_stage=prepare_installed_runtime` with
+`setup_error_code=setup_io_error`; it supplied no updater-child evidence, and
+c923224 did not change setup behavior. The new subphase is a diagnostic
+classification only, not root-cause evidence, hosted success, artifact proof,
+or a claim that the Windows setup failure is fixed. No release claim is made.
 
 **2026-09-05 — Historical packaged-smoke repair at the then-live PR #114 head**
 

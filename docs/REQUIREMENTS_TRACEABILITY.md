@@ -36,19 +36,19 @@ The exact-head reviewer repair follow-up is covered by ADR-205 and adds three
 exact source repairs on top of PR #114 head
 `3983cf3930b9462be8d2d9a175230618f74a4b04`.
 The current Windows GA diagnostic follow-up is covered by ADR-208 and starts
-from the exact live PR #114 head
-`f6d53e5215ce9082fabb0d02357274d2adfc9695`, with remote `main` at
+from the prior pushed and hosted PR #114 head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac`, with remote `main` at
 `7bfd070fd51541cd77f3cde67576f447cdef50bd`. The preceding packaged-smoke
 repair was integrated exactly once as
 `78e83e1320d263312aa2c7d70a636b951bc7972d` from then-live head
 `99fde17d8b850db561db057365efc4225e40b173`; that older SHA is historical, not
 the current live head. Diagnostic source
-`43acc25b8417c31ea9c96027acc7058d3b428365` has exact parent
-`f6d53e5215ce9082fabb0d02357274d2adfc9695` and was
-cherry-picked exactly once as source integration commit
-`dac9e60165aefa2f3bfeac71ee90ef552f2dade5`. Final documentation, exact-tree
-validation, and the ancestry-safe push remain pending; this traceability
-record intentionally does not name a future final documentation SHA.
+`5433f8100ba0a3f7aab554cba70f41bd49184309` has exact parent
+`c923224f1cf2d29c495e9bc981a381b99bded2ac` and was cherry-picked exactly once
+without conflict as source integration commit
+`6b86129b4d401765cfaf84a4ba196e793bbe9b71`. The final documentation commit
+intentionally does not name its own SHA; post-push exact-ref verification
+supplies final SHA evidence.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -70,41 +70,37 @@ object is likewise not an ancestor. It adds single-flight update actions,
 bounded cancellation feedback, protected cancellation API coverage, and
 dashboard error-recovery coverage.
 
-### 2026-09-05 Windows GA packaged-update diagnostic hardening
+### 2026-09-05 Windows GA diagnostic repair on prior hosted head
 
-This diagnostic stage starts from exact live PR #114 head
-`f6d53e5215ce9082fabb0d02357274d2adfc9695`, with remote `main` at
+This repair starts from prior pushed and hosted PR #114 head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac`, with remote `main` at
 `7bfd070fd51541cd77f3cde67576f447cdef50bd`. Source commit
-`43acc25b8417c31ea9c96027acc7058d3b428365` has that exact parent, tree
-`83d1e892c8efe9709e6a92c40b13f61871859a19`, and exactly seven changed paths:
-the desktop runtime, new diagnostic vocabulary, update helper, packaged-smoke
-script, and three directly relevant unit-test files. It was cherry-picked once
-without conflict as source integration commit
-`dac9e60165aefa2f3bfeac71ee90ef552f2dade5`. The source worker reported 578
-focused tests passed, 7 expected capability skips, one existing Starlette
-warning, and 119.46 seconds; Ruff lint/format over 378 files, mypy over 113
-files, `git diff --check`, and worktree cleanliness were green. A pre-fix
-contract check failed on missing reports, collapsed error codes, and absent
-smoke projection, then passed after the repair. This is source/integrated
-provenance only; no candidate execution, root-cause repair, hosted success,
-artifact, release, signing, publication, Defender, clean-machine,
-provider/client, or downloaded-candidate acceptance is claimed.
+`5433f8100ba0a3f7aab554cba70f41bd49184309` has that exact parent and exactly
+seven changed paths; it was cherry-picked once without conflict as source
+integration commit `6b86129b4d401765cfaf84a4ba196e793bbe9b71`. The source
+worker reported 508 focused tests passed, 8 expected capability skips, one
+known Starlette warning, and 122.45 seconds; Ruff lint/format over 378 files,
+mypy over 113 files, and `git diff --check` were green. No full suite was run
+for this source evidence. The new subphase is diagnostic-only and does not
+claim root-cause repair, hosted success, artifact proof, release, signing,
+publication, Defender, clean-machine, provider/client, or downloaded-candidate
+acceptance.
 
 | Requirement area | Implementation/evidence | Status |
 |---|---|---|
-| Packaged update child failure report | `desktop.py::_apply_packaged_update`; `_write_packaged_update_failure_report`; `windows_update_diagnostics.py`; `tests/unit/test_desktop_runtime.py::test_packaged_update_child_writes_atomic_content_free_failure_report`; source `43acc25b8417c31ea9c96027acc7058d3b428365`; integrated `dac9e60165aefa2f3bfeac71ee90ef552f2dade5` | Implemented at source level. The child writes an atomic, bounded, nonce-bound report only at the validated transaction path, with closed status/phase/code fields and no exception text, traceback, stream, path, environment, identity, credential, vault, or user-context data. The report write is best-effort after the child maps the failure to a fixed vocabulary; no underlying Windows defect is claimed fixed. |
-| Strict child-report consumption and rollback-code preservation | `windows_update_helper.py::_read_apply_failure_report`; `_apply_replacement`; `tests/unit/test_windows_update_helper.py::test_child_failure_report_code_persists_through_rollback_without_user_data`; `test_nonzero_child_report_is_strictly_classified`; source `43acc25b8417c31ea9c96027acc7058d3b428365`; integrated `dac9e60165aefa2f3bfeac71ee90ef552f2dade5` | Implemented at source level. The helper clears each report before launch, rejects stale/malformed/unallowlisted/oversized/wrong-attempt reports, distinguishes safe child nonzero from missing/invalid reports, classifies zero-report missing and target-digest mismatch separately, and preserves safe child codes through rollback journal/state and the final bounded diagnostic. Deadline behavior remains fail closed. |
-| Packaged-smoke diagnostic projection | `scripts/smoke_packaged_first_run.py::packaged_update_failure_diagnostic`; `project_setup_report_for_diagnostics`; `tests/unit/test_packaged_first_run_diagnostics.py::test_packaged_update_failure_diagnostic_projects_only_journal_evidence`; `test_project_setup_report_discards_unknown_setup_codes_and_stages`; source `43acc25b8417c31ea9c96027acc7058d3b428365`; integrated `dac9e60165aefa2f3bfeac71ee90ef552f2dade5` | Implemented at source level. Smoke output accepts only allowlisted authoritative phase/code and setup-stage values and never copies child output or sensitive fields. Its four-component transaction validation uses same-build stable helper copies for crash/rollback/component-set handling and exact hash binding; it does not establish independent candidate provenance or no-substitution evidence. |
+| Strict child-report consumption and rollback-code preservation | `windows_update_helper.py::_read_apply_failure_report`; `_apply_replacement`; `tests/unit/test_windows_update_helper.py::test_child_failure_report_code_persists_through_rollback_without_user_data`; `test_adversarial_child_failure_report_values_reach_safe_rollback`; source `5433f8100ba0a3f7aab554cba70f41bd49184309`; integrated `6b86129b4d401765cfaf84a4ba196e793bbe9b71` | Implemented at source level. The helper clears each report before launch and type-checks every untrusted decoded scalar before allowlists or nonce comparison; nested, list, dict, boolean, numeric, null, malformed, stale, oversized, and wrong-attempt reports fail closed as `child_failure_report_invalid` without bypassing rollback. Existing safe child-code persistence and other exact-key/size/status/fresh-nonce/allowlist/path/reparse/stale-unlink rules remain. |
+| Headless setup subphase diagnostics | `desktop.py::prepare_installed_runtime`; `_notify_headless_setup_subphase`; `_headless_setup`; `tests/unit/test_desktop_runtime.py::test_headless_setup_injected_prepare_oserror_reports_exact_subphase`; `test_headless_setup_progress_callback_failure_is_contained`; source `5433f8100ba0a3f7aab554cba70f41bd49184309`; integrated `6b86129b4d401765cfaf84a4ba196e793bbe9b71` | Implemented at source level. The optional callback reports six fixed setup subphases with an `unknown` fallback, contains callback exceptions, preserves normal callers and setup control flow, and projects only the closed subphase/error schema. No exception text, path, identity, credential, stream, or user context is emitted. This is diagnostic evidence only, not root-cause or hosted/artifact proof. |
+| Packaged-smoke diagnostic projection | `scripts/smoke_packaged_first_run.py::project_setup_report_for_diagnostics`; `emit_failure_diagnostics`; `tests/unit/test_packaged_first_run_diagnostics.py::test_project_setup_report_discards_unknown_setup_codes_and_stages`; source `5433f8100ba0a3f7aab554cba70f41bd49184309`; integrated `6b86129b4d401765cfaf84a4ba196e793bbe9b71` | Implemented at source level. Smoke output accepts only allowlisted authoritative phase/code/stage/subphase values and never copies child output or sensitive fields. The inherited four-component transaction validation still uses same-build stable helper copies for crash/rollback/component-set handling and exact hash binding; it does not establish independent candidate provenance or no-substitution evidence. |
 
-The pre-diagnostic hosted head f6d53e5 had green CodeQL `33951715661`. CI
-`33951716842` had every completed non-Windows-desktop job green; Windows
-desktop `101267644727` failed after native build, resources/credentials, and
-console recovery passed because packaged updater exit `2` occurred before the
-injected `86`, followed by cleanup failure. The exact-head review verdict was
-`FINDINGS` with a hosted P1 for stale live-head/document chronology and
-unsupported independent candidate provenance from same-build stable helper
-copies; the one-deadline and `.lnk`/.url cleanup code passed review. Hosted
-rerun on the pushed diagnostic tree must prove stable phase/code reporting.
+Terminal hosted validation for prior pushed/hosted head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac` is CI `33955088215`: Windows/Ubuntu
+Python, Ubuntu desktop, dashboard, repository-security, and parity jobs passed;
+CodeQL `33955085969` passed. Only Windows desktop job `101276839940` failed
+before the updater at `setup_stage=prepare_installed_runtime` with
+`setup_error_code=setup_io_error`. It supplied no updater-child evidence, and
+c923224 did not change setup behavior. The new subphase is diagnostic only and
+does not establish root cause, hosted success, artifact proof, or release
+acceptance. Post-push exact-ref verification remains the final SHA evidence.
 
 ### 2026-09-05 Windows GA hosted follow-up repairs
 
