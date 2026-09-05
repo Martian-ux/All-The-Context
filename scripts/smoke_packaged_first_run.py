@@ -111,9 +111,7 @@ _SAFE_SETUP_REPORT_KEYS = frozenset(
         "setup_stage",
     }
 )
-_SAFE_SETUP_STAGES = frozenset(
-    {"prepare_installed_runtime", "perform_setup", "write_report"}
-)
+_SAFE_SETUP_STAGES = frozenset({"prepare_installed_runtime", "perform_setup", "write_report"})
 _SENSITIVE_SETUP_PRESENCE_KEYS = (
     "dashboard_url",
     "client_id",
