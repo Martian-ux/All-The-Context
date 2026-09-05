@@ -115,6 +115,18 @@ PackagedUpdateFailurePhase = Literal[
     "internal",
     "report_write",
 ]
+PackagedUpdateBootstrapSubphase = Literal[
+    "packaged_component_source_validation",
+    "core_probe",
+    "bootstrap_install_recovery",
+    "unknown",
+]
+_PACKAGED_BOOTSTRAP_FAILURE_BY_SUBPHASE: dict[PackagedUpdateBootstrapSubphase, str] = {
+    "packaged_component_source_validation": "component_bootstrap_source_invalid",
+    "core_probe": "component_bootstrap_core_probe_failed",
+    "bootstrap_install_recovery": "component_bootstrap_transaction_failed",
+    "unknown": "component_bootstrap_failed",
+}
 _HEADLESS_SETUP_ERROR_CODES = frozenset(
     {
         "credential_store_unavailable",
@@ -691,7 +703,12 @@ def _update_report_path(value: str, operation: str, expected_name: str) -> Path:
     return target
 
 
-def _packaged_update_failure_code(error: Exception, phase: PackagedUpdateFailurePhase) -> str:
+def _packaged_update_failure_code(
+    error: Exception,
+    phase: PackagedUpdateFailurePhase,
+    *,
+    bootstrap_subphase: PackagedUpdateBootstrapSubphase = "unknown",
+) -> str:
     """Map a child exception to the closed update diagnostic vocabulary."""
 
     if phase == "component_bootstrap":
@@ -701,6 +718,11 @@ def _packaged_update_failure_code(error: Exception, phase: PackagedUpdateFailure
 
         if isinstance(error, BootstrapInstallError) and error.code in SAFE_BOOTSTRAP_FAILURE_CODES:
             return error.code
+        if not isinstance(error, BootstrapInstallError):
+            return _PACKAGED_BOOTSTRAP_FAILURE_BY_SUBPHASE.get(
+                bootstrap_subphase,
+                "component_bootstrap_failed",
+            )
         return "component_bootstrap_failed"
     if phase == "build_identity":
         return "build_identity_invalid"
@@ -767,13 +789,28 @@ def _apply_packaged_update(report_value: str) -> int:
     if not valid_update_failure_attempt(attempt):
         raise RuntimeError("The packaged update attempt identity is invalid")
     phase: PackagedUpdateFailurePhase = "build_identity"
+    bootstrap_subphase: PackagedUpdateBootstrapSubphase = "unknown"
+
+    def record_bootstrap_subphase(value: HeadlessSetupSubphase) -> None:
+        nonlocal bootstrap_subphase
+        if value in {
+            "packaged_component_source_validation",
+            "core_probe",
+            "bootstrap_install_recovery",
+        }:
+            bootstrap_subphase = cast(PackagedUpdateBootstrapSubphase, value)
+
     try:
         build_identity = runtime_build_identity(required=True)
         if build_identity is None:
             raise RuntimeError("The packaged build identity is unavailable")
 
         phase = "component_bootstrap"
-        installed, _ = prepare_installed_runtime(RuntimeCommand.current(), relaunch_args=None)
+        installed, _ = prepare_installed_runtime(
+            RuntimeCommand.current(),
+            relaunch_args=None,
+            progress=record_bootstrap_subphase,
+        )
 
         phase = "entrypoint_registration"
         install_application_entrypoints(installed.executable)
@@ -823,7 +860,11 @@ def _apply_packaged_update(report_value: str) -> int:
         finally:
             temporary.unlink(missing_ok=True)
     except Exception as error:
-        failure_code = _packaged_update_failure_code(error, phase)
+        failure_code = _packaged_update_failure_code(
+            error,
+            phase,
+            bootstrap_subphase=bootstrap_subphase,
+        )
         with suppress(Exception):
             _write_packaged_update_failure_report(
                 report_path,

@@ -614,8 +614,19 @@ def _advance_time_for_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(helper_module.time, "sleep", sleep)
 
 
+@pytest.mark.parametrize(
+    "failure_code",
+    [
+        "bootstrap_journal_invalid",
+        "component_bootstrap_source_invalid",
+        "component_bootstrap_core_probe_failed",
+        "component_bootstrap_transaction_failed",
+    ],
+)
 def test_child_failure_report_code_persists_through_rollback_without_user_data(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_code: str,
 ) -> None:
     fixture = _transaction(tmp_path, monkeypatch)
     launched: list[str] = []
@@ -627,7 +638,7 @@ def test_child_failure_report_code_persists_through_rollback_without_user_data(
         _fake_commands(
             fixture,
             apply_result=1,
-            apply_failure_code="bootstrap_journal_invalid",
+            apply_failure_code=failure_code,
         ),
     )
 
@@ -635,9 +646,9 @@ def test_child_failure_report_code_persists_through_rollback_without_user_data(
 
     journal = UpdateJournal.load(fixture.journal_path)
     assert journal.phase is HelperPhase.ROLLED_BACK
-    assert journal.last_error_code == "bootstrap_journal_invalid"
+    assert journal.last_error_code == failure_code
     state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
-    assert "diagnostic code: bootstrap_journal_invalid" in state["last_error"]
+    assert f"diagnostic code: {failure_code}" in state["last_error"]
     assert fixture.application.read_bytes() == fixture.old_application
     assert fixture.mcp.read_bytes() == fixture.old_mcp
     assert fixture.recovery.read_bytes() == fixture.old_recovery

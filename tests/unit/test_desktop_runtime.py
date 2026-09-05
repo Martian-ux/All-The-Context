@@ -734,8 +734,11 @@ def test_headless_setup_progress_callback_failure_is_contained(
     assert relaunched is True
 
 
+@pytest.mark.parametrize("unexpected_bootstrap_failure", [False, True])
 def test_packaged_update_child_writes_atomic_content_free_failure_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unexpected_bootstrap_failure: bool,
 ) -> None:
     config = CoreConfig.in_directory(tmp_path / "data")
     operation = "a" * 24
@@ -759,22 +762,33 @@ def test_packaged_update_child_writes_atomic_content_free_failure_report(
             source_commit="c" * 40,
         ),
     )
-    monkeypatch.setattr(
-        "allthecontext.desktop.prepare_installed_runtime",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            BootstrapInstallError(
-                "bootstrap_journal_invalid",
-                f"{token_canary} at {path_canary}",
-            )
-        ),
+    failure = (
+        RuntimeError(f"{token_canary} at {path_canary}")
+        if unexpected_bootstrap_failure
+        else BootstrapInstallError(
+            "bootstrap_journal_invalid",
+            f"{token_canary} at {path_canary}",
+        )
     )
+
+    def fail_prepare(*_args: object, **kwargs: object) -> tuple[RuntimeCommand, bool]:
+        progress = kwargs["progress"]
+        assert callable(progress)
+        progress("packaged_component_source_validation")
+        raise failure
+
+    monkeypatch.setattr("allthecontext.desktop.prepare_installed_runtime", fail_prepare)
 
     assert _apply_packaged_update(str(report_path)) == 1
 
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload == {
         "attempt": attempt,
-        "code": "bootstrap_journal_invalid",
+        "code": (
+            "component_bootstrap_source_invalid"
+            if unexpected_bootstrap_failure
+            else "bootstrap_journal_invalid"
+        ),
         "phase": "component_bootstrap",
         "status": "failed",
     }
@@ -792,6 +806,56 @@ def test_packaged_update_maps_unallowlisted_bootstrap_code_to_fixed_category() -
 
     assert _packaged_update_failure_code(error, "component_bootstrap") == (
         "component_bootstrap_failed"
+    )
+
+
+@pytest.mark.parametrize(
+    ("subphase", "expected"),
+    [
+        (
+            "packaged_component_source_validation",
+            "component_bootstrap_source_invalid",
+        ),
+        ("core_probe", "component_bootstrap_core_probe_failed"),
+        (
+            "bootstrap_install_recovery",
+            "component_bootstrap_transaction_failed",
+        ),
+    ],
+)
+def test_packaged_update_classifies_unexpected_bootstrap_failures_by_closed_subphase(
+    subphase: str, expected: str
+) -> None:
+    assert (
+        _packaged_update_failure_code(
+            RuntimeError("private failure detail must not be inspected"),
+            "component_bootstrap",
+            bootstrap_subphase=subphase,  # type: ignore[arg-type]
+        )
+        == expected
+    )
+
+
+def test_packaged_update_keeps_unallowlisted_bootstrap_error_generic_even_with_subphase() -> None:
+    error = BootstrapInstallError("unallowlisted_bootstrap_code", "private detail")
+
+    assert (
+        _packaged_update_failure_code(
+            error,
+            "component_bootstrap",
+            bootstrap_subphase="bootstrap_install_recovery",
+        )
+        == "component_bootstrap_failed"
+    )
+
+
+def test_packaged_update_keeps_unclassified_unexpected_bootstrap_failure_generic() -> None:
+    assert (
+        _packaged_update_failure_code(
+            RuntimeError("private detail"),
+            "component_bootstrap",
+        )
+        == "component_bootstrap_failed"
     )
 
 

@@ -46,6 +46,13 @@ SAFE_BOOTSTRAP_FAILURE_CODES: Final = frozenset(
         "bootstrap_target_substituted",
     }
 )
+PACKAGED_BOOTSTRAP_FAILURE_CODES: Final = frozenset(
+    {
+        "component_bootstrap_source_invalid",
+        "component_bootstrap_core_probe_failed",
+        "component_bootstrap_transaction_failed",
+    }
+)
 UPDATE_FAILURE_REPORT_CODES: Final = frozenset(
     {
         "build_identity_invalid",
@@ -57,6 +64,7 @@ UPDATE_FAILURE_REPORT_CODES: Final = frozenset(
         "report_write_failed",
     }
     | SAFE_BOOTSTRAP_FAILURE_CODES
+    | PACKAGED_BOOTSTRAP_FAILURE_CODES
 )
 UPDATE_FAILURE_ATTEMPT_PATTERN: Final = re.compile(r"^[0-9a-f]{32}$")
 JOURNAL_DIAGNOSTIC_PHASES: Final = frozenset(
@@ -139,6 +147,7 @@ JOURNAL_DIAGNOSTIC_CODES: Final = frozenset(
     }
     | UPDATE_FAILURE_REPORT_CODES
     | SAFE_BOOTSTRAP_FAILURE_CODES
+    | PACKAGED_BOOTSTRAP_FAILURE_CODES
 )
 
 
