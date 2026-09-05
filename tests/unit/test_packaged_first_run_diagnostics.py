@@ -370,6 +370,136 @@ def test_project_failed_setup_report_redacts_error_canaries() -> None:
         assert canary not in serialized
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "setup",
+        "credential_storage",
+        "error_type",
+        "error_code",
+        "setup_stage",
+        "setup_subphase",
+    ],
+)
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(["list-canary"], id="list"),
+        pytest.param({"dict": "dict-canary"}, id="dict"),
+        pytest.param(True, id="bool"),
+        pytest.param(7, id="int"),
+        pytest.param(3.14, id="float"),
+        pytest.param(None, id="null"),
+        pytest.param({"nested": "nested-canary"}, id="nested"),
+        pytest.param(
+            {"nested": {"deeper": ["deep-canary", {"leaf": "deepest-canary"}]}},
+            id="deep",
+        ),
+    ],
+)
+def test_project_setup_report_ignores_non_string_field_shapes(field: str, value: object) -> None:
+    projected = smoke.project_setup_report_for_diagnostics({field: value})
+
+    assert projected["parseable"] is True
+    assert field not in projected
+    serialized = json.dumps(projected, sort_keys=True)
+    for canary in ("list-canary", "dict-canary", "nested-canary", "deep-canary", "deepest-canary"):
+        assert canary not in serialized
+
+
+def test_failure_summary_contains_malformed_and_oversized_reports_without_escape(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    report = work / "setup-report.json"
+    report.write_text(json.dumps(["report-canary", {"nested": "canary"}]), encoding="utf-8")
+
+    summary = smoke.build_failure_diagnostic_summary(
+        phase="malformed setup report",
+        return_code=1,
+        work=work,
+        report_path=report,
+    )
+    assert summary["setup_report"] == {"parseable": False, "present": True}
+    assert len(json.dumps(summary)) < 4_000
+    assert "report-canary" not in json.dumps(summary)
+
+    oversized_canary = "oversized-report-canary"
+    report.write_text(
+        json.dumps({"setup": "passed", "canary": oversized_canary})
+        + " " * smoke._MAX_SETUP_REPORT_BYTES,
+        encoding="utf-8",
+    )
+    summary = smoke.build_failure_diagnostic_summary(
+        phase="oversized setup report",
+        return_code=1,
+        work=work,
+        report_path=report,
+    )
+    assert summary["setup_report"] == {"parseable": False, "present": True}
+    serialized = json.dumps(summary)
+    assert len(serialized) < 4_000
+    assert oversized_canary not in serialized
+
+
+def test_emit_failure_diagnostics_contains_non_dict_report_without_escape(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    report = work / "setup-report.json"
+    report.write_text(json.dumps(["emit-canary", {"nested": "secret"}]), encoding="utf-8")
+
+    path = smoke.emit_failure_diagnostics(
+        phase="malformed setup report",
+        return_code=1,
+        work=work,
+        diagnostics_root=tmp_path / "diagnostics",
+        report_path=report,
+    )
+
+    out = capsys.readouterr().out
+    assert json.loads(out)["setup_report_present"] is True
+    body = path.read_text(encoding="utf-8")
+    assert len(body) < 4_000
+    assert "emit-canary" not in out
+    assert "emit-canary" not in body
+
+
+def test_headless_setup_fails_closed_for_non_dict_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    report = work / "setup-report.json"
+    report.write_text(json.dumps(["headless-canary"]), encoding="utf-8")
+    monkeypatch.setattr(
+        smoke.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    with pytest.raises(SystemExit, match="parseable setup report"):
+        smoke._run_headless_setup(
+            executable=tmp_path / "fake.exe",
+            report_path=report,
+            environment={},
+            extra_args=[],
+            work=work,
+            diagnostics_root=tmp_path / "diagnostics",
+            label="headless setup",
+        )
+
+    out = capsys.readouterr().out
+    assert "headless-canary" not in out
+    diagnostic_files = list((tmp_path / "diagnostics").glob("*.json"))
+    assert len(diagnostic_files) == 1
+    body = diagnostic_files[0].read_text(encoding="utf-8")
+    assert "headless-canary" not in body
+    assert json.loads(body)["setup_report"] == {"parseable": False, "present": True}
+
+
 def test_failure_summary_never_embeds_raw_streams_or_absolute_work_paths(
     tmp_path: Path,
 ) -> None:

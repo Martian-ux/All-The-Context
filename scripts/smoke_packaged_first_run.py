@@ -130,10 +130,25 @@ _SENSITIVE_SETUP_PRESENCE_KEYS = (
     "diagnostics_path",
 )
 _MAX_REDACTED_ERROR_CHARS = 500
+_MAX_SETUP_REPORT_BYTES = 1_048_576
 _MAX_SMOKE_RESPONSE_BYTES = 1_048_576
 _SMOKE_RESPONSE_CHUNK_BYTES = 64 * 1024
 _SMOKE_RESPONSE_LIMIT_ERROR = "smoke response exceeded maximum size"
 _CLOSED_DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+class _SetupReportTooLarge(ValueError):
+    """The imported setup report exceeded the bounded diagnostics input."""
+
+
+def _load_setup_report(path: Path) -> object:
+    """Load an imported setup report with a bounded read and JSON parse."""
+
+    with path.open("rb") as handle:
+        content = handle.read(_MAX_SETUP_REPORT_BYTES + 1)
+    if len(content) > _MAX_SETUP_REPORT_BYTES:
+        raise _SetupReportTooLarge
+    return json.loads(content.decode("utf-8"))
 
 
 def packaged_smoke_parent(
@@ -648,19 +663,24 @@ def project_setup_report_for_diagnostics(raw: object) -> dict[str, Any]:
         return {"parseable": False}
     projected: dict[str, Any] = {"parseable": True}
     setup = raw.get("setup")
-    if setup in {"passed", "failed"}:
+    if isinstance(setup, str) and setup in {"passed", "failed"}:
         projected["setup"] = setup
     storage = raw.get("credential_storage")
-    if storage in {
+    if isinstance(storage, str) and storage in {
         FALLBACK_CREDENTIAL_STORAGE,
         "operating-system credential store",
     }:
         projected["credential_storage"] = storage
     error_type = raw.get("error_type")
-    if error_type in {"RuntimeError", "OSError", "ValueError", "Exception"}:
+    if isinstance(error_type, str) and error_type in {
+        "RuntimeError",
+        "OSError",
+        "ValueError",
+        "Exception",
+    }:
         projected["error_type"] = error_type[:80]
     error_code = raw.get("error_code")
-    if error_code in _HEADLESS_SETUP_ERROR_CODES:
+    if isinstance(error_code, str) and error_code in _HEADLESS_SETUP_ERROR_CODES:
         projected["error_code"] = error_code
     setup_stage = raw.get("setup_stage")
     if isinstance(setup_stage, str) and setup_stage in _SAFE_SETUP_STAGES:
@@ -724,8 +744,14 @@ def build_failure_diagnostic_summary(
     candidate = report_path if report_path is not None else work / "setup-report.json"
     if candidate.is_file():
         try:
-            raw = json.loads(candidate.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
+            raw = _load_setup_report(candidate)
+        except (
+            OSError,
+            UnicodeError,
+            json.JSONDecodeError,
+            RecursionError,
+            _SetupReportTooLarge,
+        ):
             summary["setup_report"] = {"parseable": False, "present": True}
         else:
             projected = project_setup_report_for_diagnostics(raw)
@@ -934,7 +960,38 @@ def _run_headless_setup(
             detail="setup_report_missing",
         )
         raise SystemExit(f"{label} did not write a setup report")
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    try:
+        report = _load_setup_report(report_path)
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        _SetupReportTooLarge,
+    ):
+        emit_failure_diagnostics(
+            phase=label,
+            return_code=0,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path,
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            detail="setup_report_unparseable",
+        )
+        raise SystemExit(f"{label} did not write a parseable setup report") from None
+    if not isinstance(report, dict):
+        emit_failure_diagnostics(
+            phase=label,
+            return_code=0,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path,
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            detail="setup_report_unparseable",
+        )
+        raise SystemExit(f"{label} did not write a parseable setup report")
     if report.get("setup") == "failed":
         emit_failure_diagnostics(
             phase=label,
