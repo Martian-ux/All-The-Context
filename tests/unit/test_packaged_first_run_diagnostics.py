@@ -8,12 +8,14 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
 from allthecontext.build_identity import make_build_identity
 from allthecontext.credentials import DEVELOPMENT_FALLBACK_ENV, FALLBACK_CREDENTIAL_STORAGE
 from allthecontext.windows_update_helper import HelperError
+from filelock import FileLock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -44,6 +46,47 @@ DASHBOARD_CANARY = (
     f"http://127.0.0.1:18765/v1/browser/connect?ticket={TICKET_CANARY}&atc_token={TOKEN_CANARY}"
 )
 RAW_STATEMENT = "User said their password is hunter2-never-store"
+
+
+def test_stop_core_waits_for_process_lock_after_health_disappears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    lock_path = data_dir / "core.lock"
+    lock_ready = threading.Event()
+    release = threading.Event()
+    released = threading.Event()
+
+    def hold_core_lock() -> None:
+        with FileLock(str(lock_path), timeout=1):
+            lock_ready.set()
+            release.wait(timeout=2)
+        released.set()
+
+    holder = threading.Thread(target=hold_core_lock)
+    holder.start()
+    assert lock_ready.wait(timeout=1)
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(data_dir))
+
+    monkeypatch.setattr(
+        smoke,
+        "api_request",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("Core is shutting down")),
+    )
+    monkeypatch.setattr(
+        smoke,
+        "_read_http_response",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("health is unavailable")),
+    )
+    timer = threading.Timer(0.08, release.set)
+    timer.start()
+    smoke.stop_core("http://127.0.0.1:7337", "token")
+    assert released.is_set()
+
+    timer.join(timeout=1)
+    holder.join(timeout=1)
+    assert not holder.is_alive()
 
 
 def test_packaged_transaction_scopes_disposable_helper_authority(

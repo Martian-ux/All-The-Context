@@ -66,6 +66,8 @@ from allthecontext.windows_update_helper import (
     bind_recovery_authority,
     journal_failure_diagnostic,
 )
+from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from smoke_desktop_artifact import artifact_executable
@@ -73,6 +75,7 @@ from smoke_desktop_artifact import artifact_executable
 # Explicit, isolated, non-secret smoke only. Production installs never set this.
 ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
 WINDOWS_INSTALL_REMOVAL_OBSERVATION_SECONDS = WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS + 5.0
+CORE_LOCK_RELEASE_TIMEOUT_SECONDS = 10.0
 
 
 @contextmanager
@@ -203,7 +206,27 @@ def browser_session_from_handoff_html(handoff_html: str) -> str | None:
     return html.unescape(match.group(1))
 
 
-def stop_core(base_url: str, admin_token: str) -> None:
+def wait_for_core_lock_release(data_dir: Path) -> None:
+    """Wait for the Core process, not just its HTTP listener, to finish exiting."""
+
+    lock = FileLock(str(data_dir / "core.lock"))
+    acquired = False
+    try:
+        lock.acquire(timeout=CORE_LOCK_RELEASE_TIMEOUT_SECONDS)
+        acquired = True
+    except FileLockTimeout as exc:
+        raise RuntimeError("installed Core did not release its process lock") from exc
+    finally:
+        if acquired:
+            lock.release()
+
+
+def stop_core(base_url: str, admin_token: str, *, data_dir: Path | None = None) -> None:
+    if data_dir is None:
+        configured_data_dir = os.environ.get("ATC_CORE_DATA_DIR")
+        if not configured_data_dir:
+            raise RuntimeError("packaged smoke Core data directory is unavailable")
+        data_dir = Path(configured_data_dir).expanduser().resolve()
     with suppress(OSError, httpx.HTTPError):
         api_request(f"{base_url}/v1/admin/shutdown", admin_token, method="POST")
     deadline = time.monotonic() + 10
@@ -211,6 +234,7 @@ def stop_core(base_url: str, admin_token: str) -> None:
         try:
             _read_http_response(f"{base_url}/health", timeout=0.2)
         except (OSError, httpx.HTTPError):
+            wait_for_core_lock_release(data_dir)
             return
         time.sleep(0.1)
     raise RuntimeError("installed Core did not shut down within ten seconds")
@@ -962,7 +986,7 @@ def main() -> int:
         cleanup_token = cleanup_admin_token or recover_disposable_admin_token(work)
         if cleanup_token:
             with suppress(Exception):
-                stop_core(base_url, cleanup_token)
+                stop_core(base_url, cleanup_token, data_dir=data_dir)
         if system == "Windows":
             import winreg
 
@@ -1171,7 +1195,7 @@ def main() -> int:
         if "Traceback" in mcp_stderr:
             raise RuntimeError(f"packaged MCP wrote a traceback to stderr:\n{mcp_stderr}")
     finally:
-        stop_core(base_url, admin_token)
+        stop_core(base_url, admin_token, data_dir=data_dir)
 
     # The already-configured packaged adapter must recover Core without the
     # user opening the desktop app again.
@@ -1180,7 +1204,7 @@ def main() -> int:
         anyio.run(exercise_mcp, parameters, restart_log)
     if "Traceback" in restart_log_path.read_text(encoding="utf-8", errors="replace"):
         raise RuntimeError("packaged MCP Core restart wrote a traceback")
-    stop_core(base_url, admin_token)
+    stop_core(base_url, admin_token, data_dir=data_dir)
 
     # Reopen the stable installed copy and run the idempotent setup/upgrade
     # path; the same vault and desktop authority must survive.
@@ -1210,7 +1234,7 @@ def main() -> int:
         )
     if api_request(f"{base_url}/v1/context/status", admin_token).get("core_online") is not True:
         fail_smoke("validate-reopen-core", "reopened_core_not_ready")
-    stop_core(base_url, admin_token)
+    stop_core(base_url, admin_token, data_dir=data_dir)
 
     packaged_update_result = "not_applicable"
     if system == "Windows":
@@ -1259,7 +1283,7 @@ def main() -> int:
         if json.loads(crash_journal.read_text(encoding="utf-8")).get("phase") != "committed":
             raise SystemExit("packaged updater did not commit after crash recovery")
         wait_for_core(base_url, admin_token)
-        stop_core(base_url, admin_token)
+        stop_core(base_url, admin_token, data_dir=data_dir)
 
         with _temporary_environment(helper_authority):
             rollback_helper, rollback_journal = prepare_packaged_update_transaction(
@@ -1324,7 +1348,7 @@ def main() -> int:
                 raise SystemExit("packaged updater rollback database is not valid")
         finally:
             connection.close()
-        stop_core(base_url, admin_token)
+        stop_core(base_url, admin_token, data_dir=data_dir)
         packaged_update_result = "passed"
 
     uninstall_result = "not_applicable"
