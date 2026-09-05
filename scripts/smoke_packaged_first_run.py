@@ -708,6 +708,8 @@ def emit_failure_diagnostics(
     )
     target = write_failure_diagnostic_summary(summary, diagnostics_root=diagnostics_root)
     # Print only the filename and closed outcome fields — never raw streams or reports.
+    setup_report = summary.get("setup_report")
+    setup_error_code = setup_report.get("error_code") if isinstance(setup_report, dict) else None
     print(
         json.dumps(
             {
@@ -716,6 +718,10 @@ def emit_failure_diagnostics(
                 "return_code": return_code,
                 "diagnostics_file": target.name,
                 "setup_report_present": bool(summary.get("setup_report", {}).get("present")),
+                # ``build_failure_diagnostic_summary`` has already reduced this
+                # to the closed diagnostic vocabulary; exposing it here makes
+                # hosted failures actionable without copying report contents.
+                "setup_error_code": setup_error_code,
                 "stdout_present": stdout_present,
                 "stderr_present": stderr_present,
             },

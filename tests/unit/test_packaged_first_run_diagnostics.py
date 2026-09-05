@@ -328,6 +328,7 @@ def test_emit_failure_diagnostics_prints_closed_schema_only(
             {
                 "setup": "failed",
                 "error_type": "RuntimeError",
+                "error_code": "registration_key_create_failed",
                 "error": f"token={TOKEN_CANARY}",
                 "dashboard_url": DASHBOARD_CANARY,
             }
@@ -349,6 +350,7 @@ def test_emit_failure_diagnostics_prints_closed_schema_only(
     payload = json.loads(out)
     assert payload["packaged_first_run_failure"] is True
     assert payload["diagnostics_file"] == path.name
+    assert payload["setup_error_code"] == "registration_key_create_failed"
     assert payload["stdout_present"] is True
     assert TOKEN_CANARY not in out
     assert DASHBOARD_CANARY not in out
