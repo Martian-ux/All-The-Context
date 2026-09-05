@@ -1,5 +1,56 @@
 # Architecture decisions
 
+## ADR-209: Windows GA exact-head failure narrowing remains diagnostic-only
+
+**Status:** accepted locally on 2026-09-05 for integration candidate
+`0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`, whose source parent is integrated
+`d9d294f6d8fd06338374e684731a273e402cc7ee`, and whose prior exact live PR
+#114 head was `7212d96991eb667a5df805145d3c9a97c73c470c`. This candidate was
+not the prior live head and had not been pushed when this decision was made.
+Remote branch and `refs/pull/114/head` were verified at that prior live SHA;
+remote `main` and the PR base remained
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`, and PR #114 was OPEN/DRAFT.
+
+The updater worker `a986e125ce62fbdf0bc57c71bf519bc153dd740d` has exact parent
+`7212d96991eb667a5df805145d3c9a97c73c470c`, changes exactly
+`packages/allthecontext/src/allthecontext/desktop.py`,
+`packages/allthecontext/src/allthecontext/windows_update_diagnostics.py`,
+`tests/unit/test_desktop_runtime.py`, and
+`tests/unit/test_windows_update_helper.py`, and was cherry-picked once without
+conflict as `d9d294f6d8fd06338374e684731a273e402cc7ee`. Its stable patch ID is
+`f0eb8c44083db128045a41a8ad6c9928399cb281` for both source and integrated
+commits. The provider worker `8bbcfc5e56865bc404e473dd967a6ad378914af1` has
+the same exact parent, changes only
+`tests/unit/test_packaged_provider_acceptance.py`, and was cherry-picked once
+without conflict as `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`. Its stable
+patch ID is `0683d6c15f548d6cdc3418c6ba447f4380619d9` for both source and
+integrated commits. Neither original worker tip is an ancestor of the
+integrated candidate.
+
+The prior exact-head hosted run `33960831539` on `7212d96991eb667a5df805145d3c9a97c73c470c`
+had two Windows failures. Desktop artifact job `101292314291` reached the
+injected updater crash path but produced `component_bootstrap_failed`, phase
+`rolled_back`, return code `2`, and then failed packaged cleanup. Python 3.12
+job `101292314305` failed the disposable-vault provider test; the terminal
+summary was `1 failed, 3222 passed, 2 skipped, 3 warnings`. This is exact-head
+hosted evidence, not evidence from the candidate below.
+
+The updater repair uses the existing exception-contained setup progress seams
+to map only unexpected component-bootstrap failures to the closed three-code
+vocabulary `component_bootstrap_source_invalid`,
+`component_bootstrap_core_probe_failed`, and
+`component_bootstrap_transaction_failed`, retaining generic
+`component_bootstrap_failed` for unknown subphases and preserving existing
+allowlisted `BootstrapInstallError` codes and rollback behavior. The provider
+repair is test-only: its helper accepts only the fixed content-free report
+shape and allowlisted error codes before presenting a failure token. Local
+Windows evidence is non-reproduction/stress evidence only: the focused
+updater/helper/provider run passed 300 tests with 3 expected capability skips
+in 97.41s, and ten repeated disposable-vault checks passed 10/10 in about
+15.0s. Neither repair changes the production provider acceptance path or
+claims a root-cause fix, hosted success, exact-artifact success, or release
+acceptance. The next hosted rerun must bind to the later pushed exact SHA.
+
 ## ADR-208: Windows GA packaged-update diagnostics and transaction contracts
 
 **Status:** accepted locally on 2026-09-05 for source-integration commit

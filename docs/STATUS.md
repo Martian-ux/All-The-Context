@@ -2,24 +2,27 @@
 
 ## Current milestone
 
-The current Windows GA diagnostic integration checkout contains source
-integration commits `6b86129b4d401765cfaf84a4ba196e793bbe9b71`,
+The current Windows GA diagnostic integration candidate is a clean detached
+tree whose source tip is `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`, with
+parent `d9d294f6d8fd06338374e684731a273e402cc7ee`, and whose exact prior live
+PR #114 head was `7212d96991eb667a5df805145d3c9a97c73c470c`. Worker
+`a986e125ce62fbdf0bc57c71bf519bc153dd740d` and worker
+`8bbcfc5e56865bc404e473dd967a6ad378914af1` each had that exact parent and
+were cherry-picked exactly once without conflict as `d9d294f6d8fd06338374e684731a273e402cc7ee`
+and `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`. Their stable patch IDs match
+their integrated counterparts, and the original worker tips are not
+ancestors. Before any push of this candidate, the remote branch and
+`refs/pull/114/head` were still exactly `7212d96991eb667a5df805145d3c9a97c73c470c`,
+while remote `main` and the PR base remained exactly
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`; PR #114 remained open and draft.
+The candidate SHA is not a previously live PR head. The final documentation
+commit intentionally does not name its own SHA; post-push exact-ref
+verification supplies the final SHA evidence.
+The preceding Windows GA diagnostic integration commits
+`6b86129b4d401765cfaf84a4ba196e793bbe9b71`,
 `bfdc503658794dfb80f11bd3765d62f0d836d25b`, and
-`941968d7d5714a6a889b1990ab418b9aa0fc34b3`. The first has exact parent the
-prior pushed and hosted open draft PR #114 head
-`c923224f1cf2d29c495e9bc981a381b99bded2ac`; the second has exact parent
-`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`, and the latest has exact parent
-`33bc53769a2dc5d44d0b1ec673fe66595336b835`. Local source repairs
-`5433f8100ba0a3f7aab554cba70f41bd49184309`,
-`5f78aeb861f1e0ae019ee7f048036d1b3f55511e`, and
-`cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2` each have their recorded exact
-parent and were cherry-picked exactly once without conflict. Before the
-ancestry-safe push,
-the remote branch and `refs/pull/114/head` were still c923224, while remote
-`main` and the PR base remained exactly
-`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The final documentation commit
-intentionally does not name its own SHA; post-push exact-ref verification
-supplies the final SHA evidence.
+`941968d7d5714a6a889b1990ab418b9aa0fc34b3` remain in this candidate's
+ancestry, with their historical source-parent records preserved below.
 The preceding 49-commit ancestry union and exact-head repairs remain recorded
 in `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. The earlier
 packaged-smoke repair `78e83e1320d263312aa2c7d70a636b951bc7972d` is historical
@@ -27,6 +30,32 @@ provenance from then-live head `99fde17d8b850db561db057365efc4225e40b173`;
 that older SHA is not the current live head. No release claim is made: exact-
 artifact, hosted, signing, publication, Defender, clean-machine,
 provider/client, and downloaded-candidate evidence remain separately bounded.
+
+The prior exact-head hosted validation of `7212d96991eb667a5df805145d3c9a97c73c470c`
+was CI run `33960831539`. It had exactly two Windows failures: Desktop artifact
+job `101292314291` reported the injected updater crash point as
+`component_bootstrap_failed` with rollback phase `rolled_back` and return code
+`2`, then reported `packaged_first_run_cleanup` failed; Python 3.12 job
+`101292314305` failed only
+`test_packaged_surface_removes_its_disposable_vault` with `1 failed, 3222
+passed, 2 skipped, 3 warnings`. The other listed CI, dashboard, repository-
+security, and CodeQL checks passed. The packaged-provider failure did not
+reproduce in the local Windows source tree: the three-file focused run passed
+`300` tests with `3` expected filesystem-capability skips in `97.41s`, and the
+disposable-vault test passed `10/10` repeated runs in approximately `15.0s`
+with no skips or warnings. The provider change is test-only: it projects only
+the fixed content-free report schema and allowlisted error code in a failure
+message; it changes no production acceptance behavior.
+
+The updater change narrows unexpected non-`BootstrapInstallError` failures
+during component bootstrap to the fixed codes
+`component_bootstrap_source_invalid`, `component_bootstrap_core_probe_failed`,
+and `component_bootstrap_transaction_failed`, with
+`component_bootstrap_failed` as the closed fallback; existing allowlisted
+bootstrap codes and rollback control flow remain unchanged. Both changes are
+diagnostic/test evidence only. Neither is a root-cause fix or hosted success;
+the hosted Windows failures, exact-artifact behavior, and release/Defender/
+clean-machine/provider-client acceptance remain open.
 
 The first repair adds strict primitive-type validation before child-failure
 report membership and nonce comparison, so nested, boolean, numeric, null, and

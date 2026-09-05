@@ -59,6 +59,15 @@ The final parser-normalization source repair
 `33bc53769a2dc5d44d0b1ec673fe66595336b835` and was cherry-picked exactly once
 without conflict as `941968d7d5714a6a889b1990ab418b9aa0fc34b3`; its two-path
 scope closes the remaining JSON integer-limit containment boundary.
+The current two-worker exact-head diagnostic integration is covered by ADR-209.
+It starts from prior exact live PR #114 head
+`7212d96991eb667a5df805145d3c9a97c73c470c`; worker
+`a986e125ce62fbdf0bc57c71bf519bc153dd740d` was cherry-picked once as
+`d9d294f6d8fd06338374e684731a273e402cc7ee`, and worker
+`8bbcfc5e56865bc404e473dd967a6ad378914af1` was cherry-picked once as
+`0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`. The worker tips are not
+ancestors; stable patch IDs match. The candidate is not that prior live head,
+and the final documentation commit intentionally does not name its own SHA.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -79,6 +88,35 @@ worker `14f351741c5b4cb2d2343aeea4cba88a27a4380b`; that original worker
 object is likewise not an ancestor. It adds single-flight update actions,
 bounded cancellation feedback, protected cancellation API coverage, and
 dashboard error-recovery coverage.
+
+### 2026-09-05 Windows GA exact-head failure-narrowing candidate
+
+This candidate starts from the prior exact live PR #114 head
+`7212d96991eb667a5df805145d3c9a97c73c470c`, with remote `main` and the PR base
+at `7bfd070fd51541cd77f3cde67576f447cdef50bd`. The candidate was not the prior
+live head and was not pushed at the time of integration. The preceding hosted
+run `33960831539` on that exact head had exactly two Windows failures:
+Desktop artifact job `101292314291` reported
+`component_bootstrap_failed`, rollback phase `rolled_back`, return code `2`,
+and packaged cleanup failure after the injected updater crash point; Python
+3.12 job `101292314305` failed
+`test_packaged_surface_removes_its_disposable_vault` with `1 failed, 3222
+passed, 2 skipped, 3 warnings`. Other listed CI, dashboard, repository-
+security, and CodeQL checks passed.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Packaged updater bootstrap failure narrowing | `desktop.py::_packaged_update_failure_code`; `prepare_installed_runtime` progress callback; `windows_update_diagnostics.py`; `tests/unit/test_desktop_runtime.py`; `tests/unit/test_windows_update_helper.py`; source `a986e125ce62fbdf0bc57c71bf519bc153dd740d`; integrated `d9d294f6d8fd06338374e684731a273e402cc7ee` | Diagnostic-only source contract. Unexpected component-bootstrap failures are narrowed to `component_bootstrap_source_invalid`, `component_bootstrap_core_probe_failed`, or `component_bootstrap_transaction_failed` for the three known setup subphases, with `component_bootstrap_failed` for unknown subphases. Existing allowlisted bootstrap codes and rollback authority remain unchanged; this is not a root-cause fix or hosted success |
+| Packaged provider failure projection | `tests/unit/test_packaged_provider_acceptance.py::_safe_packaged_failure_code`; source `8bbcfc5e56865bc404e473dd967a6ad378914af1`; integrated `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6` | Test-only safe projection. Only the fixed content-free report shape and allowlisted error codes are returned for failure messages; production provider acceptance behavior is unchanged |
+| Provider non-reproduction/stress evidence | Integrated focused run over `tests/unit/test_desktop_runtime.py`, `tests/unit/test_windows_update_helper.py`, and `tests/unit/test_packaged_provider_acceptance.py`; ten repeated disposable-vault checks | Local Windows source evidence only: `300` passed, `3` expected filesystem-capability skips in `97.41s`; the disposable-vault test passed `10/10` repetitions in about `15.0s` with no skips or warnings. This does not override the exact-head hosted failure or establish hosted, artifact, live-provider/client, or release acceptance |
+
+The original worker tips are not ancestors of the integrated commits. Stable
+patch ID `f0eb8c44083db128045a41a8ad6c9928399cb281` matches updater source and
+integrated commits; stable patch ID `0683d6c15f548d6cdc3418c6ba447f4380619d9d`
+matches provider source and integrated commits. Neither change claims a
+root-cause repair or hosted success; the exact hosted failures, artifact-level
+behavior, and release/Defender/clean-machine/provider-client evidence remain
+open.
 
 ### 2026-09-05 Windows GA diagnostic repair on prior hosted head
 
