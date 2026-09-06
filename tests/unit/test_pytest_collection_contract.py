@@ -116,6 +116,28 @@ def test_collection_receipt_is_order_independent_and_count_sensitive() -> None:
     assert checker.collection_digest(first) != checker.collection_digest(duplicated)
 
 
+def test_runner_rejects_collection_that_diverges_from_canonical_plan() -> None:
+    checker = _load_collection_script()
+    canonical = Counter(
+        {
+            "tests/unit/test_a.py::test_one": 1,
+            "tests/unit/test_b.py::test_two": 1,
+        }
+    )
+    divergent_runner = Counter(
+        {
+            "tests/unit/test_a.py::test_one": 1,
+            "tests/unit/test_c.py::test_three": 1,
+        }
+    )
+
+    with pytest.raises(ValueError, match="differs from canonical Windows plan"):
+        checker.require_canonical_collection(
+            divergent_runner,
+            checker.collection_digest(canonical),
+        )
+
+
 def test_shard_union_rejects_missing_duplicate_and_empty_results() -> None:
     checker = _load_collection_script()
     complete = Counter(
@@ -154,7 +176,34 @@ def test_required_windows_check_rejects_unsuccessful_or_missing_shards(result: s
     checker = _load_collection_script()
 
     assert checker.require_successful_shards(result) == 1
-    assert checker.require_successful_shards("success") == 0
+
+
+def test_required_windows_check_requires_valid_canonical_plan() -> None:
+    checker = _load_collection_script()
+    digest = "a" * 64
+    shard_zero = '["tests/unit/test_a.py"]'
+    shard_one = '["tests/unit/test_b.py"]'
+
+    assert (
+        checker.require_successful_shards(
+            "success",
+            plan_result="success",
+            complete_digest=digest,
+            shard_targets_json=(shard_zero, shard_one),
+        )
+        == 0
+    )
+    assert checker.require_successful_shards("success") == 1
+    assert checker.require_successful_shards("success", plan_result="failure") == 1
+    assert (
+        checker.require_successful_shards(
+            "success",
+            plan_result="success",
+            complete_digest=digest,
+            shard_targets_json=(shard_zero, shard_zero),
+        )
+        == 1
+    )
 
 
 def test_ci_runs_complete_linux_and_two_sharded_windows_suites() -> None:
@@ -163,14 +212,22 @@ def test_ci_runs_complete_linux_and_two_sharded_windows_suites() -> None:
     assert "python scripts/check_test_collection.py --workers 4" in workflow
     assert "python -m pytest -n 4 --dist=loadfile" in workflow
     assert "shard: [0, 1]" in workflow
+    assert "needs: python-windows-plan" in workflow
+    assert '--write-github-output "$env:GITHUB_OUTPUT"' in workflow
     assert "--shard-count 2" in workflow
     assert "--shard-index ${{ matrix.shard }}" in workflow
     assert "--write-targets .pytest-shard-targets.txt" in workflow
-    assert "needs: python-windows-shard" in workflow
+    assert '--canonical-complete-digest "$env:CANONICAL_COMPLETE_DIGEST"' in workflow
+    assert "--canonical-targets-json $targetsJson" in workflow
+    assert "- python-windows-plan" in workflow
+    assert "- python-windows-shard" in workflow
     assert "if: ${{ always() }}" in workflow
     assert "fail-fast: false" in workflow
     assert "WINDOWS_SHARD_RESULT: ${{ needs.python-windows-shard.result }}" in workflow
     assert '--require-shard-result "$WINDOWS_SHARD_RESULT"' in workflow
+    assert '--require-plan-result "$WINDOWS_PLAN_RESULT"' in workflow
+    assert '--require-complete-digest "$CANONICAL_COMPLETE_DIGEST"' in workflow
+    assert workflow.count('--require-shard-targets-json "$CANONICAL_SHARD_') == 2
     assert workflow.count("name: Python 3.12 - windows-latest\n") == 1
     assert "--ignore" not in workflow
     assert "--deselect" not in workflow

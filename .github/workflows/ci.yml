@@ -51,8 +51,39 @@ jobs:
       - name: Python dependency vulnerability gate
         run: python scripts/dependency_audit.py --ecosystem python
 
+  python-windows-plan:
+    name: Plan Windows pytest shards
+    runs-on: windows-latest
+    timeout-minutes: 10
+    outputs:
+      complete_digest: ${{ steps.plan.outputs.complete_digest }}
+      shard_0_targets: ${{ steps.plan.outputs.shard_0_targets }}
+      shard_1_targets: ${{ steps.plan.outputs.shard_1_targets }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - name: Install from reviewed lock constraints
+        run: python scripts/install_locked_python.py --extra dev
+      - id: plan
+        name: Create canonical Windows pytest shard plan
+        run: >-
+          python scripts/check_test_collection.py
+          --workers 4
+          --shard-count 2
+          --write-github-output "$env:GITHUB_OUTPUT"
+
   python-windows-shard:
     name: Python 3.12 - windows-latest shard ${{ matrix.shard }}
+    needs: python-windows-plan
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
@@ -82,12 +113,27 @@ jobs:
       - name: Documentation checks
         run: python scripts/check_docs.py
       - name: Verify complete and sharded pytest collection
-        run: >-
-          python scripts/check_test_collection.py
-          --workers 4
-          --shard-count 2
-          --shard-index ${{ matrix.shard }}
-          --write-targets .pytest-shard-targets.txt
+        env:
+          CANONICAL_COMPLETE_DIGEST: ${{ needs.python-windows-plan.outputs.complete_digest }}
+          CANONICAL_SHARD_0_TARGETS: ${{ needs.python-windows-plan.outputs.shard_0_targets }}
+          CANONICAL_SHARD_1_TARGETS: ${{ needs.python-windows-plan.outputs.shard_1_targets }}
+        shell: pwsh
+        run: |
+          $targetsJson = if (${{ matrix.shard }} -eq 0) {
+            $env:CANONICAL_SHARD_0_TARGETS
+          } else {
+            $env:CANONICAL_SHARD_1_TARGETS
+          }
+          python scripts/check_test_collection.py `
+            --workers 4 `
+            --shard-count 2 `
+            --shard-index ${{ matrix.shard }} `
+            --canonical-complete-digest "$env:CANONICAL_COMPLETE_DIGEST" `
+            --canonical-targets-json $targetsJson `
+            --write-targets .pytest-shard-targets.txt
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
       - name: Tests and platform smoke coverage
         shell: pwsh
         run: |
@@ -107,7 +153,9 @@ jobs:
   python-windows:
     name: Python 3.12 - windows-latest
     if: ${{ always() }}
-    needs: python-windows-shard
+    needs:
+      - python-windows-plan
+      - python-windows-shard
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -117,10 +165,18 @@ jobs:
           python-version: "3.12"
       - name: Propagate Windows pytest shard result
         env:
+          WINDOWS_PLAN_RESULT: ${{ needs.python-windows-plan.result }}
           WINDOWS_SHARD_RESULT: ${{ needs.python-windows-shard.result }}
+          CANONICAL_COMPLETE_DIGEST: ${{ needs.python-windows-plan.outputs.complete_digest }}
+          CANONICAL_SHARD_0_TARGETS: ${{ needs.python-windows-plan.outputs.shard_0_targets }}
+          CANONICAL_SHARD_1_TARGETS: ${{ needs.python-windows-plan.outputs.shard_1_targets }}
         run: >-
           python scripts/check_test_collection.py
           --require-shard-result "$WINDOWS_SHARD_RESULT"
+          --require-plan-result "$WINDOWS_PLAN_RESULT"
+          --require-complete-digest "$CANONICAL_COMPLETE_DIGEST"
+          --require-shard-targets-json "$CANONICAL_SHARD_0_TARGETS"
+          --require-shard-targets-json "$CANONICAL_SHARD_1_TARGETS"
 
   security:
     name: Repository security gates

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -152,7 +154,7 @@ def expected_shard_collections(
     file_to_shard = {
         path: shard_index for shard_index, shard in enumerate(shards) for path in shard
     }
-    expected = tuple(Counter() for _ in shards)
+    expected: tuple[Counter[str], ...] = tuple(Counter() for _ in shards)
     for nodeid, count in complete.items():
         path = test_file_for_nodeid(nodeid)
         shard_index = file_to_shard.get(path)
@@ -161,6 +163,49 @@ def expected_shard_collections(
         expected[shard_index][nodeid] = count
     verify_complete_disjoint_union(complete, expected)
     return expected
+
+
+def parse_shard_targets(payload: str) -> tuple[str, ...]:
+    """Parse one canonical shard's JSON target list and fail closed."""
+
+    decoded = json.loads(payload)
+    if (
+        not isinstance(decoded, list)
+        or not decoded
+        or not all(isinstance(item, str) for item in decoded)
+    ):
+        raise ValueError("canonical shard targets must be a non-empty JSON string list")
+    targets = tuple(normalize_test_file(item) for item in decoded)
+    if len({target.casefold() for target in targets}) != len(targets):
+        raise ValueError("canonical shard targets contain duplicate normalized paths")
+    return targets
+
+
+def require_canonical_collection(complete: Counter[str], expected_digest: str) -> None:
+    """Reject a runner whose complete collection differs from the planner's."""
+
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+        raise ValueError("canonical complete collection digest is missing or invalid")
+    actual_digest = collection_digest(complete)
+    if actual_digest != expected_digest:
+        raise ValueError(
+            "runner complete collection differs from canonical Windows plan "
+            f"(expected_sha256={expected_digest}, actual_sha256={actual_digest})"
+        )
+
+
+def write_github_shard_plan(
+    path: Path, complete: Counter[str], shards: Sequence[Sequence[str]]
+) -> None:
+    """Publish a bounded canonical plan for all later Windows runner jobs."""
+
+    lines = [f"complete_digest={collection_digest(complete)}\n"]
+    lines.extend(
+        f"shard_{index}_targets={json.dumps(list(targets), separators=(',', ':'))}\n"
+        for index, targets in enumerate(shards)
+    )
+    with path.open("a", encoding="utf-8") as output:
+        output.write("".join(lines))
 
 
 def verify_complete_disjoint_union(
@@ -204,6 +249,9 @@ def verify_collection(
     shard_count: int | None = None,
     shard_index: int | None = None,
     write_targets: Path | None = None,
+    write_github_output: Path | None = None,
+    canonical_complete_digest: str | None = None,
+    canonical_targets_json: str | None = None,
 ) -> int:
     if workers < 1:
         raise ValueError("workers must be positive")
@@ -217,7 +265,16 @@ def verify_collection(
         return 1
 
     if shard_count is None:
-        if shard_index is not None or write_targets is not None:
+        if any(
+            value is not None
+            for value in (
+                shard_index,
+                write_targets,
+                write_github_output,
+                canonical_complete_digest,
+                canonical_targets_json,
+            )
+        ):
             raise ValueError("shard index/output requires a shard count")
         print(
             "pytest collection contract passed: "
@@ -226,15 +283,39 @@ def verify_collection(
             f"sha256={collection_digest(sequential)}"
         )
         return 0
+    files = sorted({test_file_for_nodeid(nodeid) for nodeid in sequential})
+    shards = assign_test_files(files, shard_count=shard_count)
+    expected = expected_shard_collections(sequential, shards)
+
+    if write_github_output is not None:
+        if any(
+            value is not None
+            for value in (
+                shard_index,
+                write_targets,
+                canonical_complete_digest,
+                canonical_targets_json,
+            )
+        ):
+            raise ValueError("canonical plan output cannot select or consume a shard")
+        write_github_shard_plan(write_github_output, sequential, shards)
+        print(
+            "pytest canonical shard plan passed: "
+            f"{sum(sequential.values())} nodeids partition into {shard_count} disjoint shards; "
+            f"complete_sha256={collection_digest(sequential)}"
+        )
+        return 0
+
     if shard_index is None:
         raise ValueError("shard index is required when shard count is set")
     if shard_index < 0 or shard_index >= shard_count:
         raise ValueError("shard index is outside the configured shard range")
-
-    files = sorted({test_file_for_nodeid(nodeid) for nodeid in sequential})
-    shards = assign_test_files(files, shard_count=shard_count)
-    expected = expected_shard_collections(sequential, shards)
-    targets = shards[shard_index]
+    if canonical_complete_digest is None or canonical_targets_json is None:
+        raise ValueError("shard execution requires the canonical digest and targets")
+    require_canonical_collection(sequential, canonical_complete_digest)
+    targets = parse_shard_targets(canonical_targets_json)
+    if targets != shards[shard_index]:
+        raise ValueError(f"shard {shard_index} targets differ from canonical assignment")
     shard_sequential = collect(workers=None, targets=targets)
     shard_parallel = collect(workers=workers, targets=targets)
     if not _collections_match(
@@ -264,11 +345,35 @@ def verify_collection(
     return 0
 
 
-def require_successful_shards(result: str) -> int:
+def require_successful_shards(
+    result: str,
+    *,
+    plan_result: str | None = None,
+    complete_digest: str | None = None,
+    shard_targets_json: Sequence[str] = (),
+) -> int:
     """Propagate a matrix dependency result through the stable required check."""
 
+    if plan_result != "success":
+        print(
+            f"Windows pytest shard plan did not succeed: {plan_result or 'missing'}",
+            file=sys.stderr,
+        )
+        return 1
     if result == "success":
-        print("Windows pytest shards completed successfully")
+        try:
+            if complete_digest is None or not re.fullmatch(r"[0-9a-f]{64}", complete_digest):
+                raise ValueError("canonical complete collection digest is missing or invalid")
+            targets = tuple(parse_shard_targets(payload) for payload in shard_targets_json)
+            if len(targets) != 2:
+                raise ValueError("exactly two canonical shard target lists are required")
+            flattened = [path for shard in targets for path in shard]
+            if len({path.casefold() for path in flattened}) != len(flattened):
+                raise ValueError("canonical shard target lists overlap")
+        except (json.JSONDecodeError, ValueError) as exc:
+            print(f"Windows pytest shard plan is invalid: {exc}", file=sys.stderr)
+            return 1
+        print("Windows pytest shards completed successfully from the canonical plan")
         return 0
     print(f"Windows pytest shards did not succeed: {result or 'missing'}", file=sys.stderr)
     return 1
@@ -280,7 +385,13 @@ def main() -> int:
     parser.add_argument("--shard-count", type=int)
     parser.add_argument("--shard-index", type=int)
     parser.add_argument("--write-targets", type=Path)
+    parser.add_argument("--write-github-output", type=Path)
+    parser.add_argument("--canonical-complete-digest")
+    parser.add_argument("--canonical-targets-json")
     parser.add_argument("--require-shard-result")
+    parser.add_argument("--require-plan-result")
+    parser.add_argument("--require-complete-digest")
+    parser.add_argument("--require-shard-targets-json", action="append", default=[])
     arguments = parser.parse_args()
     try:
         if arguments.require_shard_result is not None:
@@ -291,10 +402,18 @@ def main() -> int:
                     arguments.shard_count,
                     arguments.shard_index,
                     arguments.write_targets,
+                    arguments.write_github_output,
+                    arguments.canonical_complete_digest,
+                    arguments.canonical_targets_json,
                 )
             ):
                 raise ValueError("shard result propagation cannot collect tests")
-            return require_successful_shards(arguments.require_shard_result)
+            return require_successful_shards(
+                arguments.require_shard_result,
+                plan_result=arguments.require_plan_result,
+                complete_digest=arguments.require_complete_digest,
+                shard_targets_json=arguments.require_shard_targets_json,
+            )
         if arguments.workers is None:
             raise ValueError("workers are required for collection verification")
         return verify_collection(
@@ -302,8 +421,11 @@ def main() -> int:
             shard_count=arguments.shard_count,
             shard_index=arguments.shard_index,
             write_targets=arguments.write_targets,
+            write_github_output=arguments.write_github_output,
+            canonical_complete_digest=arguments.canonical_complete_digest,
+            canonical_targets_json=arguments.canonical_targets_json,
         )
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (json.JSONDecodeError, OSError, RuntimeError, ValueError) as exc:
         print(f"pytest collection contract error: {exc}", file=sys.stderr)
         return 1
 
