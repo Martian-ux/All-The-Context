@@ -189,3 +189,72 @@ Final gates: 73 focused unit tests passed in 10.42 seconds across
 all three changed Python files passed in 0.019 seconds; `git diff --check`
 passed. All pytest data was confined to the unique run-owned basetemp and
 removed after validation.
+
+
+## Independent repair review receipt (2026-09-06)
+
+Under ATC-WF-2026-09-05 and ATC-LINUX-ASTRA-LOW-2026-09-06, the independent
+review verified clean implementation HEAD
+`b8b6301e890843dcf4c3d848eb27509bb3688717`, tree
+`cf6f789e3d0fb0e8a7c143fd1db068cb5065fbc7`, and inspected its complete diff
+against accepted base `44d5da0a5c71e24a9bd0abd7d00c3df2c2852085`.
+Python 3.12.3 imported ATC from this checkout; a Git object write succeeded.
+Both external input hashes matched the values recorded above. Test data used
+unique checkout-local `.review-pytest-zgkmowrw` subdirectories, removed after
+validation. No external fixture was modified.
+
+Verdict: **REPAIR**. All 73 original focused tests passed, but eight new
+behavioral cases failed on the implementation before repair:
+
+- Six exclusions (`not preferences`, capitalized/punctuated variants, curly
+  apostrophe `Don’t include preferences`, `Do not include my preferences`,
+  `No preferences, please`, and `Don't include: preferences`) left positive
+  content anchors that suppressed the requested project fact. The mandatory
+  preference remained, recreating a preference-only pack.
+- `State regulations for Aurora` lost the meaningful jurisdiction term, and
+  `Aurora handoff owner` lost the task facet `handoff`. Both admitted incomplete
+  records instead of abstaining.
+
+The bounded repair recognizes those preference output clauses, restricts bare
+`not/no preferences` to clause endings, and preserves following unrelated
+anchors. It narrows request-leading verb removal and handoff packaging removal
+so the proven noun cases retain their content requirements. Additional checks
+preserve factual negation, positive preference requests, and nearby latency
+requirements. This remains a conservative lexical projection, not general
+natural-language negation understanding. No thresholds or project literals
+were added to production code.
+
+Inspection confirmed explicit `SearchRequest.kinds` still filters SQL candidates
+and supplies kind compatibility; unspecified kinds alone use the neutral path.
+Bootstrap's mandatory preference category remains independent of output wording.
+Operation authorization at the API, per-client/request-scope selection before
+ranking, temporal resolution, correction/deletion handling, unresolved-conflict
+and stale-record gating, and pre/post-budget content unions are unchanged.
+Focused tests cover these boundaries, including unrelated-project isolation.
+Natural-language category wording is not an authorization or typed-kind filter.
+
+The existing frozen regression uses the real authenticated Core bootstrap API
+and current-record reconstruction, not symbolic answer substitution. Its fact
+assertion is now explicitly non-vacuous and also requires the frozen preference.
+Replacing only the retrieval module in process with the exact accepted-base
+source made this same regression fail: all three required facts were absent and
+only the irrelevant preference was present. The repaired replay selected all
+three facts and the required preference/context, seven records total, HTTP 200,
+`local_core`, `explicit_project_match`, 882 pack characters and 940 total
+characters within 1600. This establishes retrieval repair, not reader/model
+superiority or historical proposal replay.
+
+The final focused unit run passed 82 tests in 11.28 seconds. Ruff and mypy
+commands were attempted and reported missing modules; nothing was installed.
+The full suite was not run, per review scope. Integration uses the same
+process-only httpx2 and inline AnyIO adapters described above, with no product
+or environment-file changes. Windows, normal threaded HTTP, locked dependency
+validation, static checks, and shipping updates to STATUS, DECISIONS, and
+REQUIREMENTS_TRACEABILITY remain deferred to the owning desktop manager.
+
+The final standalone frozen ASGI regression passed with the strengthened fact
+and preference assertions. An additional attempt to execute the pre-existing
+six-cell TestClient bridge stalled in this environment and was interrupted;
+that threaded bridge execution remains deferred. Its unit contract tests
+passed in the focused run. Syntax compilation of the three owned Python
+files and `git diff --check` passed.

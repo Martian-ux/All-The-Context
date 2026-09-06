@@ -36,6 +36,10 @@ def test_output_exclusions_preserve_factual_and_positive_preference_intent(exclu
     assert "concise" in parse_query_intent("Do I prefer concise answers?").anchor_tokens
     assert "not" in parse_query_intent("Which region is not deployed?").anchor_tokens
     assert "state" in parse_query_intent("What is the deployment state?").anchor_tokens
+    assert "preferences" in parse_query_intent("No preferences changed for Aurora").anchor_tokens
+    assert "preferences" in parse_query_intent("Do not delete preferences").anchor_tokens
+    assert "latency" in parse_query_intent("not preferences, latency").anchor_tokens
+    assert "concise" in parse_query_intent("concise handoff preferences").anchor_tokens
 
 
 def test_positive_preference_bootstrap_keeps_current_preference(tmp_path: Path) -> None:
@@ -120,6 +124,52 @@ def test_project_handoff_composes_facts_only_when_eligible_union_fits(
         else:
             assert ids == set()
         assert response.used_chars <= (256 if boundary == "budget" else 1600)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("exclusion", [
+    "not preferences.", "Not preferences!", "Don’t include preferences.",
+    "Do not include my preferences.", "No preferences, please.",
+    "Don't include: preferences.",
+])
+def test_preference_exclusion_does_not_block_project_facts(
+    tmp_path: Path, exclusion: str,
+) -> None:
+    store = CoreStore(tmp_path / "exclusion.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    fact = _approve(
+        store, key="region", content="Aurora region is west.",
+        scopes=["project:aurora"], explicit_user_statement=True,
+    )
+    preference = _approve(
+        store, key="preference", content="I prefer concise answers.",
+        kind="interaction_preference", explicit_user_statement=True,
+    )
+    try:
+        response = RetrievalEngine(store).bootstrap(BootstrapRequest(
+            query=f"Aurora region; {exclusion}", current_project="Aurora", budget_chars=1600,
+        ), READER)
+        assert {fact, preference} <= {item.id for item in response.items}
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("query, content", [
+    ("State regulations for Aurora", "Aurora regulations require approval."),
+    ("Aurora handoff owner", "Aurora owner is Morgan."),
+    ("Aurora region; not preferences, latency", "Aurora region is west."),
+])
+def test_meaningful_state_and_handoff_terms_require_content(
+    tmp_path: Path, query: str, content: str,
+) -> None:
+    store = CoreStore(tmp_path / "meaningful.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    _approve(store, key="near-miss", content=content, explicit_user_statement=True)
+    try:
+        assert not RetrievalEngine(store).bootstrap(
+            BootstrapRequest(query=query, budget_chars=1600), READER,
+        ).items
     finally:
         store.close()
 

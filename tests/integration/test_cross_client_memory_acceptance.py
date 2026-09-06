@@ -94,7 +94,13 @@ def test_frozen_project_handoff_from_external_manifest(tmp_path: Path) -> None:
                     "deployment_region", "production_blocker", "next_action",
                 }
             }
+            assert len(required) == 3
             assert required <= contents
+            preferences = {
+                record["content"] for record in manifest["records_after_construction"]
+                if record["kind"] == "interaction_preference"
+            }
+            assert preferences and preferences <= contents
             assert payload["context_mode"] == "local_core"
             assert payload["project_context"]["reason"] == "explicit_project_match"
             assert payload["total_used_chars"] <= manifest["bootstrap_request"]["character_budget"]
