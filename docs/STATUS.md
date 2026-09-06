@@ -2,6 +2,41 @@
 
 ## Current milestone
 
+**2026-09-06 — PR #114 defensive-boundary and hosted-flake repair candidate**
+
+Starting from the still-live open/draft PR #114 head
+`bbe63194618350d5dfcd718d495f21b131f7e4a5`, six independently reviewed
+source commits were cherry-picked exactly once without conflict. Their
+integrated sequence is `ab8a11b`, `64356a0`, `7497853`, `90d65d9`, `1110707`,
+and committed-code tip `ba9d17e`; stable patch IDs match every source commit.
+The final documentation commit intentionally does not name its own SHA.
+
+The preceding exact-head CI run `33964833404` was terminal red. Windows desktop
+job `101303010615` reached updater crash injection but returned `2`, persisted a
+`rolled_back` journal with fixed code `component_bootstrap_transaction_failed`,
+and then failed cleanup. Windows Python job `101303010487` failed only two
+capture-scheduler tests waiting five seconds for a worker to enter; its summary
+was 3,231 passed, 2 expected skips, 3 warnings. CodeQL run `33964830399` was
+green. These are historical results for `bbe6319`, not candidate acceptance.
+
+This candidate makes four bounded corrections. Packaged-provider acceptance now
+validates an exact content-free schema, primitive integer version, exact parser
+version, and closed error-code vocabulary. Updater diagnostics require primitive
+strings before allowlist lookup. Bootstrap acquisition classifies only a real
+file-lock timeout as `bootstrap_busy`; other lock I/O remains the fixed
+`bootstrap_retry_required`, and a persisted rolled-back transaction is proven to
+survive one failed restart and complete on retry. Scheduler product tests replace
+the arbitrary five-second entry wait with event-driven terminal detection and a
+finite 30-second monotonic fail-safe. Bootstrap changes narrow diagnostics and
+retry behavior but do not establish the hosted updater root cause; scheduler
+changes are test-only and require a hosted rerun to establish flake closure.
+
+Independent substantive review returned CLEAN FOR INTEGRATION for all four
+areas after two repair cycles. Python 3.12.10 preflight and a worktree-local
+basetemp smoke passed. Final exact-tree static, focused, full-suite, and hosted
+validation remain pending. No artifact, Defender, clean-machine, live provider/
+client, signing, publication, or release acceptance is claimed.
+
 The current Windows GA diagnostic integration candidate is a clean detached
 tree whose source tip is `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`, with
 parent `d9d294f6d8fd06338374e684731a273e402cc7ee`, and whose exact prior live

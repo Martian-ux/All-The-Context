@@ -1,5 +1,43 @@
 # Architecture decisions
 
+## ADR-210: Fail closed at diagnostic boundaries and make scheduler tests event-driven
+
+**Status:** accepted locally on 2026-09-06 for the PR #114 repair candidate
+assembled from prior exact live head
+`bbe63194618350d5dfcd718d495f21b131f7e4a5`. Remote `main` and the PR base
+were `7bfd070fd51541cd77f3cde67576f447cdef50bd`; the PR remained OPEN/DRAFT.
+The final documentation commit intentionally does not name its own SHA.
+
+Packaged diagnostic readers consume untrusted data, so permissive coercion is
+not acceptable. Provider acceptance now requires the exact schema and primitive
+types before comparing the schema/parser versions or a closed error code.
+Updater diagnostics likewise accept only primitive strings before allowlist
+membership. Any other value maps to a fixed generic code without exception text,
+paths, credentials, raw context, or other payload reflection.
+
+Bootstrap lock acquisition distinguishes contention from other I/O failures:
+only the lock library's timeout maps to `bootstrap_busy`; non-contention
+`OSError` maps to the existing fixed `bootstrap_retry_required`. The lock is
+never released before ownership and is released after successful acquisition.
+Recovery coverage uses a persisted `ROLLED_BACK` journal and backup to prove a
+failed restart preserves retry state and a later retry completes cleanup. This
+is bounded classification/recovery hardening, not proof of the hosted failure's
+root cause or of exact-artifact success.
+
+Scheduler concurrency tests must observe lifecycle state instead of assuming a
+worker enters within five wall-clock seconds on a contended hosted runner. Their
+helper polls event, stop, terminal, and worker-failure state in 100-millisecond
+slices and retains a finite 30-second monotonic fail-safe. A hostile fake-clock
+test proves finite termination without real sleeping. This changes tests only;
+production scheduler timing and control flow remain unchanged.
+
+The accepted source-to-integrated mapping is `b390e90` -> `ab8a11b`, `9d4acb2`
+-> `64356a0`, `05b5a16` -> `7497853`, `f03ed70` -> `90d65d9`, `5df16b5` ->
+`1110707`, and `1cc893a` -> `ba9d17e`. Every pair has the same stable patch ID.
+Independent substantive review returned CLEAN FOR INTEGRATION after requiring
+the finite scheduler deadline and correct non-contention lock classification.
+Exact-tree local and hosted validation remain separate gates.
+
 ## ADR-209: Windows GA exact-head failure narrowing remains diagnostic-only
 
 **Status:** accepted locally on 2026-09-05 for integration candidate

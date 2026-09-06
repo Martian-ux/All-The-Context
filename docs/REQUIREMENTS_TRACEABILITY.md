@@ -89,6 +89,23 @@ object is likewise not an ancestor. It adds single-flight update actions,
 bounded cancellation feedback, protected cancellation API coverage, and
 dashboard error-recovery coverage.
 
+ADR-210 covers the 2026-09-06 defensive-boundary and hosted-flake repair
+candidate based on exact prior live PR #114 head `bbe63194618350d5dfcd718d495f21b131f7e4a5`.
+The six integrated commits are `ab8a11b`, `64356a0`, `7497853`, `90d65d9`,
+`1110707`, and committed-code tip `ba9d17e`; each has the same stable patch ID
+as its reviewed source. Final exact-tree and hosted results remain separate.
+
+### 2026-09-06 defensive-boundary and hosted-flake repair candidate
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Provider report boundary | `tests/unit/test_packaged_provider_acceptance.py`; source `b390e90`; integrated `ab8a11b` | Test acceptance requires the exact key set, primitive integer schema version `1`, exact parser version `provider-archives-v2`, and closed error-code vocabulary; unknown or raw payload fields fail closed. Production provider behavior is unchanged. |
+| Updater diagnostic primitive boundary | `desktop.py::_packaged_update_failure_code`; `tests/unit/test_desktop_runtime.py`; source `9d4acb2`; integrated `64356a0` | Only primitive string code/subphase values reach allowlist lookup. Unhashable, boolean, numeric, null, and unknown values return fixed `component_bootstrap_failed` without reflecting payload content or changing rollback control flow. |
+| Bootstrap contention and retry classification | `windows_bootstrap_install.py`; `tests/unit/test_windows_bootstrap_install.py`; sources `05b5a16`, `f03ed70`; integrated `7497853`, `90d65d9` | Lock timeout alone returns `bootstrap_busy`; other acquisition I/O returns fixed `bootstrap_retry_required`. Ownership/release and persisted rolled-back journal/backup retry cleanup are covered. Diagnostic/recovery hardening only; hosted root cause and artifact success remain unproved. |
+| Scheduler hosted-runner determinism | `tests/unit/test_capture_scheduler_productization.py`; sources `5df16b5`, `1cc893a`; integrated `1110707`, `ba9d17e` | Test-only event-driven entry observation checks terminal/failure/stop states and has a finite 30-second monotonic fail-safe. Fake-clock coverage proves termination without wall sleep. Production scheduler behavior is unchanged; hosted rerun is required. |
+| Prior exact-head hosted evidence | CI `33964833404`, Windows desktop job `101303010615`, Windows Python job `101303010487`; CodeQL `33964830399` | Historical `bbe6319` evidence: desktop updater crash/cleanup failed; Python failed only two five-second scheduler waits with 3,231 passed, 2 skipped, 3 warnings; CodeQL passed. It is not candidate acceptance. |
+| Review and remaining evidence | Independent reviewer `01a07766-be38-7f01-a4b3-eccb6d0714ff`; Python 3.12.10 preflight | CLEAN FOR INTEGRATION after two repair cycles. Final exact-tree local gates, hosted rerun, exact artifact, Defender, clean-machine, provider/client, signing, publication, and release evidence remain pending. |
+
 ### 2026-09-05 Windows GA exact-head failure-narrowing candidate
 
 This candidate starts from the prior exact live PR #114 head
