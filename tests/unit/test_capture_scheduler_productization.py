@@ -130,6 +130,21 @@ def _wait_until(predicate: Any, *, timeout: float = 5.0, interval: float = 0.01)
     raise AssertionError("condition was not met before timeout")
 
 
+def _wait_for_adapter_entry(
+    scheduler: CoreCaptureScheduler,
+    entered: threading.Event,
+) -> None:
+    """Wait for the controlled in-flight boundary without a host-time budget."""
+
+    while not entered.wait(timeout=0.1):
+        status = scheduler.status()
+        if not status["running"] or status["worker_state"] in {"failed", "stopped"}:
+            raise AssertionError(
+                "scheduler worker stopped before the controlled adapter-entry boundary: "
+                f"state={status['worker_state']} failure={status['worker_failure_code']}"
+            )
+
+
 def _blocking_core_scheduler(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1281,7 +1296,7 @@ def test_disable_during_in_flight_then_enable_eventually_runs(
     scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
     try:
         scheduler.start()
-        assert started.wait(timeout=5)
+        _wait_for_adapter_entry(scheduler, started)
         began = time.monotonic()
         disabled = scheduler.disable()
         assert time.monotonic() - began < 1.0
@@ -1306,7 +1321,7 @@ def test_ordered_last_writer_enable_then_disable_is_coherent(
     scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
     try:
         scheduler.start()
-        assert started.wait(timeout=5)
+        _wait_for_adapter_entry(scheduler, started)
         enabled = scheduler.enable()
         assert enabled["durable_enabled"] is True
         began = time.monotonic()
