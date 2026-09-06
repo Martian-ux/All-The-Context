@@ -1511,3 +1511,103 @@ def test_decommission_preserves_unpaired_state_until_host_deletion_is_confirmed(
         decommission_edge_connection(PreparedConnection())  # type: ignore[arg-type]
 
     assert not reset_called
+
+
+@pytest.mark.parametrize("callback", ["refresh", "registration"])
+@pytest.mark.parametrize("error_kind", ["no_errno", "unmapped_errno", "registration_guard"])
+def test_packaged_update_entrypoint_oserror_after_successful_bootstrap_is_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    callback: str,
+    error_kind: str,
+) -> None:
+    """Exercise real prepare/install flow; inner bootstrap cannot see a later error."""
+    from allthecontext import windows_bootstrap_install as bootstrap
+    from allthecontext.application_install import WindowsRegistrationError
+
+    config = CoreConfig.in_directory(tmp_path / "data")
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    targets = bootstrap.canonical_targets(install_dir)
+    sources = dict(targets)
+    if callback == "registration":
+        source_dir = tmp_path / "replacement"
+        source_dir.mkdir()
+        sources = {role: source_dir / path.name for role, path in targets.items()}
+    for role, path in sources.items():
+        path.write_bytes(role.encode("ascii"))
+    runtime = RuntimeCommand(
+        sources["main"],
+        mcp_executable=sources["mcp"],
+        update_executable=sources["updater"],
+        recovery_executable=sources["recovery"],
+    )
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
+    monkeypatch.setenv("ATC_UPDATE_OPERATION", "a" * 24)
+    monkeypatch.setenv("ATC_UPDATE_ATTEMPT", "b" * 32)
+    monkeypatch.setattr(desktop.CoreConfig, "default", lambda: config)
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(desktop.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(desktop.RuntimeCommand, "current", lambda: runtime)
+    monkeypatch.setattr(desktop, "probe_core", lambda _config: CoreProbe.UNREACHABLE)
+    monkeypatch.setattr(desktop, "_stop_installed_core_for_upgrade", lambda: None)
+    monkeypatch.setattr(
+        desktop,
+        "runtime_build_identity",
+        lambda **_: make_build_identity(
+            version=allthecontext.__version__,
+            platform_name="windows",
+            architecture="x86_64",
+            source_commit="c" * 40,
+        ),
+    )
+    canary = "private-path-and-token-must-not-escape"
+    failure = (
+        WindowsRegistrationError("registration_target_changed")
+        if error_kind == "registration_guard"
+        else OSError(9876, canary) if error_kind == "unmapped_errno" else OSError(canary)
+    )
+    events: list[str] = []
+    original_install = bootstrap.install_windows_components
+
+    def observed_install(*args, **kwargs):
+        try:
+            result = original_install(*args, **kwargs)
+        except OSError:
+            events.append("inner_oserror")
+            raise
+        events.append("bootstrap_returned")
+        assert all(targets[role].read_bytes() == role.encode("ascii") for role in targets)
+        return result
+
+    def fail_entrypoint(*_args):
+        assert events == ["bootstrap_returned"]
+        events.append(callback)
+        raise failure
+
+    monkeypatch.setattr(bootstrap, "install_windows_components", observed_install)
+    monkeypatch.setattr(desktop, "application_entrypoints_need_refresh", fail_entrypoint)
+    monkeypatch.setattr(desktop, "install_application_entrypoints", fail_entrypoint)
+    original_code = desktop._packaged_update_failure_code
+    observed_projection: list[tuple[str, str]] = []
+
+    def observed_code(error, phase, *, bootstrap_subphase="unknown"):
+        assert error is failure
+        observed_projection.append((phase, bootstrap_subphase))
+        return original_code(error, phase, bootstrap_subphase=bootstrap_subphase)
+
+    monkeypatch.setattr(desktop, "_packaged_update_failure_code", observed_code)
+    report = config.data_dir / "updates" / "transactions" / ("a" * 24) / "apply-report.json"
+    assert _apply_packaged_update(str(report)) == 1
+    assert events == ["bootstrap_returned", callback]
+    assert observed_projection == [("component_bootstrap", "bootstrap_install_recovery")]
+    assert json.loads(report.read_text(encoding="utf-8")) == {
+        "attempt": "b" * 32,
+        "code": "component_bootstrap_os_error",
+        "phase": "component_bootstrap",
+        "status": "failed",
+    }
+    captured = capsys.readouterr()
+    assert canary not in report.read_text(encoding="utf-8") + captured.out + captured.err
+    assert not list(report.parent.glob("*.atc-new"))
