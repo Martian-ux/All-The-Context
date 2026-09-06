@@ -103,3 +103,89 @@ binding. It does not establish a realistic changed-preference capability.
 A later proposal may define a realistic task family, an independent rubric, and
 a separately generated and frozen holdout. The implementer must not access the
 holdout before freezing and review. That later work is outside this pilot.
+
+## Offline deployment handoff repair receipt (2026-09-06)
+
+The bounded worker used the explicitly authorized frozen diagnostic inputs,
+without changing their query or current-record contents. This is a retrieval
+repair check, not a reader outcome or a new holdout evaluation. No model,
+reader, network, paid service, delegation, or live state was used.
+
+Checkpoint: clean HEAD `44d5da0a5c71e24a9bd0abd7d00c3df2c2852085`, tree
+`1a52f7a46927cae67bdd6ba20866ccb233646b52`; Python 3.12.3 from `.venv-atc`;
+`PYTHONPATH` and the imported `allthecontext` path both resolve to this checkout's
+`packages/allthecontext/src`. Temporary file probes proved checkout and `.git`
+write access. The unique writable pytest root was
+`.pytest-worker-20260906-repair`, with separate subdirectories for each run.
+The external bundle SHA-256 was
+`929157cebcc435a153a97d41ebf65ee87afa7414c2bfa2017e9ad5337f8aee3c`; the
+manifest SHA-256 was
+`10aa6618b080b341ed3f3311d1e917156ee75d66f5f371e5e4f55a2c89608a49`.
+Neither input was edited or copied into the repository.
+
+The causal production change is confined to `retrieval.py`. Request-leading
+verbs, handoff formatting, terminal punctuation, and narrow negated preference
+output clauses no longer become required factual anchors. Factual negation and
+positive preference terms remain. A small lexical equivalence lets “blocker”
+match “blocked” or “blocking.” An explicit project no longer invents a zero kind
+compatibility score when the caller did not request a record kind. Inspection
+found no actual preference-intent classifier in the accepted checkout: the
+reported kind mismatch was a literal query-token/storage-kind comparison.
+Explicit kind filters and mandatory preference retrieval remain intact.
+Numeric thresholds, authorization, temporal resolution, conflict handling, and
+the pre/post-budget content-union checks were not changed.
+
+Relevance heuristics are not authorization boundaries. Operation permissions
+and per-record client permissions establish access before scoring; requested
+record scopes select categories. Query normalization or a matching project
+name cannot grant access. Content coverage then decides usefulness within that
+eligible pool. A complete union must still survive selection and budget limits.
+
+The external-manifest integration test is opt-in via `ATC_FROZEN_INPUT_DIR`.
+It verifies both hashes and recreates the seven frozen current records in a
+temporary Core, using new IDs and timestamps, rather than replaying the original
+historical proposal stream. It sends the exact frozen bootstrap request through
+ASGI with a registered `context:read` client. Replacing only the retrieval module
+in process with the accepted HEAD version reproduces the preference-only
+failure (2.35 seconds). The repaired version returns HTTP 200, `local_core`,
+`explicit_project_match`, all three requested facts, seven selected records,
+zero omitted, 882 pack characters and 940 total characters out of 1600.
+The mandatory preference and other same-project records remain present; no
+claim of perfect precision or downstream reader success is made.
+
+Focused unit coverage includes output-negation variants, a genuine preference
+request, independent facts, unknown facts, wrong requested project scope,
+denied client access, corrections, deletion, open conflicts, and insufficient
+budget, plus the existing admissibility/bootstrap/retrieval/bridge unit tests.
+The initial conflict test used explicit statements and therefore exercised
+Core's resolution policy; non-explicit competing evidence correctly exercises
+an open conflict. Production work was one causal repair with a follow-up
+narrowing of request-verb normalization to preserve the noun “state.”
+
+Environment limitations: system cryptography is 41.0.7 rather than locked 50;
+encryption and Edge HTTP were not exercised. The environment-only `httpx2`
+alias lacks Starlette's private `_client` attribute, and the copied AnyIO thread
+bridge stalls. The successful ASGI run used process-only test-runner adapters:
+`sys.modules['httpx2'] = httpx` and an async `anyio.to_thread.run_sync` adapter
+that executes the supplied callable inline. These adapters alter no repository
+or venv files and no retrieval/auth logic, but do not validate normal threaded
+HTTP execution. Windows must repeat the integration test without adapters.
+Earlier attempts stopped at collection, were interrupted at the thread stall,
+or hit bounded 20/30-second diagnostic timeouts; a setup attempt also rejected
+an invalid project capability before being corrected to `context:read`.
+
+`python -m ruff check .` and `python -m mypy packages/allthecontext/src` both
+report missing modules offline; static checks are deferred to the Windows
+manager. The full suite was deliberately not run. Shared STATUS, DECISIONS,
+and REQUIREMENTS_TRACEABILITY updates are deferred to shipping integration per
+the worker's explicit scope override.
+
+Final gates: 73 focused unit tests passed in 10.42 seconds across
+`test_retrieval_bootstrap_composition`, `test_admissibility`,
+`test_retrieval_v3_integration`, `test_bootstrap`, `test_retrieval_v2`,
+`test_retrieval_v3_combined`, `test_retrieval_contracts`, and
+`test_cross_client_reader_outcomes`. The adapted frozen ASGI test passed in
+1.16 seconds (one environment import-rewrite warning). Syntax compilation of
+all three changed Python files passed in 0.019 seconds; `git diff --check`
+passed. All pytest data was confined to the unique run-owned basetemp and
+removed after validation.

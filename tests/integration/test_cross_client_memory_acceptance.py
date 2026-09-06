@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import os
 import sqlite3
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import httpx
+import pytest
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
 from allthecontext.export import _decrypt_file, create_export
+from allthecontext.models import CandidateInput
 from allthecontext.security import WITNESS_EXPLICIT_USER_STATEMENT
 from fastapi.testclient import TestClient
 
@@ -27,6 +33,84 @@ from bench.cross_client_reader_outcomes import (
 PREFERENCE = "I prefer concise answers."
 CORRECTED_PREFERENCE = "I prefer evidence-backed answers."
 SECRET_CANARY = "ATC_COMPOSED_SECRET_CANARY_6N4P8W"
+
+
+def test_frozen_project_handoff_from_external_manifest(tmp_path: Path) -> None:
+    """Replay frozen current records/query offline; never invoke a reader.
+
+    The manager supplies read-only inputs externally, not as repository fixtures.
+    Historical construction is covered separately by lifecycle acceptance tests.
+    """
+    directory = os.environ.get("ATC_FROZEN_INPUT_DIR")
+    if directory is None:
+        pytest.skip("manager-owned frozen inputs were not supplied")
+    root = Path(directory)
+    for name, expected in (
+        (
+            "reader-packet-bundle.json",
+            "929157cebcc435a153a97d41ebf65ee87afa7414c2bfa2017e9ad5337f8aee3c",
+        ),
+        (
+            "evaluator-manifest.json",
+            "10aa6618b080b341ed3f3311d1e917156ee75d66f5f371e5e4f55a2c89608a49",
+        ),
+    ):
+        assert hashlib.sha256((root / name).read_bytes()).hexdigest() == expected
+    manifest = json.loads((root / "evaluator-manifest.json").read_text(encoding="utf-8"))
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+
+    async def replay(service: CoreService) -> None:
+        transport = httpx.ASGITransport(app=create_app(config, service=service))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            setup = await client.post(
+                "/v1/setup", json={"name": "Frozen replay owner", "scopes": []},
+            )
+            assert setup.status_code == 200
+            owner = _bearer(str(setup.json()["token"]))
+            created = await client.post(
+                "/v1/admin/clients", headers=owner,
+                json={"name": "Frozen replay reader", "scopes": ["context:read"]},
+            )
+            assert created.status_code == 200
+            reader = _bearer(str(created.json()["token"]))
+            for record in manifest["records_after_construction"]:
+                candidate = service.store.add_candidate(CandidateInput(
+                    **{key: record[key] for key in (
+                        "kind", "content", "entity_key", "attribute_key", "scopes",
+                        "source_service", "source_type", "explicit_user_statement",
+                    )},
+                    structured_value={"project_name": "Borealis"}, confidence=1.0,
+                ))
+                service.store.approve_candidate(candidate.id)
+            response = await client.post(
+                "/v1/context/bootstrap", headers=reader, json=manifest["bootstrap_request"],
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            contents = {item["content"] for item in payload["items"]}
+            required = {
+                record["content"] for record in manifest["records_after_construction"]
+                if record["attribute_key"] in {
+                    "deployment_region", "production_blocker", "next_action",
+                }
+            }
+            assert required <= contents
+            assert payload["context_mode"] == "local_core"
+            assert payload["project_context"]["reason"] == "explicit_project_match"
+            assert payload["total_used_chars"] <= manifest["bootstrap_request"]["character_budget"]
+            print(json.dumps({
+                "http_status": response.status_code,
+                "context_mode": payload["context_mode"],
+                "project_reason": payload["project_context"]["reason"],
+                "required_fact_count": len(required & contents),
+                "selected_count": len(contents),
+                "total_used_chars": payload["total_used_chars"],
+                "pack_metadata": payload["pack_metadata"],
+                "reader_calls": 0,
+            }, sort_keys=True))
+
+    with CoreService(config) as service:
+        asyncio.run(replay(service))
 
 
 def _bearer(token: str) -> dict[str, str]:

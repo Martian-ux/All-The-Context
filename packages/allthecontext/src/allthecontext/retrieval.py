@@ -58,7 +58,7 @@ _MAX_QUERY_TOKENS = 32
 _CHANNEL_LIMIT = 256
 _RRF_K = 60
 _MAX_MANDATORY_PREFERENCE_RESERVE = 8
-_LEXICAL_ALIASES = CURATED_CONTENT_ALIASES
+_LEXICAL_ALIASES = {**CURATED_CONTENT_ALIASES, "blocker": ("blocked", "blocking")}
 _QUERY_STOPWORDS = frozenset(
     {
         "a",
@@ -97,6 +97,7 @@ _QUERY_SCAFFOLDING = frozenset(
         # Request-form and answer-shape terms are useful for ranking intent,
         # but they are not independently required content anchors.
         "current",
+        "handoff",
         "detail",
         "details",
         "describe",
@@ -159,7 +160,26 @@ class QueryIntent:
 def parse_query_intent(value: str) -> QueryIntent:
     """Extract bounded query features without a model, network, or vault lookup."""
 
-    raw = tuple(_tokens(value))
+    # Output exclusions do not request facts about the excluded subject.
+    # Keep factual negation (e.g. "not deployed") and positive preference
+    # requests intact. This projection has no authorization authority.
+    semantic_query = re.sub(
+        r"\b(?:do\s+not|don't|never)\s+(?:mention|include|discuss)\s+"
+        r"(?:unrelated\s+)?preferences\b[.]?",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    semantic_query = re.sub(
+        r"(^|[.!?]\s+)(?:prepare|state)\s+", r"\1", semantic_query, flags=re.IGNORECASE,
+    )
+    semantic_query = re.sub(
+        r"\b(?:concise|brief)\s+(?=(?:\w+\s+)?handoff\b)",
+        "",
+        semantic_query,
+        flags=re.IGNORECASE,
+    )
+    raw = tuple(token.rstrip(".") for token in _tokens(semantic_query) if token.rstrip("."))
     focus = tuple(token for token in raw if token not in _QUERY_STOPWORDS)
     if not focus:
         focus = raw
@@ -1617,7 +1637,6 @@ def _admissibility_inputs(
     # Hard task coverage measures direct topical anchors against content only.
     # Structural metadata stays in its dedicated scope/project/kind signals;
     # bootstrap disables this per-record floor and applies a set-level union.
-    raw_query_tokens = set(intent.raw_tokens)
     task_tokens = set(intent.anchor_tokens or intent.focus_tokens or intent.raw_tokens)
     candidates: list[AdmissibilityCandidate] = []
     requested_scopes = set(request.scopes)
@@ -1642,16 +1661,9 @@ def _admissibility_inputs(
             scope_fit = len(requested_scopes & row_scopes) / len(requested_scopes)
         else:
             scope_fit = None
-        kind_tokens = set(_tokens(str(row["kind"])))
-        kind_fit = (
-            1.0
-            if requested_kinds and str(row["kind"]) in requested_kinds
-            else (
-                float(bool(raw_query_tokens & kind_tokens))
-                if request.current_project is not None and raw_query_tokens
-                else None
-            )
-        )
+        # A project does not imply a requested record kind. In particular,
+        # ordinary factual questions need not contain the storage label "fact".
+        kind_fit = float(str(row["kind"]) in requested_kinds) if requested_kinds else None
         candidates.append(
             AdmissibilityCandidate(
                 key=record_id,
