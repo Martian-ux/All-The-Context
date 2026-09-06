@@ -42,6 +42,43 @@ def test_output_exclusions_preserve_factual_and_positive_preference_intent(exclu
     assert "concise" in parse_query_intent("concise handoff preferences").anchor_tokens
 
 
+@pytest.mark.parametrize("request_prefix", ["Please prepare", "Write"])
+def test_output_request_verbs_are_not_content_anchors(request_prefix: str) -> None:
+    query = (
+        f"{request_prefix} a concise deployment handoff for Project Aurora. "
+        "State the current region, production blocker, and next action."
+    )
+    assert set(parse_query_intent(query).anchor_tokens) == {
+        "deployment", "aurora", "region", "production", "blocker", "next", "action"
+    }
+
+
+@pytest.mark.parametrize("request_prefix", ["Please prepare", "Write"])
+def test_output_request_verbs_do_not_create_required_handoff_anchors(
+    tmp_path: Path, request_prefix: str,
+) -> None:
+    store = CoreStore(tmp_path / "request-verb.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    region = _approve(store, key="region", content="Aurora deployment region is west.")
+    blocker = _approve(
+        store, key="blocker", content="Aurora production is blocked pending approval."
+    )
+    action = _approve(
+        store, key="action", content="The next Aurora action is to request approval."
+    )
+    query = (
+        f"{request_prefix} a concise deployment handoff for Project Aurora. "
+        "State the current region, production blocker, and next action."
+    )
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(query=query, budget_chars=1600), READER
+        )
+        assert {region, blocker, action} <= {item.id for item in response.items}
+    finally:
+        store.close()
+
+
 def test_positive_preference_bootstrap_keeps_current_preference(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "preference.sqlite3")
     store.initialize_vault("synthetic", "UTC")
@@ -129,7 +166,7 @@ def test_project_handoff_composes_facts_only_when_eligible_union_fits(
 
 
 @pytest.mark.parametrize("exclusion", [
-    "not preferences.", "Not preferences!", "Don’t include preferences.",
+    "not preferences.", "Not preferences!", "Don\u2019t include preferences.",
     "Do not include my preferences.", "No preferences, please.",
     "Don't include: preferences.",
 ])
@@ -153,6 +190,12 @@ def test_preference_exclusion_does_not_block_project_facts(
         assert {fact, preference} <= {item.id for item in response.items}
     finally:
         store.close()
+
+
+def test_positive_preference_request_survives_unrelated_preference_exclusion() -> None:
+    query = "Do I prefer concise answers? Do not mention unrelated preferences."
+    intent = parse_query_intent(query)
+    assert intent.anchor_tokens == ("i", "prefer", "concise", "answers")
 
 
 @pytest.mark.parametrize("query, content", [

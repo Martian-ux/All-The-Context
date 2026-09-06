@@ -163,7 +163,7 @@ def parse_query_intent(value: str) -> QueryIntent:
     # Keep factual negation (e.g. "not deployed") and positive preference
     # requests intact. This projection has no authorization authority.
     semantic_query = re.sub(
-        r"\b(?:(?:do\s+not|don['’]t|never)\s+(?:mention|include|discuss)"
+        r"\b(?:(?:do\s+not|don['\u2019]t|never)\s+(?:mention|include|discuss)"
         r"\s*:?\s+(?:(?:my|the|unrelated|answer)\s+)*preferences\b|"
         r"(?:not|no)\s+(?:(?:my|the|unrelated|answer)\s+)*preferences"
         r"(?=\s*[,;.!?]|\s*$))",
@@ -174,7 +174,8 @@ def parse_query_intent(value: str) -> QueryIntent:
     # Only unambiguous request-leading forms: "State regulations" can refer
     # to a jurisdiction, and "handoff owner" names a real task facet.
     semantic_query = re.sub(
-        r"(^|[.!?]\s+)(?:prepare|state)\s+(?=a\b|the\b|my\b)",
+        r"(^|[.!?]\s+)(?:please\s+)?(?:prepare|state|write)\s+"
+        r"(?=a\b|an\b|the\b|my\b)",
         r"\1", semantic_query, flags=re.IGNORECASE,
     )
     semantic_query = re.sub(
