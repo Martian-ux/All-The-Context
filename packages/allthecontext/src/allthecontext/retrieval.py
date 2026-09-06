@@ -176,12 +176,16 @@ def parse_query_intent(value: str) -> QueryIntent:
     semantic_query = re.sub(
         r"(^|[.!?]\s+)(?:please\s+)?(?:prepare|state|write)\s+"
         r"(?=a\b|an\b|the\b|my\b)",
-        r"\1", semantic_query, flags=re.IGNORECASE,
+        r"\1",
+        semantic_query,
+        flags=re.IGNORECASE,
     )
     semantic_query = re.sub(
         r"\b(?:a\s+)?(?:concise|brief)\s+(?:(\w+)\s+)?handoff"
         r"(?:\s+state)?(?=\s+for\b|\s*[.!?;]|\s*$)",
-        r"\1", semantic_query, flags=re.IGNORECASE,
+        r"\1",
+        semantic_query,
+        flags=re.IGNORECASE,
     )
     raw = tuple(token.rstrip(".") for token in _tokens(semantic_query) if token.rstrip("."))
     focus = tuple(token for token in raw if token not in _QUERY_STOPWORDS)
