@@ -13,6 +13,17 @@ from allthecontext.export import _decrypt_file, create_export
 from allthecontext.security import WITNESS_EXPLICIT_USER_STATEMENT
 from fastapi.testclient import TestClient
 
+from bench.cross_client_reader_outcomes import (
+    ARM_IDS,
+    TASK_IDS,
+    TASK_PROMPTS,
+    build_packet,
+    build_reader_result,
+    context_items_from_bootstrap,
+    grade_six_cells,
+    maintain_context_file,
+)
+
 PREFERENCE = "I prefer concise answers."
 CORRECTED_PREFERENCE = "I prefer evidence-backed answers."
 SECRET_CANARY = "ATC_COMPOSED_SECRET_CANARY_6N4P8W"
@@ -490,3 +501,243 @@ def test_composed_cross_client_memory_acceptance_over_disposable_vault(tmp_path:
     assert SECRET_CANARY.encode("utf-8") not in export_path.read_bytes()
     assert SECRET_CANARY.encode("utf-8") not in decrypted_path.read_bytes()
     _assert_canary_absent_from_tree(tmp_path, SECRET_CANARY)
+
+
+def test_reader_outcome_bridge_exports_six_cells_from_real_core_bootstrap(
+    tmp_path: Path,
+) -> None:
+    """Export a bounded packet matrix after proving correction through real Core state."""
+
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with CoreService(config) as service, TestClient(create_app(config, service=service)) as client:
+        setup = client.post("/v1/setup", json={"name": "Reader bridge owner", "scopes": []})
+        assert setup.status_code == 200, setup.text
+        owner_headers = _bearer(str(setup.json()["token"]))
+        capture_id, capture_headers = _create_client(
+            client,
+            owner_headers,
+            name="Reader bridge capture",
+            scopes=["context:capture"],
+        )
+        _read_id, read_headers = _create_client(
+            client,
+            owner_headers,
+            name="Reader bridge read",
+            scopes=["context:read"],
+        )
+        _write_id, write_headers = _create_client(
+            client,
+            owner_headers,
+            name="Reader bridge correction",
+            scopes=["context:propose", WITNESS_EXPLICIT_USER_STATEMENT],
+        )
+
+        _capture_event(
+            client,
+            client_id=capture_id,
+            headers=capture_headers,
+            event_id="reader-bridge-initial",
+            idempotency_key=_fixed_v4_key(30),
+            sequence=1,
+            role="user",
+            content=PREFERENCE,
+        )
+        records = _fetch_rows(
+            config.database_path,
+            "SELECT id,content,explicit_user_statement,observation_origin "
+            "FROM context_records WHERE deleted_at IS NULL",
+        )
+        assert len(records) == 1
+        record_id = str(records[0]["id"])
+        assert records[0]["content"] == PREFERENCE
+
+        corrected = client.post(
+            "/v1/ingestion/propose",
+            headers=write_headers,
+            json={
+                "kind": "correction",
+                "content": CORRECTED_PREFERENCE,
+                "supersedes": record_id,
+                "explicit_user_statement": True,
+                "idempotency_key": "reader-bridge-correction",
+            },
+        )
+        assert corrected.status_code == 200, corrected.text
+        correction_payload = corrected.json()
+        assert corrected.json()["record_id"] == record_id
+        assert corrected.json()["content"] == CORRECTED_PREFERENCE
+        assert correction_payload["explicit_user_statement"] is True
+        correction_observation_id = str(correction_payload["id"])
+
+        current = client.get(f"/v1/context/{record_id}", headers=read_headers)
+        assert current.status_code == 200, current.text
+        assert current.json()["content"] == CORRECTED_PREFERENCE
+        truth = client.get(f"/v1/context/truth/{record_id}", headers=read_headers)
+        assert truth.status_code == 200, truth.text
+        evidence = truth.json()["evidence"]
+        assert truth.json()["record"]["id"] == record_id
+        assert truth.json()["record"]["content"] == CORRECTED_PREFERENCE
+        assert [item["content"] for item in evidence] == [PREFERENCE, CORRECTED_PREFERENCE]
+        assert evidence[1]["observation_id"] == correction_observation_id
+        assert evidence[1]["observation_origin"] == "ongoing_client"
+
+        capture_rows = _fetch_rows(
+            config.database_path,
+            "SELECT id,provider_event_id,provider_item_id,generation,order_key,operation,"
+            "normalized_payload_json,status FROM capture_events WHERE provider_event_id=?",
+            ("reader-bridge-initial",),
+        )
+        assert len(capture_rows) == 1
+        capture_row = capture_rows[0]
+        assert capture_row["status"] == "applied"
+        assert capture_row["provider_event_id"] == "reader-bridge-initial"
+        assert capture_row["provider_item_id"] == "reader-bridge-initial"
+        assert capture_row["generation"] == 0
+        assert capture_row["order_key"] == "1"
+        assert capture_row["operation"] == "upsert"
+        capture_payload = json.loads(str(capture_row["normalized_payload_json"]))
+        assert capture_payload["role"] == "user"
+        assert capture_payload["content"] == PREFERENCE
+
+        candidate_rows = _fetch_rows(
+            config.database_path,
+            "SELECT id,kind,content,source_type,observation_origin,explicit_user_statement,"
+            "record_id,capture_event_id,observed_at,created_at,supersedes "
+            "FROM context_candidates WHERE record_id=? ORDER BY observed_at,created_at,id",
+            (record_id,),
+        )
+        assert [str(row["id"]) for row in candidate_rows] == [
+            str(item["observation_id"]) for item in evidence
+        ]
+        assert [row["content"] for row in candidate_rows] == [PREFERENCE, CORRECTED_PREFERENCE]
+        assert [bool(row["explicit_user_statement"]) for row in candidate_rows] == [False, True]
+        assert candidate_rows[0]["kind"] == "interaction_preference"
+        assert candidate_rows[0]["source_type"] == "client_capture_formation"
+        assert candidate_rows[0]["capture_event_id"] == capture_row["id"]
+        assert candidate_rows[0]["record_id"] == record_id
+        assert candidate_rows[1]["kind"] == "correction"
+        assert candidate_rows[1]["record_id"] == record_id
+        assert candidate_rows[1]["supersedes"] == record_id
+        assert candidate_rows[1]["capture_event_id"] is None
+        assert candidate_rows[1]["observation_origin"] == "ongoing_client"
+
+        maintained_events = [
+            {
+                "slot": "response_style",
+                "sequence": index,
+                "content": str(row["content"]),
+                "explicit_user_statement": bool(row["explicit_user_statement"]),
+            }
+            for index, row in enumerate(candidate_rows, start=1)
+        ]
+        maintained = maintain_context_file(maintained_events)
+        assert maintained.query_blind is True
+        assert maintained.items == (CORRECTED_PREFERENCE,)
+        assert maintained.construction_units == len(candidate_rows) == 2
+
+        positive_bootstrap = _assert_bootstrap_contains(
+            client,
+            read_headers,
+            query=TASK_PROMPTS["changed_preference"].instruction,
+            expected=CORRECTED_PREFERENCE,
+        )
+        negative_bootstrap = _assert_bootstrap_contains(
+            client,
+            read_headers,
+            query=TASK_PROMPTS["unknown_deployment_region"].instruction,
+            expected=None,
+        )
+        positive_items = context_items_from_bootstrap(positive_bootstrap)
+        negative_items = context_items_from_bootstrap(negative_bootstrap)
+        assert CORRECTED_PREFERENCE in positive_items
+        assert PREFERENCE not in positive_items
+        assert any(
+            item["id"] == record_id
+            and item["content"] == CORRECTED_PREFERENCE
+            and item["observation_origin"] == "ongoing_client"
+            for item in positive_bootstrap["items"]
+        )
+
+    packets = {}
+    for task_key in TASK_IDS:
+        packets[(ARM_IDS[0], task_key)] = build_packet(
+            TASK_PROMPTS[task_key],
+            (),
+            context_source="no_memory",
+            construction_units=0,
+            access_units=0,
+            retrieval_units=0,
+        )
+        packets[(ARM_IDS[1], task_key)] = build_packet(
+            TASK_PROMPTS[task_key],
+            maintained.items,
+            context_source="maintained_context_file",
+            construction_units=0,
+            access_units=0,
+            retrieval_units=0,
+        )
+        atc_items = positive_items if task_key == TASK_IDS[0] else negative_items
+        packets[(ARM_IDS[2], task_key)] = build_packet(
+            TASK_PROMPTS[task_key],
+            atc_items,
+            context_source="actual_atc_bootstrap",
+            construction_units=0,
+            access_units=1,
+            retrieval_units=1,
+        )
+
+    results = {
+        (ARM_IDS[0], "changed_preference"): build_reader_result(
+            packets[(ARM_IDS[0], "changed_preference")],
+            "UNKNOWN",
+            provenance={"source": "canned_test_output"},
+        ),
+        (ARM_IDS[0], "unknown_deployment_region"): build_reader_result(
+            packets[(ARM_IDS[0], "unknown_deployment_region")],
+            "UNKNOWN",
+            provenance={"source": "canned_test_output"},
+        ),
+        (ARM_IDS[1], "changed_preference"): build_reader_result(
+            packets[(ARM_IDS[1], "changed_preference")],
+            CORRECTED_PREFERENCE,
+            provenance={"source": "canned_test_output"},
+        ),
+        (ARM_IDS[1], "unknown_deployment_region"): build_reader_result(
+            packets[(ARM_IDS[1], "unknown_deployment_region")],
+            "UNKNOWN",
+            provenance={"source": "canned_test_output"},
+        ),
+        (ARM_IDS[2], "changed_preference"): build_reader_result(
+            packets[(ARM_IDS[2], "changed_preference")],
+            CORRECTED_PREFERENCE,
+            provenance={"source": "canned_test_output"},
+        ),
+        (ARM_IDS[2], "unknown_deployment_region"): build_reader_result(
+            packets[(ARM_IDS[2], "unknown_deployment_region")],
+            "UNKNOWN",
+            provenance={"source": "canned_test_output"},
+        ),
+    }
+    report = grade_six_cells(
+        packets,
+        results,
+        construction_units_by_arm={
+            ARM_IDS[0]: 0,
+            ARM_IDS[1]: maintained.construction_units,
+            ARM_IDS[2]: 0,
+        },
+        stale_preference=PREFERENCE,
+        irrelevant_context_by_task={"unknown_deployment_region": [CORRECTED_PREFERENCE]},
+    )
+    assert report["denominators"] == {
+        "cell_count": 6,
+        "task_count": 2,
+        "arm_count": 3,
+        "success_count": 5,
+    }
+    assert report["classification_counts"]["safe_abstention"] == 1
+    assert report["model_execution_by_harness"] is False
+    assert all(len(outcome["packet_sha256"]) == 64 for outcome in report["outcomes"])
+    assert all(outcome["evidence_kind"] == "non_model_fixture" for outcome in report["outcomes"])
+    assert report["construction_access_retrieval_accounting"][ARM_IDS[0]]["construction_units"] == 0
+    assert report["construction_access_retrieval_accounting"][ARM_IDS[1]]["construction_units"] == 2
