@@ -798,6 +798,81 @@ def test_packaged_update_child_writes_atomic_content_free_failure_report(
     assert path_canary not in serialized
 
 
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_code"),
+    [
+        ("os_error", "component_bootstrap_os_error"),
+        ("runtime_error", "component_bootstrap_runtime_error"),
+    ],
+)
+def test_packaged_update_projects_bootstrap_exception_category_without_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+    expected_code: str,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "data")
+    operation = "a" * 24
+    attempt = "b" * 32
+    report_path = config.data_dir / "updates" / "transactions" / operation / "apply-report.json"
+    path_canary = str(tmp_path / "private" / "context.sqlite3")
+    token_canary = "atc-bootstrap-exception-canary-never-log"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    monkeypatch.setattr("allthecontext.desktop.CoreConfig.default", lambda: config)
+    monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Windows")
+    monkeypatch.setattr("allthecontext.desktop.sys.frozen", True, raising=False)
+    monkeypatch.setenv("ATC_UPDATE_OPERATION", operation)
+    monkeypatch.setenv("ATC_UPDATE_ATTEMPT", attempt)
+    monkeypatch.setattr("allthecontext.desktop.RuntimeCommand.current", lambda: runtime)
+    monkeypatch.setattr(
+        "allthecontext.desktop.runtime_build_identity",
+        lambda **_: make_build_identity(
+            version=allthecontext.__version__,
+            platform_name="windows",
+            architecture="x86_64",
+            source_commit="c" * 40,
+        ),
+    )
+
+    failure = (
+        OSError(f"{token_canary} at {path_canary}")
+        if failure_kind == "os_error"
+        else RuntimeError(f"{token_canary} at {path_canary}")
+    )
+
+    def fail_prepare(*_args: object, **kwargs: object) -> tuple[RuntimeCommand, bool]:
+        progress = kwargs["progress"]
+        assert callable(progress)
+        progress("bootstrap_install_recovery")
+        raise failure
+
+    monkeypatch.setattr("allthecontext.desktop.prepare_installed_runtime", fail_prepare)
+
+    assert _apply_packaged_update(str(report_path)) == 1
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "attempt": attempt,
+        "code": expected_code,
+        "phase": "component_bootstrap",
+        "status": "failed",
+    }
+    assert not list(report_path.parent.glob("*.atc-new"))
+    serialized = json.dumps(payload)
+    assert token_canary not in serialized
+    assert path_canary not in serialized
+
+
+def test_packaged_update_keeps_other_bootstrap_exception_generic() -> None:
+    assert (
+        _packaged_update_failure_code(
+            KeyError("private detail"),
+            "component_bootstrap",
+            bootstrap_subphase="bootstrap_install_recovery",
+        )
+        == "component_bootstrap_transaction_failed"
+    )
+
+
 def test_packaged_update_maps_unallowlisted_bootstrap_code_to_fixed_category() -> None:
     error = BootstrapInstallError(
         "token_exfiltration",
@@ -836,7 +911,7 @@ def test_packaged_update_maps_non_string_bootstrap_code_to_fixed_category(code: 
         ("core_probe", "component_bootstrap_core_probe_failed"),
         (
             "bootstrap_install_recovery",
-            "component_bootstrap_transaction_failed",
+            "component_bootstrap_runtime_error",
         ),
     ],
 )

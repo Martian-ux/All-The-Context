@@ -127,6 +127,10 @@ _PACKAGED_BOOTSTRAP_FAILURE_BY_SUBPHASE: dict[PackagedUpdateBootstrapSubphase, s
     "bootstrap_install_recovery": "component_bootstrap_transaction_failed",
     "unknown": "component_bootstrap_failed",
 }
+_PACKAGED_BOOTSTRAP_EXCEPTION_CODES: tuple[tuple[type[Exception], str], ...] = (
+    (OSError, "component_bootstrap_os_error"),
+    (RuntimeError, "component_bootstrap_runtime_error"),
+)
 _HEADLESS_SETUP_ERROR_CODES = frozenset(
     {
         "credential_store_unavailable",
@@ -725,6 +729,10 @@ def _packaged_update_failure_code(
         if not isinstance(error, BootstrapInstallError):
             if type(bootstrap_subphase) is not str:
                 return "component_bootstrap_failed"
+            if bootstrap_subphase == "bootstrap_install_recovery":
+                for exception_type, code in _PACKAGED_BOOTSTRAP_EXCEPTION_CODES:
+                    if isinstance(error, exception_type):
+                        return code
             return _PACKAGED_BOOTSTRAP_FAILURE_BY_SUBPHASE.get(
                 bootstrap_subphase,
                 "component_bootstrap_failed",

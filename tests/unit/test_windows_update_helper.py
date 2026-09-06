@@ -621,6 +621,8 @@ def _advance_time_for_retry(monkeypatch: pytest.MonkeyPatch) -> None:
         "component_bootstrap_source_invalid",
         "component_bootstrap_core_probe_failed",
         "component_bootstrap_transaction_failed",
+        "component_bootstrap_os_error",
+        "component_bootstrap_runtime_error",
     ],
 )
 def test_child_failure_report_code_persists_through_rollback_without_user_data(
@@ -657,6 +659,11 @@ def test_child_failure_report_code_persists_through_rollback_without_user_data(
         assert connection.execute("SELECT value FROM facts").fetchall() == [("before",)]
     assert not (fixture.journal_path.parent / "apply-report.json").exists()
     assert launched == ["0.1.0"]
+    assert json.loads(journal_failure_diagnostic(fixture.journal_path)) == {
+        "last_error_code": failure_code,
+        "phase": "rolled_back",
+        "schema_version": 3,
+    }
 
 
 @pytest.mark.parametrize(

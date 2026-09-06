@@ -48,6 +48,8 @@ SAFE_BOOTSTRAP_FAILURE_CODES: Final = frozenset(
 )
 PACKAGED_BOOTSTRAP_FAILURE_CODES: Final = frozenset(
     {
+        "component_bootstrap_os_error",
+        "component_bootstrap_runtime_error",
         "component_bootstrap_source_invalid",
         "component_bootstrap_core_probe_failed",
         "component_bootstrap_transaction_failed",
