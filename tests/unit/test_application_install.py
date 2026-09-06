@@ -624,6 +624,7 @@ def _patch_shortcut_writer(
         arguments: str = "",
         description: str,
     ) -> None:
+        assert path.suffix in {".lnk", ".url"}
         index = len(calls)
         calls.append(path)
         if fail_at == index:
@@ -1049,15 +1050,22 @@ def test_install_entrypoints_uses_reversible_registration_transaction(
     assert len(calls) == 3
 
 
-@pytest.mark.parametrize("suffix", (".lnk", ".url"))
-def test_shortcut_temporary_path_preserves_wscript_shortcut_suffix(suffix: str) -> None:
-    target = Path(f"All The Context{suffix}")
-    temporary_path = application_install.WindowsApplicationRegistrationTransaction._temporary_path
+@pytest.mark.parametrize("suffix", (".lnk", ".url", ""))
+@pytest.mark.parametrize("kind", ("new", "canonical"))
+def test_shortcut_temporary_path_preserves_wscript_shortcut_suffix(suffix: str, kind: str) -> None:
+    target = Path("parent") / f"All The Context{suffix}"
+    transaction_type = application_install.WindowsApplicationRegistrationTransaction
+    temporary_path = (
+        transaction_type._temporary_path
+        if kind == "new"
+        else transaction_type._canonical_temporary_path
+    )
     temporary = temporary_path(target)
 
-    assert temporary.name == f".All The Context.atc-new{suffix}"
+    assert temporary.name == f".All The Context.atc-{kind}{suffix}"
     assert temporary.parent == target.parent
-    assert temporary.suffix == suffix
+    if suffix:
+        assert temporary.suffix == suffix
     assert temporary == temporary_path(target)
     assert temporary != target
     other_suffix = ".url" if suffix == ".lnk" else ".lnk"
@@ -3021,3 +3029,41 @@ def test_executable_symlink_is_rejected_without_resolving_target(
         linked_transaction.snapshot()
 
     assert raised.value.code == "registration_reparse_path"
+
+
+@pytest.mark.parametrize("suffix", (".lnk", ".url"))
+@pytest.mark.parametrize("fail", (False, True))
+def test_canonical_generation_preserves_suffix_and_cleans_sibling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suffix: str, fail: bool
+) -> None:
+    transaction, _, _, _, _ = _make_transaction(monkeypatch, tmp_path)
+    original = transaction._shortcut_plans()[0]
+    plan = application_install._ShortcutPlan(
+        original.name, original.path.with_suffix(suffix), original.arguments, original.description
+    )
+    temporary = transaction._canonical_temporary_path(plan.path)
+    publication = transaction._temporary_path(plan.path)
+    publication.parent.mkdir(parents=True, exist_ok=True)
+    publication.write_bytes(b"publication")
+    written: list[Path] = []
+
+    def create(path: Path, executable: Path, *, arguments: str, description: str) -> None:
+        assert path == temporary
+        assert path.suffix == suffix
+        path.write_bytes(b"canonical")
+        written.append(path)
+        if fail:
+            raise OSError("generation failed")
+
+    monkeypatch.setattr(application_install, "_create_windows_shortcut", create)
+    if fail:
+        with pytest.raises(OSError):
+            transaction._canonical_shortcut_data(plan)
+        assert plan.name not in transaction._canonical_shortcut_cache
+    else:
+        assert transaction._canonical_shortcut_data(plan) == b"canonical"
+        assert transaction._canonical_shortcut_data(plan) == b"canonical"
+    assert written == [temporary]
+    assert not temporary.exists()
+    assert publication.read_bytes() == b"publication"
+    assert transaction._load_journal() is None

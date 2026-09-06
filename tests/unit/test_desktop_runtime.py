@@ -1514,8 +1514,10 @@ def test_decommission_preserves_unpaired_state_until_host_deletion_is_confirmed(
 
 
 @pytest.mark.parametrize("callback", ["refresh", "registration"])
-@pytest.mark.parametrize("error_kind", ["no_errno", "unmapped_errno", "registration_guard"])
-def test_packaged_update_entrypoint_oserror_after_successful_bootstrap_is_bounded(
+@pytest.mark.parametrize(
+    "error_kind", ["no_errno", "unmapped_errno", "registration_guard", "runtime"]
+)
+def test_packaged_update_entrypoint_failure_after_successful_bootstrap_is_bounded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1563,20 +1565,17 @@ def test_packaged_update_entrypoint_oserror_after_successful_bootstrap_is_bounde
         ),
     )
     canary = "private-path-and-token-must-not-escape"
-    failure = (
-        WindowsRegistrationError("registration_target_changed")
-        if error_kind == "registration_guard"
-        else OSError(9876, canary) if error_kind == "unmapped_errno" else OSError(canary)
-    )
+    failure = {
+        "registration_guard": WindowsRegistrationError("registration_target_changed"),
+        "runtime": RuntimeError(canary),
+        "unmapped_errno": OSError(9876, canary),
+        "no_errno": OSError(canary),
+    }[error_kind]
     events: list[str] = []
     original_install = bootstrap.install_windows_components
 
     def observed_install(*args, **kwargs):
-        try:
-            result = original_install(*args, **kwargs)
-        except OSError:
-            events.append("inner_oserror")
-            raise
+        result = original_install(*args, **kwargs)
         events.append("bootstrap_returned")
         assert all(targets[role].read_bytes() == role.encode("ascii") for role in targets)
         return result
@@ -1589,23 +1588,19 @@ def test_packaged_update_entrypoint_oserror_after_successful_bootstrap_is_bounde
     monkeypatch.setattr(bootstrap, "install_windows_components", observed_install)
     monkeypatch.setattr(desktop, "application_entrypoints_need_refresh", fail_entrypoint)
     monkeypatch.setattr(desktop, "install_application_entrypoints", fail_entrypoint)
-    original_code = desktop._packaged_update_failure_code
-    observed_projection: list[tuple[str, str]] = []
-
-    def observed_code(error, phase, *, bootstrap_subphase="unknown"):
-        assert error is failure
-        observed_projection.append((phase, bootstrap_subphase))
-        return original_code(error, phase, bootstrap_subphase=bootstrap_subphase)
-
-    monkeypatch.setattr(desktop, "_packaged_update_failure_code", observed_code)
     report = config.data_dir / "updates" / "transactions" / ("a" * 24) / "apply-report.json"
     assert _apply_packaged_update(str(report)) == 1
     assert events == ["bootstrap_returned", callback]
-    assert observed_projection == [("component_bootstrap", "bootstrap_install_recovery")]
+    phase = "component_bootstrap" if error_kind == "runtime" else "entrypoint_registration"
+    code = (
+        "component_bootstrap_runtime_error"
+        if error_kind == "runtime"
+        else "entrypoint_registration_failed"
+    )
     assert json.loads(report.read_text(encoding="utf-8")) == {
         "attempt": "b" * 32,
-        "code": "component_bootstrap_os_error",
-        "phase": "component_bootstrap",
+        "code": code,
+        "phase": phase,
         "status": "failed",
     }
     captured = capsys.readouterr()

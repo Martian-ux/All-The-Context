@@ -2600,7 +2600,8 @@ class WindowsApplicationRegistrationTransaction:
 
     @staticmethod
     def _canonical_temporary_path(path: Path) -> Path:
-        return path.with_name(f".{path.name}.atc-canonical")
+        # Canonical generation also uses WScript.Shell and needs its final suffix.
+        return path.with_name(f".{path.stem}.atc-canonical{path.suffix}")
 
     def _cleanup_temporary(self, path: Path, data: bytes | None) -> None:
         metadata = _safe_lstat(path)

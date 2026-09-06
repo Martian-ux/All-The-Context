@@ -805,8 +805,11 @@ def _apply_packaged_update(report_value: str) -> int:
     phase: PackagedUpdateFailurePhase = "build_identity"
     bootstrap_subphase: PackagedUpdateBootstrapSubphase = "unknown"
 
+    prepare_subphase: HeadlessSetupSubphase | None = None
+
     def record_bootstrap_subphase(value: HeadlessSetupSubphase) -> None:
-        nonlocal bootstrap_subphase
+        nonlocal bootstrap_subphase, prepare_subphase
+        prepare_subphase = value
         if value in {
             "packaged_component_source_validation",
             "core_probe",
@@ -874,6 +877,14 @@ def _apply_packaged_update(report_value: str) -> int:
         finally:
             temporary.unlink(missing_ok=True)
     except Exception as error:
+        # Registration runs inside prepare after the binary transaction commits.
+        # Preserve existing classifications for other exception types.
+        if (
+            isinstance(error, OSError)
+            and phase == "component_bootstrap"
+            and prepare_subphase in {"entrypoint_refresh_probe", "entrypoint_registration"}
+        ):
+            phase = "entrypoint_registration"
         failure_code = _packaged_update_failure_code(
             error,
             phase,
