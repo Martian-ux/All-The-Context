@@ -95,6 +95,33 @@ The six integrated commits are `ab8a11b`, `64356a0`, `7497853`, `90d65d9`,
 `1110707`, and committed-code tip `ba9d17e`; each has the same stable patch ID
 as its reviewed source. Final exact-tree and hosted results remain separate.
 
+ADR-211 covers the combined integration checkpoint on branch
+`codex/windows-beta-combined-20260906`, source HEAD
+`155abbf3869919b0cae8fff96076fc6c6ebcd197`, and source tree
+`5474d7ab0f1e8425e05e694531b9e4d2ee14c148`. It descends from
+`d18b4b7724b0da95d286c191879f7ea4e2724bad` and contains the nine specified
+commits once, in order: `e0c60b5`, `517e162`, `cb2689d`, `893a393`, `b7cfd68`,
+`07b7382`, `563f7c0`, `b9c515e`, `155abbf`. Controller patch-ID verification
+matches each specified source counterpart. The three documentation files are the only
+working-tree changes made by this integration review; the documentation commit
+intentionally does not name its own SHA.
+
+### 2026-09-06 combined integration candidate
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Windows packaged-update repair interaction | `application_install.py` canonical shortcut sibling; `desktop.py` setup progress and packaged-update classification; `tests/unit/test_application_install.py`; `tests/unit/test_desktop_runtime.py`; integrated `e0c60b5`, `517e162` | Final suffixes remain `.lnk`/`.url`; refresh/registration progress is recorded before later `OSError` classification. Accepted native review covered WScript COM, path/collision, and 19 focused tests. Full integrated and release gates remain separate. |
+| Focused test feedback time | `tests/unit/test_memory_reliability_spec.py`; integrated `cb2689d` | Three paired local runs reduced the median from 61.837s to 55.804s (6.033s, 9.76%) while preserving 3,480 rejection checks and 39 module tests. This is not total-suite or hosted-CI evidence. |
+| Windows CI shard coverage | `.github/workflows/ci.yml`; `scripts/check_test_collection.py`; `tests/unit/test_pytest_collection_contract.py`; integrated `893a393`, `b7cfd68` | Canonical two-shard plan/digest, complete-digest and target verification, sequential/parallel parity, disjoint union, and fail-closed aggregate are present. Accepted local proof covered 3,293 nodes/178 files; this review's collection-only smoke covered 3,352 nodeids/179 files and passed both shards in 56.953s. Hosted timing, including 5–10 minutes, is unproven. |
+| Cross-client reader bridge and Core proof | `bench/cross_client_reader_outcomes.py`; `tests/integration/test_cross_client_memory_acceptance.py`; `tests/unit/test_cross_client_reader_outcomes.py`; `docs/research/ATC_READER_OUTCOME_PILOT.md`; integrated `07b7382` | The bridge is a no-model packet/result contract. Accepted Borealis n=1 evidence covered 3/3 facts with maintained context and 0/3 with no-memory and pre-repair actual-ATC context; Core admitted zero task-relevant candidates and selected one unrelated preference. No superiority, model-quality, or user-quality claim is permitted. |
+| Retrieval repair chain | `retrieval.py`; `tests/unit/test_retrieval_bootstrap_composition.py`; integrated `563f7c0`, `b9c515e`, `155abbf` | Narrow normalization preserves meaningful request clauses and factual negation, handles preference exclusions, adds the bounded blocker equivalence, and keeps authorization, kind filters, and set-level content coverage separate. The memory manager accepted the `c107899` chain after 34 affected/frozen tests, Ruff, and mypy. In the post-repair frozen Borealis known case, actual-ATC context improved from 0/3 to 3/3 facts and produced the correct answer; maintained context also answered correctly and no-memory abstained honestly. This n=1 result is not holdout, superiority, or general product-quality evidence. |
+
+The final integrated gates remain controller-owned: clean-HEAD Ruff, mypy, full
+pytest, documentation, hosted Windows/CI, exact artifact, Defender,
+clean-machine, live client/provider, publication, and release evidence. The
+current downloadable beta.6 and unsigned/loopback boundaries are unchanged; no
+GA or new beta publication is implied by these source and local-evidence rows.
+
 ### 2026-09-06 defensive-boundary and hosted-flake repair candidate
 
 | Requirement area | Implementation/evidence | Status |

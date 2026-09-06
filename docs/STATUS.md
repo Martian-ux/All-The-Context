@@ -2,40 +2,66 @@
 
 ## Current milestone
 
-**2026-09-06 — PR #114 defensive-boundary and hosted-flake repair candidate**
+**2026-09-06 — PR #114 combined integration candidate**
 
-Starting from the still-live open/draft PR #114 head
-`bbe63194618350d5dfcd718d495f21b131f7e4a5`, six independently reviewed
-source commits were cherry-picked exactly once without conflict. Their
-integrated sequence is `ab8a11b`, `64356a0`, `7497853`, `90d65d9`, `1110707`,
-and committed-code tip `ba9d17e`; stable patch IDs match every source commit.
-The final documentation commit intentionally does not name its own SHA.
+Product work remains ACTIVE under `ATC-WF-2026-09-05` and
+`ATC-LOCAL-CLI-LUNA-2026-09-06`. The bounded integration review checked branch
+`codex/windows-beta-combined-20260906`, source checkpoint HEAD
+`155abbf3869919b0cae8fff96076fc6c6ebcd197`, tree
+`5474d7ab0f1e8425e05e694531b9e4d2ee14c148`, and clean tracked/untracked status
+before this documentation-only diff. `d18b4b7724b0da95d286c191879f7ea4e2724bad`
+is an ancestor, and the nine post-`d18` commits occur once in order:
+`e0c60b5`, `517e162`, `cb2689d`, `893a393`, `b7cfd68`, `07b7382`, `563f7c0`,
+`b9c515e`, `155abbf`. The controller's stable patch-ID checks match their
+specified source counterparts. The resulting documentation commit intentionally does
+not name its own SHA.
 
-The preceding exact-head CI run `33964833404` was terminal red. Windows desktop
-job `101303010615` reached updater crash injection but returned `2`, persisted a
-`rolled_back` journal with fixed code `component_bootstrap_transaction_failed`,
-and then failed cleanup. Windows Python job `101303010487` failed only two
-capture-scheduler tests waiting five seconds for a worker to enter; its summary
-was 3,231 passed, 2 expected skips, 3 warnings. CodeQL run `33964830399` was
-green. These are historical results for `bbe6319`, not candidate acceptance.
+The integrated package keeps the accepted Windows update repair bounded:
+canonical WScript shortcut-generation siblings retain their final `.lnk` or
+`.url` suffix, and packaged setup records refresh/registration progress before a
+later `OSError` is classified as an entrypoint-registration failure. The
+accepted native review covered WScript COM edge cases, path/collision cases, and
+19 focused tests; full integrated and release gates remain separate.
 
-This candidate makes four bounded corrections. Packaged-provider acceptance now
-validates an exact content-free schema, primitive integer version, exact parser
-version, and closed error-code vocabulary. Updater diagnostics require primitive
-strings before allowlist lookup. Bootstrap acquisition classifies only a real
-file-lock timeout as `bootstrap_busy`; other lock I/O remains the fixed
-`bootstrap_retry_required`, and a persisted rolled-back transaction is proven to
-survive one failed restart and complete on retry. Scheduler product tests replace
-the arbitrary five-second entry wait with event-driven terminal detection and a
-finite 30-second monotonic fail-safe. Bootstrap changes narrow diagnostics and
-retry behavior but do not establish the hosted updater root cause; scheduler
-changes are test-only and require a hosted rerun to establish flake closure.
+The exhaustive memory-reliability test optimization preserves 3,480 rejection
+checks and 39 module tests. Three paired local runs measured a median reduction
+from 61.837s to 55.804s (6.033s, 9.76%). This is focused local feedback-time
+evidence, not total-suite or hosted-CI proof.
 
-Independent substantive review returned CLEAN FOR INTEGRATION for all four
-areas after two repair cycles. Python 3.12.10 preflight and a worktree-local
-basetemp smoke passed. Final exact-tree static, focused, full-suite, and hosted
-validation remain pending. No artifact, Defender, clean-machine, live provider/
-client, signing, publication, or release acceptance is claimed.
+Windows CI now retains a complete Linux suite and uses a canonical two-shard
+Windows plan/digest. Each shard rechecks the complete digest, its assigned file
+targets, and sequential/parallel collection parity; the aggregate check fails
+closed on a missing or unsuccessful plan/shard or invalid canonical outputs. The
+accepted local proof covered 3,293 nodes across 178 files with zero overlap and
+full union. This review's collection-only smoke over the source checkpoint found
+3,352 nodeids across 179 files and passed both shard contracts in 56.953s. No
+hosted 5–10 minute timing claim is made.
+
+The cross-client reader bridge remains a packet/result contract, not a reader or
+model. The accepted local Borealis n=1 sanity found 3/3 facts with the maintained
+file, 0/3 with no memory, and 0/3 with the pre-repair actual-ATC bootstrap; Core
+admitted zero task-relevant candidates and selected one unrelated preference.
+This is a concrete retrieval miss, not model/user superiority evidence. The
+current repair chain narrows query normalization, preserves preference
+exclusions and meaningful request clauses, and removes Unicode ambiguity while
+keeping authorization, kind filters, and set-level content coverage separate.
+Native focused tests and static checks were accepted. The post-repair frozen
+Borealis known case then improved actual-ATC context from 0/3 to 3/3 facts and
+produced the correct answer; the maintained arm also answered correctly and the
+no-memory arm abstained honestly. The memory manager accepted the complete
+`c107899` chain after 34 affected/frozen tests, Ruff, and mypy. This is one known
+case, not holdout evidence or a superiority/general product-quality claim.
+
+The separately published immutable `0.1.0-beta.6` remains the current
+downloadable release. No GA, new beta publication, exact-artifact, Defender,
+clean-machine, live provider/client, signing, or release acceptance is claimed.
+The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
+documentation, hosted, artifact, and applicable platform/release gates.
+
+### Prior diagnostic candidate history
+
+The following prior-candidate notes are retained as historical provenance, not
+as evidence for the combined source checkpoint.
 
 The first hosted rerun on pushed head `b8e19c1` was CI `34047006204`. Every
 listed job and CodeQL `34047004650` passed except Windows desktop job

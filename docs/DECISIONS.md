@@ -1,5 +1,57 @@
 # Architecture decisions
 
+## ADR-211: Combined integration preserves bounded evidence and fail-closed gates
+
+**Status:** accepted locally on 2026-09-06 for source checkpoint
+`155abbf3869919b0cae8fff96076fc6c6ebcd197` with tree
+`5474d7ab0f1e8425e05e694531b9e4d2ee14c148`; the final documentation commit
+intentionally does not name its own SHA. The checkpoint is on branch
+`codex/windows-beta-combined-20260906`, descends from
+`d18b4b7724b0da95d286c191879f7ea4e2724bad`, and contains the nine specified
+integration commits once in the order `e0c60b5`, `517e162`, `cb2689d`, `893a393`,
+`b7cfd68`, `07b7382`, `563f7c0`, `b9c515e`, `155abbf`. Controller stable
+patch-ID verification is retained as the package identity evidence.
+
+The package's platform changes remain separate from release acceptance. Windows
+registration uses a final shortcut suffix for both the ordinary temporary
+sibling and the canonical WScript-generation sibling. Frozen packaged setup
+reports `entrypoint_refresh_probe` and `entrypoint_registration` before the
+entrypoint call; if a later `OSError` escapes while the outer phase still says
+component bootstrap, it is classified as `entrypoint_registration`. Other
+exception classes retain their existing classification and rollback/report
+boundaries. The native review's WScript, collision, and 19 focused-test receipt
+is source evidence; it does not prove the hosted updater root cause or an exact
+artifact.
+
+The Windows CI extension keeps the four-worker `--dist=loadfile` contract and
+the complete Linux suite, while planning two Windows file-level shards from one
+canonical complete collection and digest. Each Windows shard re-collects the
+complete plan, verifies its canonical targets, and compares sequential and
+parallel nodeids. An always-run aggregate propagates plan/shard failure and
+rejects missing, malformed, or overlapping canonical outputs. Local collection
+proof is scheduling/coverage evidence only; the accepted 3,293-node/178-file
+proof and this review's 3,352-node/179-file smoke do not establish hosted
+turnaround or a 5–10 minute result.
+
+The reader bridge deliberately keeps Core truth, reader-visible packets,
+externally supplied results, and evaluation oracles separate. Its maintained
+context is query-blind, actual bootstrap context is reader-visible content only,
+and the bridge cannot execute a model/provider or claim usage for fixtures.
+Retrieval repair removes only narrow output scaffolding and preference-exclusion
+phrases, preserves meaningful terms such as `state` and `handoff`, adds the
+bounded blocker equivalence, and leaves authorization, explicit kind filters,
+temporal/conflict handling, and set-level content-union checks in their existing
+boundaries. The Borealis n=1 pre-repair miss remains a retrieval case, not a
+superiority result. The post-repair frozen known case improved actual-ATC context
+from 0/3 to 3/3 facts and produced the correct answer; the memory manager accepted
+the `c107899` chain after its affected/frozen tests and static checks. This remains
+one known case, without a holdout, superiority, or general product-quality claim.
+
+No decision here changes the unsigned distribution plan, the current beta.6
+release, the default loopback Core boundary, or the separate hosted, exact
+artifact, Defender, clean-machine, live client/provider, signing, publication,
+and release gates.
+
 ## ADR-210: Fail closed at diagnostic boundaries and make scheduler tests event-driven
 
 **Status:** accepted locally on 2026-09-06 for the PR #114 repair candidate
