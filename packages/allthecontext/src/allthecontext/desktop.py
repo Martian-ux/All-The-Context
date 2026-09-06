@@ -716,9 +716,15 @@ def _packaged_update_failure_code(
         # not inspect arbitrary exception attributes or copy exception text.
         from .windows_bootstrap_install import BootstrapInstallError
 
-        if isinstance(error, BootstrapInstallError) and error.code in SAFE_BOOTSTRAP_FAILURE_CODES:
+        if (
+            isinstance(error, BootstrapInstallError)
+            and type(error.code) is str
+            and error.code in SAFE_BOOTSTRAP_FAILURE_CODES
+        ):
             return error.code
         if not isinstance(error, BootstrapInstallError):
+            if type(bootstrap_subphase) is not str:
+                return "component_bootstrap_failed"
             return _PACKAGED_BOOTSTRAP_FAILURE_BY_SUBPHASE.get(
                 bootstrap_subphase,
                 "component_bootstrap_failed",

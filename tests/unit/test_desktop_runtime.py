@@ -809,6 +809,23 @@ def test_packaged_update_maps_unallowlisted_bootstrap_code_to_fixed_category() -
     )
 
 
+def test_packaged_update_preserves_allowlisted_bootstrap_code() -> None:
+    error = BootstrapInstallError("bootstrap_journal_invalid", "private detail")
+
+    assert _packaged_update_failure_code(error, "component_bootstrap") == (
+        "bootstrap_journal_invalid"
+    )
+
+
+@pytest.mark.parametrize("code", [[], {}, True, 7, 1.5, None])
+def test_packaged_update_maps_non_string_bootstrap_code_to_fixed_category(code: object) -> None:
+    error = BootstrapInstallError(code, "private detail")  # type: ignore[arg-type]
+
+    assert _packaged_update_failure_code(error, "component_bootstrap") == (
+        "component_bootstrap_failed"
+    )
+
+
 @pytest.mark.parametrize(
     ("subphase", "expected"),
     [
@@ -833,6 +850,31 @@ def test_packaged_update_classifies_unexpected_bootstrap_failures_by_closed_subp
             bootstrap_subphase=subphase,  # type: ignore[arg-type]
         )
         == expected
+    )
+
+
+@pytest.mark.parametrize("subphase", [[], {}, True, 7, 1.5, None])
+def test_packaged_update_maps_non_string_bootstrap_subphase_to_fixed_category(
+    subphase: object,
+) -> None:
+    assert (
+        _packaged_update_failure_code(
+            RuntimeError("private failure detail must not be inspected"),
+            "component_bootstrap",
+            bootstrap_subphase=subphase,  # type: ignore[arg-type]
+        )
+        == "component_bootstrap_failed"
+    )
+
+
+def test_packaged_update_maps_unknown_bootstrap_subphase_to_fixed_category() -> None:
+    assert (
+        _packaged_update_failure_code(
+            RuntimeError("private failure detail must not be inspected"),
+            "component_bootstrap",
+            bootstrap_subphase="untrusted_bootstrap_subphase",  # type: ignore[arg-type]
+        )
+        == "component_bootstrap_failed"
     )
 
 
