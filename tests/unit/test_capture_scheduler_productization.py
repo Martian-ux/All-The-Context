@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -130,19 +131,126 @@ def _wait_until(predicate: Any, *, timeout: float = 5.0, interval: float = 0.01)
     raise AssertionError("condition was not met before timeout")
 
 
+# This is a test-only liveness guard, not a product deadline: it is six times
+# the former hosted observation window and more than three 8-second scheduler
+# join budgets, leaving room for xdist contention without allowing a hang.
+_ADAPTER_ENTRY_WAIT_FAILSAFE_SECONDS = 30.0
+_ADAPTER_ENTRY_WAIT_POLL_SECONDS = 0.1
+
+
 def _wait_for_adapter_entry(
     scheduler: CoreCaptureScheduler,
     entered: threading.Event,
+    *,
+    monotonic_fn: Callable[[], float] = time.monotonic,
 ) -> None:
-    """Wait for the controlled in-flight boundary without a host-time budget."""
+    """Wait for adapter entry with a bounded test-only liveness fail-safe."""
 
-    while not entered.wait(timeout=0.1):
+    deadline = monotonic_fn() + _ADAPTER_ENTRY_WAIT_FAILSAFE_SECONDS
+    while True:
+        remaining = deadline - monotonic_fn()
+        if remaining <= 0:
+            raise AssertionError(
+                "controlled adapter-entry boundary was not reached before the test fail-safe"
+            )
+        if entered.wait(timeout=min(_ADAPTER_ENTRY_WAIT_POLL_SECONDS, remaining)):
+            return
         status = scheduler.status()
         if not status["running"] or status["worker_state"] in {"failed", "stopped"}:
-            raise AssertionError(
-                "scheduler worker stopped before the controlled adapter-entry boundary: "
-                f"state={status['worker_state']} failure={status['worker_failure_code']}"
-            )
+            raise AssertionError("scheduler worker terminated before the controlled adapter-entry")
+
+
+def test_adapter_entry_wait_has_finite_host_failsafe() -> None:
+    class FakeClock:
+        current = 0.0
+
+        def __call__(self) -> float:
+            return self.current
+
+    class NeverSetEvent:
+        def wait(self, timeout: float | None = None) -> bool:
+            assert timeout is not None
+            clock.current += timeout
+            return False
+
+    class HostileScheduler:
+        def status(self) -> dict[str, object]:
+            return {
+                "running": True,
+                "worker_state": "running",
+                "worker_failure_code": None,
+            }
+
+    clock = FakeClock()
+    with pytest.raises(AssertionError, match="test fail-safe"):
+        _wait_for_adapter_entry(
+            cast(CoreCaptureScheduler, HostileScheduler()),
+            cast(threading.Event, NeverSetEvent()),
+            monotonic_fn=clock,
+        )
+    assert clock.current == pytest.approx(_ADAPTER_ENTRY_WAIT_FAILSAFE_SECONDS)
+
+
+@pytest.mark.parametrize(
+    ("running", "worker_state", "worker_failure_code"),
+    [
+        (False, "stopped", None),
+        (False, "failed", "worker_failed"),
+    ],
+)
+def test_adapter_entry_wait_rejects_terminal_worker_without_event(
+    running: bool,
+    worker_state: str,
+    worker_failure_code: str | None,
+) -> None:
+    class TerminalScheduler:
+        def status(self) -> dict[str, object]:
+            return {
+                "running": running,
+                "worker_state": worker_state,
+                "worker_failure_code": worker_failure_code,
+            }
+
+    with pytest.raises(AssertionError, match="terminated before the controlled adapter-entry"):
+        _wait_for_adapter_entry(
+            cast(CoreCaptureScheduler, TerminalScheduler()),
+            threading.Event(),
+        )
+
+
+def test_adapter_entry_wait_accepts_event_success() -> None:
+    entered = threading.Event()
+    entered.set()
+    _wait_for_adapter_entry(cast(CoreCaptureScheduler, object()), entered)
+
+
+def test_adapter_entry_wait_handles_stop_close_race() -> None:
+    class ClosingScheduler:
+        calls = 0
+
+        def status(self) -> dict[str, object]:
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "running": True,
+                    "worker_state": "running",
+                    "worker_failure_code": None,
+                }
+            return {
+                "running": False,
+                "worker_state": "stopped",
+                "worker_failure_code": None,
+            }
+
+    class NeverSetEvent:
+        def wait(self, timeout: float | None = None) -> bool:
+            return False
+
+    with pytest.raises(AssertionError, match="terminated before the controlled adapter-entry"):
+        _wait_for_adapter_entry(
+            cast(CoreCaptureScheduler, ClosingScheduler()),
+            cast(threading.Event, NeverSetEvent()),
+        )
 
 
 def _blocking_core_scheduler(
