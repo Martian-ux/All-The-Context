@@ -38,6 +38,17 @@ Independent substantive review returned CLEAN FOR INTEGRATION after requiring
 the finite scheduler deadline and correct non-contention lock classification.
 Exact-tree local and hosted validation remain separate gates.
 
+Hosted CI `34047006204` on pushed `b8e19c1` reproduced the generic transaction
+failure. Because child output is deliberately suppressed, reviewed follow-up
+`fc8193a` partitions only exceptions escaping `bootstrap_install_recovery`:
+`OSError` selects the filesystem/I/O reproduction path, `RuntimeError` selects
+the Core lifecycle/shutdown path, and every other `Exception` stays generic.
+`BootstrapInstallError` precedence and `BaseException` propagation are unchanged.
+The existing closed four-field report and rollback-journal projection carry the
+new fixed codes without exposing exception text, errno, paths, or streams. This
+authorizes one discriminating hosted experiment, not a release or root-cause
+claim; a remaining generic result ends diagnostic-code escalation.
+
 ## ADR-209: Windows GA exact-head failure narrowing remains diagnostic-only
 
 **Status:** accepted locally on 2026-09-05 for integration candidate

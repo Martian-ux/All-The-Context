@@ -37,6 +37,17 @@ basetemp smoke passed. Final exact-tree static, focused, full-suite, and hosted
 validation remain pending. No artifact, Defender, clean-machine, live provider/
 client, signing, publication, or release acceptance is claimed.
 
+The first hosted rerun on pushed head `b8e19c1` was CI `34047006204`. Every
+listed job and CodeQL `34047004650` passed except Windows desktop job
+`101523747703`, which reproduced the same pre-injection transaction and cleanup
+failure. Its pull-request merge commit `4dd5032` has the exact candidate tree
+`39bb058`, so the package exercised the intended code. Diagnostic commit
+`fc8193a` adds only a fixed `component_bootstrap_os_error` versus
+`component_bootstrap_runtime_error` partition at `bootstrap_install_recovery`;
+all other exceptions retain the generic code. Schema, rollback, and raw-output
+suppression are unchanged. One hosted rerun must select a causal reproduction;
+if it remains generic, diagnostic-code iteration stops.
+
 The current Windows GA diagnostic integration candidate is a clean detached
 tree whose source tip is `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`, with
 parent `d9d294f6d8fd06338374e684731a273e402cc7ee`, and whose exact prior live
