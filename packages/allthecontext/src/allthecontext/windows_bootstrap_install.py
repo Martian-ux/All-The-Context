@@ -1532,13 +1532,28 @@ def install_windows_components(
         lock.acquire(timeout=0)
     except Timeout as exc:
         raise BootstrapInstallError("bootstrap_busy") from exc
+    except OSError as exc:
+        # FileLock can fail before it has acquired the lock (for example when
+        # the lock file or its parent is temporarily unavailable).  Keep that
+        # boundary in the fixed bootstrap vocabulary instead of allowing the
+        # packaged child to collapse it into a generic transaction failure.
+        raise BootstrapInstallError("bootstrap_busy") from exc
     try:
-        recovered = _recover_existing(
-            journal_path,
-            root,
-            stop_core=stop_core,
-            restart_core=restart_core,
-        )
+        try:
+            recovered = _recover_existing(
+                journal_path,
+                root,
+                stop_core=stop_core,
+                restart_core=restart_core,
+            )
+        except BootstrapInstallError:
+            raise
+        except OSError as exc:
+            # Recovery may have already published a journal phase before a
+            # restart or cleanup operation reports an OS failure.  Preserve
+            # retry-required recovery semantics without exposing exception
+            # text, paths, or platform details to the packaged child.
+            raise BootstrapInstallError("bootstrap_retry_required") from exc
         if recovered:
             _journal_root_entries(evidence_root, journal_path)
         else:

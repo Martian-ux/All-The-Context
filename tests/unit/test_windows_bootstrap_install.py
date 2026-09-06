@@ -81,6 +81,50 @@ def test_reinstall_is_idempotent_and_does_not_stop_core(
     assert not (journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME).exists()
 
 
+def test_lock_acquisition_os_error_is_classified_as_busy(
+    bundle: tuple[dict[str, Path], Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources, install_root, journal_root = bundle
+
+    class BrokenLock:
+        def __init__(self, _path: str) -> None:
+            pass
+
+        def acquire(self, *, timeout: float) -> None:
+            assert timeout == 0
+            raise OSError("private lock failure")
+
+        def release(self) -> None:
+            raise AssertionError("a lock that failed to acquire must not be released")
+
+    monkeypatch.setattr(bootstrap, "FileLock", BrokenLock)
+
+    with pytest.raises(bootstrap.BootstrapInstallError, match="bootstrap_busy") as raised:
+        _install(sources, install_root, journal_root)
+
+    assert raised.value.code == "bootstrap_busy"
+    assert str(raised.value) == "bootstrap_busy"
+    assert not (journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME).exists()
+
+
+def test_existing_recovery_os_error_is_classified_as_retry_required(
+    bundle: tuple[dict[str, Path], Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources, install_root, journal_root = bundle
+
+    def fail_recovery(*_args: object, **_kwargs: object) -> bool:
+        raise OSError("private recovery failure")
+
+    monkeypatch.setattr(bootstrap, "_recover_existing", fail_recovery)
+
+    with pytest.raises(bootstrap.BootstrapInstallError, match="bootstrap_retry_required") as raised:
+        _install(sources, install_root, journal_root)
+
+    assert raised.value.code == "bootstrap_retry_required"
+    assert str(raised.value) == "bootstrap_retry_required"
+    assert not (journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME).exists()
+
+
 @pytest.mark.parametrize("role", ["main", "mcp", "recovery", "updater"])
 def test_each_locked_canonical_component_rolls_back_without_mcp_sidecar(
     bundle: tuple[dict[str, Path], Path, Path],
