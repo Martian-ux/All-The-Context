@@ -1533,11 +1533,11 @@ def install_windows_components(
     except Timeout as exc:
         raise BootstrapInstallError("bootstrap_busy") from exc
     except OSError as exc:
-        # FileLock can fail before it has acquired the lock (for example when
-        # the lock file or its parent is temporarily unavailable).  Keep that
-        # boundary in the fixed bootstrap vocabulary instead of allowing the
-        # packaged child to collapse it into a generic transaction failure.
-        raise BootstrapInstallError("bootstrap_busy") from exc
+        # FileLock converts contention into Timeout.  Other OS failures (for
+        # example permission or disk exhaustion) are not evidence of another
+        # owner, so keep them as a fixed retry boundary without releasing a
+        # lock that was never acquired.
+        raise BootstrapInstallError("bootstrap_retry_required") from exc
     try:
         try:
             recovered = _recover_existing(

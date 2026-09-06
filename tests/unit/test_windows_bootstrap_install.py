@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 from pathlib import Path
 
@@ -81,8 +82,19 @@ def test_reinstall_is_idempotent_and_does_not_stop_core(
     assert not (journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME).exists()
 
 
-def test_lock_acquisition_os_error_is_classified_as_busy(
-    bundle: tuple[dict[str, Path], Path, Path], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_code"),
+    [
+        ("eacces", "bootstrap_retry_required"),
+        ("enospc", "bootstrap_retry_required"),
+        ("timeout", "bootstrap_busy"),
+    ],
+)
+def test_lock_acquisition_failures_are_fixed_and_do_not_release(
+    bundle: tuple[dict[str, Path], Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+    expected_code: str,
 ) -> None:
     sources, install_root, journal_root = bundle
 
@@ -92,37 +104,125 @@ def test_lock_acquisition_os_error_is_classified_as_busy(
 
         def acquire(self, *, timeout: float) -> None:
             assert timeout == 0
-            raise OSError("private lock failure")
+            if failure_kind == "eacces":
+                raise PermissionError(errno.EACCES, "private lock permission failure")
+            if failure_kind == "enospc":
+                raise OSError(errno.ENOSPC, "private lock disk failure")
+            raise bootstrap.Timeout(self)
 
         def release(self) -> None:
             raise AssertionError("a lock that failed to acquire must not be released")
 
     monkeypatch.setattr(bootstrap, "FileLock", BrokenLock)
 
-    with pytest.raises(bootstrap.BootstrapInstallError, match="bootstrap_busy") as raised:
+    with pytest.raises(bootstrap.BootstrapInstallError, match=expected_code) as raised:
         _install(sources, install_root, journal_root)
 
-    assert raised.value.code == "bootstrap_busy"
-    assert str(raised.value) == "bootstrap_busy"
+    assert raised.value.code == expected_code
+    assert str(raised.value) == expected_code
     assert not (journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME).exists()
 
 
-def test_existing_recovery_os_error_is_classified_as_retry_required(
+def test_successful_lock_is_released_after_transaction(
     bundle: tuple[dict[str, Path], Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sources, install_root, journal_root = bundle
+    released: list[bool] = []
 
-    def fail_recovery(*_args: object, **_kwargs: object) -> bool:
-        raise OSError("private recovery failure")
+    class TrackingLock:
+        def __init__(self, _path: str) -> None:
+            pass
 
-    monkeypatch.setattr(bootstrap, "_recover_existing", fail_recovery)
+        def acquire(self, *, timeout: float) -> None:
+            assert timeout == 0
+
+        def release(self) -> None:
+            released.append(True)
+
+    monkeypatch.setattr(bootstrap, "FileLock", TrackingLock)
+
+    _install(sources, install_root, journal_root)
+
+    assert released == [True]
+
+
+def test_existing_rolled_back_recovery_os_error_preserves_retry_state(
+    bundle: tuple[dict[str, Path], Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources, install_root, journal_root = bundle
+    install_root.mkdir()
+    targets = bootstrap.canonical_targets(install_root)
+    old = {role: f"old-{role}".encode() for role in targets}
+    for role, target in targets.items():
+        target.write_bytes(old[role])
+    original_replace = Path.replace
+    original_save = bootstrap.BootstrapInstallJournal.save
+    terminal_saved = False
+
+    def fail_cutover(path: Path, destination: Path) -> Path:
+        if path.parent.name == "staged" and destination == targets["main"]:
+            raise OSError("private cutover failure")
+        return original_replace(path, destination)
+
+    def interrupt_after_rollback_save(
+        journal: bootstrap.BootstrapInstallJournal,
+        path: Path,
+    ) -> None:
+        nonlocal terminal_saved
+        original_save(journal, path)
+        if journal.phase is bootstrap.BootstrapPhase.ROLLED_BACK and not terminal_saved:
+            terminal_saved = True
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "replace", fail_cutover)
+    monkeypatch.setattr(bootstrap.BootstrapInstallJournal, "save", interrupt_after_rollback_save)
+    with pytest.raises(KeyboardInterrupt):
+        _install(
+            sources,
+            install_root,
+            journal_root,
+            core_was_running=True,
+            stop_core=lambda: None,
+            restart_core=lambda: None,
+        )
+
+    monkeypatch.setattr(Path, "replace", original_replace)
+    monkeypatch.setattr(bootstrap.BootstrapInstallJournal, "save", original_save)
+    journal_path = journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME
+    journal = bootstrap.BootstrapInstallJournal.load(journal_path)
+    backup_path = journal.components[0].backup_path
+    assert backup_path is not None
+    assert journal.phase is bootstrap.BootstrapPhase.ROLLED_BACK
+    assert journal.core_restart_complete is False
+    assert Path(backup_path).is_file()
+    assert {role: target.read_bytes() for role, target in targets.items()} == old
+
+    def fail_restart() -> None:
+        raise OSError("private restart failure")
 
     with pytest.raises(bootstrap.BootstrapInstallError, match="bootstrap_retry_required") as raised:
-        _install(sources, install_root, journal_root)
+        _install(sources, install_root, journal_root, restart_core=fail_restart)
 
     assert raised.value.code == "bootstrap_retry_required"
     assert str(raised.value) == "bootstrap_retry_required"
-    assert not (journal_root / bootstrap.BOOTSTRAP_JOURNAL_NAME).exists()
+    retained = bootstrap.BootstrapInstallJournal.load(journal_path)
+    retained_backup_path = retained.components[0].backup_path
+    assert retained_backup_path is not None
+    assert retained.phase is bootstrap.BootstrapPhase.ROLLED_BACK
+    assert retained.core_restart_complete is False
+    assert Path(retained_backup_path).is_file()
+
+    events: list[str] = []
+    _install(
+        sources,
+        install_root,
+        journal_root,
+        stop_core=lambda: None,
+        restart_core=lambda: events.append("restart"),
+    )
+    assert events == ["restart"]
+    assert bootstrap.is_complete_install(sources, install_root)
+    assert not journal_path.exists()
 
 
 @pytest.mark.parametrize("role", ["main", "mcp", "recovery", "updater"])
