@@ -174,8 +174,18 @@ def parse_query_intent(value: str) -> QueryIntent:
     # Only unambiguous request-leading forms: "State regulations" can refer
     # to a jurisdiction, and "handoff owner" names a real task facet.
     semantic_query = re.sub(
-        r"(^|[.!?]\s+)(?:please\s+)?(?:prepare|state|write)\s+"
+        r"(^|[.!?]\s+)(?:please\s+)?(?:prepare|state)\s+"
         r"(?=a\b|an\b|the\b|my\b)",
+        r"\1",
+        semantic_query,
+        flags=re.IGNORECASE,
+    )
+    # A generic "write the ... plan" query names the requested subject; only
+    # the established handoff form is an output wrapper to project away.
+    semantic_query = re.sub(
+        r"(^|[.!?]\s+)(?:please\s+)?write\s+"
+        r"(?=(?:a\b|an\b|the\b|my\b)\s+(?:(?:concise|brief)\s+)?"
+        r"(?:\w+\s+)?handoff\b)",
         r"\1",
         semantic_query,
         flags=re.IGNORECASE,
@@ -1669,9 +1679,13 @@ def _admissibility_inputs(
             scope_fit = len(requested_scopes & row_scopes) / len(requested_scopes)
         else:
             scope_fit = None
-        # A project does not imply a requested record kind. In particular,
-        # ordinary factual questions need not contain the storage label "fact".
-        kind_fit = float(str(row["kind"]) in requested_kinds) if requested_kinds else None
+        kind_tokens = set(_tokens(str(row["kind"])))
+        if requested_kinds:
+            kind_fit = float(str(row["kind"]) in requested_kinds)
+        elif request.current_project is not None and intent.focus_tokens:
+            kind_fit = float(bool(set(intent.focus_tokens) & kind_tokens))
+        else:
+            kind_fit = None
         candidates.append(
             AdmissibilityCandidate(
                 key=record_id,

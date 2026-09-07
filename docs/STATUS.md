@@ -16,6 +16,10 @@ is an ancestor, and the nine post-`d18` commits occur once in order:
 specified source counterparts. The resulting documentation commit intentionally does
 not name its own SHA.
 
+The truthful release boundary remains explicit:
+protected main contains the merged Import Truth, while this branch is only a
+source integration candidate and not a release.
+
 The integrated package keeps the accepted Windows update repair bounded:
 canonical WScript shortcut-generation siblings retain their final `.lnk` or
 `.url` suffix, and packaged setup records refresh/registration progress before a
@@ -52,9 +56,11 @@ no-memory arm abstained honestly. The memory manager accepted the complete
 `c107899` chain after 34 affected/frozen tests, Ruff, and mypy. This is one known
 case, not holdout evidence or a superiority/general product-quality claim.
 
-The separately published immutable `0.1.0-beta.6` remains the current
-downloadable release. No GA, new beta publication, exact-artifact, Defender,
-clean-machine, live provider/client, signing, or release acceptance is claimed.
+The separately published immutable `0.1.0-beta.6` remains the
+current downloadable release. No GA, new beta publication, exact-artifact,
+Defender, clean-machine, live provider/client, signing, or release acceptance is
+claimed. This source evidence does not
+become release evidence; exact-artifact and publication claims remain separate.
 The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
 documentation, hosted, artifact, and applicable platform/release gates.
 

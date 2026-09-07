@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from allthecontext.admissibility import ConflictState
 from allthecontext.content_evidence import CURATED_CONTENT_ALIASES, project_content_evidence
 from allthecontext.models import (
     ApprovalRequest,
@@ -11,7 +12,7 @@ from allthecontext.models import (
     CandidateInput,
     SearchRequest,
 )
-from allthecontext.retrieval import RetrievalEngine, parse_query_intent
+from allthecontext.retrieval import RetrievalEngine, _admissibility_inputs, parse_query_intent
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
@@ -66,6 +67,43 @@ def test_output_request_verbs_are_not_content_anchors(request_prefix: str) -> No
         "next",
         "action",
     }
+
+
+def test_generic_write_plan_keeps_the_request_subject_boundary() -> None:
+    assert parse_query_intent("write the Atlas project plan").anchor_tokens == (
+        "write",
+        "atlas",
+    )
+
+
+def test_explicit_kind_mismatch_overrides_kind_token_overlap(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "kind-mismatch.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    record_id = _approve(
+        store,
+        key="workflow-kind",
+        content="Atlas workflow",
+        kind="workflow",
+        scopes=["project:atlas"],
+    )
+    try:
+        with store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM context_records WHERE id=?", (record_id,)
+            ).fetchone()
+        assert row is not None
+        candidates, _context = _admissibility_inputs(
+            [row],
+            SearchRequest(
+                query="Atlas workflow",
+                kinds=["fact"],
+                current_project="atlas",
+            ),
+            {record_id: ConflictState.CLEAR},
+        )
+        assert candidates[0].signals.kind_compatibility == 0.0
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize("request_prefix", ["Please prepare", "Write"])
