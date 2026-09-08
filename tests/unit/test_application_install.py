@@ -6,6 +6,7 @@ import ctypes
 import json
 import os
 import stat
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -280,7 +281,9 @@ class _StockWinreg:
 
     def __init__(self) -> None:
         self.state = _FakeRegistry()
-        self.PyHKEY = lambda raw: _StockPyHKEY(self, int(raw))
+        # Stock CPython 3.12 exposes HKEYType values but no constructible
+        # winreg.PyHKEY wrapper for a raw native handle.
+        self.PyHKEY = None
         self.set_calls = 0
         self.delete_key_calls = 0
         self._handles: dict[int, str] = {}
@@ -305,6 +308,13 @@ class _StockWinreg:
     def _fake_key(self, key: object, access: int | None = None) -> _FakeKey:
         if isinstance(key, _StockPyHKEY):
             raw = int(key)
+        elif isinstance(key, int) and not isinstance(key, bool):
+            raw = key
+            if raw in self.closed_handles:
+                raise OSError("closed registry handle")
+        else:
+            raw = None
+        if raw is not None:
             name = self._handles[raw]
             transaction = self._handle_transactions.get(raw)
             registry = transaction.registry if transaction is not None else self.state
@@ -2453,10 +2463,10 @@ def test_stock_winreg_forward_install_uses_native_new_key_disposition(
     assert transaction._journal is not None and transaction._journal.phase == "installed"
 
 
-def test_stock_winreg_without_raw_hkey_wrapper_uses_forward_install(
+def test_stock_winreg_without_pyhkey_uses_raw_native_install(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """CPython's pathless HKEYType must not enter the raw-handle KTM path."""
+    """CPython's stock HKEYType must enter KTM through an owned raw integer."""
 
     _patch_shortcut_writer(monkeypatch)
     stock = _StockWinreg()
@@ -2478,10 +2488,232 @@ def test_stock_winreg_without_raw_hkey_wrapper_uses_forward_install(
     result = transaction.apply(transaction.snapshot())
 
     assert result.changed_entries
-    assert adapter.native_registry_publication_available is False
-    assert native.transactions == {}
-    assert stock.set_calls == len(transaction._REGISTRY_NAMES)
+    assert adapter.native_registry_publication_available is True
+    assert native.transactions
+    assert stock.set_calls == 2 * (len(transaction._REGISTRY_NAMES) + 2)
     assert transaction._journal is not None and transaction._journal.phase == "installed"
+
+
+def test_raw_hkey_conversion_failure_closes_native_handle_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _transaction, _executable, _start_menu, _desktop, stock, _native, adapter = (
+        _stock_native_transaction(monkeypatch, tmp_path, desktop=False)
+    )
+    native_transaction = adapter._begin_registry_transaction()
+    raw_before = stock._next_handle
+
+    def reject_conversion(*_args: object, **_kwargs: object) -> object:
+        raise TypeError("raw HKEY conversion rejected")
+
+    monkeypatch.setattr(platform_compat, "_OwnedRegistryHandle", reject_conversion)
+    try:
+        with pytest.raises(TypeError, match="raw HKEY conversion rejected"):
+            adapter._transacted_key_handle(
+                "Software\\AllTheContextTests\\ConversionFailure",
+                native_transaction,
+                create=True,
+                access=platform_compat._KEY_READ,
+            )
+    finally:
+        native_transaction.rollback()
+        native_transaction.close()
+
+    assert stock.closed_handles.count(raw_before) == 1
+
+
+def test_owned_raw_hkey_close_failure_is_single_attempt_and_destructor_safe() -> None:
+    close_calls: list[ctypes.c_void_p] = []
+
+    def fail_close(handle: ctypes.c_void_p) -> int:
+        close_calls.append(handle)
+        raise OSError("close failure")
+
+    key = platform_compat._OwnedRegistryHandle(101, fail_close)
+    with pytest.raises(OSError, match="close failure"):
+        key.Close()
+
+    key.__del__()
+    with pytest.raises(OSError, match="close failure"):
+        key.Close()
+
+    assert len(close_calls) == 1
+    with pytest.raises(OSError, match="closed registry handle"):
+        int(key)
+
+
+def test_raw_hkey_query_failure_closes_native_handle_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _transaction, _executable, _start_menu, _desktop, stock, _native, adapter = (
+        _stock_native_transaction(monkeypatch, tmp_path, desktop=False)
+    )
+    native_transaction = adapter._begin_registry_transaction()
+    key, _disposition = adapter._transacted_key_handle(
+        "Software\\AllTheContextTests\\QueryFailure",
+        native_transaction,
+        create=True,
+        access=platform_compat._KEY_READ,
+    )
+    raw = int(key)
+
+    def fail_query(*_args: object) -> object:
+        raise OSError("query failure")
+
+    monkeypatch.setattr(stock, "QueryInfoKey", fail_query)
+    try:
+        with pytest.raises(OSError, match="query failure"):
+            adapter._staged_values_match(key, ())
+    finally:
+        key.Close()
+        key.Close()
+        native_transaction.rollback()
+        native_transaction.close()
+
+    assert stock.closed_handles.count(raw) == 1
+    with pytest.raises(OSError, match="closed registry handle"):
+        int(key)
+
+
+def test_raw_hkey_transaction_failure_closes_key_and_transaction_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _transaction, _executable, _start_menu, _desktop, stock, native, adapter = (
+        _stock_native_transaction(monkeypatch, tmp_path, desktop=False)
+    )
+    raw_before = stock._next_handle
+
+    def fail_operation(native_transaction: platform_compat._RegistryTransaction) -> None:
+        key, _disposition = adapter._transacted_key_handle(
+            "Software\\AllTheContextTests\\TransactionFailure",
+            native_transaction,
+            create=True,
+            access=platform_compat._KEY_READ,
+        )
+        try:
+            raise RuntimeError("transaction operation failure")
+        finally:
+            key.Close()
+
+    with pytest.raises(RuntimeError, match="transaction operation failure"):
+        adapter._run_registry_transaction(fail_operation)
+
+    assert stock.closed_handles.count(raw_before) == 1
+    assert len(native.closed_transaction_handles) == 1
+
+
+def test_native_registry_publication_fails_closed_without_raw_handle_primitives() -> None:
+    class _IncompleteWinreg:
+        HKEY_CURRENT_USER = 1
+        SetValueEx = object()
+        QueryInfoKey = object()
+
+    adapter = platform_compat.WindowsRegistryAdapter(_IncompleteWinreg())
+
+    assert adapter.native_registry_publication_available is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires stock Windows winreg and KTM")
+def test_stock_windows_raw_hkey_read_only_transaction_handle() -> None:
+    """Prove stock winreg accepts an int for an owned KTM-bound HKEY."""
+
+    adapter = platform_compat.windows_registry()
+    transaction = adapter._begin_registry_transaction()
+    key, _disposition = adapter._transacted_key_handle(
+        "Software",
+        transaction,
+        create=False,
+        access=platform_compat._KEY_READ,
+    )
+    try:
+        raw = int(key)
+        subkeys, values, _last_write = adapter._module.QueryInfoKey(raw)
+        assert int(subkeys) >= 0
+        assert int(values) >= 0
+    finally:
+        key.Close()
+        key.Close()
+        transaction.rollback()
+        transaction.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires stock Windows winreg and KTM")
+def test_stock_windows_raw_hkey_native_registry_lifecycle() -> None:
+    """Exercise publication/CAS deletion with CPython's non-PyHKEY winreg."""
+
+    adapter = platform_compat.windows_registry()
+    assert not callable(getattr(adapter._module, "PyHKEY", None))
+    assert adapter.native_registry_publication_available is True
+    try:
+        with adapter._module.OpenKey(
+            adapter._current_user,
+            "Software",
+            0,
+            int(adapter.KEY_READ) | int(adapter.KEY_SET_VALUE) | int(adapter.KEY_CREATE_SUB_KEY),
+        ):
+            pass
+    except PermissionError as exc:
+        pytest.skip(
+            "approved HKCU\\Software native test root is not writable on this host; "
+            f"winerror={getattr(exc, 'winerror', None)}"
+        )
+
+    key_name = f"Software\\AllTheContextTests\\NativeHandles-{uuid.uuid4().hex}"
+    generation = "a" * platform_compat._REGISTRY_IDENTITY_HEX_LENGTH
+    wrong_generation = "b" * platform_compat._REGISTRY_IDENTITY_HEX_LENGTH
+    identity = "c" * platform_compat._REGISTRY_IDENTITY_HEX_LENGTH
+    values = (
+        ("ATCTestMarker", int(adapter.REG_SZ), "raw-hkey"),
+        (platform_compat._REGISTRY_OWNERSHIP_VALUE, int(adapter.REG_SZ), generation),
+        (platform_compat._REGISTRY_IDENTITY_VALUE, int(adapter.REG_SZ), identity),
+    )
+    wrong_values = tuple(
+        (
+            name,
+            value_type,
+            wrong_generation if name == platform_compat._REGISTRY_OWNERSHIP_VALUE else data,
+        )
+        for name, value_type, data in values
+    )
+    try:
+        assert adapter.publish_key_if_absent(
+            key_name,
+            values,
+            generation,
+            platform_compat._REGISTRY_OWNERSHIP_VALUE,
+        )
+        assert adapter.registry_key_matches_generation(
+            key_name,
+            values,
+            generation,
+            platform_compat._REGISTRY_OWNERSHIP_VALUE,
+        )
+        assert not adapter.delete_key_if_generation(
+            key_name,
+            wrong_values,
+            wrong_generation,
+            platform_compat._REGISTRY_OWNERSHIP_VALUE,
+        )
+        assert adapter.registry_key_matches_generation(
+            key_name,
+            values,
+            generation,
+            platform_compat._REGISTRY_OWNERSHIP_VALUE,
+        )
+        assert adapter.delete_key_if_generation(
+            key_name,
+            values,
+            generation,
+            platform_compat._REGISTRY_OWNERSHIP_VALUE,
+        )
+        assert adapter._key_is_absent(key_name)
+    finally:
+        assert adapter.delete_key_if_generation(
+            key_name,
+            values,
+            generation,
+            platform_compat._REGISTRY_OWNERSHIP_VALUE,
+        )
 
 
 def test_stock_winreg_existing_key_fails_closed_without_atomic_write(

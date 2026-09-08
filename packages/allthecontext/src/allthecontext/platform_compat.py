@@ -8,6 +8,7 @@ import os
 import subprocess
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
@@ -351,6 +352,107 @@ class _RegistryTransaction:
         self.state = _RegistryTransactionState.CLOSED
 
 
+class _OwnedRegistryHandle:
+    """Own one raw HKEY without relying on a ``winreg.PyHKEY`` constructor.
+
+    Stock CPython accepts integer HKEY values at every winreg call that accepts
+    a handle, but does not expose a public constructor for wrapping a raw HKEY
+    on current Python versions.  This owner keeps the raw handle paired with
+    its native close function and makes close a single-attempt operation.  A
+    failed close is retained and never retried, including from ``__del__``.
+    """
+
+    def __init__(
+        self,
+        raw_handle: int,
+        close: Any,
+        *,
+        last_error_provider: object | None = None,
+    ) -> None:
+        if isinstance(raw_handle, bool) or int(raw_handle) in {0, _INVALID_HANDLE_VALUE}:
+            raise OSError("invalid registry handle")
+        if not callable(close):
+            raise OSError("registry handle close primitive is unavailable")
+        self._handle: int | None = int(raw_handle)
+        self._close = close
+        self._last_error_provider = last_error_provider
+        self._close_attempted = False
+        self._close_error: BaseException | None = None
+        self._detached = False
+
+    @property
+    def raw(self) -> int:
+        """Return the live raw HKEY, rejecting use after ownership ends."""
+
+        if self._handle is None:
+            raise OSError("closed registry handle")
+        return self._handle
+
+    def __int__(self) -> int:
+        return self.raw
+
+    def __index__(self) -> int:
+        return self.raw
+
+    def __enter__(self) -> _OwnedRegistryHandle:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.Close()
+
+    def Detach(self) -> int:
+        """Transfer the raw HKEY to a caller that will close it natively."""
+
+        raw = self.raw
+        self._handle = None
+        self._detached = True
+        return raw
+
+    def Close(self) -> None:
+        """Close the HKEY at most once, preserving a failed attempt."""
+
+        if self._detached or self._handle is None:
+            if self._close_error is not None:
+                raise self._close_error
+            return
+        if self._close_attempted:
+            if self._close_error is not None:
+                raise self._close_error
+            return
+        raw = self._handle
+        self._handle = None
+        self._close_attempted = True
+        try:
+            result = int(self._close(ctypes.c_void_p(raw)))
+            if result != _ERROR_SUCCESS:
+                _raise_windows_error(
+                    _windows_last_error(self._last_error_provider),
+                    "unable to close registry key handle",
+                )
+        except BaseException as exc:
+            self._close_error = exc
+            raise
+
+    def __del__(self) -> None:
+        """Best-effort finalization that can never raise from destruction."""
+
+        with suppress(BaseException):
+            self.Close()
+
+
+def _winreg_key_argument(key: Any) -> Any:
+    """Pass owned native keys to stock winreg as raw integers.
+
+    Other provider-shaped fake keys remain untouched so the adapter keeps its
+    existing compatibility seam without treating test-only PyHKEY behavior as
+    a production capability requirement.
+    """
+
+    if isinstance(key, _OwnedRegistryHandle):
+        return key.raw
+    return key
+
+
 class WindowsRegistryAdapter:
     """Standard ``winreg`` compatibility plus bounded registry primitives.
 
@@ -396,16 +498,18 @@ class WindowsRegistryAdapter:
 
     @property
     def native_registry_publication_available(self) -> bool:
-        """Whether this winreg surface can own a transacted native key handle.
+        """Whether this winreg surface can consume owned raw HKEY values."""
 
-        CPython exposes registry handles as ``HKEYType`` instances, but does
-        not expose a constructible ``PyHKEY`` wrapper for a raw handle on the
-        hosted Python versions used by the desktop workflow.  Without that
-        wrapper, the KTM publication path cannot safely bind its handles and
-        must use the stock forward-only install path instead.
-        """
-
-        return callable(getattr(self._module, "PyHKEY", None))
+        if not all(
+            callable(getattr(self._module, name, None))
+            for name in ("SetValueEx", "QueryInfoKey", "QueryValueEx")
+        ):
+            return False
+        try:
+            int(self._current_user)
+        except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+            return False
+        return True
 
     @property
     def path_bound_registry_handles(self) -> bool:
@@ -419,14 +523,11 @@ class WindowsRegistryAdapter:
         *,
         access: int = _KEY_ALL_ACCESS,
     ) -> tuple[Any, bool]:
-        """Create/open a native key and transfer its handle to ``PyHKEY``.
+        """Create/open a native key and transfer it to an owned raw handle.
 
-        A stock ``winreg`` key is a ``PyHKEY`` without ``name`` or ``path``.
-        Callers therefore receive the canonical path separately and must never
-        infer it from the handle.  Once ownership is transferred to ``PyHKEY``
-        its ``Close``/context-manager path owns the native handle; the raw
-        ``RegCreateKeyExW`` handle is closed directly only when conversion
-        fails.
+        Callers receive the canonical path separately and must never infer it
+        from the handle.  The owner closes the raw ``RegCreateKeyExW`` handle
+        exactly once, including when ownership conversion fails.
         """
 
         advapi32 = windows_dll("advapi32")
@@ -468,17 +569,20 @@ class WindowsRegistryAdapter:
         if not raw_handle:
             raise OSError("RegCreateKeyExW returned no handle")
         created = int(disposition.value) == 1
-        transferred = False
         try:
-            py_hkey = getattr(self._module, "PyHKEY", None)
-            if callable(py_hkey):
-                key = py_hkey(raw_handle)
-                transferred = True
-                return key, created
-        finally:
-            if not transferred:
+            key = _OwnedRegistryHandle(
+                int(raw_handle),
+                close_key,
+                last_error_provider=advapi32 if os.name != "nt" else None,
+            )
+        except BaseException as exc:
+            try:
                 close_key(ctypes.c_void_p(raw_handle))
-        return self._module.OpenKey(self._current_user, name, 0, access), created
+            except BaseException as close_exc:
+                exc.add_note("native registry handle close failed after ownership conversion")
+                exc.add_note(f"native close error: {close_exc!r}")
+            raise
+        return key, created
 
     def _create_key_native(self, name: str) -> bool:
         key, created = self._native_key_handle(name)
@@ -510,8 +614,9 @@ class WindowsRegistryAdapter:
         setter = getattr(self._module, "SetValueEx", None)
         if not callable(setter):
             raise OSError("winreg.SetValueEx is unavailable")
+        winreg_key = _winreg_key_argument(key)
         for name, value_type, data in values:
-            setter(key, name, 0, int(value_type), data)
+            setter(winreg_key, name, 0, int(value_type), data)
 
     def _staged_values_match(
         self,
@@ -522,12 +627,13 @@ class WindowsRegistryAdapter:
         query_value = getattr(self._module, "QueryValueEx", None)
         if not callable(query_info) or not callable(query_value):
             raise OSError("registry query primitives are unavailable")
-        subkeys, value_count, _ = query_info(key)
+        winreg_key = _winreg_key_argument(key)
+        subkeys, value_count, _ = query_info(winreg_key)
         if int(subkeys) != 0 or int(value_count) != len(values):
             return False
         for name, value_type, data in values:
             try:
-                observed, observed_type = query_value(key, name)
+                observed, observed_type = query_value(winreg_key, name)
             except FileNotFoundError:
                 return False
             if int(observed_type) != int(value_type) or observed != data:
@@ -571,17 +677,16 @@ class WindowsRegistryAdapter:
     ) -> tuple[Any, int]:
         """Open a registry key through the KTM-bound Win32 API.
 
-        The returned ``PyHKEY`` owns the native key handle.  This deliberately
-        requires stock ``winreg.PyHKEY`` support; a provider that cannot
-        transfer and close the handle is not an atomic registry provider.
+        The returned owner closes the raw native key handle.  Stock winreg
+        receives its integer value at each bounded Query/Set call; no
+        constructible ``winreg.PyHKEY`` is required.
         """
 
         advapi32 = windows_dll("advapi32")
         function_name = "RegCreateKeyTransactedW" if create else "RegOpenKeyTransactedW"
         function = getattr(advapi32, function_name, None)
-        py_hkey = getattr(self._module, "PyHKEY", None)
         close_key = getattr(advapi32, "RegCloseKey", None)
-        if not callable(function) or not callable(py_hkey) or not callable(close_key):
+        if not callable(function) or not callable(close_key):
             raise OSError("transactional registry handles are unavailable")
         result_handle = ctypes.c_void_p()
         disposition = ctypes.c_uint32(_REG_OPENED_EXISTING_KEY)
@@ -645,16 +750,22 @@ class WindowsRegistryAdapter:
             operation = "create" if create else "open"
             _raise_windows_error(result, f"unable to {operation} transacted key")
         raw_handle = result_handle.value
-        if raw_handle in {None, _INVALID_HANDLE_VALUE}:
+        if raw_handle is None or raw_handle == _INVALID_HANDLE_VALUE:
             raise OSError("transactional registry API returned no handle")
-        transferred = False
         try:
-            key = py_hkey(raw_handle)
-            transferred = True
-            return key, int(disposition.value)
-        finally:
-            if not transferred:
+            key = _OwnedRegistryHandle(
+                raw_handle,
+                close_key,
+                last_error_provider=advapi32 if os.name != "nt" else None,
+            )
+        except BaseException as exc:
+            try:
                 close_key(ctypes.c_void_p(raw_handle))
+            except BaseException as close_exc:
+                exc.add_note("native registry handle close failed after ownership conversion")
+                exc.add_note(f"native close error: {close_exc!r}")
+            raise
+        return key, int(disposition.value)
 
     def _set_transacted_values(
         self,
@@ -664,8 +775,9 @@ class WindowsRegistryAdapter:
         setter = getattr(self._module, "SetValueEx", None)
         if not callable(setter):
             raise OSError("winreg.SetValueEx is unavailable")
+        winreg_key = _winreg_key_argument(key)
         for name, value_type, data in values:
-            setter(key, name, 0, int(value_type), data)
+            setter(winreg_key, name, 0, int(value_type), data)
 
     def _delete_transacted_key(
         self,
