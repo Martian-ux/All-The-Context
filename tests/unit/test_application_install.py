@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 from allthecontext import application_install, platform_compat
+from allthecontext.build_identity import make_build_identity
 
 
 class _FakeKey:
@@ -1438,6 +1439,251 @@ def test_version_transition_migrates_installed_registration_without_preimage_res
         before[0],
         {application_install.WINDOWS_UNINSTALL_KEY: {}},
     )
+
+
+def test_installed_journal_reuses_nondeterministic_shortcut_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[Path] = []
+
+    def write_nondeterministic(
+        path: Path,
+        executable: Path,
+        *,
+        arguments: str = "",
+        description: str,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        calls.append(path)
+        path.write_bytes(f"{len(calls)}|{executable}|{arguments}|{description}".encode())
+
+    monkeypatch.setattr(application_install, "_create_windows_shortcut", write_nondeterministic)
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=_FakeRegistry()
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+
+    application_install.install_application_entrypoints(executable)
+    first_files, first_registry = _surface(start_menu, desktop, registry)
+    first_call_count = len(calls)
+
+    application_install.install_application_entrypoints(executable)
+
+    assert len(calls) == first_call_count
+    assert _surface(start_menu, desktop, registry) == (first_files, first_registry)
+    assert transaction._load_journal() is not None
+
+
+@pytest.mark.parametrize("tamper", ("bytes", "identity"))
+def test_installed_journal_rejects_shortcut_byte_or_identity_tamper(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tamper: str
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    _transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+
+    target = start_menu / "All The Context.lnk"
+    original = target.read_bytes()
+    if tamper == "bytes":
+        target.write_bytes(original + b"tampered")
+    else:
+        replacement = tmp_path / "replacement.lnk"
+        replacement.write_bytes(original)
+        os.replace(replacement, target)
+
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install.remove_application_entrypoints()
+
+    assert raised.value.code == "registration_target_changed"
+    assert target.exists()
+    assert application_install.WINDOWS_UNINSTALL_KEY in registry.keys
+
+
+def test_installed_identity_metadata_migrates_as_one_journaled_surface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    old_identity = make_build_identity(
+        version="0.1.0-beta.6",
+        source_commit="a" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    new_identity = make_build_identity(
+        version="0.1.0-beta.7",
+        source_commit="b" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: old_identity)
+    registry = _FakeRegistry()
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+    old_values = copy.deepcopy(registry.keys[application_install.WINDOWS_UNINSTALL_KEY])
+
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: new_identity)
+    migrated_transaction, _, _, _, _ = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+    application_install.install_application_entrypoints(executable)
+
+    migrated = migrated_transaction._load_journal()
+    assert migrated is not None and migrated.phase == "installed"
+    assert migrated.registry_before == {}
+    expected = {
+        name: (value_type, data)
+        for name, value_type, data in migrated_transaction._desired_registry()
+        if name in migrated_transaction._migration_registry_names()
+    }
+    observed = registry.keys[application_install.WINDOWS_UNINSTALL_KEY]
+    assert {name: observed[name] for name in expected} == expected
+    assert {
+        name: old_values[name]
+        for name in expected
+    } != {name: observed[name] for name in expected}
+
+
+def test_installed_identity_metadata_migration_compensates_partial_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    old_identity = make_build_identity(
+        version="0.1.0-beta.6",
+        source_commit="c" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    new_identity = make_build_identity(
+        version="0.1.0-beta.7",
+        source_commit="d" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: old_identity)
+    registry = _FakeRegistry()
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+    old_registry_metadata = {
+        name: (value_type, data)
+        for name, value_type, data in transaction._desired_registry()
+    }
+    old_values = copy.deepcopy(registry.keys[application_install.WINDOWS_UNINSTALL_KEY])
+
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: new_identity)
+    registry.fail_after = "ATCSourceCommit"
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install.install_application_entrypoints(executable)
+
+    assert raised.value.code == "registration_value_write_failed"
+    assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY] == old_values
+    recovered = transaction._load_journal()
+    assert recovered is not None and recovered.phase == "installed"
+    assert recovered.registry_before == {}
+    assert recovered.desired_registry == old_registry_metadata
+
+
+def test_installed_identity_metadata_migration_rejects_downgrade(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    installed_identity = make_build_identity(
+        version="0.1.0-beta.7",
+        source_commit="1" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    downgrade_identity = make_build_identity(
+        version="0.1.0-beta.6",
+        source_commit="2" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    monkeypatch.setattr(
+        application_install, "runtime_build_identity", lambda **_: installed_identity
+    )
+    registry = _FakeRegistry()
+    _transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+    old_values = copy.deepcopy(registry.keys[application_install.WINDOWS_UNINSTALL_KEY])
+
+    monkeypatch.setattr(
+        application_install, "runtime_build_identity", lambda **_: downgrade_identity
+    )
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install.install_application_entrypoints(executable)
+
+    assert raised.value.code == "registration_target_changed"
+    assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY] == old_values
+
+
+def test_interrupted_identity_metadata_migration_recovers_forward(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    old_identity = make_build_identity(
+        version="0.1.0-beta.6",
+        source_commit="e" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    new_identity = make_build_identity(
+        version="0.1.0-beta.7",
+        source_commit="f" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: old_identity)
+    registry = _FakeRegistry()
+    _transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: new_identity)
+    resumed, _, _, _, _ = _make_transaction(monkeypatch, tmp_path, registry=registry)
+    journal = resumed._load_journal()
+    assert journal is not None and journal.phase == "installed"
+    current = resumed._current_snapshot()
+    current_registry = resumed._registry_values_by_name(current)
+    journal.desired_registry = {
+        name: (value_type, data) for name, value_type, data in resumed._desired_registry()
+    }
+    journal.registry_before = {
+        name: current_registry[name] for name in resumed._migration_registry_names()
+    }
+    resumed._persist_journal("migrating", resumed._migration_registry_names())
+    for name, value_type, data in resumed._desired_registry():
+        if name in resumed._migration_registry_names():
+            registry.keys[application_install.WINDOWS_UNINSTALL_KEY][name] = (
+                value_type,
+                data,
+            )
+
+    status = application_install.recover_application_entrypoints()
+
+    assert status is not None and status.complete is True
+    recovered = resumed._load_journal()
+    assert recovered is not None and recovered.phase == "installed"
+    assert recovered.registry_before == {}
 
 
 def test_schema1_installed_journal_is_rejected_without_authenticated_ownership(

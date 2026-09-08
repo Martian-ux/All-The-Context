@@ -122,6 +122,14 @@ clean-machine, live client/provider, publication, and release evidence. The
 current downloadable beta.6 and unsigned/loopback boundaries are unchanged; no
 GA or new beta publication is implied by these source and local-evidence rows.
 
+### 2026-09-08 bounded packaged-registration repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| WScript shortcut ownership across processes | `packages/allthecontext/src/allthecontext/application_install.py`; `tests/unit/test_application_install.py::test_installed_journal_reuses_nondeterministic_shortcut_bytes`; `tests/unit/test_application_install.py::test_installed_journal_rejects_shortcut_byte_or_identity_tamper` | Source-level repair. Authenticated installed journal bytes are bound to the fixed path and recorded file identity; every installed-state shortcut comparison now uses that journal-aware lookup, so fresh WScript output is not used as a cross-process canonical comparison. The first native focused receipt exposed and bounded this remaining comparison path; native validation remains pending. |
+| Full packaged build-identity migration | `application_install.py::_migrate_installed_journal`; `application_install.py::_complete_version_migration`; `application_install.py::_rollback_installed_migration`; `tests/unit/test_application_install.py::test_installed_identity_metadata_migrates_as_one_journaled_surface` | Source-level repair. `DisplayVersion` and all four build-identity values are journaled, compare-and-set, recovered, and compensated together; downgrade and native ownership checks remain. Native gates are pending. |
+| Migration recovery and compensation | `application_install.py::_recover_journal`; `application_install.py::_resume_restoring_journal`; focused recovery/rollback tests in `tests/unit/test_application_install.py` | Source-level focused coverage added for interrupted forward completion and partial-write rollback. No pytest, build, executable, or native-controller validation was run here. |
+
 ### 2026-09-06 defensive-boundary and hosted-flake repair candidate
 
 | Requirement area | Implementation/evidence | Status |

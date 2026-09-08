@@ -27,6 +27,35 @@ later `OSError` is classified as an entrypoint-registration failure. The
 accepted native review covered WScript COM edge cases, path/collision cases, and
 19 focused tests; full integrated and release gates remain separate.
 
+### 2026-09-08 — packaged registration repair (source-level)
+
+The exact diagnosis inputs identify candidate
+`d51a761ed8242e045cce1a848715eb8b2b598346` and a registration-journal mismatch
+after packaged first-run. The bounded source repair no longer regenerates
+WScript shortcut bytes as a cross-process canonical value: an authenticated
+installed journal supplies expected bytes only for its fixed path with the
+exact stored bytes and recorded file identity. Byte, replacement-identity,
+reparse, path, authentication, registry, and ownership checks remain
+fail-closed.
+
+Installed registration migration now journals and updates `DisplayVersion` plus
+the complete packaged build identity (`ATCReleaseChannel`, `ATCSourceCommit`,
+`ATCBuildIdentity`, and `ATCBuildIdentitySha256`) as one recoverable metadata
+surface. Older target versions remain blocked; partial writes compensate back
+to the authenticated old surface, and interrupted migrations can finish from
+the durable journal. Focused source tests cover nondeterministic shortcut
+generation, byte/identity tamper, metadata migration, recovery, and rollback.
+No tests, builds, executables, or native gates were run in this source-only
+attempt; controller-owned validation remains pending and this is not release
+evidence.
+
+The first native focused receipt then exposed one remaining cross-process
+validation path that bypassed the journal-aware shortcut lookup, plus a focused
+test's stale assumption about the expanded registry tuple shape. The bounded
+repair routes every installed-state shortcut comparison through the authenticated
+journal and updates that test's mapping conversion. Native validation remains
+controller-owned and pending.
+
 The exhaustive memory-reliability test optimization preserves 3,480 rejection
 checks and 39 module tests. Three paired local runs measured a median reduction
 from 61.837s to 55.804s (6.033s, 9.76%). This is focused local feedback-time

@@ -52,6 +52,36 @@ release, the default loopback Core boundary, or the separate hosted, exact
 artifact, Defender, clean-machine, live client/provider, signing, publication,
 and release gates.
 
+## ADR-212: Installed registration binds WScript bytes to journal identity
+
+**Status:** source-level repair on 2026-09-08 for the exact diagnosis
+candidate `d51a761ed8242e045cce1a848715eb8b2b598346`; native gates remain
+controller-owned and pending.
+
+WScript.Shell shortcut output is not a deterministic cross-process canonical
+form. Registration validation and recovery therefore use the authenticated
+installed journal's exact bytes only at the existing fixed shortcut paths and
+only with the journal's recorded file-identity bindings. A later process never
+regenerates WScript bytes to decide whether an installed shortcut is owned.
+Without that authenticated installed proof, shortcut bytes alone cannot
+authorize cleanup; authentication, path, reparse, registry, and ownership
+checks remain fail-closed.
+
+The installed metadata migration covers `DisplayVersion` and all packaged build
+identity values (`ATCReleaseChannel`, `ATCSourceCommit`, `ATCBuildIdentity`,
+and `ATCBuildIdentitySha256`) under one durable migration phase. Compare-and-set
+writes are journaled with the complete old metadata preimage; an interrupted
+migration resumes forward, while a failed migration compensates to the old
+authenticated installed record. The migration rejects a target version below
+the installed version and retains native registry-generation ownership checks.
+This decision does not claim native, artifact, hosted, or release acceptance.
+
+The first native focused receipt identified a remaining installed-state
+comparison that called the generator directly instead of this journal-aware
+lookup. The repair makes the shared shortcut comparison path use the authenticated
+journal bytes, preserving the fixed-path identity binding; the associated focused
+test now adapts to the complete `(name, value_type, data)` registry contract.
+
 ## ADR-210: Fail closed at diagnostic boundaries and make scheduler tests event-driven
 
 **Status:** accepted locally on 2026-09-06 for the PR #114 repair candidate
