@@ -1559,3 +1559,15 @@ diagnostic-write errors secondary to the native return code. Focused tests
 cover baseline Core acceptance, new modal/child rejection, same-PID replacement,
 inventory failure, safe external diagnostics, stdout status, and write-failure
 containment. Native exact-candidate lifecycle proof remains pending.
+
+### Stock Windows transacted registry handle repair (2026-09-08)
+
+`platform_compat.WindowsRegistryAdapter` now owns raw HKEY values returned by
+the native transacted registry APIs and converts that owner to its live integer
+handle at each bounded stock-winreg query/set call. The handle is closed once,
+including failure paths, while the owning KTM transaction remains in scope;
+`RegCloseKey`'s returned LSTATUS is used directly. Focused fake-provider tests
+exercise transaction binding, raw-handle lifetime, wrong-generation rejection,
+rollback, and close errors with stale last-error state. The independent stock
+Windows lifecycle, packaged recovery, full-suite, and release gates remain
+open.

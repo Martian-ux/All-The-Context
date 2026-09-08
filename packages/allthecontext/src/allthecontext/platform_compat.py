@@ -366,8 +366,6 @@ class _OwnedRegistryHandle:
         self,
         raw_handle: int,
         close: Any,
-        *,
-        last_error_provider: object | None = None,
     ) -> None:
         if isinstance(raw_handle, bool) or int(raw_handle) in {0, _INVALID_HANDLE_VALUE}:
             raise OSError("invalid registry handle")
@@ -375,7 +373,6 @@ class _OwnedRegistryHandle:
             raise OSError("registry handle close primitive is unavailable")
         self._handle: int | None = int(raw_handle)
         self._close = close
-        self._last_error_provider = last_error_provider
         self._close_attempted = False
         self._close_error: BaseException | None = None
         self._detached = False
@@ -425,10 +422,7 @@ class _OwnedRegistryHandle:
         try:
             result = int(self._close(ctypes.c_void_p(raw)))
             if result != _ERROR_SUCCESS:
-                _raise_windows_error(
-                    _windows_last_error(self._last_error_provider),
-                    "unable to close registry key handle",
-                )
+                _raise_windows_error(result, "unable to close registry key handle")
         except BaseException as exc:
             self._close_error = exc
             raise
@@ -573,11 +567,12 @@ class WindowsRegistryAdapter:
             key = _OwnedRegistryHandle(
                 int(raw_handle),
                 close_key,
-                last_error_provider=advapi32 if os.name != "nt" else None,
             )
         except BaseException as exc:
             try:
-                close_key(ctypes.c_void_p(raw_handle))
+                close_result = int(close_key(ctypes.c_void_p(raw_handle)))
+                if close_result != _ERROR_SUCCESS:
+                    _raise_windows_error(close_result, "unable to close registry key handle")
             except BaseException as close_exc:
                 exc.add_note("native registry handle close failed after ownership conversion")
                 exc.add_note(f"native close error: {close_exc!r}")
@@ -756,11 +751,12 @@ class WindowsRegistryAdapter:
             key = _OwnedRegistryHandle(
                 raw_handle,
                 close_key,
-                last_error_provider=advapi32 if os.name != "nt" else None,
             )
         except BaseException as exc:
             try:
-                close_key(ctypes.c_void_p(raw_handle))
+                close_result = int(close_key(ctypes.c_void_p(raw_handle)))
+                if close_result != _ERROR_SUCCESS:
+                    _raise_windows_error(close_result, "unable to close registry key handle")
             except BaseException as close_exc:
                 exc.add_note("native registry handle close failed after ownership conversion")
                 exc.add_note(f"native close error: {close_exc!r}")

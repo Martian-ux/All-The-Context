@@ -1892,13 +1892,15 @@ class WindowsApplicationRegistrationTransaction:
             identity_type, identity_json = values["ATCBuildIdentity"]
             digest_type, digest = values["ATCBuildIdentitySha256"]
             version_type, version = values["DisplayVersion"]
-            if (
-                (channel_type, source_type, identity_type, digest_type, version_type)
-                != (1, 1, 1, 1, 1)
-                or not all(
-                    isinstance(item, str)
-                    for item in (channel, source_commit, identity_json, digest, version)
-                )
+            if (channel_type, source_type, identity_type, digest_type, version_type) != (
+                1,
+                1,
+                1,
+                1,
+                1,
+            ) or not all(
+                isinstance(item, str)
+                for item in (channel, source_commit, identity_json, digest, version)
             ):
                 return False
             identity = BuildIdentity.from_mapping(json.loads(cast(str, identity_json)))
@@ -2010,9 +2012,10 @@ class WindowsApplicationRegistrationTransaction:
                 ReleaseVersion.parse(observed[1])
             except ManifestError:
                 raise WindowsRegistrationError("registration_journal_invalid") from None
-        if set(self._BUILD_IDENTITY_REGISTRY_NAMES).issubset(self._registry_names):
-            if not self._valid_build_identity_metadata(journal.desired_registry):
-                raise WindowsRegistrationError("registration_journal_invalid")
+        if set(self._BUILD_IDENTITY_REGISTRY_NAMES).issubset(self._registry_names) and not (
+            self._valid_build_identity_metadata(journal.desired_registry)
+        ):
+            raise WindowsRegistrationError("registration_journal_invalid")
         if journal.phase == "installed" and set(journal.active) != set(owned):
             raise WindowsRegistrationError("registration_journal_invalid")
         if journal.phase == "installed" and set(journal.desired_shortcuts) != set(shortcut_names):
@@ -2584,16 +2587,18 @@ class WindowsApplicationRegistrationTransaction:
         # may contain either the authenticated pre-migration values or the new
         # values after an interrupted write, but never an unrelated surface.
         if journal.registry_publication == _REGISTRATION_PUBLICATION_NATIVE_STAGED:
-            prior_registry = tuple(
-                (
-                    name,
-                    journal.registry_before[name].value_type,
-                    journal.registry_before[name].data,
-                )
-                if name in migration_names
-                else (name, value_type, data)
-                for name, (value_type, data) in journal.desired_registry.items()
-            )
+            prior_registry_items: list[tuple[str, int, RegistryData]] = []
+            for name, (value_type, data) in journal.desired_registry.items():
+                if name in migration_names:
+                    before = journal.registry_before.get(name)
+                    if before is None or not before.present or before.value_type is None:
+                        raise WindowsRegistrationError(
+                            "registration_journal_invalid", transaction=self
+                        )
+                    prior_registry_items.append((name, before.value_type, before.data))
+                else:
+                    prior_registry_items.append((name, value_type, data))
+            prior_registry = tuple(prior_registry_items)
             if not (
                 self._native_registry_matches_generation(journal, desired_registry=prior_registry)
                 or self._native_registry_matches_generation(journal)
@@ -2677,21 +2682,23 @@ class WindowsApplicationRegistrationTransaction:
         new_version = desired_registry.get("DisplayVersion")
         if old_version is None or new_version is None:
             raise WindowsRegistrationError("registration_journal_mismatch", transaction=self)
+        old_version_value = old_version[1]
+        new_version_value = new_version[1]
+        if not isinstance(old_version_value, str) or not isinstance(new_version_value, str):
+            raise WindowsRegistrationError("registration_journal_invalid", transaction=self)
         try:
-            if ReleaseVersion.parse(cast(str, new_version[1])) < ReleaseVersion.parse(
-                cast(str, old_version[1])
-            ):
+            if ReleaseVersion.parse(new_version_value) < ReleaseVersion.parse(old_version_value):
                 raise WindowsRegistrationError("registration_target_changed", transaction=self)
         except (ManifestError, TypeError):
-            raise WindowsRegistrationError("registration_journal_invalid", transaction=self)
+            raise WindowsRegistrationError(
+                "registration_journal_invalid", transaction=self
+            ) from None
         migration_names = self._migration_registry_names()
         current_registry = self._registry_values_by_name(current)
         if any(name not in journal.desired_registry for name in migration_names):
             raise WindowsRegistrationError("registration_journal_mismatch", transaction=self)
         journal.desired_registry = desired_registry
-        journal.registry_before = {
-            name: current_registry[name] for name in migration_names
-        }
+        journal.registry_before = {name: current_registry[name] for name in migration_names}
         self._journal = journal
         self._mutations = [
             _RegistryMutation(
@@ -2712,9 +2719,7 @@ class WindowsApplicationRegistrationTransaction:
                     transaction=self,
                     status=status,
                 ) from exc
-            raise WindowsRegistrationError(
-                _safe_error_code(exc), transaction=self
-            ) from exc
+            raise WindowsRegistrationError(_safe_error_code(exc), transaction=self) from exc
 
     def _rollback_installed_migration(
         self, journal: _RegistrationJournal
@@ -2752,9 +2757,7 @@ class WindowsApplicationRegistrationTransaction:
             except BaseException as exc:
                 errors.append(_safe_error_code(exc))
 
-        pending = tuple(
-            dict.fromkeys(cast(str, mutation.name) for mutation in self._mutations)
-        )
+        pending = tuple(dict.fromkeys(mutation.name for mutation in self._mutations))
         if not self._mutations and not errors:
             old_desired = dict(journal.desired_registry)
             for name in self._migration_registry_names():

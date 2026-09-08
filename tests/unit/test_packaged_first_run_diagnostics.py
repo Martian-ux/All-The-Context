@@ -1094,28 +1094,31 @@ def test_packaged_uninstall_diagnostic_write_failure_is_best_effort(
 
 
 def test_packaged_uninstall_process_inventory_is_bounded_and_path_bound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed: list[list[str]] = []
     monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    target = Path("C:/installed/AllTheContext.exe")
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         observed.append(command)
         assert kwargs["check"] is False
         script = command[-1]
         assert "CommandLine" not in script
+        assert "$ErrorActionPreference = 'Stop';" in script
         assert "ProcessId,CreationDate,ExecutablePath" in script
+        assert (
+            "CreationDate.ToUniversalTime().Ticks.ToString("
+            "[System.Globalization.CultureInfo]::InvariantCulture)"
+        ) in script
         return subprocess.CompletedProcess(
             command,
             0,
-            json.dumps(
-                [{"pid": 17, "creation_identity": "creation-a", "exe": str(target)}]
-            ),
+            json.dumps([{"pid": 17, "creation_identity": "creation-a", "exe": str(target)}]),
             "",
         )
 
     monkeypatch.setattr(smoke.subprocess, "run", fake_run)
-    target = tmp_path / "installed" / "AllTheContext.exe"
     baseline = smoke.snapshot_packaged_processes(target)
     assert smoke.assert_no_packaged_process_or_modal(target, baseline_processes=baseline) == {
         "status": "baseline_preserved",
@@ -1201,6 +1204,46 @@ def test_packaged_uninstall_process_check_fails_closed_on_inventory_error(
         "current_count": None,
         "new_count": None,
     }
+
+
+def test_packaged_uninstall_inventory_timeout_preserves_validated_failure_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = Path("C:/installed/AllTheContext.exe")
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+
+    def timed_out(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, 10)
+
+    monkeypatch.setattr(smoke.subprocess, "run", timed_out)
+    with pytest.raises(smoke.PackagedProcessCheckError) as raised:
+        smoke.assert_no_packaged_process_or_modal(target, baseline_processes=())
+
+    inventory_error = raised.value.__cause__
+    assert isinstance(inventory_error, smoke.PackagedProcessInventoryError)
+    assert isinstance(inventory_error.__cause__, subprocess.TimeoutExpired)
+    classification = raised.value.classification
+    failure = {
+        "uninstalled": False,
+        "vault_preserved": True,
+        "stage": "windows_registration",
+        "code": "registration_uninstall_required",
+        "registration_status": {
+            "available": True,
+            "complete": False,
+            "retryable": True,
+            "pending": ["uninstall"],
+            "errors": ["registration_restore_target_changed"],
+        },
+    }
+    diagnostic = smoke.build_packaged_uninstall_failure_diagnostic(
+        phase="packaged-uninstall-final",
+        return_code=7,
+        failure_payload=failure,
+        process_classification=classification,
+    )
+    assert diagnostic["uninstall_failure"] == failure
+    assert diagnostic["process_classification"] == classification
 
 
 def test_packaged_mcp_surface_is_exactly_read_only() -> None:

@@ -156,6 +156,10 @@ ProcessIdentity = tuple[int, str, str]
 _MAX_PACKAGED_PROCESS_INVENTORY = 64
 
 
+class PackagedProcessInventoryError(RuntimeError):
+    """The native packaged-process inventory could not be trusted."""
+
+
 class PackagedProcessCheckError(RuntimeError):
     """The native packaged-process check could not prove a safe result."""
 
@@ -414,9 +418,10 @@ def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ..
                 "Bypass",
                 "-Command",
                 (
+                    "$ErrorActionPreference = 'Stop'; "
                     "$target = [System.IO.Path]::GetFullPath($env:ATC_SMOKE_PROCESS_PATH); "
                     "$name = [System.IO.Path]::GetFileName($target); "
-                    "$filterName = $name.Replace(\"'\", \"''\"); "
+                    '$filterName = $name.Replace("\'", "\'\'"); '
                     "$processes = @(Get-CimInstance -ClassName Win32_Process "
                     "-Filter (\"Name = '{0}'\" -f $filterName) "
                     "-Property ProcessId,CreationDate,ExecutablePath | "
@@ -424,7 +429,8 @@ def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ..
                     "Select-Object -First 65 | "
                     "ForEach-Object { [pscustomobject]@{ "
                     "pid = [int64]$_.ProcessId; "
-                    "creation_identity = [string]$_.CreationDate; "
+                    "creation_identity = $_.CreationDate.ToUniversalTime().Ticks"
+                    ".ToString([System.Globalization.CultureInfo]::InvariantCulture); "
                     "exe = [string]$_.ExecutablePath } }); "
                     "if ($processes.Count -gt 64) { exit 2 }; "
                     "ConvertTo-Json -InputObject @($processes) -Compress"
@@ -437,22 +443,26 @@ def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ..
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError("native packaged process inventory failed") from exc
+        raise PackagedProcessInventoryError("native packaged process inventory failed") from exc
     if completed.returncode != 0:
-        raise RuntimeError("native packaged process inventory failed")
+        raise PackagedProcessInventoryError("native packaged process inventory failed")
     try:
         raw_inventory = json.loads(completed.stdout)
     except (UnicodeError, ValueError) as exc:
-        raise RuntimeError("native packaged process inventory was invalid") from exc
+        raise PackagedProcessInventoryError(
+            "native packaged process inventory was invalid"
+        ) from exc
     if not isinstance(raw_inventory, list) or len(raw_inventory) > _MAX_PACKAGED_PROCESS_INVENTORY:
-        raise RuntimeError("native packaged process inventory was unbounded")
+        raise PackagedProcessInventoryError("native packaged process inventory was unbounded")
 
     expected_executable = _normalized_process_path(str(resolved_executable))
     identities: list[ProcessIdentity] = []
     seen: set[ProcessIdentity] = set()
     for item in raw_inventory:
         if not isinstance(item, dict) or set(item) != {"pid", "creation_identity", "exe"}:
-            raise RuntimeError("native packaged process identity shape was invalid")
+            raise PackagedProcessInventoryError(
+                "native packaged process identity shape was invalid"
+            )
         pid = item["pid"]
         creation_identity = item["creation_identity"]
         reported_executable = item["exe"]
@@ -465,10 +475,12 @@ def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ..
             or type(reported_executable) is not str
             or _normalized_process_path(reported_executable) != expected_executable
         ):
-            raise RuntimeError("native packaged process identity was invalid")
+            raise PackagedProcessInventoryError("native packaged process identity was invalid")
         identity = (pid, creation_identity, expected_executable)
         if identity in seen:
-            raise RuntimeError("native packaged process identities were duplicated")
+            raise PackagedProcessInventoryError(
+                "native packaged process identities were duplicated"
+            )
         seen.add(identity)
         identities.append(identity)
     return tuple(identities)

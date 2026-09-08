@@ -4876,3 +4876,13 @@ Final failure stdout includes the validated registration status without paths,
 PIDs, raw streams, tokens, or user data. Diagnostic write failure remains
 secondary to the native uninstall result. Native exact-candidate proof remains
 required.
+
+### 2026-09-08 stock Windows transacted registry handle repair
+
+The native Windows registry adapter now owns raw KTM key handles directly and
+passes their live integer HKEY to each bounded stock-winreg query/set call,
+keeping every operation bound to its active transaction. Close is single-attempt
+and interprets `RegCloseKey`'s returned status directly. Focused tests cover
+handle lifetime, transaction binding, ownership/CAS preservation, and stale
+last-error separation. The stock Windows lifecycle and packaged proof gates
+remain required and are not claimed here.

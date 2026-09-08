@@ -6604,3 +6604,18 @@ bounded process classification in a run-unique directory outside disposable
 work. It emits the validated registration status on a real final uninstall
 failure, while a diagnostic write failure cannot replace the native primary
 result. No live registration cause is inferred from this source repair.
+
+## ADR-135: Stock winreg receives owned raw KTM handles
+
+**Status:** implemented locally on 2026-09-08; native exact-candidate
+acceptance remains required.
+
+The stock CPython `winreg` surface does not provide a constructible wrapper for
+the raw HKEY returned by the transacted Advapi32 APIs. The adapter therefore
+retains explicit ownership of each raw key handle, passes its live integer value
+to every bounded `QueryInfoKey`, `QueryValueEx`, and `SetValueEx` operation,
+and closes it exactly once while the KTM transaction remains active. A
+`RegCloseKey` failure uses that call's returned LSTATUS rather than stale
+thread last-error state. Existing full ownership, identity CAS, rollback, and
+security checks remain authoritative; the stock Windows lifecycle regression
+and packaged recovery are downstream evidence.

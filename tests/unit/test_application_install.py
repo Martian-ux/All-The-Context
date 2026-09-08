@@ -1532,7 +1532,7 @@ def test_installed_identity_metadata_migrates_as_one_journaled_surface(
     )
     monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: old_identity)
     registry = _FakeRegistry()
-    transaction, executable, start_menu, desktop, registry = _make_transaction(
+    _transaction, executable, start_menu, desktop, registry = _make_transaction(
         monkeypatch, tmp_path, registry=registry
     )
     monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
@@ -1541,9 +1541,7 @@ def test_installed_identity_metadata_migrates_as_one_journaled_surface(
     old_values = copy.deepcopy(registry.keys[application_install.WINDOWS_UNINSTALL_KEY])
 
     monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: new_identity)
-    migrated_transaction, _, _, _, _ = _make_transaction(
-        monkeypatch, tmp_path, registry=registry
-    )
+    migrated_transaction, _, _, _, _ = _make_transaction(monkeypatch, tmp_path, registry=registry)
     application_install.install_application_entrypoints(executable)
 
     migrated = migrated_transaction._load_journal()
@@ -1556,10 +1554,9 @@ def test_installed_identity_metadata_migrates_as_one_journaled_surface(
     }
     observed = registry.keys[application_install.WINDOWS_UNINSTALL_KEY]
     assert {name: observed[name] for name in expected} == expected
-    assert {
-        name: old_values[name]
-        for name in expected
-    } != {name: observed[name] for name in expected}
+    assert {name: old_values[name] for name in expected} != {
+        name: observed[name] for name in expected
+    }
 
 
 def test_installed_identity_metadata_migration_compensates_partial_write(
@@ -1587,8 +1584,7 @@ def test_installed_identity_metadata_migration_compensates_partial_write(
     monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
     application_install.install_application_entrypoints(executable)
     old_registry_metadata = {
-        name: (value_type, data)
-        for name, value_type, data in transaction._desired_registry()
+        name: (value_type, data) for name, value_type, data in transaction._desired_registry()
     }
     old_values = copy.deepcopy(registry.keys[application_install.WINDOWS_UNINSTALL_KEY])
 
@@ -2540,6 +2536,30 @@ def test_owned_raw_hkey_close_failure_is_single_attempt_and_destructor_safe() ->
     assert len(close_calls) == 1
     with pytest.raises(OSError, match="closed registry handle"):
         int(key)
+
+
+def test_owned_raw_hkey_close_uses_returned_status_not_stale_last_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_calls: list[ctypes.c_void_p] = []
+
+    def return_close_error(handle: ctypes.c_void_p) -> int:
+        close_calls.append(handle)
+        return 1234
+
+    def stale_last_error(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("RegCloseKey must not consult last-error state")
+
+    monkeypatch.setattr(platform_compat, "_windows_last_error", stale_last_error)
+    key = platform_compat._OwnedRegistryHandle(101, return_close_error)
+
+    with pytest.raises(OSError) as raised:
+        key.Close()
+
+    assert raised.value.errno == 1234
+    assert len(close_calls) == 1
+    with pytest.raises(OSError, match="1234"):
+        key.Close()
 
 
 def test_raw_hkey_query_failure_closes_native_handle_once(
