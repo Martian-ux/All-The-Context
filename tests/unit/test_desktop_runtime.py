@@ -430,9 +430,7 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert "Remove-Item" in script
     assert "-ErrorAction Stop" in script
     assert f"Start-Sleep -Milliseconds {WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS}" in script
-    assert requested_flags == [
-        ("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")
-    ]
+    assert requested_flags == [("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")]
     assert kwargs["creationflags"] == 0xA5
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["stdout"] is subprocess.DEVNULL
@@ -443,9 +441,7 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert kwargs["cwd"] == install_dir.resolve().parent
 
 
-def test_windows_uninstall_helper_is_live_after_caller_returns(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_windows_uninstall_helper_is_live_after_caller_returns(tmp_path: Path, monkeypatch) -> None:
     install_dir = tmp_path / "installed"
     install_dir.mkdir()
     launched: list[tuple[list[str], dict[str, object]]] = []

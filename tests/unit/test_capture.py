@@ -692,9 +692,7 @@ def test_capture_renews_lease_after_adapter_page_fetch(
     class TrackingAdapter:
         capability_manifest = CaptureCapabilityManifest(provider="fake")
 
-        def fetch_page(
-            self, source: Any, cursor: str | None, page_order: int
-        ) -> CapturePage:
+        def fetch_page(self, source: Any, cursor: str | None, page_order: int) -> CapturePage:
             del source, cursor, page_order
             nonlocal adapter_fetched
             adapter_fetched = True
