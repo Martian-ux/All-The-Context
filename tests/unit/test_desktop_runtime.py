@@ -1606,3 +1606,67 @@ def test_packaged_update_entrypoint_failure_after_successful_bootstrap_is_bounde
     captured = capsys.readouterr()
     assert canary not in report.read_text(encoding="utf-8") + captured.out + captured.err
     assert not list(report.parent.glob("*.atc-new"))
+
+
+def test_packaged_update_does_not_register_entrypoints_twice_after_bootstrap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bootstrap owns the one post-commit registration call."""
+    from allthecontext import windows_bootstrap_install as bootstrap
+    from allthecontext.application_install import WindowsRegistrationError
+
+    config = CoreConfig.in_directory(tmp_path / "data")
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    targets = bootstrap.canonical_targets(install_dir)
+    source_dir = tmp_path / "replacement"
+    source_dir.mkdir()
+    sources = {role: source_dir / path.name for role, path in targets.items()}
+    for role, path in sources.items():
+        path.write_bytes(role.encode("ascii"))
+    runtime = RuntimeCommand(
+        sources["main"],
+        mcp_executable=sources["mcp"],
+        update_executable=sources["updater"],
+        recovery_executable=sources["recovery"],
+    )
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
+    monkeypatch.setenv("ATC_UPDATE_OPERATION", "a" * 24)
+    monkeypatch.setenv("ATC_UPDATE_ATTEMPT", "b" * 32)
+    monkeypatch.setattr(desktop.CoreConfig, "default", lambda: config)
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(desktop.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(desktop.RuntimeCommand, "current", lambda: runtime)
+    monkeypatch.setattr(desktop, "probe_core", lambda _config: CoreProbe.UNREACHABLE)
+    monkeypatch.setattr(desktop, "_stop_installed_core_for_upgrade", lambda: None)
+    monkeypatch.setattr(
+        desktop,
+        "runtime_build_identity",
+        lambda **_: make_build_identity(
+            version=allthecontext.__version__,
+            platform_name="windows",
+            architecture="x86_64",
+            source_commit="c" * 40,
+        ),
+    )
+
+    registration_calls: list[Path] = []
+
+    def register_once(target: Path) -> None:
+        registration_calls.append(target)
+        if len(registration_calls) == 2:
+            raise WindowsRegistrationError("registration_target_changed")
+
+    monkeypatch.setattr(desktop, "install_application_entrypoints", register_once)
+    report = config.data_dir / "updates" / "transactions" / ("a" * 24) / "apply-report.json"
+
+    assert _apply_packaged_update(str(report)) == 0
+    assert registration_calls == [install_dir / "AllTheContext.exe"]
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["status"] == "installed"
+    assert payload["version"] == allthecontext.__version__
+    assert payload["application"] == str(install_dir / "AllTheContext.exe")
+    assert payload["mcp"] == str(install_dir / "AllTheContextMCP.exe")
+    assert payload["recovery"] == str(install_dir / "AllTheContextRecovery.exe")
+    assert payload["update_helper"] == str(install_dir / "AllTheContextUpdater.exe")

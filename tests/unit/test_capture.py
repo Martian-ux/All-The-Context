@@ -6,6 +6,7 @@ import json
 import sqlite3
 import sys
 import traceback
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ import pytest
 from allthecontext.capture import (
     BackoffPolicy,
     CaptureApplicationReceipt,
+    CaptureCapabilityManifest,
     CaptureCoordinator,
     CaptureError,
     CaptureEvent,
@@ -637,6 +639,82 @@ def test_lease_expiry_during_sink_replays_same_idempotency_key(tmp_path: Path) -
     assert event is not None and event["status"] == "applied"
     assert event["idempotency_key"] == sink.calls[0][2]
     assert item is not None and item["item_state"] == "active"
+
+
+def test_capture_renews_lease_between_events_in_one_bounded_page(tmp_path: Path) -> None:
+    class AdvancingClock:
+        def __init__(self) -> None:
+            self.current = datetime(2026, 1, 1, tzinfo=UTC)
+
+        def __call__(self) -> str:
+            value = self.current.isoformat(timespec="microseconds").replace("+00:00", "Z")
+            self.current += timedelta(seconds=20)
+            return value
+
+    clock = AdvancingClock()
+    sink = IdempotentFakeSink()
+    store = _store(tmp_path)
+    coordinator = CaptureCoordinator(store, clock=clock, sink=sink)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    coordinator.register_adapter(
+        "fake",
+        DeterministicFakeAdapter(
+            [
+                CapturePage(
+                    generation=1,
+                    page_order=0,
+                    events=(_event("lease-1", "item-1", "1"), _event("lease-2", "item-2", "2")),
+                    done=True,
+                )
+            ]
+        ),
+    )
+
+    result = coordinator.run(source_id)
+
+    assert result.status == "completed"
+    assert result.applied_events == 2
+
+
+def test_capture_renews_lease_after_adapter_page_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    sink = IdempotentFakeSink()
+    coordinator = CaptureCoordinator(store, sink=sink)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    page = CapturePage(generation=1, events=(_event("after-fetch", "item", "1"),))
+    adapter_fetched = False
+    renewed_after_fetch = False
+
+    class TrackingAdapter:
+        capability_manifest = CaptureCapabilityManifest(provider="fake")
+
+        def fetch_page(
+            self, source: Any, cursor: str | None, page_order: int
+        ) -> CapturePage:
+            del source, cursor, page_order
+            nonlocal adapter_fetched
+            adapter_fetched = True
+            return page
+
+    original_renew = coordinator.ledger.renew_run
+
+    def tracked_renew(handle: Any) -> Any:
+        nonlocal renewed_after_fetch
+        if adapter_fetched:
+            renewed_after_fetch = True
+        return original_renew(handle)
+
+    monkeypatch.setattr(coordinator.ledger, "renew_run", tracked_renew)
+    coordinator.register_adapter("fake", TrackingAdapter())
+
+    result = coordinator.run(source_id)
+
+    assert result.status == "completed"
+    assert renewed_after_fetch is True
 
 
 def test_capture_migration_restart_and_partial_damage_repair(tmp_path: Path) -> None:

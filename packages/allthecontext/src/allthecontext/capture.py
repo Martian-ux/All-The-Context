@@ -2278,6 +2278,7 @@ class CaptureCoordinator:
         applied = 0
         duplicates = 0
         for event_id in event_ids:
+            self.ledger.renew_run(handle)
             row = rows[event_id]
             if int(row["generation"]) != pending_generation:
                 raise CaptureError("capture_event_generation_mismatch")
@@ -2394,6 +2395,11 @@ class CaptureCoordinator:
                         page_index,
                         manifest,
                     )
+                    # Adapter scans are part of the bounded run and can be
+                    # materially slower than the in-memory validation below.
+                    # Re-authenticate after the fetch so page admission starts
+                    # with a fresh lease while preserving the expiry boundary.
+                    self.ledger.renew_run(handle)
                     if expected_page_order is None:
                         expected_page_order = page.page_order
                     elif page.page_order != expected_page_order:
@@ -2409,6 +2415,7 @@ class CaptureCoordinator:
                     for event, (event_id, already_applied, _attempts) in zip(
                         page.events, staged, strict=True
                     ):
+                        self.ledger.renew_run(handle)
                         events += 1
                         if already_applied:
                             duplicates += 1
@@ -2436,6 +2443,7 @@ class CaptureCoordinator:
                                 raise ownership_error from error
                             raise
                         applied += 1
+                    self.ledger.renew_run(handle)
                     self.ledger.commit_page_cursor(handle, page)
                     cursor = page.next_cursor
                     expected_page_order += 1

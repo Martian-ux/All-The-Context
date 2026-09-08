@@ -829,9 +829,6 @@ def _apply_packaged_update(report_value: str) -> int:
             progress=record_bootstrap_subphase,
         )
 
-        phase = "entrypoint_registration"
-        install_application_entrypoints(installed.executable)
-
         phase = "component_presence"
         helper = installed.mcp_executable
         update_helper = installed.update_executable
@@ -1354,7 +1351,16 @@ def _uninstall(runtime: RuntimeCommand, *, unattended: bool = False) -> int:
         apply_managed_client_cleanup(client_cleanup)
         remove_user_startup()
         remove_application_entrypoints()
-        _schedule_windows_install_removal(runtime.executable.parent)
+        # Packaged smoke and update recovery launch the cleanup mode from a
+        # staged helper, not necessarily from the canonical installed copy.
+        # When the install root is explicitly configured, remove that trusted
+        # root so rollback cleanup cannot target the staging directory.
+        cleanup_dir = (
+            windows_install_directory()
+            if os.environ.get("ATC_INSTALL_DIR")
+            else runtime.executable.parent
+        )
+        _schedule_windows_install_removal(cleanup_dir)
     except Exception as exc:
         raise RuntimeError(
             "Local uninstall cleanup did not finish. The installed files and local vault "
