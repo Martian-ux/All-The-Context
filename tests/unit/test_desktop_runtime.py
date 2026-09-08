@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
@@ -397,6 +398,8 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     install_dir.mkdir()
     launched: list[tuple[list[str], dict[str, object]]] = []
 
+    requested_flags: list[tuple[str, ...]] = []
+
     class Process:
         pass
 
@@ -406,6 +409,10 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
 
     monkeypatch.setattr("allthecontext.desktop.windows_install_directory", lambda: install_dir)
     monkeypatch.setattr("allthecontext.desktop.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "allthecontext.desktop.windows_creation_flags",
+        lambda *names: requested_flags.append(names) or 0xA5,
+    )
 
     _schedule_windows_install_removal(install_dir)
 
@@ -416,14 +423,59 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS == 100
     assert WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS == 30.0
     assert "Wait-Process" in script
+    assert script.index("Wait-Process") < script.index("Remove-Item")
     assert (
         f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};$atcAttempt++){{"
     ) in script
     assert "Remove-Item" in script
     assert "-ErrorAction Stop" in script
     assert f"Start-Sleep -Milliseconds {WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS}" in script
+    assert requested_flags == [
+        ("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")
+    ]
+    assert kwargs["creationflags"] == 0xA5
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.DEVNULL
+    assert kwargs["close_fds"] is True
     assert kwargs["env"]["ATC_UNINSTALL_DIR"] == str(install_dir.resolve())  # type: ignore[index]
+    assert kwargs["env"]["ATC_UNINSTALL_PID"] == str(desktop.os.getpid())  # type: ignore[index]
     assert kwargs["cwd"] == install_dir.resolve().parent
+
+
+def test_windows_uninstall_helper_is_live_after_caller_returns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    launched: list[tuple[list[str], dict[str, object]]] = []
+
+    class LiveProcess:
+        waited = False
+
+        def wait(self) -> None:
+            self.waited = True
+            raise AssertionError("the uninstall caller must not wait for its detached helper")
+
+        def poll(self) -> None:
+            return None
+
+    helper = LiveProcess()
+
+    def fake_popen(command: list[str], **kwargs: object) -> LiveProcess:
+        launched.append((command, kwargs))
+        return helper
+
+    monkeypatch.setattr("allthecontext.desktop.windows_install_directory", lambda: install_dir)
+    monkeypatch.setattr("allthecontext.desktop.subprocess.Popen", fake_popen)
+
+    _schedule_windows_install_removal(install_dir)
+
+    assert len(launched) == 1
+    assert helper.poll() is None
+    assert helper.waited is False
+    script = launched[0][0][-1]
+    assert script.index("Wait-Process -Id $atcProcessId") < script.index("Remove-Item")
 
 
 def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(

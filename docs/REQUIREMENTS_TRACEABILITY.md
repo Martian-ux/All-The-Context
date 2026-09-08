@@ -1503,3 +1503,15 @@ local source wheel passed a straight-only run in the same qualified guest with
 a 0.780195-second maximum durable timestamp gap and 0.786998/0.800204-second
 maximum API/direct receipt gaps. It emitted no receipt. A new immutable Linux
 candidate must pass the complete D01 matrix.
+
+### Packaged uninstall lifecycle handoff (2026-09-08)
+
+The packaged Windows removal handoff is a detached, bounded child operation:
+`desktop._schedule_windows_install_removal` retains exact resolved-root and
+minimum-depth validation, passes only the validated target and current PID via
+environment bindings, uses null standard handles and `close_fds`, runs from the
+stable parent, and preserves the existing 300 x 100 ms retry budget. Focused
+regressions require all creation flags, verify the caller returns while the
+helper remains live, and require the helper's bound-process wait before any
+delete attempt. The native uninstall timeout and secondary cleanup failure must
+be rerun on a fresh exact candidate; this trace does not claim acceptance.

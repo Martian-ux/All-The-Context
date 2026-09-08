@@ -6542,3 +6542,20 @@ The script does not execute binaries,
 open a release archive as an executable, contact Microsoft, or submit/upload
 anything. A fresh exact artifact and the physical Defender reassessment remain
 required before any release decision.
+
+## ADR-132: Packaged uninstall hands removal to a detached helper
+
+**Status:** implemented locally on 2026-09-08 after the bounded packaged
+uninstall diagnosis; exact-candidate native acceptance remains required.
+
+The packaged uninstaller must return after handing its validated install root
+to the existing PowerShell removal helper. The helper now uses
+`DETACHED_PROCESS` in addition to `CREATE_NO_WINDOW` and
+`CREATE_NEW_PROCESS_GROUP`, with `stdin`/`stdout`/`stderr` discarded,
+`close_fds=True`, the resolved install root and uninstall PID passed only as
+environment values, and the stable parent as `cwd`. The helper still waits for
+the bound uninstall process and uses the unchanged 300-attempt, 100-millisecond
+bounded delete retry. This addresses parent/child exit coordination without
+weakening path identity, process identity, rollback, cleanup, credentials,
+journal/registry ownership, or user-data retention. The native timeout's
+content-free cleanup failure remains a separate secondary symptom.

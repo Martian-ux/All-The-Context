@@ -4826,3 +4826,16 @@ or papered over in this integration.
   #78/#79/#82/#84, existing CoreService/startup wiring, and this local
   composition checkout. Those later facts do not belong under this
   2026-08-22 heading.
+
+### 2026-09-08 packaged uninstall lifecycle repair
+
+The bounded packaged-first-run diagnosis identified the primary native failure
+as the installed uninstaller not returning within its unchanged 90-second
+subprocess bound; the separate disposable-root cleanup failure remains
+secondary. The Windows install-removal handoff now requests a detached helper
+while retaining the exact validated install root, process identity, null
+standard handles, stable-parent working directory, and existing 300-attempt /
+100-millisecond retry contract. Focused tests cover the launch flags and prove
+the caller does not wait for the live helper. A fresh exact-candidate native
+packaged journey, reproducible artifacts, review, and release gates are still
+required; this source change is not product acceptance.
