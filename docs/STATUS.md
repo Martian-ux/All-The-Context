@@ -4858,3 +4858,21 @@ process that could own a modal, then executes its existing successful
 install/update/rollback/uninstall journey. The injected case is smoke-only and
 does not repair or infer the underlying live registration cause. Native
 exact-candidate build, OS lifecycle, and final release gates remain open.
+
+### 2026-09-08 packaged smoke process and uninstall diagnostics repair
+
+The packaged smoke now snapshots matching installed-executable process
+identities as PID, native creation identity, and executable, then accepts only
+those exact pre-existing identities after the injected windowed uninstall
+returns. A healthy already-running Core is therefore preserved and checked by
+the subsequent real journey; a new modal/child, PID reuse with a different
+creation identity, or native inventory error fails closed. The inventory is
+bounded and does not request command lines.
+
+Validated closed-schema uninstall failure status and bounded process
+classification are copied before cleanup into a run-unique external diagnostic
+directory for both the injected boundary and a real final uninstall failure.
+Final failure stdout includes the validated registration status without paths,
+PIDs, raw streams, tokens, or user data. Diagnostic write failure remains
+secondary to the native uninstall result. Native exact-candidate proof remains
+required.

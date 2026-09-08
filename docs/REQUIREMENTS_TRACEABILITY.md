@@ -1539,3 +1539,23 @@ the existing successful install/update/rollback/uninstall journey. The
 injection is explicit smoke-only evidence; the underlying live registration
 cause is intentionally not inferred or repaired here. Native exact-candidate
 and final release gates remain required.
+
+### Packaged smoke identity and failure-diagnostic repair (2026-09-08)
+
+`scripts/smoke_packaged_first_run.py` now snapshots a bounded native inventory
+of the isolated executable before the injected and final Windows uninstall
+invocations. The post-invocation check compares exact `(PID, creation
+identity, executable)` tuples, so an existing healthy Core is accepted, a new
+modal/child is rejected, PID reuse with a different creation identity is
+rejected, and inventory/schema errors fail closed. The native query is limited
+to `ProcessId`, `CreationDate`, and `ExecutablePath`; no command line or raw
+process inventory is emitted.
+
+After each validated uninstall failure, the smoke preserves only the existing
+closed uninstall-failure report and bounded process classification in a
+run-unique external diagnostics directory before disposable cleanup. A real
+final-uninstall failure prints the validated registration status while keeping
+diagnostic-write errors secondary to the native return code. Focused tests
+cover baseline Core acceptance, new modal/child rejection, same-PID replacement,
+inventory failure, safe external diagnostics, stdout status, and write-failure
+containment. Native exact-candidate lifecycle proof remains pending.

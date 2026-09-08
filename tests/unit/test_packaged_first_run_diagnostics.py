@@ -995,7 +995,105 @@ def test_packaged_uninstall_failure_report_validation_is_closed() -> None:
         smoke.validate_packaged_uninstall_failure_report(invalid)
 
 
-def test_packaged_uninstall_process_check_is_path_bound(
+def test_packaged_uninstall_failure_diagnostic_preserves_only_safe_fields(
+    tmp_path: Path,
+) -> None:
+    failure = {
+        "uninstalled": False,
+        "vault_preserved": True,
+        "stage": "windows_registration",
+        "code": "registration_uninstall_required",
+        "registration_status": {
+            "available": True,
+            "complete": False,
+            "retryable": True,
+            "pending": ["uninstall"],
+            "errors": ["registration_restore_target_changed"],
+        },
+    }
+    classification = {
+        "status": "baseline_preserved",
+        "baseline_count": 1,
+        "current_count": 1,
+        "new_count": 0,
+    }
+    diagnostic_root = tmp_path / "external-diagnostics-run-unique"
+    target = smoke.write_packaged_uninstall_failure_diagnostic(
+        phase="packaged-uninstall-injected",
+        return_code=1,
+        failure_payload=failure,
+        process_classification=classification,
+        diagnostics_root=diagnostic_root,
+    )
+
+    stored = json.loads(target.read_text(encoding="utf-8"))
+    assert stored["uninstall_failure"] == failure
+    assert stored["process_classification"] == classification
+    rendered = json.dumps(stored)
+    assert PATH_CANARY not in rendered
+    assert TOKEN_CANARY not in rendered
+    assert "101" not in rendered
+
+
+def test_final_uninstall_status_stdout_contains_validated_registration_status(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failure = {
+        "uninstalled": False,
+        "vault_preserved": True,
+        "stage": "windows_registration",
+        "code": "registration_uninstall_required",
+        "registration_status": {
+            "available": True,
+            "complete": False,
+            "retryable": True,
+            "pending": ["uninstall"],
+            "errors": ["registration_restore_target_changed"],
+        },
+    }
+    smoke.emit_packaged_uninstall_failure_status(
+        phase="packaged-uninstall-final",
+        return_code=7,
+        failure_payload=failure,
+        process_classification={
+            "status": "baseline_preserved",
+            "baseline_count": 1,
+            "current_count": 1,
+            "new_count": 0,
+        },
+        diagnostics_file=None,
+    )
+
+    output = capsys.readouterr().out
+    assert '"registration_status"' in output
+    assert "registration_restore_target_changed" in output
+    assert PATH_CANARY not in output
+    assert TOKEN_CANARY not in output
+    assert "diagnostics_write" in output
+
+
+def test_packaged_uninstall_diagnostic_write_failure_is_best_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        smoke,
+        "write_packaged_uninstall_failure_diagnostic",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("raw path should not escape")),
+    )
+    assert (
+        smoke.try_write_packaged_uninstall_failure_diagnostic(
+            phase="packaged-uninstall-final",
+            return_code=7,
+            failure_payload={},
+            process_classification={},
+            diagnostics_root=tmp_path,
+        )
+        is None
+    )
+
+
+def test_packaged_uninstall_process_inventory_is_bounded_and_path_bound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     observed: list[list[str]] = []
@@ -1004,12 +1102,105 @@ def test_packaged_uninstall_process_check_is_path_bound(
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         observed.append(command)
         assert kwargs["check"] is False
-        return subprocess.CompletedProcess(command, 0, "0\n", "")
+        script = command[-1]
+        assert "CommandLine" not in script
+        assert "ProcessId,CreationDate,ExecutablePath" in script
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps(
+                [{"pid": 17, "creation_identity": "creation-a", "exe": str(target)}]
+            ),
+            "",
+        )
 
     monkeypatch.setattr(smoke.subprocess, "run", fake_run)
     target = tmp_path / "installed" / "AllTheContext.exe"
-    smoke.assert_no_packaged_process_or_modal(target)
+    baseline = smoke.snapshot_packaged_processes(target)
+    assert smoke.assert_no_packaged_process_or_modal(target, baseline_processes=baseline) == {
+        "status": "baseline_preserved",
+        "baseline_count": 1,
+        "current_count": 1,
+        "new_count": 0,
+    }
     assert observed and observed[0][0] == "powershell.exe"
+
+
+def test_packaged_uninstall_process_check_accepts_preexisting_core(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "AllTheContext.exe"
+    identities = [
+        ((101, "core-created", str(target).casefold()),),
+        ((101, "core-created", str(target).casefold()),),
+    ]
+    monkeypatch.setattr(smoke, "snapshot_packaged_processes", lambda _target: identities.pop(0))
+
+    baseline = smoke.snapshot_packaged_processes(target)
+    assert smoke.assert_no_packaged_process_or_modal(target, baseline_processes=baseline) == {
+        "status": "baseline_preserved",
+        "baseline_count": 1,
+        "current_count": 1,
+        "new_count": 0,
+    }
+
+
+def test_packaged_uninstall_process_check_rejects_new_modal_or_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "AllTheContext.exe"
+    baseline = (101, "core-created", str(target).casefold())
+    monkeypatch.setattr(
+        smoke,
+        "snapshot_packaged_processes",
+        lambda _target: (baseline, (202, "modal-created", str(target).casefold())),
+    )
+
+    with pytest.raises(smoke.PackagedProcessCheckError) as raised:
+        smoke.assert_no_packaged_process_or_modal(target, baseline_processes=(baseline,))
+
+    assert raised.value.classification == {
+        "status": "new_processes_detected",
+        "baseline_count": 1,
+        "current_count": 2,
+        "new_count": 1,
+    }
+
+
+def test_packaged_uninstall_process_check_rejects_reused_pid_with_new_creation_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "AllTheContext.exe"
+    baseline = (101, "core-created", str(target).casefold())
+    replacement = (101, "replacement-created", str(target).casefold())
+    monkeypatch.setattr(smoke, "snapshot_packaged_processes", lambda _target: (replacement,))
+
+    with pytest.raises(smoke.PackagedProcessCheckError) as raised:
+        smoke.assert_no_packaged_process_or_modal(target, baseline_processes=(baseline,))
+
+    assert raised.value.classification["status"] == "new_processes_detected"
+    assert raised.value.classification["new_count"] == 1
+
+
+def test_packaged_uninstall_process_check_fails_closed_on_inventory_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "AllTheContext.exe"
+    monkeypatch.setattr(
+        smoke,
+        "snapshot_packaged_processes",
+        lambda _target: (_ for _ in ()).throw(RuntimeError("untrusted inventory details")),
+    )
+
+    with pytest.raises(smoke.PackagedProcessCheckError) as raised:
+        smoke.assert_no_packaged_process_or_modal(target, baseline_processes=())
+
+    assert raised.value.classification == {
+        "status": "inventory_error",
+        "baseline_count": 0,
+        "current_count": None,
+        "new_count": None,
+    }
 
 
 def test_packaged_mcp_surface_is_exactly_read_only() -> None:

@@ -152,6 +152,18 @@ class _SetupReportParseError(ValueError):
     """The bounded JSON parser rejected the imported setup report."""
 
 
+ProcessIdentity = tuple[int, str, str]
+_MAX_PACKAGED_PROCESS_INVENTORY = 64
+
+
+class PackagedProcessCheckError(RuntimeError):
+    """The native packaged-process check could not prove a safe result."""
+
+    def __init__(self, classification: dict[str, Any]) -> None:
+        self.classification = classification
+        super().__init__("packaged uninstall process check failed closed")
+
+
 def _load_setup_report(path: Path) -> object:
     """Load an imported setup report with a bounded read and JSON parse."""
 
@@ -379,36 +391,123 @@ def validate_packaged_uninstall_failure_report(value: object) -> dict[str, Any]:
     return value
 
 
-def assert_no_packaged_process_or_modal(executable: Path) -> None:
-    """Prove the failed windowed invocation left no process that could own a modal."""
+def _normalized_process_path(value: str) -> str:
+    return os.path.normpath(value).casefold()
+
+
+def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ...]:
+    """Read a bounded, content-free native process identity inventory."""
 
     if platform.system() != "Windows":
-        return
+        return ()
+    resolved_executable = executable.resolve()
     process_environment = os.environ.copy()
-    process_environment["ATC_SMOKE_PROCESS_PATH"] = str(executable.resolve())
-    completed = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            (
-                "$count = @(Get-CimInstance Win32_Process | "
-                "Where-Object { $_.ExecutablePath -eq $env:ATC_SMOKE_PROCESS_PATH }).Count; "
-                "Write-Output $count"
-            ),
-        ],
-        env=process_environment,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if completed.returncode != 0 or completed.stdout.strip() != "0":
-        raise RuntimeError("packaged uninstall left a windowed process or modal")
+    process_environment["ATC_SMOKE_PROCESS_PATH"] = str(resolved_executable)
+    try:
+        completed = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                (
+                    "$target = [System.IO.Path]::GetFullPath($env:ATC_SMOKE_PROCESS_PATH); "
+                    "$name = [System.IO.Path]::GetFileName($target); "
+                    "$filterName = $name.Replace(\"'\", \"''\"); "
+                    "$processes = @(Get-CimInstance -ClassName Win32_Process "
+                    "-Filter (\"Name = '{0}'\" -f $filterName) "
+                    "-Property ProcessId,CreationDate,ExecutablePath | "
+                    "Where-Object { $_.ExecutablePath -eq $target } | "
+                    "Select-Object -First 65 | "
+                    "ForEach-Object { [pscustomobject]@{ "
+                    "pid = [int64]$_.ProcessId; "
+                    "creation_identity = [string]$_.CreationDate; "
+                    "exe = [string]$_.ExecutablePath } }); "
+                    "if ($processes.Count -gt 64) { exit 2 }; "
+                    "ConvertTo-Json -InputObject @($processes) -Compress"
+                ),
+            ],
+            env=process_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("native packaged process inventory failed") from exc
+    if completed.returncode != 0:
+        raise RuntimeError("native packaged process inventory failed")
+    try:
+        raw_inventory = json.loads(completed.stdout)
+    except (UnicodeError, ValueError) as exc:
+        raise RuntimeError("native packaged process inventory was invalid") from exc
+    if not isinstance(raw_inventory, list) or len(raw_inventory) > _MAX_PACKAGED_PROCESS_INVENTORY:
+        raise RuntimeError("native packaged process inventory was unbounded")
+
+    expected_executable = _normalized_process_path(str(resolved_executable))
+    identities: list[ProcessIdentity] = []
+    seen: set[ProcessIdentity] = set()
+    for item in raw_inventory:
+        if not isinstance(item, dict) or set(item) != {"pid", "creation_identity", "exe"}:
+            raise RuntimeError("native packaged process identity shape was invalid")
+        pid = item["pid"]
+        creation_identity = item["creation_identity"]
+        reported_executable = item["exe"]
+        if (
+            type(pid) is not int
+            or not 1 <= pid <= 4_294_967_295
+            or type(creation_identity) is not str
+            or not creation_identity
+            or len(creation_identity) > 128
+            or type(reported_executable) is not str
+            or _normalized_process_path(reported_executable) != expected_executable
+        ):
+            raise RuntimeError("native packaged process identity was invalid")
+        identity = (pid, creation_identity, expected_executable)
+        if identity in seen:
+            raise RuntimeError("native packaged process identities were duplicated")
+        seen.add(identity)
+        identities.append(identity)
+    return tuple(identities)
+
+
+def snapshot_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ...]:
+    """Snapshot exact process identities before a windowed smoke invocation."""
+
+    return _inventory_packaged_processes(executable)
+
+
+def assert_no_packaged_process_or_modal(
+    executable: Path,
+    *,
+    baseline_processes: tuple[ProcessIdentity, ...],
+) -> dict[str, Any]:
+    """Reject only new exact executable identities, while preserving a healthy Core."""
+
+    baseline = set(baseline_processes)
+    try:
+        current = snapshot_packaged_processes(executable)
+    except (OSError, RuntimeError) as exc:
+        classification = {
+            "status": "inventory_error",
+            "baseline_count": len(baseline_processes),
+            "current_count": None,
+            "new_count": None,
+        }
+        raise PackagedProcessCheckError(classification) from exc
+    new_processes = tuple(identity for identity in current if identity not in baseline)
+    classification = {
+        "status": "baseline_preserved" if not new_processes else "new_processes_detected",
+        "baseline_count": len(baseline_processes),
+        "current_count": len(current),
+        "new_count": len(new_processes),
+    }
+    if new_processes:
+        raise PackagedProcessCheckError(classification)
+    return classification
 
 
 def prepare_packaged_update_transaction(
@@ -857,12 +956,133 @@ def write_failure_diagnostic_summary(
     """Persist only the allowlisted summary under a separate diagnostics directory."""
 
     diagnostics_root.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
-    target = diagnostics_root / f"packaged-first-run-failure-{stamp}-{os.getpid()}.json"
-    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    stamp = f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{time.time_ns()}"
+    target = diagnostics_root / f"packaged-first-run-failure-{stamp}.json"
+    temporary = target.with_name(f"{target.name}.tmp")
     temporary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(target)
     return target
+
+
+def _validate_process_classification(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "status",
+        "baseline_count",
+        "current_count",
+        "new_count",
+    }:
+        raise RuntimeError("packaged process classification shape is invalid")
+    status = value["status"]
+    if status not in {"baseline_preserved", "new_processes_detected", "inventory_error"}:
+        raise RuntimeError("packaged process classification status is invalid")
+    baseline_count = value["baseline_count"]
+    current_count = value["current_count"]
+    new_count = value["new_count"]
+    if (
+        type(baseline_count) is not int
+        or not 0 <= baseline_count <= _MAX_PACKAGED_PROCESS_INVENTORY
+    ):
+        raise RuntimeError("packaged process classification count is invalid")
+    if status == "inventory_error":
+        if current_count is not None or new_count is not None:
+            raise RuntimeError("packaged process inventory error shape is invalid")
+    elif (
+        type(current_count) is not int
+        or type(new_count) is not int
+        or not 0 <= current_count <= _MAX_PACKAGED_PROCESS_INVENTORY
+        or not 0 <= new_count <= current_count
+    ):
+        raise RuntimeError("packaged process classification count is invalid")
+    return value
+
+
+def build_packaged_uninstall_failure_diagnostic(
+    *,
+    phase: str,
+    return_code: int | None,
+    failure_payload: object,
+    process_classification: object,
+) -> dict[str, Any]:
+    """Build the only retained uninstall-failure material: safe report + classification."""
+
+    return {
+        "application": "All The Context packaged first-run smoke",
+        "outcome": "packaged_uninstall_failed",
+        "phase": phase,
+        "return_code": return_code,
+        "uninstall_failure": validate_packaged_uninstall_failure_report(failure_payload),
+        "process_classification": _validate_process_classification(process_classification),
+    }
+
+
+def write_packaged_uninstall_failure_diagnostic(
+    *,
+    phase: str,
+    return_code: int | None,
+    failure_payload: object,
+    process_classification: object,
+    diagnostics_root: Path,
+) -> Path:
+    """Persist validated uninstall status and bounded process classification externally."""
+
+    summary = build_packaged_uninstall_failure_diagnostic(
+        phase=phase,
+        return_code=return_code,
+        failure_payload=failure_payload,
+        process_classification=process_classification,
+    )
+    return write_failure_diagnostic_summary(summary, diagnostics_root=diagnostics_root)
+
+
+def try_write_packaged_uninstall_failure_diagnostic(
+    *,
+    phase: str,
+    return_code: int | None,
+    failure_payload: object,
+    process_classification: object,
+    diagnostics_root: Path,
+) -> Path | None:
+    """Best-effort safe preservation that cannot replace the primary failure."""
+
+    try:
+        return write_packaged_uninstall_failure_diagnostic(
+            phase=phase,
+            return_code=return_code,
+            failure_payload=failure_payload,
+            process_classification=process_classification,
+            diagnostics_root=diagnostics_root,
+        )
+    except (OSError, UnicodeError):
+        return None
+
+
+def emit_packaged_uninstall_failure_status(
+    *,
+    phase: str,
+    return_code: int,
+    failure_payload: dict[str, Any],
+    process_classification: dict[str, Any],
+    diagnostics_file: Path | None,
+) -> None:
+    """Print only the validated registration status and bounded outcome fields."""
+
+    status = failure_payload["registration_status"]
+    print(
+        json.dumps(
+            {
+                "packaged_uninstall_failure": True,
+                "phase": phase,
+                "return_code": return_code,
+                "registration_status": status,
+                "process_status": process_classification["status"],
+                "new_process_count": process_classification["new_count"],
+                "diagnostics_write": "passed" if diagnostics_file is not None else "failed",
+                "diagnostics_file": diagnostics_file.name if diagnostics_file is not None else None,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
 
 def emit_failure_diagnostics(
@@ -1106,8 +1326,9 @@ def main() -> int:
     temp_parent.mkdir(parents=True, exist_ok=True)
     # Disposable work holds credentials/vault/binaries and is always removed.
     work = Path(tempfile.mkdtemp(prefix="packaged-first-run-", dir=temp_parent))
-    # Content-free failure summaries live outside the work tree and never hold secrets.
-    diagnostics_root = temp_parent / "packaged-first-run-diagnostics"
+    # Content-free failure summaries live outside the work tree in a run-unique
+    # directory and never hold secrets or disposable process identities.
+    diagnostics_root = temp_parent / f"packaged-first-run-diagnostics-{work.name}"
     diagnostics_root.mkdir(parents=True, exist_ok=True)
     data_dir = work / "data"
     codex_home = work / "codex"
@@ -1333,6 +1554,10 @@ def main() -> int:
         failure_environment = dict(environment)
         failure_environment["ATC_PACKAGED_SMOKE_INJECT_INCOMPLETE_REGISTRATION"] = "1"
         try:
+            failure_baseline_processes = snapshot_packaged_processes(installed_app)
+        except (OSError, RuntimeError):
+            fail_smoke("packaged-uninstall-failure", "process_inventory_failed")
+        try:
             failure_completed = subprocess.run(
                 [
                     str(installed_app),
@@ -1368,7 +1593,34 @@ def main() -> int:
             or registration_status["errors"] != ["registration_restore_target_changed"]
         ):
             fail_smoke("packaged-uninstall-failure", "typed_status_invalid")
-        assert_no_packaged_process_or_modal(installed_app)
+        try:
+            failure_process_classification = assert_no_packaged_process_or_modal(
+                installed_app,
+                baseline_processes=failure_baseline_processes,
+            )
+        except PackagedProcessCheckError as exc:
+            failure_process_classification = exc.classification
+            try_write_packaged_uninstall_failure_diagnostic(
+                phase="packaged-uninstall-injected",
+                return_code=failure_completed.returncode,
+                failure_payload=failure_payload,
+                process_classification=failure_process_classification,
+                diagnostics_root=diagnostics_root,
+            )
+            fail_smoke("packaged-uninstall-failure", "process_check_failed")
+        # Keep the baseline Core alive: the dashboard and authenticated status
+        # probes below are the subsequent real-journey proof.
+        if (
+            try_write_packaged_uninstall_failure_diagnostic(
+                phase="packaged-uninstall-injected",
+                return_code=failure_completed.returncode,
+                failure_payload=failure_payload,
+                process_classification=failure_process_classification,
+                diagnostics_root=diagnostics_root,
+            )
+            is None
+        ):
+            fail_smoke("packaged-uninstall-failure", "diagnostic_write_failed")
         install_dir = Path(environment["ATC_INSTALL_DIR"])
         if (
             not install_dir.is_dir()
@@ -1402,9 +1654,9 @@ def main() -> int:
         # The MCP principal is deliberately read-only. Use the separately
         # retained disposable desktop administrator for readiness probes;
         # exercise_mcp below proves the MCP credential itself works.
-        status = api_request(f"{base_url}/v1/context/status", admin_token)
-        if status.get("core_online") is not True:
-            raise SystemExit(f"installed Core status was not ready: {status}")
+        core_status = api_request(f"{base_url}/v1/context/status", admin_token)
+        if core_status.get("core_online") is not True:
+            raise SystemExit(f"installed Core status was not ready: {core_status}")
         updates = api_request(f"{base_url}/v1/admin/updates", admin_token)
         expected_automatic = system == "Windows"
         if updates.get("automatic_install_supported") is not expected_automatic:
@@ -1589,20 +1841,64 @@ def main() -> int:
     uninstall_result = "not_applicable"
     if system == "Windows":
         uninstall_report_path = work / "uninstall-report.json"
-        subprocess.run(
-            [
-                str(installed_app),
-                "--packaged-smoke-uninstall",
-                str(uninstall_report_path),
-            ],
-            # Match the WorkingDirectory used by the real Start Menu
-            # uninstall shortcut. The detached cleanup helper must move out
-            # of this directory before trying to remove it.
-            cwd=installed_app.parent,
-            env=environment,
-            check=True,
-            timeout=90,
-        )
+        try:
+            final_baseline_processes = snapshot_packaged_processes(installed_app)
+        except (OSError, RuntimeError):
+            fail_smoke("packaged-uninstall", "process_inventory_failed")
+        try:
+            final_uninstall = subprocess.run(
+                [
+                    str(installed_app),
+                    "--packaged-smoke-uninstall",
+                    str(uninstall_report_path),
+                ],
+                # Match the WorkingDirectory used by the real Start Menu
+                # uninstall shortcut. The detached cleanup helper must move out
+                # of this directory before trying to remove it.
+                cwd=installed_app.parent,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        except subprocess.TimeoutExpired:
+            fail_smoke("packaged-uninstall", "timeout")
+        if final_uninstall.returncode != 0:
+            try:
+                final_failure_payload = validate_packaged_uninstall_failure_report(
+                    json.loads(uninstall_report_path.read_text(encoding="utf-8"))
+                )
+            except (OSError, UnicodeError, ValueError, RuntimeError):
+                fail_smoke(
+                    "packaged-uninstall",
+                    "report_invalid",
+                    return_code=final_uninstall.returncode,
+                )
+            try:
+                final_process_classification = assert_no_packaged_process_or_modal(
+                    installed_app,
+                    baseline_processes=final_baseline_processes,
+                )
+            except PackagedProcessCheckError as exc:
+                final_process_classification = exc.classification
+            diagnostics_file = try_write_packaged_uninstall_failure_diagnostic(
+                phase="packaged-uninstall-final",
+                return_code=final_uninstall.returncode,
+                failure_payload=final_failure_payload,
+                process_classification=final_process_classification,
+                diagnostics_root=diagnostics_root,
+            )
+            emit_packaged_uninstall_failure_status(
+                phase="packaged-uninstall-final",
+                return_code=final_uninstall.returncode,
+                failure_payload=final_failure_payload,
+                process_classification=final_process_classification,
+                diagnostics_file=diagnostics_file,
+            )
+            # Preserve the native uninstall's primary nonzero result even when
+            # safe diagnostic preservation or process classification is partial.
+            raise SystemExit(final_uninstall.returncode)
         uninstall_report = json.loads(uninstall_report_path.read_text(encoding="utf-8"))
         if uninstall_report != {"uninstalled": True, "vault_preserved": True}:
             raise SystemExit(f"unexpected packaged uninstall report: {uninstall_report}")

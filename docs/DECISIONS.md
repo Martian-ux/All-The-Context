@@ -6584,3 +6584,23 @@ unchanged 90-second bound, leaves install/vault evidence, and leaves no
 process that could own an unhandled-exception modal before continuing with the
 real update/rollback/uninstall path. This is a discriminator for the boundary,
 not a registration fix or a claim about the live pending cause.
+
+## ADR-134: Packaged smoke compares process identities against its baseline
+
+**Status:** implemented locally on 2026-09-08; native exact-candidate
+acceptance remains required.
+
+The smoke records the bounded native inventory of the isolated installed
+executable before each Windows windowed uninstall invocation. Each identity is
+the PID, native creation identity, and normalized executable; after the
+invocation, only exact identities from that baseline are accepted. This keeps
+the legitimate Core alive for the next real journey while rejecting new modal
+or child processes and same-PID replacement. The inventory requests only
+`ProcessId`, `CreationDate`, and `ExecutablePath`, never `CommandLine`, and any
+inventory or schema failure is fail-closed.
+
+The smoke retains only a validated closed-schema uninstall failure report and
+bounded process classification in a run-unique directory outside disposable
+work. It emits the validated registration status on a real final uninstall
+failure, while a diagnostic write failure cannot replace the native primary
+result. No live registration cause is inferred from this source repair.
