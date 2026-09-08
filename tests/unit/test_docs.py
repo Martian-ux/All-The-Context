@@ -11,6 +11,20 @@ def test_repository_markdown_links_resolve() -> None:
     assert broken_links(root) == []
 
 
+def test_broken_links_ignore_invalid_utf8_scratch_but_report_repository_markdown(
+    tmp_path: Path,
+) -> None:
+    scratch = tmp_path / ".test-runs"
+    scratch.mkdir()
+    (scratch / "invalid.md").write_bytes(b"[broken](missing\xff.md)")
+    repository_document = tmp_path / "README.md"
+    repository_document.write_text("[broken](missing.md)\n", encoding="utf-8")
+
+    failures = broken_links(tmp_path)
+
+    assert failures == [f"{repository_document}: missing target: missing.md"]
+
+
 def test_windows_convergence_ledger_shas_are_full_and_resolvable() -> None:
     root = Path(__file__).resolve().parents[2]
     assert convergence_ledger_failures(root) == []

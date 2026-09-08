@@ -27,6 +27,14 @@ later `OSError` is classified as an entrypoint-registration failure. The
 accepted native review covered WScript COM edge cases, path/collision cases, and
 19 focused tests; full integrated and release gates remain separate.
 
+The separately published immutable `0.1.0-beta.6` remains the
+current downloadable release. No GA, new beta publication, exact-artifact,
+Defender, clean-machine, live provider/client, signing, or release acceptance is
+claimed. This source evidence does not
+become release evidence; exact-artifact and publication claims remain separate.
+The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
+documentation, hosted, artifact, and applicable platform/release gates.
+
 ### 2026-09-08 — packaged registration repair (source-level)
 
 The exact diagnosis inputs identify candidate
@@ -84,14 +92,6 @@ produced the correct answer; the maintained arm also answered correctly and the
 no-memory arm abstained honestly. The memory manager accepted the complete
 `c107899` chain after 34 affected/frozen tests, Ruff, and mypy. This is one known
 case, not holdout evidence or a superiority/general product-quality claim.
-
-The separately published immutable `0.1.0-beta.6` remains the
-current downloadable release. No GA, new beta publication, exact-artifact,
-Defender, clean-machine, live provider/client, signing, or release acceptance is
-claimed. This source evidence does not
-become release evidence; exact-artifact and publication claims remain separate.
-The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
-documentation, hosted, artifact, and applicable platform/release gates.
 
 ### Prior diagnostic candidate history
 

@@ -1586,3 +1586,10 @@ child inside a unique checkout-owned dummy install directory and asserts actual
 directory removal. Controller-owned normal-permission native execution and the
 fresh exact packaged candidate journey remain pending; no product acceptance is
 claimed here.
+
+### Documentation scanner scratch boundary (2026-09-08)
+
+The documentation link scanner skips the checkout-owned `.test-runs` pytest
+basetemp so invalid test output cannot be read as repository Markdown. Actual
+repository Markdown remains strict UTF-8 and missing local targets remain
+reported.

@@ -6635,3 +6635,9 @@ deletion retry. The focused regression invokes the production helper from a
 short-lived Python child launched with cwd inside a unique checkout-owned dummy
 install directory and requires the directory to disappear; it does not accept
 a flag-string or fake-process assertion as native proof.
+
+## ADR-137: Documentation scanning excludes owned pytest scratch
+
+The Markdown link scanner excludes the checkout-owned `.test-runs` pytest
+basetemp. Repository Markdown remains strict UTF-8 input and missing local
+targets remain failures; invalid scratch output is not repository documentation.

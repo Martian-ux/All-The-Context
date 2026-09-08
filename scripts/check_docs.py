@@ -22,7 +22,7 @@ def broken_links(root: Path) -> list[str]:
     for document in sorted(root.rglob("*.md"), key=lambda path: str(path).casefold()):
         relative_parts = document.relative_to(root).parts
         if any(
-            part in {".git", "build", "dist", "node_modules", "tmp"}
+            part in {".git", ".test-runs", "build", "dist", "node_modules", "tmp"}
             or part.startswith((".tmp", ".venv"))
             for part in relative_parts
         ):
