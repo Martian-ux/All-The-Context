@@ -4886,3 +4886,15 @@ and interprets `RegCloseKey`'s returned status directly. Focused tests cover
 handle lifetime, transaction binding, ownership/CAS preservation, and stale
 last-error separation. The stock Windows lifecycle and packaged proof gates
 remain required and are not claimed here.
+
+### 2026-09-08 packaged uninstall PowerShell launch repair
+
+The Windows install-removal helper no longer requests `DETACHED_PROCESS`.
+The host diagnostic showed that this flag combination can produce a zero-exit
+PowerShell process that never executes the removal command. `CREATE_NO_WINDOW`,
+`CREATE_NEW_PROCESS_GROUP`, discarded standard handles, `close_fds`, the stable
+parent cwd, exact install-root validation, caller-exit wait, and the existing
+bounded deletion retry remain unchanged. A short-lived-child native regression
+now accepts only actual removal of its unique checkout-owned dummy install
+directory. The exact packaged candidate journey and release gates remain
+pending; this source repair is not product acceptance.

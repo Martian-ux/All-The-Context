@@ -6619,3 +6619,19 @@ and closes it exactly once while the KTM transaction remains active. A
 thread last-error state. Existing full ownership, identity CAS, rollback, and
 security checks remain authoritative; the stock Windows lifecycle regression
 and packaged recovery are downstream evidence.
+
+## ADR-136: PowerShell removal must not request DETACHED_PROCESS
+
+**Status:** implemented locally on 2026-09-08 after a host-native flag
+diagnostic; exact-candidate packaged acceptance remains required.
+
+The Windows install-removal handoff keeps `CREATE_NO_WINDOW` and
+`CREATE_NEW_PROCESS_GROUP` but removes `DETACHED_PROCESS`. On the target host,
+the prior combination could return zero while PowerShell did not execute its
+command, so a fake success left the install directory in place. The helper
+continues to discard all standard handles, close inherited descriptors, run
+from the stable parent, wait for the caller PID, and use the unchanged bounded
+deletion retry. The focused regression invokes the production helper from a
+short-lived Python child launched with cwd inside a unique checkout-owned dummy
+install directory and requires the directory to disappear; it does not accept
+a flag-string or fake-process assertion as native proof.

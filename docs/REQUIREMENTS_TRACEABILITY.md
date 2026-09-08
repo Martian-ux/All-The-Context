@@ -1571,3 +1571,18 @@ exercise transaction binding, raw-handle lifetime, wrong-generation rejection,
 rollback, and close errors with stale last-error state. The independent stock
 Windows lifecycle, packaged recovery, full-suite, and release gates remain
 open.
+
+### Packaged uninstall PowerShell launch flag repair (2026-09-08)
+
+`desktop._schedule_windows_install_removal` now resolves only
+`CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP`; `DETACHED_PROCESS` was
+removed because the diagnosed host can report a zero-exit PowerShell launch
+without executing the command. Exact root validation, environment-bound target
+and caller identity, null standard handles, `close_fds`, stable-parent cwd,
+caller-exit wait, and the 300 x 100 ms retry contract are unchanged. The
+focused fake-call expectation covers the two retained flags, and the Windows
+native regression launches the production helper from a short-lived Python
+child inside a unique checkout-owned dummy install directory and asserts actual
+directory removal. Controller-owned normal-permission native execution and the
+fresh exact packaged candidate journey remain pending; no product acceptance is
+claimed here.
