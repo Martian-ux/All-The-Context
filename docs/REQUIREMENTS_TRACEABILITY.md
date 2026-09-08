@@ -1515,3 +1515,27 @@ regressions require all creation flags, verify the caller returns while the
 helper remains live, and require the helper's bound-process wait before any
 delete attempt. The native uninstall timeout and secondary cleanup failure must
 be rerun on a fresh exact candidate; this trace does not claim acceptance.
+
+### Packaged unattended-uninstall error boundary (2026-09-08)
+
+The frozen uninstall boundary is implemented in
+`allthecontext.desktop._run_packaged_smoke_uninstall` and
+`_run_silent_internal_mode`. Failure reports are atomically written with the
+closed schema `uninstalled`, `vault_preserved`, `stage`, `code`, and
+`registration_status`. The boundary extracts only a typed
+`WindowsRegistrationError` cause, maps unknown codes to the closed
+`registration_failed` value, validates `WindowsRegistrationRestoreStatus`
+booleans and bounded pending/error vocabularies, and marks missing/invalid
+status unavailable without detail. The success report remains
+`{"uninstalled": true, "vault_preserved": true}`. Focused desktop regressions
+cover typed propagation, unavailable status, arbitrary-context redaction,
+atomic report failure, silent nonzero exit, and success preservation.
+
+`scripts/smoke_packaged_first_run.py` validates the same safe failure schema,
+checks the exact typed injected status from the real installed WINDOWED
+binary, checks the unchanged 90-second bound, verifies no process remains that
+could host a modal, and verifies install/vault evidence before continuing to
+the existing successful install/update/rollback/uninstall journey. The
+injection is explicit smoke-only evidence; the underlying live registration
+cause is intentionally not inferred or repaired here. Native exact-candidate
+and final release gates remain required.

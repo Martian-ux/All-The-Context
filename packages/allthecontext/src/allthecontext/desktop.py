@@ -28,6 +28,9 @@ from typing import Any, Literal, cast
 from platformdirs import user_data_path
 
 from .application_install import (
+    WindowsRegistrationCompensationError,
+    WindowsRegistrationError,
+    WindowsRegistrationRestoreStatus,
     application_entrypoints_need_refresh,
     install_application_entrypoints,
     remove_application_entrypoints,
@@ -83,6 +86,176 @@ WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS = 100
 WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS * WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS / 1000
 )
+PACKAGED_UNINSTALL_FAILURE_FIELDS = frozenset(
+    {"uninstalled", "vault_preserved", "stage", "code", "registration_status"}
+)
+PACKAGED_UNINSTALL_STATUS_FIELDS = frozenset(
+    {"available", "complete", "retryable", "pending", "errors"}
+)
+PACKAGED_UNINSTALL_FAILURE_STAGES = frozenset({"cleanup", "windows_registration"})
+PACKAGED_UNINSTALL_FAILURE_CODES = frozenset(
+    {
+        "cleanup_failed",
+        "registration_failed",
+        "registration_compensation_required",
+        "registration_directory_create_failed",
+        "registration_executable_mismatch",
+        "registration_executable_missing",
+        "registration_file_missing",
+        "registration_file_too_large",
+        "registration_file_unreadable",
+        "registration_hardlink_path",
+        "registration_install_root_mismatch",
+        "registration_journal_auth_invalid",
+        "registration_journal_auth_unavailable",
+        "registration_journal_invalid",
+        "registration_journal_missing",
+        "registration_journal_path_invalid",
+        "registration_journal_target_changed",
+        "registration_journal_temporary_exists",
+        "registration_journal_too_large",
+        "registration_journal_write_failed",
+        "registration_journal_cleanup_failed",
+        "registration_key_create_failed",
+        "registration_key_creation_unverified",
+        "registration_key_open_failed",
+        "registration_key_path_invalid",
+        "registration_key_path_substitution",
+        "registration_key_unreadable",
+        "registration_parent_not_directory",
+        "registration_path_not_absolute",
+        "registration_path_unexpected",
+        "registration_permission_denied",
+        "registration_recovery_required",
+        "registration_recovery_ownership_mismatch",
+        "registration_recovery_ownership_unproven",
+        "registration_reparse_path",
+        "registration_restore_atomicity_unavailable",
+        "registration_restore_cleanup_ambiguous",
+        "registration_restore_cleanup_failed",
+        "registration_restore_delete_failed",
+        "registration_restore_failed",
+        "registration_restore_identity_unavailable",
+        "registration_restore_key_failed",
+        "registration_restore_key_missing",
+        "registration_restore_key_unreadable",
+        "registration_restore_key_unverified",
+        "registration_restore_required",
+        "registration_restore_target_changed",
+        "registration_restore_unverified",
+        "registration_restore_value_failed",
+        "registration_shortcut_create_failed",
+        "registration_shortcut_publish_failed",
+        "registration_shortcut_publish_unverified",
+        "registration_shortcut_replace_unsupported",
+        "registration_snapshot_invalid",
+        "registration_snapshot_mismatch",
+        "registration_step_failed",
+        "registration_target_changed",
+        "registration_target_not_regular",
+        "registration_target_unreadable",
+        "registration_temporary_changed",
+        "registration_temporary_exists",
+        "registration_temporary_unsafe",
+        "registration_timeout",
+        "registration_uninstall_required",
+        "registration_value_too_large",
+        "registration_value_type_invalid",
+        "registration_value_type_unsupported",
+        "registration_value_unreadable",
+        "registration_value_write_failed",
+        "registration_value_write_unverified",
+        "registration_windows_only",
+    }
+)
+PACKAGED_UNINSTALL_STATUS_DETAIL_CODES = frozenset(
+    {
+        "launcher",
+        "desktop",
+        "uninstall",
+        "DisplayName",
+        "DisplayVersion",
+        "Publisher",
+        "InstallLocation",
+        "DisplayIcon",
+        "UninstallString",
+        "ATCReleaseChannel",
+        "ATCSourceCommit",
+        "ATCBuildIdentity",
+        "ATCBuildIdentitySha256",
+        "NoModify",
+        "NoRepair",
+        "recovery",
+        "uninstall_key",
+        "registry_transaction",
+        "journal",
+        "registry_staging",
+        "registration_directory_create_failed",
+        "registration_executable_mismatch",
+        "registration_executable_missing",
+        "registration_file_missing",
+        "registration_file_too_large",
+        "registration_file_unreadable",
+        "registration_hardlink_path",
+        "registration_install_root_mismatch",
+        "registration_journal_auth_invalid",
+        "registration_journal_auth_unavailable",
+        "registration_journal_invalid",
+        "registration_journal_mismatch",
+        "registration_journal_missing",
+        "registration_journal_path_invalid",
+        "registration_journal_target_changed",
+        "registration_journal_temporary_exists",
+        "registration_journal_too_large",
+        "registration_journal_write_failed",
+        "registration_key_create_failed",
+        "registration_key_creation_unverified",
+        "registration_key_open_failed",
+        "registration_key_path_invalid",
+        "registration_key_path_substitution",
+        "registration_key_unreadable",
+        "registration_parent_not_directory",
+        "registration_path_not_absolute",
+        "registration_path_unexpected",
+        "registration_recovery_ownership_mismatch",
+        "registration_recovery_ownership_unproven",
+        "registration_recovery_required",
+        "registration_reparse_path",
+        "registration_restore_atomicity_unavailable",
+        "registration_restore_cleanup_ambiguous",
+        "registration_restore_failed",
+        "registration_restore_identity_unavailable",
+        "registration_restore_key_failed",
+        "registration_restore_key_missing",
+        "registration_restore_key_unreadable",
+        "registration_restore_key_unverified",
+        "registration_restore_required",
+        "registration_restore_target_changed",
+        "registration_restore_unverified",
+        "registration_restore_value_failed",
+        "registration_shortcut_create_failed",
+        "registration_shortcut_publish_failed",
+        "registration_shortcut_publish_unverified",
+        "registration_shortcut_replace_unsupported",
+        "registration_snapshot_invalid",
+        "registration_snapshot_mismatch",
+        "registration_target_changed",
+        "registration_target_not_regular",
+        "registration_target_unreadable",
+        "registration_temporary_changed",
+        "registration_temporary_exists",
+        "registration_temporary_unsafe",
+        "registration_value_too_large",
+        "registration_value_type_invalid",
+        "registration_value_type_unsupported",
+        "registration_value_unreadable",
+        "registration_value_write_failed",
+        "registration_value_write_unverified",
+        "registration_windows_only",
+    }
+)
+PACKAGED_UNINSTALL_STATUS_MAX_ITEMS = 16
+PACKAGED_UNINSTALL_FAILURE_MAX_BYTES = 16 * 1024
 MACOS_APP_NAME = "All The Context.app"
 HeadlessSetupStage = Literal["prepare_installed_runtime", "perform_setup", "write_report"]
 HeadlessSetupSubphase = Literal[
@@ -932,6 +1105,164 @@ def _run_silent_internal_mode(operation: Callable[[], int | None]) -> int:
     return 0 if result is None else result
 
 
+def _find_windows_registration_error(error: BaseException) -> WindowsRegistrationError | None:
+    """Find only the typed registration cause; never inspect exception text."""
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    for _ in range(8):
+        if current is None or id(current) in seen:
+            return None
+        seen.add(id(current))
+        if isinstance(current, WindowsRegistrationError):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _bounded_registration_status_values(values: object) -> list[str] | None:
+    if not isinstance(values, tuple) or len(values) > PACKAGED_UNINSTALL_STATUS_MAX_ITEMS:
+        return None
+    if any(
+        type(value) is not str or value not in PACKAGED_UNINSTALL_STATUS_DETAIL_CODES
+        for value in values
+    ):
+        return None
+    return list(values)
+
+
+def _packaged_registration_status(
+    status: WindowsRegistrationRestoreStatus | None,
+) -> dict[str, object]:
+    unavailable = {
+        "available": False,
+        "complete": False,
+        "retryable": False,
+        "pending": [],
+        "errors": [],
+    }
+    if status is None or type(status.complete) is not bool or type(status.retryable) is not bool:
+        return unavailable
+    pending = _bounded_registration_status_values(status.pending)
+    errors = _bounded_registration_status_values(status.errors)
+    if pending is None or errors is None:
+        return unavailable
+    return {
+        "available": True,
+        "complete": status.complete,
+        "retryable": status.retryable,
+        "pending": pending,
+        "errors": errors,
+    }
+
+
+def _packaged_uninstall_failure_payload(error: BaseException) -> dict[str, object]:
+    registration_error = _find_windows_registration_error(error)
+    if registration_error is None:
+        stage = "cleanup"
+        code = "cleanup_failed"
+        status = None
+    else:
+        stage = "windows_registration"
+        code = (
+            registration_error.code
+            if (
+                type(registration_error.code) is str
+                and registration_error.code in PACKAGED_UNINSTALL_FAILURE_CODES
+            )
+            else "registration_failed"
+        )
+        status = registration_error.status
+    payload = {
+        "uninstalled": False,
+        "vault_preserved": True,
+        "stage": stage,
+        "code": code,
+        "registration_status": _packaged_registration_status(status),
+    }
+    if set(payload) != PACKAGED_UNINSTALL_FAILURE_FIELDS:
+        raise RuntimeError("The packaged uninstall failure report shape is invalid")
+    return payload
+
+
+def _write_packaged_uninstall_report(target: Path, payload: dict[str, object]) -> None:
+    """Atomically publish one bounded, content-free packaged-uninstall report."""
+
+    raw = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(raw) > PACKAGED_UNINSTALL_FAILURE_MAX_BYTES:
+        raise RuntimeError("The packaged uninstall report is too large")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{target.name}.", suffix=".atc-new", dir=target.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(target)
+    except BaseException:
+        with suppress(OSError):
+            temporary.unlink()
+        raise
+
+
+def _packaged_smoke_registration_failure() -> None:
+    """Inject one typed, content-free failure only for the isolated frozen smoke."""
+
+    if (
+        getattr(sys, "frozen", False)
+        and platform.system() == "Windows"
+        and os.environ.get("ATC_PACKAGED_SMOKE") == "1"
+        and os.environ.get("ATC_PACKAGED_SMOKE_INJECT_INCOMPLETE_REGISTRATION") == "1"
+    ):
+        raise WindowsRegistrationCompensationError(
+            "registration_uninstall_required",
+            status=WindowsRegistrationRestoreStatus(
+                False,
+                True,
+                0,
+                ("uninstall",),
+                ("registration_restore_target_changed",),
+            ),
+        )
+
+
+def _run_packaged_smoke_uninstall(report_value: str) -> int:
+    report_path = Path(report_value).expanduser().resolve()
+
+    def operation() -> int:
+        try:
+            if os.environ.get("ATC_PACKAGED_SMOKE") != "1":
+                raise RuntimeError("Packaged smoke uninstall is disabled")
+            _packaged_smoke_registration_failure()
+            result = _uninstall(RuntimeCommand.current(), unattended=True)
+        except Exception as error:
+            with suppress(Exception):
+                _write_packaged_uninstall_report(
+                    report_path, _packaged_uninstall_failure_payload(error)
+                )
+            return 1
+        if result != 0:
+            with suppress(Exception):
+                _write_packaged_uninstall_report(
+                    report_path,
+                    _packaged_uninstall_failure_payload(RuntimeError("uninstall_failed")),
+                )
+            return 1
+        try:
+            _write_packaged_uninstall_report(
+                report_path,
+                {"uninstalled": True, "vault_preserved": True},
+            )
+        except Exception:
+            return 1
+        return 0
+
+    return _run_silent_internal_mode(operation)
+
+
 def _run_packaged_update_health_check(report_value: str) -> int:
     operation = _valid_update_operation()
     report_path = _update_report_path(report_value, operation, "health.json")
@@ -1722,16 +2053,7 @@ def main(argv: list[str] | None = None) -> int:
             lambda: _run_packaged_update_health_check(args.update_health_check)
         )
     if args.packaged_smoke_uninstall:
-        if os.environ.get("ATC_PACKAGED_SMOKE") != "1":
-            raise RuntimeError("Packaged smoke uninstall is disabled")
-        report_path = Path(args.packaged_smoke_uninstall).expanduser().resolve()
-        result = _uninstall(RuntimeCommand.current(), unattended=True)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps({"uninstalled": result == 0, "vault_preserved": True}) + "\n",
-            encoding="utf-8",
-        )
-        return result
+        return _run_packaged_smoke_uninstall(args.packaged_smoke_uninstall)
 
     while True:
         try:

@@ -36,7 +36,7 @@ import tomllib
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, NoReturn, TextIO
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "allthecontext" / "src"))
@@ -52,6 +52,12 @@ from allthecontext.credentials import (
 from allthecontext.desktop import (
     _HEADLESS_SETUP_ERROR_CODES,
     _HEADLESS_SETUP_SUBPHASES,
+    PACKAGED_UNINSTALL_FAILURE_CODES,
+    PACKAGED_UNINSTALL_FAILURE_FIELDS,
+    PACKAGED_UNINSTALL_FAILURE_STAGES,
+    PACKAGED_UNINSTALL_STATUS_DETAIL_CODES,
+    PACKAGED_UNINSTALL_STATUS_FIELDS,
+    PACKAGED_UNINSTALL_STATUS_MAX_ITEMS,
     WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS,
 )
 from allthecontext.installed_component_manifest import (
@@ -97,6 +103,7 @@ def _temporary_environment(values: Mapping[str, str]) -> Iterator[None]:
 _DIAGNOSTIC_RELATIVE_NAMES = (
     "setup-report.json",
     "reopen-report.json",
+    "uninstall-failure-report.json",
     "uninstall-report.json",
     "mcp-stderr.log",
     "mcp-restart-stderr.log",
@@ -331,6 +338,77 @@ def read_packaged_build_identity(
     ):
         raise RuntimeError("packaged build identity does not match the Windows smoke")
     return identity
+
+
+def validate_packaged_uninstall_failure_report(value: object) -> dict[str, Any]:
+    """Validate the exact content-free failure schema before using it."""
+
+    if not isinstance(value, dict) or set(value) != PACKAGED_UNINSTALL_FAILURE_FIELDS:
+        raise RuntimeError("packaged uninstall failure report shape is invalid")
+    if value.get("uninstalled") is not False or value.get("vault_preserved") is not True:
+        raise RuntimeError("packaged uninstall failure report outcome is invalid")
+    stage = value.get("stage")
+    code = value.get("code")
+    if type(stage) is not str or stage not in PACKAGED_UNINSTALL_FAILURE_STAGES:
+        raise RuntimeError("packaged uninstall failure report stage is invalid")
+    if type(code) is not str or code not in PACKAGED_UNINSTALL_FAILURE_CODES:
+        raise RuntimeError("packaged uninstall failure report code is invalid")
+    status = value.get("registration_status")
+    if not isinstance(status, dict) or set(status) != PACKAGED_UNINSTALL_STATUS_FIELDS:
+        raise RuntimeError("packaged uninstall registration status shape is invalid")
+    available = status.get("available")
+    complete = status.get("complete")
+    retryable = status.get("retryable")
+    pending = status.get("pending")
+    errors = status.get("errors")
+    if type(available) is not bool or type(complete) is not bool or type(retryable) is not bool:
+        raise RuntimeError("packaged uninstall registration status flags are invalid")
+    if (
+        not isinstance(pending, list)
+        or not isinstance(errors, list)
+        or len(pending) > PACKAGED_UNINSTALL_STATUS_MAX_ITEMS
+        or len(errors) > PACKAGED_UNINSTALL_STATUS_MAX_ITEMS
+        or any(
+            type(item) is not str or item not in PACKAGED_UNINSTALL_STATUS_DETAIL_CODES
+            for item in (*pending, *errors)
+        )
+    ):
+        raise RuntimeError("packaged uninstall registration status detail is invalid")
+    if not available and (complete or retryable or pending or errors):
+        raise RuntimeError("unavailable registration status contains detail")
+    return value
+
+
+def assert_no_packaged_process_or_modal(executable: Path) -> None:
+    """Prove the failed windowed invocation left no process that could own a modal."""
+
+    if platform.system() != "Windows":
+        return
+    process_environment = os.environ.copy()
+    process_environment["ATC_SMOKE_PROCESS_PATH"] = str(executable.resolve())
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            (
+                "$count = @(Get-CimInstance Win32_Process | "
+                "Where-Object { $_.ExecutablePath -eq $env:ATC_SMOKE_PROCESS_PATH }).Count; "
+                "Write-Output $count"
+            ),
+        ],
+        env=process_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if completed.returncode != 0 or completed.stdout.strip() != "0":
+        raise RuntimeError("packaged uninstall left a windowed process or modal")
 
 
 def prepare_packaged_update_transaction(
@@ -893,6 +971,7 @@ def scrub_sensitive_work_tree(work: Path) -> None:
         "codex/config.toml",
         "setup-report.json",
         "reopen-report.json",
+        "uninstall-failure-report.json",
         "uninstall-report.json",
         "mcp-stderr.log",
         "mcp-restart-stderr.log",
@@ -1074,7 +1153,7 @@ def main() -> int:
     base_url = f"http://127.0.0.1:{port}"
     cleanup_admin_token = ""
 
-    def fail_smoke(phase: str, error_code: str, *, return_code: int | None = None) -> None:
+    def fail_smoke(phase: str, error_code: str, *, return_code: int | None = None) -> NoReturn:
         """Record content-free diagnostics, then exit. Work tree is always cleaned."""
 
         emit_failure_diagnostics(
@@ -1247,6 +1326,57 @@ def main() -> int:
         startup_content = startup_entry.read_text(encoding="utf-8")
         if str(installed_app) not in startup_content or "--core" not in startup_content:
             raise SystemExit("isolated XDG startup entry did not use the portable app")
+
+    packaged_uninstall_failure_result = "not_applicable"
+    if system == "Windows":
+        failure_report_path = work / "uninstall-failure-report.json"
+        failure_environment = dict(environment)
+        failure_environment["ATC_PACKAGED_SMOKE_INJECT_INCOMPLETE_REGISTRATION"] = "1"
+        try:
+            failure_completed = subprocess.run(
+                [
+                    str(installed_app),
+                    "--packaged-smoke-uninstall",
+                    str(failure_report_path),
+                ],
+                cwd=installed_app.parent,
+                env=failure_environment,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=90,
+            )
+        except subprocess.TimeoutExpired:
+            fail_smoke("packaged-uninstall-failure", "timeout")
+        if failure_completed.returncode == 0:
+            fail_smoke("packaged-uninstall-failure", "unexpected_success")
+        try:
+            failure_payload = validate_packaged_uninstall_failure_report(
+                json.loads(failure_report_path.read_text(encoding="utf-8"))
+            )
+        except (OSError, UnicodeError, ValueError, RuntimeError):
+            fail_smoke("packaged-uninstall-failure", "report_invalid")
+        registration_status = failure_payload["registration_status"]
+        if (
+            failure_payload["stage"] != "windows_registration"
+            or failure_payload["code"] != "registration_uninstall_required"
+            or not isinstance(registration_status, dict)
+            or registration_status["available"] is not True
+            or registration_status["complete"] is not False
+            or registration_status["retryable"] is not True
+            or registration_status["pending"] != ["uninstall"]
+            or registration_status["errors"] != ["registration_restore_target_changed"]
+        ):
+            fail_smoke("packaged-uninstall-failure", "typed_status_invalid")
+        assert_no_packaged_process_or_modal(installed_app)
+        install_dir = Path(environment["ATC_INSTALL_DIR"])
+        if (
+            not install_dir.is_dir()
+            or not installed_app.is_file()
+            or not (data_dir / "core.sqlite3").is_file()
+        ):
+            fail_smoke("packaged-uninstall-failure", "install_or_vault_not_preserved")
+        packaged_uninstall_failure_result = "passed"
 
     try:
         dashboard_url = str(report.get("dashboard_url", ""))
@@ -1585,6 +1715,7 @@ def main() -> int:
                 "ota_automatic_install": system == "Windows",
                 "ota_transaction_recovery": packaged_update_result,
                 "core_shutdown": "passed",
+                "packaged_uninstall_failure_boundary": packaged_uninstall_failure_result,
                 "packaged_uninstall": uninstall_result,
                 "temporary_data_removed": True,
             },

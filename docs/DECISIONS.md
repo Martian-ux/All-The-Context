@@ -6559,3 +6559,28 @@ bounded delete retry. This addresses parent/child exit coordination without
 weakening path identity, process identity, rollback, cleanup, credentials,
 journal/registry ownership, or user-data retention. The native timeout's
 content-free cleanup failure remains a separate secondary symptom.
+
+## ADR-133: Packaged unattended uninstall fails closed at the silent boundary
+
+**Status:** implemented locally on 2026-09-08; exact-candidate native
+acceptance and the downstream registration-cause repair remain required.
+
+The packaged smoke-uninstall mode reuses `_run_silent_internal_mode`, which is
+the existing exit-code boundary for windowed internal children. The operation
+keeps the ordinary uninstall ordering and ownership checks. If the operation
+fails, the boundary walks only the typed exception cause for
+`WindowsRegistrationError`; it never parses exception text. The report is
+atomically replaced after bounded JSON validation and contains no paths,
+registry values, credentials, or user context. A typed
+`WindowsRegistrationRestoreStatus` is copied only when its booleans and
+bounded closed-vocabulary pending/error details validate. Otherwise the report
+marks registration status unavailable with empty detail and still returns
+nonzero. Successful uninstall retains the existing minimal report.
+
+The smoke harness injects one typed incomplete-registration failure only when
+the explicit isolated packaged-smoke and frozen-Windows conditions are both
+present. It proves the real installed windowed binary exits within the
+unchanged 90-second bound, leaves install/vault evidence, and leaves no
+process that could own an unhandled-exception modal before continuing with the
+real update/rollback/uninstall path. This is a discriminator for the boundary,
+not a registration fix or a claim about the live pending cause.

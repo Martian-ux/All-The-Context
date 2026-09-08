@@ -4839,3 +4839,22 @@ standard handles, stable-parent working directory, and existing 300-attempt /
 the caller does not wait for the live helper. A fresh exact-candidate native
 packaged journey, reproducible artifacts, review, and release gates are still
 required; this source change is not product acceptance.
+
+### 2026-09-08 packaged uninstall error boundary
+
+The unattended packaged-uninstall mode now runs through the existing silent
+internal-mode boundary. A typed Windows registration failure returns nonzero
+and atomically publishes only a bounded failure report: the uninstall outcome,
+vault retention, a closed stage/code, and validated registration compensation
+status. Unknown exception text, paths, registry material, credentials, and
+user context are not serialized. Missing or malformed typed status is explicit
+as unavailable. The success report remains the existing minimal two-field
+report.
+
+The packaged-first-run smoke first invokes the real installed WINDOWED binary
+with a deterministic isolated incomplete-registration injection, verifies the
+typed failure report, the unchanged install/vault evidence, and no remaining
+process that could own a modal, then executes its existing successful
+install/update/rollback/uninstall journey. The injected case is smoke-only and
+does not repair or infer the underlying live registration cause. Native
+exact-candidate build, OS lifecycle, and final release gates remain open.

@@ -1076,6 +1076,142 @@ def test_internal_update_child_preserves_deliberate_process_exit() -> None:
     assert exc_info.value.code == 86
 
 
+def test_packaged_uninstall_failure_boundary_writes_typed_safe_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_path = tmp_path / "uninstall-report.json"
+    status = desktop.WindowsRegistrationRestoreStatus(
+        False,
+        True,
+        0,
+        ("uninstall",),
+        ("registration_restore_target_changed",),
+    )
+    failure = desktop.WindowsRegistrationCompensationError(
+        "registration_uninstall_required",
+        status=status,
+    )
+    monkeypatch.setenv("ATC_PACKAGED_SMOKE", "1")
+    monkeypatch.setattr(
+        desktop,
+        "_uninstall",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
+    )
+    calls: list[bool] = []
+
+    def record_boundary(operation):
+        calls.append(True)
+        return operation()
+
+    monkeypatch.setattr(desktop, "_run_silent_internal_mode", record_boundary)
+
+    assert desktop.main(["--packaged-smoke-uninstall", str(report_path)]) == 1
+    assert calls == [True]
+    assert json.loads(report_path.read_text(encoding="utf-8")) == {
+        "uninstalled": False,
+        "vault_preserved": True,
+        "stage": "windows_registration",
+        "code": "registration_uninstall_required",
+        "registration_status": {
+            "available": True,
+            "complete": False,
+            "retryable": True,
+            "pending": ["uninstall"],
+            "errors": ["registration_restore_target_changed"],
+        },
+    }
+
+
+def test_packaged_uninstall_failure_without_typed_status_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_path = tmp_path / "uninstall-report.json"
+    failure = desktop.WindowsRegistrationError("registration_target_changed")
+    monkeypatch.setenv("ATC_PACKAGED_SMOKE", "1")
+    monkeypatch.setattr(
+        desktop,
+        "_uninstall",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
+    )
+
+    assert desktop.main(["--packaged-smoke-uninstall", str(report_path)]) == 1
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["code"] == "registration_target_changed"
+    assert payload["registration_status"] == {
+        "available": False,
+        "complete": False,
+        "retryable": False,
+        "pending": [],
+        "errors": [],
+    }
+
+
+def test_packaged_uninstall_report_never_serializes_arbitrary_exception_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_path = tmp_path / "uninstall-report.json"
+    secret = "C:\\Users\\private\\credential.txt"
+    failure = desktop.WindowsRegistrationError(
+        "not-a-closed-code",
+        status=desktop.WindowsRegistrationRestoreStatus(
+            False,
+            True,
+            0,
+            (secret,),
+            ("arbitrary-error",),
+        ),
+    )
+    failure.__cause__ = RuntimeError(f"raw failure at {secret}")
+    monkeypatch.setenv("ATC_PACKAGED_SMOKE", "1")
+    monkeypatch.setattr(
+        desktop,
+        "_uninstall",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
+    )
+
+    assert desktop.main(["--packaged-smoke-uninstall", str(report_path)]) == 1
+    raw = report_path.read_text(encoding="utf-8")
+    assert secret not in raw
+    assert "raw failure" not in raw
+    payload = json.loads(raw)
+    assert payload["code"] == "registration_failed"
+    assert payload["registration_status"]["available"] is False
+
+
+def test_packaged_uninstall_atomic_report_failure_stays_silent_and_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_path = tmp_path / "uninstall-report.json"
+    monkeypatch.setenv("ATC_PACKAGED_SMOKE", "1")
+    monkeypatch.setattr(
+        desktop,
+        "_uninstall",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("raw failure")),
+    )
+    monkeypatch.setattr(
+        desktop,
+        "_write_packaged_uninstall_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("report destination")),
+    )
+
+    assert desktop.main(["--packaged-smoke-uninstall", str(report_path)]) == 1
+    assert not report_path.exists()
+
+
+def test_packaged_uninstall_success_keeps_minimal_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_path = tmp_path / "uninstall-report.json"
+    monkeypatch.setenv("ATC_PACKAGED_SMOKE", "1")
+    monkeypatch.setattr(desktop, "_uninstall", lambda *_args, **_kwargs: 0)
+
+    assert desktop.main(["--packaged-smoke-uninstall", str(report_path)]) == 0
+    assert json.loads(report_path.read_text(encoding="utf-8")) == {
+        "uninstalled": True,
+        "vault_preserved": True,
+    }
+
+
 def test_frozen_core_startup_contains_manifest_parser_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

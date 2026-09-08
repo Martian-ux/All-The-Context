@@ -973,6 +973,45 @@ def test_packaged_uninstall_observation_exceeds_product_cleanup_budget() -> None
     assert smoke.WINDOWS_INSTALL_REMOVAL_OBSERVATION_SECONDS == 35.0
 
 
+def test_packaged_uninstall_failure_report_validation_is_closed() -> None:
+    valid = {
+        "uninstalled": False,
+        "vault_preserved": True,
+        "stage": "windows_registration",
+        "code": "registration_uninstall_required",
+        "registration_status": {
+            "available": True,
+            "complete": False,
+            "retryable": True,
+            "pending": ["uninstall"],
+            "errors": ["registration_restore_target_changed"],
+        },
+    }
+    assert smoke.validate_packaged_uninstall_failure_report(valid) == valid
+
+    invalid = dict(valid)
+    invalid["exception"] = "raw path and message"
+    with pytest.raises(RuntimeError, match="shape is invalid"):
+        smoke.validate_packaged_uninstall_failure_report(invalid)
+
+
+def test_packaged_uninstall_process_check_is_path_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[list[str]] = []
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed.append(command)
+        assert kwargs["check"] is False
+        return subprocess.CompletedProcess(command, 0, "0\n", "")
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+    target = tmp_path / "installed" / "AllTheContext.exe"
+    smoke.assert_no_packaged_process_or_modal(target)
+    assert observed and observed[0][0] == "powershell.exe"
+
+
 def test_packaged_mcp_surface_is_exactly_read_only() -> None:
     expected = {
         "bootstrap_context",
