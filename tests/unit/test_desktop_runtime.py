@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
+import sys
+import time
 import urllib.request
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -430,7 +435,7 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert "Remove-Item" in script
     assert "-ErrorAction Stop" in script
     assert f"Start-Sleep -Milliseconds {WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS}" in script
-    assert requested_flags == [("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")]
+    assert requested_flags == [("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP")]
     assert kwargs["creationflags"] == 0xA5
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["stdout"] is subprocess.DEVNULL
@@ -472,6 +477,47 @@ def test_windows_uninstall_helper_is_live_after_caller_returns(tmp_path: Path, m
     assert helper.waited is False
     script = launched[0][0][-1]
     assert script.index("Wait-Process -Id $atcProcessId") < script.index("Remove-Item")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")
+def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> None:
+    checkout_root = Path(__file__).resolve().parents[2]
+    install_dir = checkout_root / ".test-runs" / f"windows-install-removal-{uuid.uuid4().hex}"
+    try:
+        try:
+            install_dir.mkdir(parents=True)
+            (install_dir / "removal-sentinel.txt").write_text("sentinel\n", encoding="utf-8")
+        except PermissionError as exc:
+            pytest.skip(f"checkout-owned native test directory is not writable: {exc}")
+
+        environment = os.environ.copy()
+        environment["ATC_INSTALL_DIR"] = str(install_dir)
+        source_root = checkout_root / "packages" / "allthecontext" / "src"
+        environment["PYTHONPATH"] = os.pathsep.join(
+            filter(None, (str(source_root), environment.get("PYTHONPATH")))
+        )
+        child_code = (
+            "from allthecontext.desktop import _schedule_windows_install_removal;"
+            "from pathlib import Path;"
+            "import os;"
+            "_schedule_windows_install_removal(Path(os.environ['ATC_INSTALL_DIR']))"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", child_code],
+            cwd=install_dir,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+
+        deadline = time.monotonic() + WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS + 5.0
+        while install_dir.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert not install_dir.exists(), "PowerShell exited without executing directory removal"
+    finally:
+        shutil.rmtree(install_dir, ignore_errors=True)
 
 
 def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
