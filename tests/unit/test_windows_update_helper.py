@@ -385,6 +385,38 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
     )
 
 
+def _legacy_beta6_state(fixture: TransactionFixture) -> dict[str, Any]:
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    legacy_fields = (
+        "phase",
+        "current_version",
+        "offered_version",
+        "mandatory",
+        "release_notes_url",
+        "downloaded_path",
+        "backup_path",
+        "last_checked_at",
+        "last_error",
+        "operation_id",
+        "transaction_path",
+        "recovery_attempts",
+    )
+    return {
+        **{field: state[field] for field in legacy_fields},
+        "phase": "current",
+        "current_version": "0.1.0-beta.6",
+        "offered_version": "0.1.0-beta.6",
+        "release_notes_url": (
+            "https://github.com/Martian-ux/All-The-Context/releases/tag/v0.1.0-beta.6"
+        ),
+        "last_checked_at": "2026-09-09T04:36:21.570047+00:00",
+        "operation_id": "3d27280c2b8987366b3c814e",
+        "downloaded_path": None,
+        "backup_path": None,
+        "transaction_path": None,
+    }
+
+
 @pytest.mark.parametrize(
     ("kind", "parser_error"),
     [
@@ -2756,6 +2788,96 @@ def test_core_start_guard_handles_missing_state_without_pruning_transaction_data
             (updates / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(encoding="utf-8")
         )
         assert diagnostic["code"] == "startup_state_missing_with_transaction"
+
+
+def test_core_start_guard_accepts_observed_beta6_state_without_rewriting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    fixture.state_path.write_text(json.dumps(_legacy_beta6_state(fixture)), encoding="utf-8")
+    shutil.rmtree(fixture.journal_path.parent)
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is True
+
+    assert fixture.state_path.read_bytes() == original_state
+    assert not (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "extra_field",
+        "missing_field",
+        "wrong_version",
+        "active_phase",
+        "downloaded_path",
+        "backup_path",
+        "transaction_path",
+        "invalid_operation_id",
+    ],
+)
+def test_core_start_guard_rejects_unsafe_beta6_compatibility_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    state = _legacy_beta6_state(fixture)
+    if mutation == "extra_field":
+        state["manifest_identity"] = None
+    elif mutation == "missing_field":
+        del state["recovery_attempts"]
+    elif mutation == "wrong_version":
+        state["current_version"] = "0.1.0-beta.5"
+    elif mutation == "active_phase":
+        state["phase"] = "downloading"
+    elif mutation == "downloaded_path":
+        state["downloaded_path"] = "stale-artifact.zip"
+    elif mutation == "backup_path":
+        state["backup_path"] = "stale-backup.sqlite3"
+    elif mutation == "transaction_path":
+        state["transaction_path"] = "stale-journal.json"
+    elif mutation == "invalid_operation_id":
+        state["operation_id"] = "not-an-operation"
+    else:
+        raise AssertionError(mutation)
+    fixture.state_path.write_text(json.dumps(state), encoding="utf-8")
+    shutil.rmtree(fixture.journal_path.parent)
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_invalid"
+
+
+def test_core_start_guard_rejects_beta6_state_with_transaction_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _transaction(tmp_path, monkeypatch)
+    fixture.state_path.write_text(json.dumps(_legacy_beta6_state(fixture)), encoding="utf-8")
+    shutil.rmtree(fixture.journal_path.parent)
+    evidence_dir = fixture.state_path.parent / "transactions" / ("b" * 24)
+    evidence_dir.mkdir()
+    (evidence_dir / "journal.json").write_bytes(b"partial journal")
+    original_state = fixture.state_path.read_bytes()
+    monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
+
+    assert ensure_recovery_before_core() is False
+
+    assert fixture.state_path.read_bytes() == original_state
+    diagnostic = json.loads(
+        (fixture.state_path.parent / helper_module.STARTUP_RECOVERY_DIAGNOSTIC_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostic["code"] == "startup_state_missing_with_transaction"
 
 
 @pytest.mark.parametrize("phase", ["idle", "current", "error"])

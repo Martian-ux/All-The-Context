@@ -155,6 +155,35 @@ STARTUP_STATE_FIELDS = frozenset(
         "automatic_staging_paused",
     }
 )
+BETA6_STARTUP_STATE_FIELDS = frozenset(
+    {
+        "phase",
+        "current_version",
+        "offered_version",
+        "mandatory",
+        "release_notes_url",
+        "downloaded_path",
+        "backup_path",
+        "last_checked_at",
+        "last_error",
+        "operation_id",
+        "transaction_path",
+        "recovery_attempts",
+    }
+)
+BETA6_STARTUP_INACTIVE_PHASES = frozenset(
+    {
+        "idle",
+        "disabled",
+        "current",
+        "unpublished",
+        "available",
+        "deferred",
+        "manual_required",
+        "error",
+        "cancelled",
+    }
+)
 PROCESS_TIMEOUT_SECONDS = 90
 PARENT_EXIT_TIMEOUT_SECONDS = 60
 WINDOWS_RUNONCE_KEY = r"Software\Microsoft\Windows\CurrentVersion\RunOnce"
@@ -1153,12 +1182,14 @@ def _validate_startup_state(
     *,
     allow_packaged_terminal_replay: bool = False,
 ) -> str:
+    beta6_fields = BETA6_STARTUP_STATE_FIELDS
     legacy_fields = STARTUP_STATE_FIELDS - {
         "automatic_staging_paused",
         "current_source_commit",
         "offered_source_commit",
     }
     accepted_fields = {
+        beta6_fields,
         legacy_fields,
         STARTUP_STATE_FIELDS,
         STARTUP_STATE_FIELDS - {"automatic_staging_paused"},
@@ -1167,19 +1198,6 @@ def _validate_startup_state(
         - {"automatic_staging_paused", "current_source_commit", "offered_source_commit"},
     }
     if set(value) not in accepted_fields:
-        raise HelperError("startup_state_invalid")
-    packaged_runtime = _packaged_helper_runtime()
-    packaged_source_commit = _packaged_source_commit()
-    if packaged_runtime and (
-        packaged_source_commit is None
-        or (
-            value.get("current_source_commit") != packaged_source_commit
-            and not (
-                allow_packaged_terminal_replay
-                and _is_packaged_terminal_replay_state(value, packaged_source_commit)
-            )
-        )
-    ):
         raise HelperError("startup_state_invalid")
     phase = value.get("phase")
     if not isinstance(phase, str) or phase not in STARTUP_RECOVERY_PHASES:
@@ -1248,6 +1266,34 @@ def _validate_startup_state(
             raise HelperError("startup_state_invalid")
     if value.get("transaction_path") is None and any(
         value.get(field) is not None for field in ("handoff_identity", "pending_handoff_identity")
+    ):
+        raise HelperError("startup_state_invalid")
+    is_beta6_state = set(value) == beta6_fields
+    if is_beta6_state and (
+        value.get("current_version") != "0.1.0-beta.6"
+        or phase not in BETA6_STARTUP_INACTIVE_PHASES
+        or any(
+            value.get(field) is not None
+            for field in ("downloaded_path", "backup_path", "transaction_path")
+        )
+    ):
+        raise HelperError("startup_state_invalid")
+    # beta.6 predates source and handoff identities; the exact inactive shape
+    # above is the only compatibility exception to packaged source binding.
+    packaged_runtime = _packaged_helper_runtime()
+    packaged_source_commit = _packaged_source_commit()
+    if packaged_runtime and (
+        packaged_source_commit is None
+        or (
+            value.get("current_source_commit") != packaged_source_commit
+            and not (
+                is_beta6_state
+                or (
+                    allow_packaged_terminal_replay
+                    and _is_packaged_terminal_replay_state(value, packaged_source_commit)
+                )
+            )
+        )
     ):
         raise HelperError("startup_state_invalid")
     return phase

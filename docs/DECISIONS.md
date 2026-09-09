@@ -6666,3 +6666,27 @@ a flag-string or fake-process assertion as native proof.
 The Markdown link scanner excludes the checkout-owned `.test-runs` pytest
 basetemp. Repository Markdown remains strict UTF-8 input and missing local
 targets remain failures; invalid scratch output is not repository documentation.
+
+## ADR-138: Frozen startup admits the published beta.6 inactive state
+
+**Status:** implemented locally on 2026-09-09 after the v3 cross-version
+diagnosis; exact-candidate native acceptance remains required.
+
+The published beta.6 updater persists a valid journal-less 12-field state that
+does not contain beta.7's source and handoff fields. The frozen beta.7 startup
+guard now recognizes that exact field set only when the version is
+`0.1.0-beta.6`, the phase is one of the safe inactive phases, all transaction,
+download, and backup paths are null, scalar values pass the normal bounded
+validation, and the packaged source identity is available. The existing
+transaction-root evidence check still blocks any recovery evidence without a
+pointer. The guard never rewrites the legacy state; the existing `UpdateManager`
+binds the verified beta.7 version/source identity and atomically writes the
+current schema before Core serves requests.
+
+Current-schema, active/recovery, malformed, foreign-version, invalid-operation,
+handoff, and transaction-evidence states retain their fail-closed behavior and
+original bytes. Registration adoption ordering, exact beta.6 registration
+preimage, five-value compensation/recovery, registry ownership, shortcut and
+uninstall ownership, vault preservation, loopback binding, and closed
+diagnostics are unchanged. Native cross-version, independent review, and
+release gates remain separate evidence.

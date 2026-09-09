@@ -130,6 +130,13 @@ GA or new beta publication is implied by these source and local-evidence rows.
 | Full packaged build-identity migration | `application_install.py::_migrate_installed_journal`; `application_install.py::_complete_version_migration`; `application_install.py::_rollback_installed_migration`; `tests/unit/test_application_install.py::test_installed_identity_metadata_migrates_as_one_journaled_surface` | Source-level repair. `DisplayVersion` and all four build-identity values are journaled, compare-and-set, recovered, and compensated together; downgrade and native ownership checks remain. Native gates are pending. |
 | Migration recovery and compensation | `application_install.py::_recover_journal`; `application_install.py::_resume_restoring_journal`; focused recovery/rollback tests in `tests/unit/test_application_install.py` | Source-level focused coverage added for interrupted forward completion and partial-write rollback. No pytest, build, executable, or native-controller validation was run here. |
 
+### 2026-09-09 beta.6 updater-state compatibility repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Frozen startup compatibility with published beta.6 | `windows_update_helper.py::_validate_startup_state`; `windows_update_helper.py::ensure_recovery_before_core`; `tests/unit/test_windows_update_helper.py::test_core_start_guard_accepts_observed_beta6_state_without_rewriting_it`; `tests/unit/test_windows_update_helper.py::test_core_start_guard_rejects_unsafe_beta6_compatibility_state`; `tests/unit/test_windows_update_helper.py::test_core_start_guard_rejects_beta6_state_with_transaction_evidence`; ADR-138 | Source-level repair. The exact published beta.6 12-field inactive state is admitted only with bounded scalar validation, safe inactive phase, null transaction/download/backup paths, known packaged source identity, and no transaction evidence. Legacy state bytes are preserved; malformed, active, foreign, and evidence-bearing variants remain blocked and byte-preserved. |
+| Current updater schema binding | `updater.py::UpdateManager::_load_state`; `updater.py::UpdateManager::_save`; `tests/unit/test_updater.py::test_beta6_state_is_canonicalized_with_current_version_and_source` | The existing updater canonicalizes missing beta.7 fields and atomically persists the configured version and source commit before normal Core service. Focused source tests pass; exact native cross-version, independent review, hosted, artifact, Defender, and release gates remain pending. |
+
 ### 2026-09-06 defensive-boundary and hosted-flake repair candidate
 
 | Requirement area | Implementation/evidence | Status |

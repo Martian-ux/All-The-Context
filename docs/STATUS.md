@@ -4901,6 +4901,22 @@ handle lifetime, transaction binding, ownership/CAS preservation, and stale
 last-error separation. The stock Windows lifecycle and packaged proof gates
 remain required and are not claimed here.
 
+### 2026-09-09 beta.6 updater-state compatibility repair
+
+The v3 cross-version proof observed a product defect after beta.7 component
+installation and authenticated registration migration: the frozen Core startup
+guard rejected the published beta.6 updater's valid 12-field inactive state
+before the current updater could canonicalize it. The bounded repair accepts
+only that exact beta.6 field set with a safe inactive phase, null transaction,
+download, and backup paths, valid scalar values, a known packaged source
+identity, and no transaction recovery evidence. It leaves the legacy bytes
+unchanged; the existing updater then atomically saves the complete beta.7
+version/source-bound state. Malformed, active, foreign, or evidence-bearing
+states remain blocked and byte-preserved. Focused startup/updater regressions
+and existing startup-guard tests passed; exact native cross-version proof,
+independent review, and downstream release gates remain controller-owned and
+pending. This source repair is not release acceptance.
+
 ### 2026-09-08 packaged uninstall PowerShell launch repair
 
 The Windows install-removal helper no longer requests `DETACHED_PROCESS`.

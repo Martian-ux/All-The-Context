@@ -653,6 +653,66 @@ def test_legacy_canonical_beta_404_state_migrates_without_another_network_check(
     assert manager.public_status()["last_error"] is None
 
 
+def test_beta6_state_is_canonicalized_with_current_version_and_source(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "updates"
+    data_dir.mkdir()
+    (data_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "current",
+                "current_version": "0.1.0-beta.6",
+                "offered_version": "0.1.0-beta.6",
+                "mandatory": False,
+                "release_notes_url": (
+                    "https://github.com/Martian-ux/All-The-Context/releases/tag/v0.1.0-beta.6"
+                ),
+                "downloaded_path": None,
+                "backup_path": None,
+                "last_checked_at": "2026-09-09T04:36:21.570047+00:00",
+                "last_error": None,
+                "operation_id": "3d27280c2b8987366b3c814e",
+                "transaction_path": None,
+                "recovery_attempts": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    database = tmp_path / "core.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE records (id INTEGER PRIMARY KEY)")
+    source_commit = "b" * 40
+    manager = UpdateManager(
+        UpdateConfig(
+            data_dir,
+            tmp_path / "keys.json",
+            {"beta": DEFAULT_BETA_MANIFEST_URL},
+            current_version="0.1.0-beta.7",
+            current_source_commit=source_commit,
+            platform_name="windows",
+            architecture="x86_64",
+        ),
+        database_path=database,
+        transport=FakeTransport({}, b""),
+        installer=FakeInstaller(),
+        health_probe=FakeHealth(True),
+    )
+
+    persisted = json.loads((data_dir / "state.json").read_text(encoding="utf-8"))
+    assert set(persisted) == set(UpdateState.__dataclass_fields__)
+    assert persisted["phase"] == "current"
+    assert persisted["current_version"] == "0.1.0-beta.7"
+    assert persisted["current_source_commit"] == source_commit
+    assert persisted["offered_source_commit"] is None
+    assert persisted["manifest_identity"] is None
+    assert persisted["handoff_identity"] is None
+    assert persisted["pending_handoff_identity"] is None
+    assert persisted["completed_handoff_identity"] is None
+    assert persisted["automatic_staging_paused"] is False
+    assert manager.state.current_source_commit == source_commit
+
+
 def test_custom_channel_404_remains_a_visible_error(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
