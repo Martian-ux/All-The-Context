@@ -1114,7 +1114,9 @@ def test_packaged_uninstall_process_inventory_is_bounded_and_path_bound(
         return subprocess.CompletedProcess(
             command,
             0,
-            json.dumps([{"pid": 17, "creation_identity": "creation-a", "exe": str(target)}]),
+            json.dumps(
+                [{"pid": 17, "creation_identity": "creation-a", "exe": str(target.resolve())}]
+            ),
             "",
         )
 
