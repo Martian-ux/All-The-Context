@@ -64,6 +64,12 @@ def _attribute(value: object, name: str) -> Any:
     return getattr(value, name)
 
 
+def _registry_data_equal(left: object, right: object) -> bool:
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return tuple(left) == tuple(right)
+    return left == right
+
+
 def _same_identity(left: os.stat_result, expected: tuple[int, int, int, int, int, int]) -> bool:
     observed = (
         int(left.st_dev),
@@ -488,6 +494,20 @@ class WindowsRegistryAdapter:
                 "DeleteValueIfUnchanged",
                 "DeleteKeyIfUnchanged",
             )
+        )
+
+    @property
+    def atomic_value_mutations_available(self) -> bool:
+        """Whether existing-key value compare/set/delete can be transacted."""
+
+        if all(
+            callable(getattr(self._module, name, None))
+            for name in ("SetValueIfUnchanged", "DeleteValueIfUnchanged")
+        ):
+            return True
+        return all(
+            callable(getattr(self._module, name, None))
+            for name in ("OpenKey", "QueryValueEx", "SetValueEx", "DeleteValue")
         )
 
     @property
@@ -1156,32 +1176,111 @@ class WindowsRegistryAdapter:
     ) -> bool:
         with _REGISTRY_MUTATION_LOCK:
             conditional = getattr(self._module, "SetValueIfUnchanged", None)
-            if not callable(conditional):
+            if callable(conditional):
+                try:
+                    with self._open(name, _KEY_READ | _KEY_SET_VALUE) as key:
+                        value_name = str(_attribute(expected, "name"))
+                        result = conditional(key, value_name, expected, value_type, data)
+                        if not isinstance(result, bool):
+                            raise OSError("registry compare-and-set result invalid")
+                        return result
+                except FileNotFoundError:
+                    return False
+            if not self.atomic_value_mutations_available:
                 raise OSError("registry compare-and-set unavailable")
-            try:
-                with self._open(name, _KEY_READ | _KEY_SET_VALUE) as key:
+
+            def mutate(transaction: _RegistryTransaction) -> bool:
+                try:
+                    key, _disposition = self._transacted_key_handle(
+                        name,
+                        transaction,
+                        create=False,
+                        access=_KEY_READ | _KEY_SET_VALUE,
+                    )
+                except FileNotFoundError:
+                    return False
+                try:
                     value_name = str(_attribute(expected, "name"))
-                    result = conditional(key, value_name, expected, value_type, data)
-                    if not isinstance(result, bool):
-                        raise OSError("registry compare-and-set result invalid")
-                    return result
-            except FileNotFoundError:
-                return False
+                    try:
+                        observed, observed_type = self._module.QueryValueEx(
+                            _winreg_key_argument(key), value_name
+                        )
+                    except FileNotFoundError:
+                        if _attribute(expected, "present"):
+                            return False
+                    else:
+                        if not _attribute(expected, "present"):
+                            return False
+                        if int(observed_type) != int(_attribute(expected, "value_type")):
+                            return False
+                        if not _registry_data_equal(observed, _attribute(expected, "data")):
+                            return False
+                    self._module.SetValueEx(
+                        _winreg_key_argument(key), value_name, 0, int(value_type), data
+                    )
+                    updated, updated_type = self._module.QueryValueEx(
+                        _winreg_key_argument(key), value_name
+                    )
+                    return int(updated_type) == int(value_type) and _registry_data_equal(
+                        updated, data
+                    )
+                finally:
+                    key.Close()
+
+            result = self._run_registry_transaction(mutate)
+            return isinstance(result, bool) and result
 
     def delete_value_if_unchanged(self, name: str, expected: object) -> bool:
         with _REGISTRY_MUTATION_LOCK:
             conditional = getattr(self._module, "DeleteValueIfUnchanged", None)
-            if not callable(conditional):
+            if callable(conditional):
+                try:
+                    with self._open(name, _KEY_READ | _KEY_SET_VALUE) as key:
+                        value_name = str(_attribute(expected, "name"))
+                        result = conditional(key, value_name, expected)
+                        if not isinstance(result, bool):
+                            raise OSError("registry compare-and-delete result invalid")
+                        return result
+                except FileNotFoundError:
+                    return False
+            if not self.atomic_value_mutations_available:
                 raise OSError("registry compare-and-delete unavailable")
-            try:
-                with self._open(name, _KEY_READ | _KEY_SET_VALUE) as key:
+
+            def mutate(transaction: _RegistryTransaction) -> bool:
+                try:
+                    key, _disposition = self._transacted_key_handle(
+                        name,
+                        transaction,
+                        create=False,
+                        access=_KEY_READ | _KEY_SET_VALUE,
+                    )
+                except FileNotFoundError:
+                    return False
+                try:
                     value_name = str(_attribute(expected, "name"))
-                    result = conditional(key, value_name, expected)
-                    if not isinstance(result, bool):
-                        raise OSError("registry compare-and-delete result invalid")
-                    return result
-            except FileNotFoundError:
-                return False
+                    if not _attribute(expected, "present"):
+                        return False
+                    try:
+                        observed, observed_type = self._module.QueryValueEx(
+                            _winreg_key_argument(key), value_name
+                        )
+                    except FileNotFoundError:
+                        return False
+                    if int(observed_type) != int(
+                        _attribute(expected, "value_type")
+                    ) or not _registry_data_equal(observed, _attribute(expected, "data")):
+                        return False
+                    self._module.DeleteValue(_winreg_key_argument(key), value_name)
+                    try:
+                        self._module.QueryValueEx(_winreg_key_argument(key), value_name)
+                    except FileNotFoundError:
+                        return True
+                    return False
+                finally:
+                    key.Close()
+
+            result = self._run_registry_transaction(mutate)
+            return isinstance(result, bool) and result
 
     def delete_key_if_unchanged(self, name: str, expected: tuple[object, ...]) -> bool:
         with _REGISTRY_MUTATION_LOCK:

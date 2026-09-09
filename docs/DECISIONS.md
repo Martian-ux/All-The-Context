@@ -52,6 +52,31 @@ release, the default loopback Core boundary, or the separate hosted, exact
 artifact, Defender, clean-machine, live client/provider, signing, publication,
 and release gates.
 
+## ADR-213: Adopt only the supported journal-less beta.6 registration
+
+**Status:** source-level repair on 2026-09-08 for the bounded cross-version
+diagnosis at accepted base `50a5b9db5eb6727b21d7da50c6a083a17b90588e`; native
+proof and release gates remain controller-owned and pending.
+
+Beta.7 may adopt a predecessor only when the fixed install, shortcut, and HKCU
+uninstall paths contain the complete expected beta.6 registration, the four
+new build-identity values are absent, shortcuts are regular fixed-path files,
+and a second snapshot is unchanged. The transaction persists an authenticated
+`migrating` journal with the shortcut identities and five-value registry
+preimage before the first metadata write. Existing compare-and-set helpers
+update or remove values only when their exact preimage still matches; stock
+Windows `winreg` receives the same value-level guarantee through KTM-backed
+transactions, without changing full-key ownership or native-handle rules.
+
+Successful adoption publishes the exact beta.7 metadata and clears the old
+preimage. A failed or interrupted write compensates or retries from the
+journal, and complete compensation removes the temporary journal to restore
+the journal-less beta.6 surface. Foreign values, extra subkeys, malformed or
+swapped paths, version downgrades, and concurrent changes remain fail-closed.
+This decision preserves shortcut/uninstall ownership, vault data, loopback
+defaults, diagnostics, and the existing security boundaries; it creates no
+artifact, hosted, Defender, or release acceptance evidence.
+
 ## ADR-212: Installed registration binds WScript bytes to journal identity
 
 **Status:** source-level repair on 2026-09-08 for the exact diagnosis

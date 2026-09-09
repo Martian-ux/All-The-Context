@@ -54,6 +54,8 @@ _REGISTRY_OWNERSHIP_VALUE = "ATCRegistrationGeneration"
 _REGISTRY_IDENTITY_VALUE = "ATCRegistrationJournal"
 _REGISTRATION_PUBLICATION_LEGACY = "legacy"
 _REGISTRATION_PUBLICATION_NATIVE_STAGED = "native_staged"
+_SUPPORTED_LEGACY_BETA_VERSION = "0.1.0-beta.6"
+_SUPPORTED_LEGACY_TARGET_VERSION = "0.1.0-beta.7"
 
 ShortcutName = Literal["launcher", "desktop", "uninstall"]
 RegistrationName = Literal[
@@ -164,6 +166,7 @@ class _RegistrationJournal:
     registry_generation: str | None = field(default=None, repr=False)
     registry_identity: str | None = field(default=None, repr=False)
     registry_publication: str = field(default=_REGISTRATION_PUBLICATION_LEGACY, repr=False)
+    legacy_adoption: bool = field(default=False, repr=False)
 
 
 class WindowsRegistrationError(OSError):
@@ -691,6 +694,25 @@ def _registry_atomic_mutations_available(winreg: Any) -> bool:
     )
 
 
+def _registry_value_mutations_available(winreg: Any) -> bool:
+    """Require compare primitives for value-level migration and rollback."""
+
+    capability = getattr(winreg, "atomic_value_mutations_available", None)
+    if isinstance(capability, bool):
+        return capability
+    if all(
+        callable(getattr(winreg, name, None))
+        for name in ("set_value_if_unchanged", "delete_value_if_unchanged")
+    ):
+        return True
+    if all(
+        callable(getattr(winreg, name, None))
+        for name in ("SetValueIfUnchanged", "DeleteValueIfUnchanged")
+    ):
+        return True
+    return _registry_atomic_mutations_available(winreg)
+
+
 def _native_registry_publication_available(winreg: Any) -> bool:
     """Report whether the provider can bind raw handles for native publication."""
 
@@ -1016,7 +1038,7 @@ def _delete_registry_value_if_unchanged(
 ) -> None:
     """Delete only an exact value, using an adapter CAS when available."""
 
-    if not _registry_atomic_mutations_available(winreg):
+    if not _registry_value_mutations_available(winreg):
         raise WindowsRegistrationError("registration_restore_atomicity_unavailable")
     conditional = getattr(winreg, "delete_value_if_unchanged", None)
     if callable(conditional):
@@ -1062,7 +1084,7 @@ def _set_registry_value_if_unchanged(
 ) -> None:
     """Set only an exact value, using an adapter CAS when available."""
 
-    if not _registry_atomic_mutations_available(winreg):
+    if not _registry_value_mutations_available(winreg):
         if allow_forward_only_absent and not expected.present:
             _set_registry_value_forward_only(
                 winreg,
@@ -1323,6 +1345,7 @@ def _encode_journal(journal: _RegistrationJournal, *, phase: str, active: tuple[
         "registry_generation": journal.registry_generation,
         "registry_identity": journal.registry_identity,
         "registry_publication": journal.registry_publication,
+        "legacy_adoption": journal.legacy_adoption,
         "snapshot": _encode_snapshot(journal.snapshot),
         "desired_shortcuts": {
             name: base64.b64encode(data).decode("ascii")
@@ -1426,7 +1449,12 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         "registry_before",
         "registry_key_created",
     }
-    optional = {"registry_generation", "registry_identity", "registry_publication"}
+    optional = {
+        "registry_generation",
+        "registry_identity",
+        "registry_publication",
+        "legacy_adoption",
+    }
     if (
         not required.issubset(set(decoded))
         or set(decoded) - required - optional
@@ -1451,11 +1479,13 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
     registry_generation = decoded.get("registry_generation")
     registry_identity = decoded.get("registry_identity")
     registry_publication = decoded.get("registry_publication", _REGISTRATION_PUBLICATION_LEGACY)
+    legacy_adoption = decoded.get("legacy_adoption", False)
     if (
         not isinstance(phase, str)
         or phase not in {"applying", "migrating", "installed", "restoring", "uninstalling"}
         or not isinstance(active_raw, list)
         or not isinstance(registry_key_created, bool)
+        or not isinstance(legacy_adoption, bool)
         or (
             registry_generation is not None
             and (
@@ -1541,6 +1571,7 @@ def _read_registration_journal(path: Path) -> _RegistrationJournal | None:
         registry_generation,
         registry_identity,
         registry_publication,
+        legacy_adoption,
     )
 
 
@@ -1760,6 +1791,7 @@ class WindowsApplicationRegistrationTransaction:
         self._registry_identity = secrets.token_hex(16)
         self._registry_native_residual = False
         self._applied = False
+        self._legacy_adoption_active = False
         self._canonical_shortcut_cache: dict[ShortcutName, bytes] = {}
 
     def _delete_file(self, path: Path, identity: object) -> None:
@@ -1944,6 +1976,13 @@ class WindowsApplicationRegistrationTransaction:
             _REGISTRATION_PUBLICATION_LEGACY,
             _REGISTRATION_PUBLICATION_NATIVE_STAGED,
         }:
+            raise WindowsRegistrationError("registration_journal_invalid")
+        if journal.legacy_adoption and (
+            journal.phase not in {"migrating", "restoring"}
+            or not journal.snapshot.uninstall_key_present
+            or journal.registry_key_created
+            or journal.registry_publication != _REGISTRATION_PUBLICATION_LEGACY
+        ):
             raise WindowsRegistrationError("registration_journal_invalid")
         if journal.registry_generation is not None and (
             len(journal.registry_generation) != 32
@@ -2478,6 +2517,136 @@ class WindowsApplicationRegistrationTransaction:
         ):
             raise WindowsRegistrationError("registration_target_changed", transaction=self)
 
+    def _legacy_registry_surface(self) -> dict[str, WindowsRegistryValueSnapshot]:
+        """Describe only the immutable beta.6 registration predecessor."""
+
+        if (
+            self._build_identity is None
+            or self._build_identity.version != _SUPPORTED_LEGACY_TARGET_VERSION
+        ):
+            return {}
+        desired = {
+            name: WindowsRegistryValueSnapshot(name, True, value_type, data)
+            for name, value_type, data in self._desired_registry()
+            if name in self._REGISTRY_NAMES
+        }
+        desired["DisplayVersion"] = WindowsRegistryValueSnapshot(
+            "DisplayVersion", True, 1, _SUPPORTED_LEGACY_BETA_VERSION
+        )
+        return {
+            name: desired[name]
+            if name in desired
+            else WindowsRegistryValueSnapshot(name, False, None)
+            for name in self._registry_names
+        }
+
+    def _legacy_registration_matches(
+        self, snapshot: WindowsApplicationRegistrationSnapshot
+    ) -> bool:
+        """Recognize only the complete, journal-less beta.6 surface."""
+
+        legacy_registry = self._legacy_registry_surface()
+        if not legacy_registry or not snapshot.uninstall_key_present:
+            return False
+        if any(
+            not shortcut.present or shortcut.data is None or shortcut.identity is None
+            for shortcut in snapshot.shortcuts
+        ):
+            return False
+        observed_registry = self._registry_values_by_name(snapshot)
+        if any(
+            not _registry_snapshot_equal(observed_registry[name], expected)
+            for name, expected in legacy_registry.items()
+        ):
+            return False
+        winreg = self._registry if self._registry is not None else windows_registry()
+        key_read = int(getattr(winreg, "KEY_READ", 0x20019))
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._uninstall_key, 0, key_read) as key:
+                subkeys, value_count, _ = winreg.QueryInfoKey(key)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise WindowsRegistrationError("registration_key_unreadable") from exc
+        return int(subkeys) == 0 and int(value_count) == len(self._REGISTRY_NAMES)
+
+    def _adopt_legacy_registration(
+        self,
+        snapshot: WindowsApplicationRegistrationSnapshot,
+        changed_entries: list[RegistrationName],
+    ) -> None:
+        """Journal and migrate the exact supported beta.6 predecessor."""
+
+        legacy_registry = self._legacy_registry_surface()
+        if not legacy_registry or not self._legacy_registration_matches(snapshot):
+            raise WindowsRegistrationError("registration_target_changed", transaction=self)
+        self._assert_snapshot_unchanged(snapshot)
+        if not self._legacy_registration_matches(snapshot):
+            raise WindowsRegistrationError("registration_target_changed", transaction=self)
+        desired_registry = {
+            name: (value_type, data) for name, value_type, data in self._desired_registry()
+        }
+        migration_names = self._migration_registry_names()
+        snapshot_registry = self._registry_values_by_name(snapshot)
+        desired_shortcuts = {
+            shortcut.name: shortcut.data
+            for shortcut in snapshot.shortcuts
+            if shortcut.data is not None
+        }
+        desired_shortcut_identities = {
+            shortcut.name: shortcut.identity
+            for shortcut in snapshot.shortcuts
+            if shortcut.identity is not None
+        }
+        if len(desired_shortcuts) != len(snapshot.shortcuts) or len(
+            desired_shortcut_identities
+        ) != len(snapshot.shortcuts):
+            raise WindowsRegistrationError("registration_target_changed", transaction=self)
+        journal = _RegistrationJournal(
+            install_root=str(self._install_root),
+            executable=str(self._executable),
+            start_menu=str(self._start_menu),
+            desktop=str(self._desktop) if self._desktop is not None else None,
+            uninstall_key=self._uninstall_key,
+            snapshot=snapshot,
+            desired_shortcuts=desired_shortcuts,
+            desired_shortcut_identities=desired_shortcut_identities,
+            desired_registry=desired_registry,
+            registry_before={name: snapshot_registry[name] for name in migration_names},
+            phase="migrating",
+            active=migration_names,
+            registry_generation=self._registry_generation,
+            registry_identity=self._registry_identity,
+            legacy_adoption=True,
+        )
+        self._journal = journal
+        self._snapshot = snapshot
+        self._journal_identity_trusted = True
+        self._legacy_adoption_active = True
+        self._mutations = [
+            _RegistryMutation(
+                name,
+                journal.registry_before[name],
+                WindowsRegistryValueSnapshot(name, True, *desired_registry[name]),
+            )
+            for name in migration_names
+        ]
+        try:
+            self._persist_journal("migrating", migration_names)
+            if not self._legacy_registration_matches(snapshot):
+                raise WindowsRegistrationError("registration_target_changed", transaction=self)
+            self._complete_version_migration(journal)
+        except BaseException as exc:
+            status = self._rollback_installed_migration(journal)
+            if not status.complete:
+                raise WindowsRegistrationCompensationError(
+                    "registration_compensation_required",
+                    transaction=self,
+                    status=status,
+                ) from exc
+            raise WindowsRegistrationError(_safe_error_code(exc), transaction=self) from exc
+        changed_entries.extend(migration_names)
+
     def _registration_matches_journal(
         self,
         journal: _RegistrationJournal,
@@ -2660,14 +2829,20 @@ class WindowsApplicationRegistrationTransaction:
             raise WindowsRegistrationError("registration_target_changed", transaction=self)
         completed_mutations = list(self._mutations)
         completed_before = dict(journal.registry_before)
+        legacy_adoption = journal.legacy_adoption
         self._mutations.clear()
         journal.registry_before.clear()
         try:
+            if legacy_adoption:
+                journal.legacy_adoption = False
             self._persist_journal("installed", self._owned_names())
         except BaseException:
+            journal.legacy_adoption = legacy_adoption
             self._mutations = completed_mutations
             journal.registry_before = completed_before
             raise
+        if legacy_adoption:
+            self._legacy_adoption_active = False
 
     def _migrate_installed_journal(self, journal: _RegistrationJournal) -> None:
         desired_registry = {
@@ -2759,21 +2934,35 @@ class WindowsApplicationRegistrationTransaction:
 
         pending = tuple(dict.fromkeys(mutation.name for mutation in self._mutations))
         if not self._mutations and not errors:
-            old_desired = dict(journal.desired_registry)
-            for name in self._migration_registry_names():
-                before = journal.registry_before.get(name)
-                if before is None or not before.present or before.value_type is None:
-                    errors.append("registration_journal_invalid")
-                    break
-                old_desired[name] = (before.value_type, before.data)
-            if not errors:
-                journal.desired_registry = old_desired
-                journal.registry_before.clear()
+            if self._legacy_adoption_active or journal.legacy_adoption:
                 try:
-                    self._persist_journal("installed", self._owned_names())
+                    self._clear_journal()
+                    self._legacy_adoption_active = False
                 except BaseException as exc:
                     errors.append(_safe_error_code(exc))
-        complete = not self._mutations and not errors and journal.phase == "installed"
+            else:
+                old_desired = dict(journal.desired_registry)
+                for name in self._migration_registry_names():
+                    before = journal.registry_before.get(name)
+                    if before is None or not before.present or before.value_type is None:
+                        errors.append("registration_journal_invalid")
+                        break
+                    old_desired[name] = (before.value_type, before.data)
+                if not errors:
+                    journal.desired_registry = old_desired
+                    journal.registry_before.clear()
+                    try:
+                        self._persist_journal("installed", self._owned_names())
+                    except BaseException as exc:
+                        errors.append(_safe_error_code(exc))
+        complete = (
+            not self._mutations
+            and not errors
+            and (
+                self._journal is None
+                or (not self._legacy_adoption_active and journal.phase == "installed")
+            )
+        )
         return WindowsRegistrationRestoreStatus(
             complete,
             not complete,
@@ -3118,6 +3307,10 @@ class WindowsApplicationRegistrationTransaction:
         changed_entries: list[RegistrationName] = []
         try:
             self._assert_snapshot_unchanged(selected)
+            if self._legacy_registration_matches(selected):
+                self._adopt_legacy_registration(selected, changed_entries)
+                self._applied = True
+                return WindowsRegistrationApplyResult(selected, tuple(changed_entries))
             self._assert_fresh_registration_surface(selected)
             self._prepare_journal(selected)
             by_name = {shortcut.name: shortcut for shortcut in selected.shortcuts}

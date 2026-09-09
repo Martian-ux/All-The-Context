@@ -1415,6 +1415,91 @@ def test_matching_preexisting_shortcuts_are_not_overwritten_without_proof(
     assert all(path.exists() for path, _arguments, _description in shortcut_specs)
 
 
+def test_journalless_beta6_registration_is_adopted_as_one_metadata_migration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    registry = _FakeRegistry()
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: None)
+    monkeypatch.setattr(application_install, "__version__", "0.1.0-beta.6")
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+    old_values = copy.deepcopy(registry.keys[application_install.WINDOWS_UNINSTALL_KEY])
+    transaction._journal_path.unlink()
+
+    new_identity = make_build_identity(
+        version="0.1.0-beta.7",
+        source_commit="b" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: new_identity)
+    migrated, _, _, _, _ = _make_transaction(monkeypatch, tmp_path, registry=registry)
+
+    result = application_install.install_application_entrypoints(executable)
+
+    assert result is not None
+    expected = {name: (value_type, data) for name, value_type, data in migrated._desired_registry()}
+    assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY] == expected
+    journal = migrated._load_journal()
+    assert journal is not None and journal.phase == "installed"
+    assert journal.legacy_adoption is False
+    assert all(
+        not value.present
+        for value in migrated._registry_values_by_name(journal.snapshot).values()
+        if value.name in migrated._BUILD_IDENTITY_REGISTRY_NAMES
+    )
+    assert old_values["DisplayVersion"] == (registry.REG_SZ, "0.1.0-beta.6")
+
+
+@pytest.mark.parametrize(
+    "failure_name",
+    (
+        "DisplayVersion",
+        "ATCReleaseChannel",
+        "ATCSourceCommit",
+        "ATCBuildIdentity",
+        "ATCBuildIdentitySha256",
+    ),
+)
+def test_journalless_beta6_adoption_compensates_each_metadata_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure_name: str
+) -> None:
+    _patch_shortcut_writer(monkeypatch)
+    registry = _FakeRegistry()
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: None)
+    monkeypatch.setattr(application_install, "__version__", "0.1.0-beta.6")
+    transaction, executable, start_menu, desktop, registry = _make_transaction(
+        monkeypatch, tmp_path, registry=registry
+    )
+    monkeypatch.setattr(application_install, "_windows_locations", lambda: (start_menu, desktop))
+    monkeypatch.setattr(application_install, "windows_registry", lambda: registry)
+    application_install.install_application_entrypoints(executable)
+    old_values = copy.deepcopy(registry.keys[application_install.WINDOWS_UNINSTALL_KEY])
+    transaction._journal_path.unlink()
+
+    new_identity = make_build_identity(
+        version="0.1.0-beta.7",
+        source_commit="c" * 40,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    monkeypatch.setattr(application_install, "runtime_build_identity", lambda **_: new_identity)
+    _migrated, _, _, _, _ = _make_transaction(monkeypatch, tmp_path, registry=registry)
+    registry.fail_after = failure_name
+
+    with pytest.raises(application_install.WindowsRegistrationError) as raised:
+        application_install.install_application_entrypoints(executable)
+
+    assert raised.value.code == "registration_value_write_failed"
+    assert registry.keys[application_install.WINDOWS_UNINSTALL_KEY] == old_values
+    assert not transaction._journal_path.exists()
+
+
 def test_version_transition_migrates_installed_registration_without_preimage_restore(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2286,6 +2371,36 @@ def test_registry_adapter_mutations_are_bound_to_requested_path() -> None:
     )
     assert adapter.delete_value_if_unchanged(key_name, updated)
     assert registry.keys[key_name] == {}
+
+
+def test_stock_registry_adapter_transacts_existing_value_compare_set_and_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stock = _StockWinreg()
+    native = _FakeAdvapi(stock)
+    original_windows_dll = platform_compat.windows_dll
+    monkeypatch.setattr(
+        platform_compat,
+        "windows_dll",
+        lambda name: (
+            native if name in {"advapi32", "ntdll", "ktmw32"} else original_windows_dll(name)
+        ),
+    )
+    adapter = platform_compat.WindowsRegistryAdapter(stock)
+    key_name = application_install.WINDOWS_UNINSTALL_KEY
+    stock.keys[key_name] = {"DisplayVersion": (stock.REG_SZ, "0.1.0-beta.6")}
+
+    absent = application_install.WindowsRegistryValueSnapshot("ATCReleaseChannel", False, None)
+    assert adapter.atomic_mutations_available is False
+    assert adapter.atomic_value_mutations_available is True
+    assert adapter.set_value_if_unchanged(key_name, absent, stock.REG_SZ, "beta")
+    assert stock.keys[key_name]["ATCReleaseChannel"] == (stock.REG_SZ, "beta")
+
+    current = application_install.WindowsRegistryValueSnapshot(
+        "ATCReleaseChannel", True, stock.REG_SZ, "beta"
+    )
+    assert adapter.delete_value_if_unchanged(key_name, current)
+    assert "ATCReleaseChannel" not in stock.keys[key_name]
 
 
 def test_registry_adapter_fails_closed_without_native_compare_primitives() -> None:

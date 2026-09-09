@@ -35,6 +35,20 @@ become release evidence; exact-artifact and publication claims remain separate.
 The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
 documentation, hosted, artifact, and applicable platform/release gates.
 
+### 2026-09-08 — bounded beta.6-to-beta.7 registration adoption repair
+
+The diagnosed packaged failure was a real source defect: beta.7 rejected the
+supported journal-less beta.6 registration before it could begin metadata
+migration. The repair adopts only the complete fixed-path beta.6 surface,
+records an authenticated `migrating` journal before changing metadata, and
+updates exactly `DisplayVersion` plus the four build-identity values. Stock
+Windows registry value compare/set/delete now uses a bounded KTM transaction
+for existing keys while retaining the prior native handle ownership and full-key
+capability boundary. Focused tests cover adoption, every metadata-write
+compensation point, and the stock adapter path. The exact-source native
+cross-version proof, independent review, and downstream release gates remain
+controller-owned and pending.
+
 ### 2026-09-08 — packaged registration repair (source-level)
 
 The exact diagnosis inputs identify candidate
