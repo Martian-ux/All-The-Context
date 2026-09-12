@@ -58,7 +58,7 @@ def _stub_setup(
     monkeypatch.setattr(
         desktop,
         "prepare_installed_runtime",
-        lambda supplied_runtime, *, relaunch_args: (supplied_runtime, False),
+        lambda supplied_runtime, *, relaunch_args, progress: (supplied_runtime, False),
     )
     monkeypatch.setattr(desktop, "SetupOptions", FakeSetupOptions)
 
@@ -251,7 +251,7 @@ def test_headless_setup_failure_redacts_workspace_root_and_exception_text(
     monkeypatch.setattr(
         desktop,
         "prepare_installed_runtime",
-        lambda supplied_runtime, *, relaunch_args: (supplied_runtime, False),
+        lambda supplied_runtime, *, relaunch_args, progress: (supplied_runtime, False),
     )
     monkeypatch.setattr(desktop, "SetupOptions", FakeSetupOptions)
 

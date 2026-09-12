@@ -127,8 +127,10 @@ def _validate_shape(payload: Mapping[str, Any]) -> None:
     }
     if set(payload) != required:
         _failure("installed-component manifest fields or schema are invalid")
-    if payload["schema_version"] != MANIFEST_SCHEMA_VERSION or isinstance(
-        payload["schema_version"], bool
+    if (
+        isinstance(payload["schema_version"], bool)
+        or not isinstance(payload["schema_version"], int)
+        or payload["schema_version"] != MANIFEST_SCHEMA_VERSION
     ):
         _failure("installed-component manifest fields or schema are invalid")
     if payload["manifest_type"] != MANIFEST_TYPE:
@@ -233,6 +235,7 @@ def validate_manifest_bytes(
     expected_version: str,
     expected_package_sha256: str,
     expected_package_size: int,
+    expected_source_commit: str | None = None,
 ) -> dict[str, Any]:
     """Validate metadata copied from the signed Windows release archive."""
 
@@ -244,6 +247,8 @@ def validate_manifest_bytes(
     _validate_shape(payload)
     if payload["version"] != expected_version:
         _failure("installed-component manifest version does not match the update")
+    if expected_source_commit is not None and payload["source_commit"] != expected_source_commit:
+        _failure("installed-component manifest source commit does not match the update")
     package = cast(dict[str, Any], payload["package"])
     if package["sha256"] != expected_package_sha256 or package["size"] != expected_package_size:
         _failure("archive package does not match the installed-component manifest")

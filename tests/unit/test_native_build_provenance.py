@@ -120,6 +120,7 @@ def test_missing_component_and_duplicate_input_fail_closed(tmp_path: Path) -> No
         lambda payload: payload["components"].reverse(),
         lambda payload: payload["components"][0].update(build_filename="C:\\leak.exe"),
         lambda payload: payload["builds"][0]["components"][0].update(size=True),
+        lambda payload: payload.update(schema_version=1.0),
     ],
 )
 def test_unbound_metadata_order_and_path_mutations_are_rejected(mutate) -> None:

@@ -20,6 +20,7 @@ from allthecontext.release_manifest import (
     public_key_fingerprint,
     public_key_value,
     read_private_key_bytes,
+    validate_keyring,
     verify_manifest,
 )
 from cryptography.hazmat.primitives import serialization
@@ -76,6 +77,21 @@ def test_manifest_is_deterministic_and_verifies(tmp_path: Path) -> None:
     repeated, _ = _release(tmp_path)
     assert json.dumps(manifest, sort_keys=True) == json.dumps(repeated, sort_keys=True)
     verify_manifest(manifest, keyring, current_version="0.1.0", expected_channel="stable")
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_manifest_schema_version_must_be_an_integer(tmp_path: Path, schema_version: object) -> None:
+    manifest, _ = _release(tmp_path)
+    manifest["schema_version"] = schema_version
+
+    with pytest.raises(ManifestError, match="schema version"):
+        verify_manifest(manifest, {})
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_keyring_schema_version_must_be_an_integer(schema_version: object) -> None:
+    with pytest.raises(ManifestError, match="keyring schema"):
+        validate_keyring({"schema_version": schema_version, "keys": []})
 
 
 def test_release_version_parser_accepts_conservative_boundaries() -> None:

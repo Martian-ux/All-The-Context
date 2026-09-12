@@ -476,6 +476,7 @@ def run_supporting_checks(
                 release,
                 platform_name="macos",
                 architecture=architecture,
+                source_commit=source_commit_value,
             ),
         )
         phases.append(package_observation)

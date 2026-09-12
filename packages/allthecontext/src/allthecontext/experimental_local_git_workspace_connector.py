@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import os
 import re
 import stat
 import unicodedata
@@ -1077,7 +1078,10 @@ _MISSING_STATE = object()
 
 
 def _root_token(root: Path) -> str:
-    return hashlib.sha256(root.as_posix().encode("utf-8")).digest()[:8].hex()
+    root_text = root.as_posix()
+    if os.name == "nt":
+        root_text = root_text.casefold()
+    return hashlib.sha256(root_text.encode("utf-8")).digest()[:8].hex()
 
 
 def _root_set_token(root_tokens: Iterable[str]) -> str:

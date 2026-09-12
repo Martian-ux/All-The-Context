@@ -16,6 +16,7 @@ adapter logic.
 from __future__ import annotations
 
 import os
+import sqlite3
 import threading
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -26,12 +27,14 @@ from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, Literal
 
+from .activity import CoreActivityGate, CoreActivityGateClosingError
 from .capture import (
     CaptureCapabilityManifest,
     CaptureCoordinator,
     CaptureError,
     CaptureRunResult,
     CaptureSource,
+    capture_executable_capability_error,
 )
 from .capture_runtime import (
     read_scheduler_durable_state,
@@ -46,11 +49,22 @@ type CaptureRunner = Callable[[str], CaptureRunResult]
 type ResourceCost = Callable[[CaptureSource], int]
 ScheduleKind = Literal["initial_backfill", "incremental", "retry"]
 HealthState = Literal["healthy", "degraded", "unavailable"]
+WorkerState = Literal["not_started", "starting", "running", "stopped", "failed"]
 CAPTURE_SCHEDULER_ENABLED_ENV = "ATC_CAPTURE_SCHEDULER_ENABLED"
 UPDATE_HEALTH_OPERATION_ENV = "ATC_UPDATE_HEALTH_OPERATION"
+RUNTIME_READINESS_ERROR_CODE = "runtime_readiness_unavailable"
 _CORE_SCHEDULER_JOIN_TIMEOUT_SECONDS = 8.0
 _CORE_SCHEDULER_JOIN_POLL_SECONDS = 0.05
 _CORE_SCHEDULER_THREAD_NAME = "atc-capture-scheduler"
+
+
+def _is_transient_sqlite_contention(error: sqlite3.OperationalError) -> bool:
+    """Recognize SQLite lock arbitration without hiding other storage faults."""
+
+    code = getattr(error, "sqlite_errorcode", None)
+    if not isinstance(code, int):
+        return False
+    return (code & 0xFF) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
 
 
 def _merge_health(left: HealthState, right: HealthState) -> HealthState:
@@ -294,10 +308,7 @@ class CaptureScheduler:
     @staticmethod
     def _manifest_allows_scheduling(manifest: CaptureCapabilityManifest) -> bool:
         return (
-            manifest.availability != "unavailable"
-            and manifest.health != "unavailable"
-            and manifest.authorization
-            not in {"reauthorization_required", "unauthorized", "unknown"}
+            capture_executable_capability_error(manifest) is None
             and manifest.connection == "connected"
         )
 
@@ -480,6 +491,15 @@ class CaptureScheduler:
                     reasons.add("capture_capability_invalid")
                     state = _merge_health(state, "unavailable")
                     continue
+                capability_error = capture_executable_capability_error(manifest)
+                if capability_error is not None:
+                    reasons.add(capability_error)
+                    state = _merge_health(
+                        state,
+                        "unavailable"
+                        if capability_error == "capture_adapter_unavailable"
+                        else "degraded",
+                    )
                 if manifest.authorization == "reauthorization_required":
                     reauth_source_ids.append(source.id)
                     reasons.add("capture_reauthorization_required")
@@ -686,6 +706,7 @@ class CoreCaptureScheduler:
         scheduler_config: SchedulerConfig | None = None,
         clock: SchedulerClock | None = None,
         join_timeout_seconds: float = _CORE_SCHEDULER_JOIN_TIMEOUT_SECONDS,
+        activity_gate: CoreActivityGate | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.config = config
@@ -704,6 +725,7 @@ class CoreCaptureScheduler:
             ),
             clock=clock or coordinator.clock,
         )
+        self.activity_gate = activity_gate or CoreActivityGate()
         self._join_timeout_seconds = float(join_timeout_seconds)
         self._control_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
@@ -712,6 +734,15 @@ class CoreCaptureScheduler:
         self._wakeup = threading.Event()
         self._closing = threading.Event()
         self._thread: threading.Thread | None = None
+        self._worker_state: WorkerState = "not_started"
+        self._worker_failure_code: str | None = None
+        self._worker_generation = 0
+        self._worker_failure_generation: int | None = None
+        self._worker_restart_count = 0
+        self._last_cycle_reason_code: str | None = None
+        self._adapter_refresh_state: Literal["not_attempted", "available", "unavailable"] = (
+            "not_attempted"
+        )
 
     def dispatch_allowed(self) -> bool:
         if scheduler_update_health_forced_off() or not scheduler_process_gate_open():
@@ -722,19 +753,274 @@ class CoreCaptureScheduler:
     def status(self) -> dict[str, Any]:
         """Content-free scheduler status that does not mutate scheduling state."""
 
+        running = False
+        worker_state: WorkerState = "not_started"
+        worker_failure_code: str | None = None
+        worker_generation = 0
+        worker_failure_generation: int | None = None
+        worker_restart_count = 0
+        last_cycle_reason_code: str | None = None
+        adapter_refresh_state: Literal["not_attempted", "available", "unavailable"] = (
+            "not_attempted"
+        )
+        try:
+            with self._lifecycle_lock:
+                thread = self._thread
+                running = thread is not None and thread.is_alive()
+                worker_state = self._worker_state
+                worker_failure_code = self._worker_failure_code
+                worker_generation = self._worker_generation
+                worker_failure_generation = self._worker_failure_generation
+                worker_restart_count = self._worker_restart_count
+                last_cycle_reason_code = self._last_cycle_reason_code
+                adapter_refresh_state = self._adapter_refresh_state
+                closing = self._closing.is_set()
+            payload = capture_scheduler_status_payload(
+                self.config.data_dir,
+                running=running,
+            )
+            payload.update(
+                {
+                    "adapter_refresh_state": adapter_refresh_state,
+                    "last_cycle_reason_code": last_cycle_reason_code,
+                    "worker_failure_code": worker_failure_code,
+                    "worker_failure_generation": worker_failure_generation,
+                    "worker_generation": worker_generation,
+                    "worker_restart_count": worker_restart_count,
+                    "worker_restartable": (
+                        not closing
+                        and not running
+                        and worker_state in {"not_started", "stopped", "failed"}
+                        and bool(payload["dispatch_allowed"])
+                    ),
+                    "worker_state": worker_state,
+                }
+            )
+            return payload
+        except Exception:
+            return self._status_failure_payload(
+                running=running,
+                worker_state=worker_state,
+                worker_failure_code=worker_failure_code,
+                worker_generation=worker_generation,
+                worker_failure_generation=worker_failure_generation,
+                worker_restart_count=worker_restart_count,
+                last_cycle_reason_code=last_cycle_reason_code or RUNTIME_READINESS_ERROR_CODE,
+                adapter_refresh_state=adapter_refresh_state,
+            )
+
+    @staticmethod
+    def _status_failure_payload(
+        *,
+        running: bool,
+        worker_state: WorkerState,
+        worker_failure_code: str | None,
+        worker_generation: int,
+        worker_failure_generation: int | None,
+        worker_restart_count: int,
+        last_cycle_reason_code: str | None,
+        adapter_refresh_state: Literal["not_attempted", "available", "unavailable"],
+    ) -> dict[str, Any]:
+        """Return a fixed, content-free status when a status read itself fails."""
+
+        return {
+            "adapter_refresh_state": adapter_refresh_state,
+            "config_valid": False,
+            "dispatch_allowed": False,
+            "durable_enabled": False,
+            "enabled": False,
+            "last_cycle_reason_code": last_cycle_reason_code,
+            "max_workers": 1,
+            "process_gate": False,
+            "reason_code": RUNTIME_READINESS_ERROR_CODE,
+            "running": running,
+            "update_health_forced_off": False,
+            "worker_failure_code": worker_failure_code,
+            "worker_failure_generation": worker_failure_generation,
+            "worker_generation": worker_generation,
+            "worker_restart_count": worker_restart_count,
+            "worker_restartable": False,
+            "worker_state": worker_state,
+        }
+
+    @staticmethod
+    def _content_free_error_code(error: BaseException) -> str:
+        if isinstance(error, CaptureError):
+            return error.code
+        if isinstance(error, (OSError, sqlite3.OperationalError)):
+            return "capture_failed"
+        return "worker_failed"
+
+    def _record_cycle_reason(self, reason_code: str | None) -> None:
+        with self._lifecycle_lock:
+            self._last_cycle_reason_code = reason_code
+
+    def _record_worker_failure(
+        self,
+        error: BaseException,
+        *,
+        generation: int | None = None,
+        current: threading.Thread | None = None,
+    ) -> None:
+        current = current or threading.current_thread()
+        with self._lifecycle_lock:
+            self._record_worker_failure_locked(
+                error,
+                generation=self._worker_generation if generation is None else generation,
+                current=current,
+            )
+
+    def _record_worker_failure_locked(
+        self,
+        error: BaseException,
+        *,
+        generation: int,
+        current: threading.Thread | None,
+    ) -> None:
+        """Record failure only for the still-current worker lifecycle."""
+
+        if generation != self._worker_generation:
+            return
+        if current is not None and self._thread is not current:
+            return
+        self._worker_state = "failed"
+        self._worker_failure_code = self._content_free_error_code(error)
+        self._worker_failure_generation = generation
+
+    def readiness(self) -> dict[str, Any]:
+        """Return content-free scheduler and capture readiness diagnostics."""
+
+        try:
+            scheduler = self.status()
+        except Exception:
+            scheduler = self._status_failure_payload(
+                running=False,
+                worker_state="failed",
+                worker_failure_code=None,
+                worker_generation=0,
+                worker_failure_generation=None,
+                worker_restart_count=0,
+                last_cycle_reason_code=RUNTIME_READINESS_ERROR_CODE,
+                adapter_refresh_state="not_attempted",
+            )
+        try:
+            batch = self._scheduler._sources(full_scan=True)
+            health = self._scheduler._health_from_sources(
+                batch.sources,
+                source_total=batch.total,
+                truncated=batch.truncated,
+                emit_actions=False,
+            )
+            sources: list[dict[str, Any]] = []
+            for source in batch.sources:
+                adapter_available = False
+                retry_exhausted = False
+                reason_code = source.last_error_code
+                try:
+                    manifest = self.coordinator.capability_manifest(source.id)
+                    capability_error = capture_executable_capability_error(manifest)
+                    adapter_available = capability_error is None
+                    if capability_error is not None:
+                        reason_code = capability_error
+                    retry_exhausted = source.retry_count >= manifest.retry_policy.max_attempts
+                except CaptureError:
+                    reason_code = reason_code or "capture_capability_invalid"
+                if (
+                    reason_code is None
+                    and not adapter_available
+                    and source.lifecycle_state
+                    in {
+                        "enabled",
+                        "degraded",
+                        "reconciling",
+                    }
+                ):
+                    reason_code = "capture_adapter_unavailable"
+                if retry_exhausted:
+                    reason_code = reason_code or "capture_retry_exhausted"
+                sources.append(
+                    {
+                        "adapter_available": adapter_available,
+                        "id": source.id,
+                        "last_error_code": source.last_error_code,
+                        "lifecycle_state": source.lifecycle_state,
+                        "provider": source.provider,
+                        "reason_code": reason_code,
+                        "retry_count": source.retry_count,
+                        "retry_exhausted": retry_exhausted,
+                        "retry_reason_code": (
+                            "capture_retry_exhausted" if retry_exhausted else None
+                        ),
+                        "retry_scheduled": source.next_retry_at is not None,
+                    }
+                )
+            reason_codes = {
+                reason for connector in health.connectors for reason in connector.reason_codes
+            }
+            reason_codes.update(health.reason_codes)
+            reason_codes.update(
+                source["retry_reason_code"]
+                for source in sources
+                if source["retry_reason_code"] is not None
+            )
+            capture = {
+                "inspected_source_count": health.inspected_source_count,
+                "reason_codes": sorted(reason_codes),
+                "source_total": health.source_total,
+                "sources": sources,
+                "state": health.state,
+                "truncated": health.truncated,
+            }
+        except CaptureError as error:
+            capture = {
+                "inspected_source_count": 0,
+                "reason_codes": [error.code],
+                "source_total": None,
+                "sources": [],
+                "state": "unavailable",
+                "truncated": False,
+            }
+        except (OSError, sqlite3.OperationalError):
+            capture = {
+                "inspected_source_count": 0,
+                "reason_codes": ["capture_failed"],
+                "source_total": None,
+                "sources": [],
+                "state": "unavailable",
+                "truncated": False,
+            }
+        except Exception:
+            capture = {
+                "inspected_source_count": 0,
+                "reason_codes": [RUNTIME_READINESS_ERROR_CODE],
+                "source_total": None,
+                "sources": [],
+                "state": "unavailable",
+                "truncated": False,
+            }
+        return {"capture": capture, "scheduler": scheduler}
+
+    def activity_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free scheduler and capture activity."""
+
         with self._lifecycle_lock:
             thread = self._thread
-            running = thread is not None and thread.is_alive()
-        return capture_scheduler_status_payload(
-            self.config.data_dir,
-            running=running,
+            worker_active = thread is not None and thread.is_alive()
+        activity = self.coordinator.activity_snapshot()
+        activity.update(
+            {
+                "scheduled_worker_active": worker_active,
+                "scheduled_cycle_active": self._cycle_lock.locked(),
+            }
         )
+        return activity
 
     def enable(self) -> dict[str, Any]:
-        with self._control_lock:
-            write_scheduler_enabled(self.config.data_dir, enabled=True)
-            self._start_unlocked()
-        return self.status()
+        with self.activity_gate.activity():
+            with self._control_lock:
+                write_scheduler_enabled(self.config.data_dir, enabled=True)
+                self._start_unlocked()
+            return self.status()
 
     def disable(self) -> dict[str, Any]:
         with self._control_lock:
@@ -746,7 +1032,7 @@ class CoreCaptureScheduler:
     def start(self) -> None:
         """Start the non-daemon loop after Core is ready. Idempotent."""
 
-        with self._control_lock:
+        with self.activity_gate.activity(), self._control_lock:
             self._start_unlocked()
 
     def stop(self) -> None:
@@ -771,27 +1057,71 @@ class CoreCaptureScheduler:
         self._clear_dead_thread()
 
     def _start_unlocked(self) -> None:
-        if scheduler_update_health_forced_off() or not self.dispatch_allowed():
-            return
         spawned: threading.Thread | None = None
+        generation = 0
         with self._lifecycle_lock:
             if self._closing.is_set():
                 return
             thread = self._thread
             if thread is not None and thread.is_alive():
-                self._stop.clear()
-                self._wakeup.set()
+                if self._worker_state != "failed":
+                    self._stop.clear()
+                    self._wakeup.set()
+                return
+            try:
+                if scheduler_update_health_forced_off() or not self.dispatch_allowed():
+                    return
+            except BaseException as error:
+                self._worker_generation += 1
+                generation = self._worker_generation
+                self._worker_state = "failed"
+                self._worker_restart_count += 1
+                self._record_worker_failure_locked(
+                    error,
+                    generation=generation,
+                    current=None,
+                )
                 return
             self._stop.clear()
             self._wakeup.clear()
+            self._worker_generation += 1
+            generation = self._worker_generation
+            self._worker_state = "starting"
+            self._worker_restart_count += 1
             spawned = threading.Thread(
                 target=self._loop,
+                args=(generation,),
                 name=_CORE_SCHEDULER_THREAD_NAME,
                 daemon=False,
             )
             self._thread = spawned
-        if spawned is not None:
-            spawned.start()
+            try:
+                spawned.start()
+            except BaseException as error:
+                if self._thread is spawned:
+                    self._thread = None
+                    self._record_worker_failure_locked(
+                        error,
+                        generation=generation,
+                        current=None,
+                    )
+
+    def _mark_worker_running(self, generation: int, current: threading.Thread) -> bool:
+        """Publish a worker as running and clear only an older failure."""
+
+        with self._lifecycle_lock:
+            if generation != self._worker_generation or self._thread is not current:
+                return False
+            if self._closing.is_set() or self._stop.is_set():
+                self._worker_state = "stopped"
+                return False
+            self._worker_state = "running"
+            if self._worker_failure_code is not None and (
+                self._worker_failure_generation != generation
+            ):
+                self._worker_failure_code = None
+                self._worker_failure_generation = None
+            return True
 
     def _signal_stop_unlocked(self) -> threading.Thread | None:
         with self._lifecycle_lock:
@@ -828,13 +1158,30 @@ class CoreCaptureScheduler:
             if current is not None and not current.is_alive():
                 self._thread = None
 
-    def _try_exit(self, current: threading.Thread) -> bool:
+    def _finish_worker(self, generation: int, current: threading.Thread) -> None:
         with self._lifecycle_lock:
-            if not self._closing.is_set() and not self._stop.is_set():
-                return False
-            if self._thread is current:
-                self._thread = None
-            return True
+            if generation != self._worker_generation or self._thread is not current:
+                return
+            self._thread = None
+            if self._worker_state in {"starting", "running"}:
+                if self._stop.is_set() or self._closing.is_set():
+                    self._worker_state = "stopped"
+                else:
+                    self._worker_state = "failed"
+                    self._worker_failure_code = "worker_failed"
+                    self._worker_failure_generation = generation
+
+    def _record_cycle_report(self, report: SchedulerRunReport) -> None:
+        reason_codes = set(report.health.reason_codes)
+        reason_codes.update(
+            reason for connector in report.health.connectors for reason in connector.reason_codes
+        )
+        reason_code = sorted(reason_codes)[0] if reason_codes else None
+        self._record_cycle_reason(reason_code)
+
+    def _try_exit(self) -> bool:
+        with self._lifecycle_lock:
+            return self._closing.is_set() or self._stop.is_set()
 
     def _content_free_cycle_failure(self, error_code: str) -> SchedulerRunReport:
         allowed = self.dispatch_allowed()
@@ -848,46 +1195,81 @@ class CoreCaptureScheduler:
     def run_cycle(self) -> SchedulerRunReport:
         """Run one scheduled cycle without waiting. Fail closed per source."""
 
-        acquired = self._cycle_lock.acquire(blocking=False)
-        if not acquired:
-            return SchedulerRunReport(plan=SchedulePlan(enabled=self.dispatch_allowed()))
         try:
-            if not self.dispatch_allowed():
-                self._scheduler.disable()
-                return SchedulerRunReport(plan=SchedulePlan(enabled=False))
-            refresh_local_workspace_adapter(self.coordinator, self.config)
-            self._scheduler.enable()
-            return self._scheduler.run_once()
-        except CaptureError as error:
-            return self._content_free_cycle_failure(error.code)
-        except OSError:
-            return self._content_free_cycle_failure("capture_failed")
-        finally:
-            self._cycle_lock.release()
+            with self.activity_gate.activity():
+                if self._stop.is_set() or self._closing.is_set():
+                    return SchedulerRunReport(plan=SchedulePlan(enabled=False))
+                acquired = self._cycle_lock.acquire(blocking=False)
+                if not acquired:
+                    return SchedulerRunReport(plan=SchedulePlan(enabled=self.dispatch_allowed()))
+                try:
+                    if not self.dispatch_allowed():
+                        self._scheduler.disable()
+                        self._record_cycle_reason("dispatch_not_allowed")
+                        return SchedulerRunReport(plan=SchedulePlan(enabled=False))
+                    refreshed = refresh_local_workspace_adapter(self.coordinator, self.config)
+                    with self._lifecycle_lock:
+                        self._adapter_refresh_state = "available" if refreshed else "unavailable"
+                    self.coordinator.recover_available_adapters()
+                    self._scheduler.enable()
+                    report = self._scheduler.run_once()
+                    self._record_cycle_report(report)
+                    return report
+                except CaptureError as error:
+                    self._record_cycle_reason(error.code)
+                    return self._content_free_cycle_failure(error.code)
+                except sqlite3.OperationalError as error:
+                    if not _is_transient_sqlite_contention(error):
+                        raise
+                    self._record_cycle_reason("capture_failed")
+                    return self._content_free_cycle_failure("capture_failed")
+                except OSError:
+                    self._record_cycle_reason("capture_failed")
+                    return self._content_free_cycle_failure("capture_failed")
+                finally:
+                    self._cycle_lock.release()
+        except CoreActivityGateClosingError:
+            # The worker may pass dispatch_allowed() just before Core shutdown
+            # closes the shared gate. This is expected convergence, not a
+            # scheduler failure; the worker observes its own closing fence next.
+            return SchedulerRunReport(plan=SchedulePlan(enabled=False))
 
-    def _loop(self) -> None:
+    def _loop(self, generation: int) -> None:
         current = threading.current_thread()
         try:
+            if not self._mark_worker_running(generation, current):
+                return
             while True:
-                if self._try_exit(current):
+                if self._try_exit():
                     return
                 try:
                     if self.dispatch_allowed():
-                        self.run_cycle()
-                except (CaptureError, OSError):
-                    pass
-                if self._try_exit(current):
+                        self._record_cycle_report(self.run_cycle())
+                except sqlite3.OperationalError as error:
+                    if not _is_transient_sqlite_contention(error):
+                        self._record_worker_failure(error, generation=generation, current=current)
+                        return
+                    self._record_cycle_reason("capture_failed")
+                except (CaptureError, OSError) as error:
+                    self._record_cycle_reason(self._content_free_error_code(error))
+                except BaseException as error:
+                    self._record_worker_failure(error, generation=generation, current=current)
+                    return
+                if self._try_exit():
                     return
                 self._wakeup.wait(timeout=float(self._scheduler.config.poll_interval_seconds))
                 self._wakeup.clear()
+        except BaseException as error:
+            # Keep failures in the worker boundary even if lifecycle or wait
+            # plumbing itself raises outside the per-cycle containment block.
+            self._record_worker_failure(error, generation=generation, current=current)
         finally:
-            with self._lifecycle_lock:
-                if self._thread is current:
-                    self._thread = None
+            self._finish_worker(generation, current)
 
 
 __all__ = [
     "CAPTURE_SCHEDULER_ENABLED_ENV",
+    "RUNTIME_READINESS_ERROR_CODE",
     "UPDATE_HEALTH_OPERATION_ENV",
     "CaptureScheduler",
     "ConnectorHealth",

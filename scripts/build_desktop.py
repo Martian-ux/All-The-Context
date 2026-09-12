@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import plistlib
@@ -23,13 +24,34 @@ DIST_ROOT = ROOT / "dist" / "desktop"
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from allthecontext import __version__  # noqa: E402
+from allthecontext.build_identity import (  # noqa: E402
+    PRODUCT_NAME,
+    BuildIdentity,
+    BuildIdentityError,
+    make_build_identity,
+    normalized_architecture,
+    normalized_platform,
+)
+from allthecontext.release_manifest import ReleaseVersion  # noqa: E402
 
 
 def executable_name(name: str, system: str) -> str:
     return f"{name}.exe" if system == "Windows" else name
 
 
-def common_arguments(*, source_root: Path = SOURCE_ROOT) -> list[str]:
+def _identity_data_argument(identity_path: Path | None) -> list[str]:
+    if identity_path is None:
+        return []
+    return ["--add-data", f"{identity_path}{os.pathsep}allthecontext"]
+
+
+def _version_file_argument(version_file: Path | None) -> list[str]:
+    return ["--version-file", str(version_file)] if version_file is not None else []
+
+
+def common_arguments(
+    *, source_root: Path = SOURCE_ROOT, identity_path: Path | None = None
+) -> list[str]:
     return [
         "--noconfirm",
         "--clean",
@@ -45,6 +67,7 @@ def common_arguments(*, source_root: Path = SOURCE_ROOT) -> list[str]:
         "mcp",
         "--copy-metadata",
         "keyring",
+        *_identity_data_argument(identity_path),
     ]
 
 
@@ -53,10 +76,12 @@ def helper_arguments(
     *,
     source_root: Path = SOURCE_ROOT,
     build_root: Path = BUILD_ROOT,
+    identity_path: Path | None = None,
+    version_file: Path | None = None,
 ) -> list[str]:
     name = "AllTheContextMCP" if system == "Windows" else "all-the-context-mcp"
     return [
-        *common_arguments(source_root=source_root),
+        *common_arguments(source_root=source_root, identity_path=identity_path),
         "--onefile",
         "--console",
         "--name",
@@ -67,6 +92,7 @@ def helper_arguments(
         str(build_root / "helper-work"),
         "--specpath",
         str(build_root / "spec"),
+        *_version_file_argument(version_file),
         str(ROOT / "scripts" / "mcp_entry.py"),
     ]
 
@@ -76,12 +102,14 @@ def recovery_helper_arguments(
     *,
     source_root: Path = SOURCE_ROOT,
     build_root: Path = BUILD_ROOT,
+    identity_path: Path | None = None,
+    version_file: Path | None = None,
 ) -> list[str]:
     """Console recovery/admin helper for windowed Windows/macOS desktop builds."""
 
     name = "AllTheContextRecovery" if system == "Windows" else "all-the-context-recovery"
     return [
-        *common_arguments(source_root=source_root),
+        *common_arguments(source_root=source_root, identity_path=identity_path),
         "--onefile",
         "--console",
         "--name",
@@ -92,6 +120,7 @@ def recovery_helper_arguments(
         str(build_root / "recovery-helper-work"),
         "--specpath",
         str(build_root / "spec"),
+        *_version_file_argument(version_file),
         str(ROOT / "scripts" / "recovery_entry.py"),
     ]
 
@@ -101,14 +130,13 @@ def update_helper_arguments(
     *,
     source_root: Path = SOURCE_ROOT,
     build_root: Path = BUILD_ROOT,
+    identity_path: Path | None = None,
+    version_file: Path | None = None,
 ) -> list[str]:
     name = "AllTheContextUpdater" if system == "Windows" else "all-the-context-updater"
     subsystem = ["--windowed"] if system == "Windows" else ["--console"]
     return [
-        "--noconfirm",
-        "--clean",
-        "--paths",
-        str(source_root),
+        *common_arguments(source_root=source_root, identity_path=identity_path),
         "--onefile",
         *subsystem,
         "--name",
@@ -119,6 +147,7 @@ def update_helper_arguments(
         str(build_root / "update-helper-work"),
         "--specpath",
         str(build_root / "spec"),
+        *_version_file_argument(version_file),
         str(ROOT / "scripts" / "update_helper_entry.py"),
     ]
 
@@ -132,6 +161,8 @@ def desktop_arguments(
     source_root: Path = SOURCE_ROOT,
     build_root: Path = BUILD_ROOT,
     dist_root: Path = DIST_ROOT,
+    identity_path: Path | None = None,
+    version_file: Path | None = None,
 ) -> list[str]:
     name = {
         "Windows": "AllTheContextSetup",
@@ -148,7 +179,7 @@ def desktop_arguments(
         ["--add-binary", f"{recovery_helper}{os.pathsep}."] if recovery_helper else []
     )
     return [
-        *common_arguments(source_root=source_root),
+        *common_arguments(source_root=source_root, identity_path=identity_path),
         bundle_mode,
         *subsystem,
         *bundle_identity,
@@ -163,6 +194,7 @@ def desktop_arguments(
         str(build_root / "app-work"),
         "--specpath",
         str(build_root / "spec"),
+        *_version_file_argument(version_file),
         str(ROOT / "scripts" / "desktop_entry.py"),
     ]
 
@@ -178,7 +210,9 @@ def macos_bundle_version(version: str) -> str:
     return match.group("base")
 
 
-def finalize_macos_bundle(bundle: Path, *, version: str) -> None:
+def finalize_macos_bundle(
+    bundle: Path, *, version: str, build_identity: BuildIdentity | None = None
+) -> None:
     """Add explicit user-facing identity to the unsigned community app bundle."""
 
     info_path = bundle / "Contents" / "Info.plist"
@@ -197,6 +231,13 @@ def finalize_macos_bundle(bundle: Path, *, version: str) -> None:
             "CFBundleVersion": macos_bundle_version(version),
         }
     )
+    if build_identity is not None:
+        payload.update(
+            {
+                "ATCBuildIdentity": build_identity.as_dict(),
+                "ATCBuildIdentitySha256": build_identity.sha256,
+            }
+        )
     temporary = info_path.with_name(f"{info_path.name}.atc-new")
     try:
         with temporary.open("wb") as stream:
@@ -249,12 +290,65 @@ def component_paths(
     }
 
 
+def _write_build_identity(
+    *, build_root: Path, version: str, source_commit: str, system: str, architecture: str
+) -> tuple[Path, BuildIdentity]:
+    try:
+        platform_name = normalized_platform(system)
+        identity = make_build_identity(
+            version=version,
+            source_commit=source_commit,
+            platform_name=platform_name,
+            architecture=architecture,
+        )
+    except BuildIdentityError as exc:
+        raise RuntimeError(f"native build identity is invalid: {exc}") from exc
+    path = build_root / "identity" / "build-identity-v1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rendered = json.dumps(identity.as_dict(), sort_keys=True, separators=(",", ":")) + "\n"
+    if path.exists() and path.read_text(encoding="utf-8") != rendered:
+        raise RuntimeError("refusing to replace a conflicting native build identity")
+    path.write_text(rendered, encoding="utf-8", newline="\n")
+    return path, identity
+
+
+def _windows_version_file(*, build_root: Path, identity: BuildIdentity, component: str) -> Path:
+    parsed = ReleaseVersion.parse(identity.version)
+    version_tuple = (parsed.major, parsed.minor, parsed.patch, parsed.prerelease)
+    digest = identity.sha256
+    content = f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers={version_tuple}, prodvers={version_tuple}, mask=0x3f,
+                   flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[StringFileInfo([StringTable('040904B0', [
+    StringStruct('CompanyName', '{PRODUCT_NAME}'),
+    StringStruct('FileDescription', '{PRODUCT_NAME} {component} ({identity.channel})'),
+    StringStruct('FileVersion', '{identity.version}'),
+    StringStruct('InternalName', '{component}'),
+    StringStruct('OriginalFilename', '{component}.exe'),
+    StringStruct('ProductName', '{PRODUCT_NAME}'),
+    StringStruct('ProductVersion', '{identity.version}'),
+    StringStruct('PrivateBuild', '{identity.source_commit}'),
+    StringStruct('SpecialBuild', '{identity.channel}'),
+    StringStruct('Comments', 'ATC build identity sha256:{digest}'),
+  ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
+)
+"""
+    path = build_root / "identity" / f"{component}-version.txt"
+    if path.exists() and path.read_text(encoding="utf-8") != content:
+        raise RuntimeError("refusing to replace a conflicting Windows version resource")
+    path.write_text(content, encoding="utf-8", newline="\n")
+    return path
+
+
 def build(
     *,
     system: str | None = None,
     source_root: Path = SOURCE_ROOT,
     build_root: Path = BUILD_ROOT,
     dist_root: Path = DIST_ROOT,
+    version: str = __version__,
+    source_commit: str | None = None,
+    architecture: str | None = None,
 ) -> Path:
     try:
         import PyInstaller.__main__
@@ -264,9 +358,29 @@ def build(
         ) from exc
 
     active_system = system or platform.system()
+    if version != __version__:
+        raise RuntimeError("native build version does not match the checked-out runtime")
+    if source_commit is None:
+        completed = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        source_commit = completed.stdout.strip()
+    if source_commit is None or not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        raise RuntimeError("native build source commit must be a full lowercase SHA")
+    active_architecture = architecture or normalized_architecture(platform.machine())
     source_root = source_root.resolve(strict=True)
     build_root = build_root.expanduser().resolve()
     dist_root = dist_root.expanduser().resolve()
+    identity_path, identity = _write_build_identity(
+        build_root=build_root,
+        version=version,
+        source_commit=source_commit,
+        system=active_system,
+        architecture=active_architecture,
+    )
     (build_root / "spec").mkdir(parents=True, exist_ok=True)
     dist_root.mkdir(parents=True, exist_ok=True)
     helper: Path | None = None
@@ -276,7 +390,19 @@ def build(
         helper_stem = "AllTheContextMCP" if active_system == "Windows" else "all-the-context-mcp"
         helper = build_root / "helper-dist" / executable_name(helper_stem, active_system)
         PyInstaller.__main__.run(
-            helper_arguments(active_system, source_root=source_root, build_root=build_root)
+            helper_arguments(
+                active_system,
+                source_root=source_root,
+                build_root=build_root,
+                identity_path=identity_path,
+                version_file=(
+                    _windows_version_file(
+                        build_root=build_root, identity=identity, component="AllTheContextMCP"
+                    )
+                    if active_system == "Windows"
+                    else None
+                ),
+            )
         )
         if not helper.is_file():
             raise RuntimeError(f"MCP helper was not produced at {helper}")
@@ -287,14 +413,36 @@ def build(
             build_root / "recovery-helper-dist" / executable_name(recovery_stem, active_system)
         )
         PyInstaller.__main__.run(
-            recovery_helper_arguments(active_system, source_root=source_root, build_root=build_root)
+            recovery_helper_arguments(
+                active_system,
+                source_root=source_root,
+                build_root=build_root,
+                identity_path=identity_path,
+                version_file=(
+                    _windows_version_file(
+                        build_root=build_root,
+                        identity=identity,
+                        component="AllTheContextRecovery",
+                    )
+                    if active_system == "Windows"
+                    else None
+                ),
+            )
         )
         if not recovery_helper.is_file():
             raise RuntimeError(f"Recovery helper was not produced at {recovery_helper}")
     if active_system == "Windows":
         update_helper = build_root / "update-helper-dist" / "AllTheContextUpdater.exe"
         PyInstaller.__main__.run(
-            update_helper_arguments(active_system, source_root=source_root, build_root=build_root)
+            update_helper_arguments(
+                active_system,
+                source_root=source_root,
+                build_root=build_root,
+                identity_path=identity_path,
+                version_file=_windows_version_file(
+                    build_root=build_root, identity=identity, component="AllTheContextUpdater"
+                ),
+            )
         )
         if not update_helper.is_file():
             raise RuntimeError(f"Update helper was not produced at {update_helper}")
@@ -307,6 +455,14 @@ def build(
             source_root=source_root,
             build_root=build_root,
             dist_root=dist_root,
+            identity_path=identity_path,
+            version_file=(
+                _windows_version_file(
+                    build_root=build_root, identity=identity, component="AllTheContextSetup"
+                )
+                if active_system == "Windows"
+                else None
+            ),
         )
     )
 
@@ -318,7 +474,7 @@ def build(
     if not artifact.exists():
         raise RuntimeError(f"Desktop artifact was not produced at {artifact}")
     if active_system == "Darwin":
-        finalize_macos_bundle(artifact, version=__version__)
+        finalize_macos_bundle(artifact, version=__version__, build_identity=identity)
         # PyInstaller seals the bundle before this script adds the final public
         # metadata. Re-seal with the identity-free ad-hoc marker so Gatekeeper
         # still sees an unsigned/unnotarized community build, but the bundle is
@@ -339,12 +495,18 @@ def main() -> int:
     parser.add_argument("--source-root", type=Path, default=SOURCE_ROOT)
     parser.add_argument("--build-root", type=Path, default=BUILD_ROOT)
     parser.add_argument("--dist-root", type=Path, default=DIST_ROOT)
+    parser.add_argument("--version", default=__version__)
+    parser.add_argument("--source-commit")
+    parser.add_argument("--architecture", choices=("x86_64", "arm64"))
     arguments = parser.parse_args()
     artifact = build(
         system=arguments.system,
         source_root=arguments.source_root,
         build_root=arguments.build_root,
         dist_root=arguments.dist_root,
+        version=arguments.version,
+        source_commit=arguments.source_commit,
+        architecture=arguments.architecture,
     )
     print(artifact)
     return 0

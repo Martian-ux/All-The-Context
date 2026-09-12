@@ -471,7 +471,6 @@ def _server_for_profile() -> MCPServer:
                     "bootstrap_context",
                     "search_context",
                     "get_context_item",
-                    "context_status",
                     CODEX_READ_HOOK_TOOL,
                 }
             )

@@ -6,7 +6,7 @@
   "required": [
     "schema_version", "version", "channel", "platform", "architecture",
     "url", "sha256", "size", "minimum_supported_version", "mandatory",
-    "release_notes_url", "key_id", "signature"
+    "release_notes_url", "key_id", "signature", "source_commit"
   ],
   "properties": {
     "schema_version": {"const": 1},
@@ -21,6 +21,7 @@
     "mandatory": {"type": "boolean"},
     "release_notes_url": {"type": "string", "format": "uri", "pattern": "^https://"},
     "key_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"},
-    "signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+    "signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"},
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
   }
 }

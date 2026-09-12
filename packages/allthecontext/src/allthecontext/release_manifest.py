@@ -38,6 +38,7 @@ WINDOWS_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SHA256_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 KEY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{2,63}")
+SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}")
 VERSION = re.compile(
     r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
     r"(?:-(?P<label>beta)\.(?P<number>[1-9][0-9]*))?"
@@ -152,11 +153,16 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         "key_id",
         "signature",
     }
-    if set(manifest) != required:
+    optional = {"source_commit"}
+    if not set(manifest).issubset(required | optional) or not required.issubset(manifest):
         missing = sorted(required - set(manifest))
         extra = sorted(set(manifest) - required)
         raise ManifestError(f"manifest fields differ (missing={missing}, extra={extra})")
-    if manifest["schema_version"] != SCHEMA_VERSION:
+    if (
+        isinstance(manifest["schema_version"], bool)
+        or not isinstance(manifest["schema_version"], int)
+        or manifest["schema_version"] != SCHEMA_VERSION
+    ):
         raise ManifestError("unsupported manifest schema version")
     version_value = manifest["version"]
     minimum_value = manifest["minimum_supported_version"]
@@ -193,6 +199,11 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         raise ManifestError("size must be a positive integer")
     if not isinstance(manifest["mandatory"], bool):
         raise ManifestError("mandatory must be a boolean")
+    if "source_commit" in manifest and (
+        not isinstance(manifest["source_commit"], str)
+        or SOURCE_COMMIT.fullmatch(manifest["source_commit"]) is None
+    ):
+        raise ManifestError("source_commit must be a full lowercase SHA-1")
     key_id = manifest["key_id"]
     if not isinstance(key_id, str) or KEY_ID.fullmatch(key_id) is None:
         raise ManifestError("invalid key ID")
@@ -249,6 +260,7 @@ def create_manifest(
     release_notes_url: str,
     key_id: str,
     private_key: Ed25519PrivateKey,
+    source_commit: str | None = None,
 ) -> dict[str, Any]:
     digest, size = sha256_file(artifact)
     manifest: dict[str, Any] = {
@@ -266,6 +278,8 @@ def create_manifest(
         "key_id": key_id,
         "signature": _base64url_encode(bytes(64)),
     }
+    if source_commit is not None:
+        manifest["source_commit"] = source_commit
     validate_manifest(manifest)
     manifest["signature"] = _base64url_encode(private_key.sign(canonical_payload(manifest)))
     return manifest
@@ -363,7 +377,11 @@ def validate_keyring(keyring: dict[str, Any]) -> None:
 
     if set(keyring) != {"schema_version", "keys"}:
         raise ManifestError("keyring fields differ from the version 1 schema")
-    if keyring.get("schema_version") != SCHEMA_VERSION:
+    if (
+        isinstance(keyring.get("schema_version"), bool)
+        or not isinstance(keyring.get("schema_version"), int)
+        or keyring.get("schema_version") != SCHEMA_VERSION
+    ):
         raise ManifestError("unsupported keyring schema")
     keys = keyring.get("keys")
     if not isinstance(keys, list):
@@ -423,8 +441,11 @@ def verify_manifest(
     *,
     current_version: str | None = None,
     expected_channel: str | None = None,
+    require_source_commit: bool = False,
 ) -> None:
     validate_manifest(manifest)
+    if require_source_commit and "source_commit" not in manifest:
+        raise ManifestError("manifest source commit is required for a packaged update")
     validate_keyring(keyring)
     if expected_channel is not None and manifest["channel"] != expected_channel:
         raise ManifestError("manifest channel does not match the requested channel")

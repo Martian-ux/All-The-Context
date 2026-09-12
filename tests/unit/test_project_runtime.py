@@ -213,7 +213,7 @@ def test_two_provider_anchors_abstain_and_facts_do_not_cross_lineages(tmp_path: 
                     reference="conversations.json#conversation=two&message=anchor",
                 ),
                 _goal(
-                    "This ambiguous goal must be omitted.",
+                    "The ambiguous goal must be omitted.",
                     reference="conversations.json#conversation=one&message=goal",
                 ),
                 _goal(
@@ -647,8 +647,15 @@ def test_bootstrap_keeps_retrieval_available_when_project_projection_fails(
             headers=owner,
             json={"task_description": "Continue ordinary retrieval."},
         )
+        status = client.get("/v1/context/status", headers=owner)
 
     assert response.status_code == 200, response.text
+    assert status.status_code == 200, status.text
+    assert status.json()["runtime_readiness"]["project_projection"] == {
+        "available": False,
+        "reason_code": "project_projection_unavailable",
+        "state": "unavailable",
+    }
     payload = response.json()
     assert payload["project_context"] == {
         "schema": "atc.ambient-project-context.v1",

@@ -58,7 +58,7 @@ _MAX_QUERY_TOKENS = 32
 _CHANNEL_LIMIT = 256
 _RRF_K = 60
 _MAX_MANDATORY_PREFERENCE_RESERVE = 8
-_LEXICAL_ALIASES = CURATED_CONTENT_ALIASES
+_LEXICAL_ALIASES = {**CURATED_CONTENT_ALIASES, "blocker": ("blocked", "blocking")}
 _QUERY_STOPWORDS = frozenset(
     {
         "a",
@@ -159,7 +159,45 @@ class QueryIntent:
 def parse_query_intent(value: str) -> QueryIntent:
     """Extract bounded query features without a model, network, or vault lookup."""
 
-    raw = tuple(_tokens(value))
+    # Output exclusions do not request facts about the excluded subject.
+    # Keep factual negation (e.g. "not deployed") and positive preference
+    # requests intact. This projection has no authorization authority.
+    semantic_query = re.sub(
+        r"\b(?:(?:do\s+not|don['\u2019]t|never)\s+(?:mention|include|discuss)"
+        r"\s*:?\s+(?:(?:my|the|unrelated|answer)\s+)*preferences\b|"
+        r"(?:not|no)\s+(?:(?:my|the|unrelated|answer)\s+)*preferences"
+        r"(?=\s*[,;.!?]|\s*$))",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    # Only unambiguous request-leading forms: "State regulations" can refer
+    # to a jurisdiction, and "handoff owner" names a real task facet.
+    semantic_query = re.sub(
+        r"(^|[.!?]\s+)(?:please\s+)?(?:prepare|state)\s+"
+        r"(?=a\b|an\b|the\b|my\b)",
+        r"\1",
+        semantic_query,
+        flags=re.IGNORECASE,
+    )
+    # A generic "write the ... plan" query names the requested subject; only
+    # the established handoff form is an output wrapper to project away.
+    semantic_query = re.sub(
+        r"(^|[.!?]\s+)(?:please\s+)?write\s+"
+        r"(?=(?:a\b|an\b|the\b|my\b)\s+(?:(?:concise|brief)\s+)?"
+        r"(?:\w+\s+)?handoff\b)",
+        r"\1",
+        semantic_query,
+        flags=re.IGNORECASE,
+    )
+    semantic_query = re.sub(
+        r"\b(?:a\s+)?(?:concise|brief)\s+(?:(\w+)\s+)?handoff"
+        r"(?:\s+state)?(?=\s+for\b|\s*[.!?;]|\s*$)",
+        r"\1",
+        semantic_query,
+        flags=re.IGNORECASE,
+    )
+    raw = tuple(token.rstrip(".") for token in _tokens(semantic_query) if token.rstrip("."))
     focus = tuple(token for token in raw if token not in _QUERY_STOPWORDS)
     if not focus:
         focus = raw
@@ -1617,7 +1655,6 @@ def _admissibility_inputs(
     # Hard task coverage measures direct topical anchors against content only.
     # Structural metadata stays in its dedicated scope/project/kind signals;
     # bootstrap disables this per-record floor and applies a set-level union.
-    raw_query_tokens = set(intent.raw_tokens)
     task_tokens = set(intent.anchor_tokens or intent.focus_tokens or intent.raw_tokens)
     candidates: list[AdmissibilityCandidate] = []
     requested_scopes = set(request.scopes)
@@ -1643,15 +1680,12 @@ def _admissibility_inputs(
         else:
             scope_fit = None
         kind_tokens = set(_tokens(str(row["kind"])))
-        kind_fit = (
-            1.0
-            if requested_kinds and str(row["kind"]) in requested_kinds
-            else (
-                float(bool(raw_query_tokens & kind_tokens))
-                if request.current_project is not None and raw_query_tokens
-                else None
-            )
-        )
+        if requested_kinds:
+            kind_fit = float(str(row["kind"]) in requested_kinds)
+        elif request.current_project is not None and intent.focus_tokens:
+            kind_fit = float(bool(set(intent.focus_tokens) & kind_tokens))
+        else:
+            kind_fit = None
         candidates.append(
             AdmissibilityCandidate(
                 key=record_id,

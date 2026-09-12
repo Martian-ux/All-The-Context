@@ -79,6 +79,9 @@ def _run_clean_build(
     repository_root: Path,
     build_root: Path,
     dist_root: Path,
+    *,
+    version: str,
+    source_commit: str,
 ) -> native_build_provenance.BuildSnapshot:
     _fresh_directory(build_root, label="clean build root")
     _fresh_directory(dist_root, label="clean dist root")
@@ -93,6 +96,12 @@ def _run_clean_build(
         str(build_root),
         "--dist-root",
         str(dist_root),
+        "--version",
+        version,
+        "--source-commit",
+        source_commit,
+        "--architecture",
+        "x86_64",
     ]
     completed = subprocess.run(
         command,
@@ -260,7 +269,13 @@ def generate_provenance(
     if runner is None:
 
         def runner(_source: Path, build: Path, dist: Path) -> native_build_provenance.BuildSnapshot:
-            return _run_clean_build(repository_root, build, dist)
+            return _run_clean_build(
+                repository_root,
+                build,
+                dist,
+                version=version,
+                source_commit=source_commit,
+            )
 
     with tempfile.TemporaryDirectory(prefix="atc-native-repro-") as temporary_name:
         temporary = Path(temporary_name)

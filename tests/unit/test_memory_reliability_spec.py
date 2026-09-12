@@ -329,18 +329,23 @@ def test_packet_a_validator_rejects_cross_field_contract_mutations() -> None:
 
 
 def test_packet_a_code_owned_digest_rejects_every_semantic_leaf_after_rebound() -> None:
-    spec = _load(SPEC_PATH)
+    pristine = _load(SPEC_PATH)
+    spec = deepcopy(pristine)
     scalar_paths = _scalar_paths(spec)
     assert len(scalar_paths) > 300
 
     for path, original in scalar_paths:
         if path == ("packet_a", "content_binding", "specification_digest"):
             continue
-        candidate = deepcopy(spec)
-        _replace_path(candidate, path, _mutated_scalar(original))
-        candidate = with_recomputed_digest(candidate)
-        with pytest.raises(SpecificationValidationError):
-            validate_spec(candidate, require_golden_digest=False, validate_narrative=False)
+        _replace_path(spec, path, _mutated_scalar(original))
+        try:
+            candidate = with_recomputed_digest(spec)
+            with pytest.raises(SpecificationValidationError):
+                validate_spec(candidate, require_golden_digest=False, validate_narrative=False)
+        finally:
+            _replace_path(spec, path, original)
+
+    assert spec == pristine
 
 
 def test_packet_a_self_digest_is_not_authority_but_is_repaired_for_nonsemantic_reencoding() -> None:

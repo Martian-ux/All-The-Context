@@ -116,8 +116,17 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             ),
         )
     store = CoreStore(database)
-    assert store.migrate() == 19
+    assert store.migrate() == 20
     with store.connect() as connection:
+        primary_key = [
+            str(row["name"])
+            for row in sorted(
+                connection.execute('PRAGMA table_info("purge_tombstones")').fetchall(),
+                key=lambda row: int(row["pk"]),
+            )
+            if int(row["pk"]) > 0
+        ]
+        assert primary_key == ["vault_id", "target_type", "stable_id"]
         candidate_columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(context_candidates)")
         }
@@ -162,6 +171,80 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             (0, SOURCE_BLOB_CHUNK_BYTES, SOURCE_BLOB_CHUNK_BYTES),
             (1, len(b"legacy-chunk-tail"), len(b"legacy-chunk-tail")),
         ]
+
+
+def test_purge_tombstone_identity_allows_same_ids_across_vaults_and_target_types(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path / "core.sqlite3")
+    first_vault_id = store.vault_id()
+    second_vault_id = "second-vault-for-purge-scope"
+    with store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO vaults(id,name,display_timezone,created_at,schema_version) "
+            "VALUES(?,?,?,?,?)",
+            (second_vault_id, "second", "UTC", "2099-01-01T00:00:00Z", 20),
+        )
+        for vault_id, target_type in (
+            (first_vault_id, "record"),
+            (first_vault_id, "source"),
+            (second_vault_id, "record"),
+        ):
+            connection.execute(
+                "INSERT INTO purge_tombstones"
+                "(stable_id,vault_id,target_type,purged_at) VALUES(?,?,?,?)",
+                ("shared-stable-id", vault_id, target_type, "2026-09-04T00:00:00Z"),
+            )
+        rows = connection.execute(
+            "SELECT vault_id,target_type,stable_id FROM purge_tombstones "
+            "ORDER BY vault_id,target_type"
+        ).fetchall()
+    assert len(rows) == 3
+    assert {(str(row["vault_id"]), str(row["target_type"])) for row in rows} == {
+        (first_vault_id, "record"),
+        (first_vault_id, "source"),
+        (second_vault_id, "record"),
+    }
+
+
+def test_legacy_purge_tombstone_table_is_repaired_without_losing_rows(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path / "core.sqlite3")
+    vault_id = store.vault_id()
+    with store.transaction() as connection:
+        connection.execute("DROP TABLE purge_tombstones")
+        connection.execute(
+            "CREATE TABLE purge_tombstones ("
+            "stable_id TEXT PRIMARY KEY,"
+            "vault_id TEXT NOT NULL REFERENCES vaults(id),"
+            "target_type TEXT NOT NULL CHECK(target_type IN ('record', 'source')),"
+            "purged_at TEXT NOT NULL,"
+            "replication_sequence INTEGER,"
+            "replication_event_id TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO purge_tombstones(stable_id,vault_id,target_type,purged_at) "
+            "VALUES(?,?,?,?)",
+            ("legacy-stable-id", vault_id, "record", "2026-09-04T00:00:00Z"),
+        )
+
+    assert store.migrate() == 20
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT stable_id,vault_id,target_type FROM purge_tombstones"
+        ).fetchone()
+        primary_key = [
+            str(item["name"])
+            for item in sorted(
+                connection.execute('PRAGMA table_info("purge_tombstones")').fetchall(),
+                key=lambda item: int(item["pk"]),
+            )
+            if int(item["pk"]) > 0
+        ]
+    assert row is not None
+    assert tuple(row) == ("legacy-stable-id", vault_id, "record")
+    assert primary_key == ["vault_id", "target_type", "stable_id"]
 
 
 def test_slot_metadata_stays_proposed_until_approval_and_groups_are_deterministic(

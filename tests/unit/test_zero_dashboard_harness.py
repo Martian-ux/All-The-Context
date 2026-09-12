@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from allthecontext import experimental_zero_dashboard_harness as harness
 from allthecontext.capture import (
     CaptureCapabilityManifest,
@@ -15,13 +16,15 @@ from allthecontext.capture import (
     DeterministicFakeAdapter,
 )
 from allthecontext.experimental_zero_dashboard_harness import (
+    ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
     ZeroDashboardFixture,
+    evaluate_zero_dashboard_operational_acceptance,
     run_zero_dashboard_journey,
 )
 from allthecontext.storage import CoreStore
 
 
-def test_zero_dashboard_wave2_journey_passes_every_non_compensable_gate(
+def test_zero_dashboard_wave2_journey_passes_every_functional_gate(
     tmp_path: Path,
 ) -> None:
     fixture = ZeroDashboardFixture.from_json(
@@ -30,8 +33,8 @@ def test_zero_dashboard_wave2_journey_passes_every_non_compensable_gate(
 
     receipt = run_zero_dashboard_journey(tmp_path / "zero-dashboard.sqlite3", fixture=fixture)
 
-    assert receipt.scorecard.passed is True, receipt.scorecard.as_dict()
-    assert receipt.scorecard.as_dict()["passed"] is True
+    assert receipt.scorecard.functional_passed is True, receipt.scorecard.as_dict()
+    assert receipt.scorecard.as_dict()["functional_passed"] is True
     assert "Atlas uses deterministic local retrieval." in receipt.first_context
     assert "Atlas private staging uses a bounded fixture." in receipt.first_context
     assert "Expired Atlas working-state fixture." in receipt.first_context
@@ -55,7 +58,151 @@ def test_zero_dashboard_wave2_journey_passes_every_non_compensable_gate(
     assert "Atlas private staging uses a bounded fixture." not in receipt.viewer_context
     assert receipt.capture_event_count == 6
     assert receipt.observation_count >= 7
-    assert receipt.restart_context_latency_ms <= receipt.scorecard.restart_context_latency_bound_ms
+    assert receipt.restart_context_latency_ms >= 0
+
+
+def test_latency_evidence_preserves_strict_comparable_hardware_boundary() -> None:
+    def evidence(compile_ms: object, restart_ms: object) -> dict[str, object]:
+        return {
+            "profile": ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
+            "compile_latency_ms": compile_ms,
+            "restart_context_latency_ms": restart_ms,
+        }
+
+    passing = evaluate_zero_dashboard_operational_acceptance(
+        [evidence(4999.999, 4999.999)], functional_passed=True
+    )
+    assert passing["all_latency_gates_passed"] is True
+    assert passing["passed"] is True
+
+    failing = evaluate_zero_dashboard_operational_acceptance(
+        [evidence(4999.999, 5000.0)], functional_passed=True
+    )
+    assert failing["compile_latency_under_5000_ms"] is True
+    assert failing["restart_context_latency_under_5000_ms"] is False
+    assert failing["all_latency_gates_passed"] is False
+    assert failing["passed"] is False
+
+
+def test_latency_measurements_reject_a_non_monotonic_clock() -> None:
+    with pytest.raises(RuntimeError, match="monotonic latency measurement"):
+        harness._elapsed_ms(2.0, 1.0)
+
+    assert harness._elapsed_ms(2.0, 2.0) == 0.0
+
+
+@pytest.mark.parametrize(
+    "invalid_evidence",
+    [
+        {
+            "profile": ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
+            "compile_latency_ms": float("nan"),
+            "restart_context_latency_ms": 1.0,
+        },
+        {
+            "profile": ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
+            "compile_latency_ms": 1.0,
+            "restart_context_latency_ms": float("inf"),
+        },
+        {
+            "profile": ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
+            "compile_latency_ms": -0.001,
+            "restart_context_latency_ms": 1.0,
+        },
+        {
+            "profile": ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
+            "compile_latency_ms": 1.0,
+        },
+    ],
+)
+def test_latency_evidence_rejects_invalid_values(
+    invalid_evidence: dict[str, object],
+) -> None:
+    result = evaluate_zero_dashboard_operational_acceptance(
+        [invalid_evidence], functional_passed=True
+    )
+
+    assert result["all_latency_gates_passed"] is False
+
+
+def test_latency_evidence_rejects_mixed_profiles() -> None:
+    evidence = [
+        {
+            "profile": ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
+            "compile_latency_ms": 1.0,
+            "restart_context_latency_ms": 1.0,
+        },
+        {
+            "profile": "other-hardware",
+            "compile_latency_ms": 1.0,
+            "restart_context_latency_ms": 1.0,
+        },
+    ]
+
+    result = evaluate_zero_dashboard_operational_acceptance(evidence, functional_passed=True)
+
+    assert result["comparable_hardware_profile"] is False
+    assert result["all_latency_gates_passed"] is False
+
+
+def test_latency_evidence_rejects_missing_profile_samples() -> None:
+    result = evaluate_zero_dashboard_operational_acceptance([], functional_passed=True)
+
+    assert result["comparable_hardware_profile"] is False
+    assert result["compile_latency_under_5000_ms"] is False
+    assert result["restart_context_latency_under_5000_ms"] is False
+    assert result["passed"] is False
+
+
+def test_latency_evidence_requires_functional_contract() -> None:
+    evidence = {
+        "profile": ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
+        "compile_latency_ms": 1.0,
+        "restart_context_latency_ms": 1.0,
+    }
+    result = evaluate_zero_dashboard_operational_acceptance([evidence], functional_passed=False)
+
+    assert result["functional_contract_passed"] is False
+    assert result["all_latency_gates_passed"] is True
+    assert result["passed"] is False
+
+
+def test_zero_dashboard_journey_closes_database_handles(tmp_path: Path) -> None:
+    database_path = tmp_path / "closed.sqlite3"
+
+    run_zero_dashboard_journey(database_path)
+
+    database_path.unlink()
+    assert not database_path.exists()
+
+
+def test_host_descheduling_cannot_fail_functional_smoke_or_fabricate_acceptance_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = 0
+
+    def descheduled_monotonic_clock() -> float:
+        nonlocal calls
+        calls += 1
+        if calls < 4:
+            return calls / 1_000
+        return 6.0 + calls / 1_000
+
+    monkeypatch.setattr(harness, "perf_counter", descheduled_monotonic_clock)
+    receipt = run_zero_dashboard_journey(tmp_path / "descheduled.sqlite3")
+    operational = evaluate_zero_dashboard_operational_acceptance(
+        [receipt.scorecard.as_latency_evidence(profile=ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE)],
+        functional_passed=receipt.scorecard.functional_passed,
+    )
+
+    assert receipt.scorecard.functional_passed is True
+    assert receipt.scorecard.passed is False
+    assert receipt.restart_context_latency_ms >= 5_000.0
+    assert operational["functional_contract_passed"] is True
+    assert operational["comparable_hardware_profile"] is True
+    assert operational["restart_context_latency_under_5000_ms"] is False
+    assert operational["all_latency_gates_passed"] is False
+    assert operational["passed"] is False
 
 
 def test_default_zero_dashboard_fixture_is_deterministic_and_sanitized() -> None:

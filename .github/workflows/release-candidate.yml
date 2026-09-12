@@ -221,6 +221,7 @@ jobs:
           --directory dist/release
           --platform "${{ matrix.platform }}"
           --architecture "${{ matrix.architecture }}"
+          --source-commit "${{ inputs.source_commit }}"
       - name: Build deterministic archive, checksum, and SPDX inventory
         run: >-
           python scripts/build_release_assets.py

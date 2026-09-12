@@ -468,6 +468,7 @@ def test_codex_integration_uses_optional_servers_and_exact_read_hook_payload(
         )
     )
     assert CODEX_READ_HOOK_TOOL in servers[CODEX_READ_SERVER_KEY]["enabled_tools"]
+    assert "context_status" not in servers[CODEX_READ_SERVER_KEY]["enabled_tools"]
 
     hooks = parsed["hooks"]
     user_prompt_hooks = hooks["UserPromptSubmit"]

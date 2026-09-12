@@ -23,15 +23,19 @@ from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from tkinter import messagebox
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from platformdirs import user_data_path
 
-from . import __version__
 from .application_install import (
+    WindowsRegistrationCompensationError,
+    WindowsRegistrationError,
+    WindowsRegistrationRestoreStatus,
+    application_entrypoints_need_refresh,
     install_application_entrypoints,
     remove_application_entrypoints,
 )
+from .build_identity import runtime_build_identity, runtime_build_identity_status
 from .client_config import apply_managed_client_cleanup, plan_managed_client_cleanup
 from .config import CoreConfig
 from .credentials import FALLBACK_CREDENTIAL_STORAGE, verify_isolated_os_credential_round_trip
@@ -63,6 +67,15 @@ from .models import ClientCreate
 from .platform_compat import windows_creation_flags
 from .storage import CoreStore, StorageError
 from .user_startup import remove_user_startup
+from .windows_update_diagnostics import (
+    SAFE_BOOTSTRAP_FAILURE_CODES,
+    UPDATE_FAILURE_REPORT_CODES,
+    UPDATE_FAILURE_REPORT_FIELDS,
+    UPDATE_FAILURE_REPORT_MAX_BYTES,
+    UPDATE_FAILURE_REPORT_PHASES,
+    UPDATE_FAILURE_REPORT_STATUS,
+    valid_update_failure_attempt,
+)
 
 WINDOWS_APP_NAME = "AllTheContext.exe"
 WINDOWS_MCP_NAME = "AllTheContextMCP.exe"
@@ -73,7 +86,238 @@ WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS = 100
 WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS * WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS / 1000
 )
+PACKAGED_UNINSTALL_FAILURE_FIELDS = frozenset(
+    {"uninstalled", "vault_preserved", "stage", "code", "registration_status"}
+)
+PACKAGED_UNINSTALL_STATUS_FIELDS = frozenset(
+    {"available", "complete", "retryable", "pending", "errors"}
+)
+PACKAGED_UNINSTALL_FAILURE_STAGES = frozenset({"cleanup", "windows_registration"})
+PACKAGED_UNINSTALL_FAILURE_CODES = frozenset(
+    {
+        "cleanup_failed",
+        "registration_failed",
+        "registration_compensation_required",
+        "registration_directory_create_failed",
+        "registration_executable_mismatch",
+        "registration_executable_missing",
+        "registration_file_missing",
+        "registration_file_too_large",
+        "registration_file_unreadable",
+        "registration_hardlink_path",
+        "registration_install_root_mismatch",
+        "registration_journal_auth_invalid",
+        "registration_journal_auth_unavailable",
+        "registration_journal_invalid",
+        "registration_journal_missing",
+        "registration_journal_path_invalid",
+        "registration_journal_target_changed",
+        "registration_journal_temporary_exists",
+        "registration_journal_too_large",
+        "registration_journal_write_failed",
+        "registration_journal_cleanup_failed",
+        "registration_key_create_failed",
+        "registration_key_creation_unverified",
+        "registration_key_open_failed",
+        "registration_key_path_invalid",
+        "registration_key_path_substitution",
+        "registration_key_unreadable",
+        "registration_parent_not_directory",
+        "registration_path_not_absolute",
+        "registration_path_unexpected",
+        "registration_permission_denied",
+        "registration_recovery_required",
+        "registration_recovery_ownership_mismatch",
+        "registration_recovery_ownership_unproven",
+        "registration_reparse_path",
+        "registration_restore_atomicity_unavailable",
+        "registration_restore_cleanup_ambiguous",
+        "registration_restore_cleanup_failed",
+        "registration_restore_delete_failed",
+        "registration_restore_failed",
+        "registration_restore_identity_unavailable",
+        "registration_restore_key_failed",
+        "registration_restore_key_missing",
+        "registration_restore_key_unreadable",
+        "registration_restore_key_unverified",
+        "registration_restore_required",
+        "registration_restore_target_changed",
+        "registration_restore_unverified",
+        "registration_restore_value_failed",
+        "registration_shortcut_create_failed",
+        "registration_shortcut_publish_failed",
+        "registration_shortcut_publish_unverified",
+        "registration_shortcut_replace_unsupported",
+        "registration_snapshot_invalid",
+        "registration_snapshot_mismatch",
+        "registration_step_failed",
+        "registration_target_changed",
+        "registration_target_not_regular",
+        "registration_target_unreadable",
+        "registration_temporary_changed",
+        "registration_temporary_exists",
+        "registration_temporary_unsafe",
+        "registration_timeout",
+        "registration_uninstall_required",
+        "registration_value_too_large",
+        "registration_value_type_invalid",
+        "registration_value_type_unsupported",
+        "registration_value_unreadable",
+        "registration_value_write_failed",
+        "registration_value_write_unverified",
+        "registration_windows_only",
+    }
+)
+PACKAGED_UNINSTALL_STATUS_DETAIL_CODES = frozenset(
+    {
+        "launcher",
+        "desktop",
+        "uninstall",
+        "DisplayName",
+        "DisplayVersion",
+        "Publisher",
+        "InstallLocation",
+        "DisplayIcon",
+        "UninstallString",
+        "ATCReleaseChannel",
+        "ATCSourceCommit",
+        "ATCBuildIdentity",
+        "ATCBuildIdentitySha256",
+        "NoModify",
+        "NoRepair",
+        "recovery",
+        "uninstall_key",
+        "registry_transaction",
+        "journal",
+        "registry_staging",
+        "registration_directory_create_failed",
+        "registration_executable_mismatch",
+        "registration_executable_missing",
+        "registration_file_missing",
+        "registration_file_too_large",
+        "registration_file_unreadable",
+        "registration_hardlink_path",
+        "registration_install_root_mismatch",
+        "registration_journal_auth_invalid",
+        "registration_journal_auth_unavailable",
+        "registration_journal_invalid",
+        "registration_journal_mismatch",
+        "registration_journal_missing",
+        "registration_journal_path_invalid",
+        "registration_journal_target_changed",
+        "registration_journal_temporary_exists",
+        "registration_journal_too_large",
+        "registration_journal_write_failed",
+        "registration_key_create_failed",
+        "registration_key_creation_unverified",
+        "registration_key_open_failed",
+        "registration_key_path_invalid",
+        "registration_key_path_substitution",
+        "registration_key_unreadable",
+        "registration_parent_not_directory",
+        "registration_path_not_absolute",
+        "registration_path_unexpected",
+        "registration_recovery_ownership_mismatch",
+        "registration_recovery_ownership_unproven",
+        "registration_recovery_required",
+        "registration_reparse_path",
+        "registration_restore_atomicity_unavailable",
+        "registration_restore_cleanup_ambiguous",
+        "registration_restore_failed",
+        "registration_restore_identity_unavailable",
+        "registration_restore_key_failed",
+        "registration_restore_key_missing",
+        "registration_restore_key_unreadable",
+        "registration_restore_key_unverified",
+        "registration_restore_required",
+        "registration_restore_target_changed",
+        "registration_restore_unverified",
+        "registration_restore_value_failed",
+        "registration_shortcut_create_failed",
+        "registration_shortcut_publish_failed",
+        "registration_shortcut_publish_unverified",
+        "registration_shortcut_replace_unsupported",
+        "registration_snapshot_invalid",
+        "registration_snapshot_mismatch",
+        "registration_target_changed",
+        "registration_target_not_regular",
+        "registration_target_unreadable",
+        "registration_temporary_changed",
+        "registration_temporary_exists",
+        "registration_temporary_unsafe",
+        "registration_value_too_large",
+        "registration_value_type_invalid",
+        "registration_value_type_unsupported",
+        "registration_value_unreadable",
+        "registration_value_write_failed",
+        "registration_value_write_unverified",
+        "registration_windows_only",
+    }
+)
+PACKAGED_UNINSTALL_STATUS_MAX_ITEMS = 16
+PACKAGED_UNINSTALL_FAILURE_MAX_BYTES = 16 * 1024
 MACOS_APP_NAME = "All The Context.app"
+HeadlessSetupStage = Literal["prepare_installed_runtime", "perform_setup", "write_report"]
+HeadlessSetupSubphase = Literal[
+    "packaged_component_source_validation",
+    "core_probe",
+    "bootstrap_install_recovery",
+    "entrypoint_refresh_probe",
+    "entrypoint_registration",
+    "installed_runtime_assembly",
+    "unknown",
+]
+_HEADLESS_SETUP_SUBPHASES: frozenset[str] = frozenset(
+    {
+        "packaged_component_source_validation",
+        "core_probe",
+        "bootstrap_install_recovery",
+        "entrypoint_refresh_probe",
+        "entrypoint_registration",
+        "installed_runtime_assembly",
+        "unknown",
+    }
+)
+HeadlessSetupProgress = Callable[[HeadlessSetupSubphase], None]
+PackagedUpdateFailurePhase = Literal[
+    "build_identity",
+    "component_bootstrap",
+    "component_digest",
+    "component_presence",
+    "entrypoint_registration",
+    "internal",
+    "report_write",
+]
+PackagedUpdateBootstrapSubphase = Literal[
+    "packaged_component_source_validation",
+    "core_probe",
+    "bootstrap_install_recovery",
+    "unknown",
+]
+_PACKAGED_BOOTSTRAP_FAILURE_BY_SUBPHASE: dict[PackagedUpdateBootstrapSubphase, str] = {
+    "packaged_component_source_validation": "component_bootstrap_source_invalid",
+    "core_probe": "component_bootstrap_core_probe_failed",
+    "bootstrap_install_recovery": "component_bootstrap_transaction_failed",
+    "unknown": "component_bootstrap_failed",
+}
+_PACKAGED_BOOTSTRAP_EXCEPTION_CODES: tuple[tuple[type[Exception], str], ...] = (
+    (OSError, "component_bootstrap_os_error"),
+    (RuntimeError, "component_bootstrap_runtime_error"),
+)
+_HEADLESS_SETUP_ERROR_CODES = frozenset(
+    {
+        "credential_store_unavailable",
+        "setup_io_error",
+        "setup_invalid_value",
+        "setup_failed",
+    }
+)
+
+
+def _normalize_headless_setup_subphase(value: object) -> HeadlessSetupSubphase:
+    if isinstance(value, str) and value in _HEADLESS_SETUP_SUBPHASES:
+        return cast(HeadlessSetupSubphase, value)
+    return "unknown"
 
 
 def _retire_installed_ai_clients(
@@ -197,10 +441,17 @@ def _offer_graphical_retry(error: Exception) -> bool:
 def windows_install_directory() -> Path:
     configured = os.environ.get("ATC_INSTALL_DIR")
     if configured:
-        return Path(configured).expanduser().resolve()
+        # Keep the spelling intact until the bootstrap transaction has
+        # lstat-validated every existing parent.  Resolving here could turn a
+        # junction or symlink into an apparently trusted install root.
+        return Path(os.path.abspath(os.fspath(Path(configured).expanduser())))
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
-        return Path(local_app_data).resolve() / "Programs" / "All The Context"
+        return (
+            Path(os.path.abspath(os.fspath(Path(local_app_data).expanduser())))
+            / "Programs"
+            / "All The Context"
+        )
     data_path = Path(user_data_path("AllTheContext", "AllTheContext", roaming=False))
     return data_path.parent / "Programs" / "All The Context"
 
@@ -314,19 +565,6 @@ def _copy_macos_bundle_atomically(source: Path, target: Path, *, trusted_base: P
             shutil.rmtree(staged)
         if backup.exists() and target.exists():
             shutil.rmtree(backup)
-
-
-def _install_mcp_helper(source: Path, target: Path) -> Path:
-    """Update the stable helper or install a content-addressed copy if an AI app holds it open."""
-    try:
-        _copy_atomically(source, target)
-        return target
-    except PermissionError:
-        with source.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()[:12]
-        versioned = target.with_name(f"{target.stem}-{digest}{target.suffix}")
-        _copy_atomically(source, versioned)
-        return versioned
 
 
 def _stop_installed_core_for_upgrade() -> None:
@@ -451,6 +689,7 @@ def prepare_installed_runtime(
     runtime: RuntimeCommand,
     *,
     relaunch_args: tuple[str, ...] | None,
+    progress: HeadlessSetupProgress | None = None,
 ) -> tuple[RuntimeCommand, bool]:
     """Install frozen platform bundles per-user and optionally relaunch the stable copy."""
     if not getattr(sys, "frozen", False):
@@ -461,6 +700,13 @@ def prepare_installed_runtime(
     if system != "Windows":
         return runtime, False
 
+    from .windows_bootstrap_install import (
+        bootstrap_journal_root,
+        canonical_targets,
+        install_windows_components,
+    )
+
+    _notify_headless_setup_subphase(progress, "packaged_component_source_validation")
     helper_source = runtime.mcp_executable
     if helper_source is None or not helper_source.is_file():
         raise RuntimeError("The packaged MCP helper is missing. Download the installer again.")
@@ -472,22 +718,55 @@ def prepare_installed_runtime(
         raise RuntimeError("The packaged update helper is missing. Download the installer again.")
 
     install_dir = windows_install_directory()
-    app_target = install_dir / WINDOWS_APP_NAME
-    helper_target = install_dir / WINDOWS_MCP_NAME
-    recovery_target = install_dir / WINDOWS_RECOVERY_NAME
-    update_target = install_dir / WINDOWS_UPDATE_HELPER_NAME
-    app_needs_update = not _same_file(runtime.executable, app_target)
-    if runtime.executable != app_target and app_target.is_file() and app_needs_update:
-        _stop_installed_core_for_upgrade()
-    installed_helper = _install_mcp_helper(helper_source, helper_target)
-    _copy_atomically(recovery_source, recovery_target)
-    _copy_atomically(update_source, update_target)
-    _copy_atomically(runtime.executable, app_target)
-    if runtime.executable != app_target:
+    sources = {
+        "main": runtime.executable,
+        "mcp": helper_source,
+        "recovery": recovery_source,
+        "updater": update_source,
+    }
+    targets = canonical_targets(install_dir)
+
+    # Probe only for lifecycle bookkeeping.  The stop routine independently
+    # authenticates and waits for Core to exit before the first target replace.
+    _notify_headless_setup_subphase(progress, "core_probe")
+    core_was_running = probe_core(CoreConfig.default()) is not CoreProbe.UNREACHABLE
+
+    def restart_prior_core() -> None:
+        prior_runtime = RuntimeCommand(
+            targets["main"],
+            mcp_executable=targets["mcp"],
+            update_executable=targets["updater"],
+            recovery_executable=targets["recovery"],
+        )
+        _relaunch_installed_runtime(prior_runtime, ("--core",))
+
+    _notify_headless_setup_subphase(progress, "bootstrap_install_recovery")
+    result = install_windows_components(
+        sources,
+        install_dir,
+        core_was_running=core_was_running,
+        stop_core=_stop_installed_core_for_upgrade,
+        restart_core=restart_prior_core,
+        journal_root=bootstrap_journal_root(install_dir),
+    )
+    app_target = result.targets["main"]
+    helper_target = result.targets["mcp"]
+    recovery_target = result.targets["recovery"]
+    update_target = result.targets["updater"]
+    # Refresh an existing registration only when its identity is stale. This
+    # repairs an older installed registration that may otherwise keep showing
+    # beta.3 without rewriting an unregistered current copy on every launch.
+    _notify_headless_setup_subphase(progress, "entrypoint_refresh_probe")
+    refresh_entrypoints = runtime.executable != app_target or application_entrypoints_need_refresh()
+    if refresh_entrypoints:
+        # Shortcut/registry registration is intentionally outside the binary
+        # transaction and runs only after its complete commit.
+        _notify_headless_setup_subphase(progress, "entrypoint_registration")
         install_application_entrypoints(app_target)
+    _notify_headless_setup_subphase(progress, "installed_runtime_assembly")
     installed = RuntimeCommand(
         app_target,
-        mcp_executable=installed_helper,
+        mcp_executable=helper_target,
         update_executable=update_target,
         recovery_executable=recovery_target,
     )
@@ -496,6 +775,22 @@ def prepare_installed_runtime(
         _relaunch_installed_runtime(installed, relaunch_args)
         return installed, True
     return installed, False
+
+
+def _notify_headless_setup_subphase(
+    progress: HeadlessSetupProgress | None,
+    subphase: HeadlessSetupSubphase,
+) -> None:
+    """Notify the private headless reporter without changing setup control flow."""
+
+    if progress is None:
+        return
+    try:
+        progress(subphase)
+    except Exception:
+        # Diagnostics are strictly best-effort; a reporter failure must not
+        # turn a successful setup into a product failure.
+        return
 
 
 def _dashboard_exposes_import_operations(package_root: Path) -> bool:
@@ -528,9 +823,13 @@ def diagnostics() -> dict[str, Any]:
     runtime = RuntimeCommand.current()
     update_config = UpdateConfig.default()
     system = platform.system()
+    build_identity = runtime_build_identity_status()
     return {
         "application": "All The Context",
-        "version": __version__,
+        "version": build_identity["version"],
+        "channel": build_identity["channel"],
+        "source_commit": build_identity["source_commit"],
+        "build_identity": build_identity,
         "frozen": bool(getattr(sys, "frozen", False)),
         "distribution_trust": (
             "unsigned-community" if getattr(sys, "frozen", False) else "source-development"
@@ -581,49 +880,194 @@ def _update_report_path(value: str, operation: str, expected_name: str) -> Path:
     return target
 
 
+def _packaged_update_failure_code(
+    error: Exception,
+    phase: PackagedUpdateFailurePhase,
+    *,
+    bootstrap_subphase: PackagedUpdateBootstrapSubphase = "unknown",
+) -> str:
+    """Map a child exception to the closed update diagnostic vocabulary."""
+
+    if phase == "component_bootstrap":
+        # BootstrapInstallError deliberately exposes a separate fixed code.  Do
+        # not inspect arbitrary exception attributes or copy exception text.
+        from .windows_bootstrap_install import BootstrapInstallError
+
+        if (
+            isinstance(error, BootstrapInstallError)
+            and type(error.code) is str
+            and error.code in SAFE_BOOTSTRAP_FAILURE_CODES
+        ):
+            return error.code
+        if not isinstance(error, BootstrapInstallError):
+            if type(bootstrap_subphase) is not str:
+                return "component_bootstrap_failed"
+            if bootstrap_subphase == "bootstrap_install_recovery":
+                for exception_type, code in _PACKAGED_BOOTSTRAP_EXCEPTION_CODES:
+                    if isinstance(error, exception_type):
+                        return code
+            return _PACKAGED_BOOTSTRAP_FAILURE_BY_SUBPHASE.get(
+                bootstrap_subphase,
+                "component_bootstrap_failed",
+            )
+        return "component_bootstrap_failed"
+    if phase == "build_identity":
+        return "build_identity_invalid"
+    if phase == "entrypoint_registration":
+        return "entrypoint_registration_failed"
+    if phase == "component_presence":
+        return "component_presence_invalid"
+    if phase == "component_digest":
+        return "component_digest_invalid"
+    if phase == "report_write":
+        return "report_write_failed"
+    return "internal_failure"
+
+
+def _write_packaged_update_failure_report(
+    report_path: Path,
+    *,
+    attempt: str,
+    phase: PackagedUpdateFailurePhase,
+    code: str,
+) -> None:
+    """Atomically publish one bounded, content-free child failure report."""
+
+    if (
+        not valid_update_failure_attempt(attempt)
+        or phase not in UPDATE_FAILURE_REPORT_PHASES
+        or code not in UPDATE_FAILURE_REPORT_CODES
+    ):
+        raise RuntimeError("The packaged update failure report is invalid")
+    payload = {
+        "attempt": attempt,
+        "code": code,
+        "phase": phase,
+        "status": UPDATE_FAILURE_REPORT_STATUS,
+    }
+    if set(payload) != UPDATE_FAILURE_REPORT_FIELDS:
+        raise RuntimeError("The packaged update failure report shape is invalid")
+    raw = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(raw) > UPDATE_FAILURE_REPORT_MAX_BYTES:
+        raise RuntimeError("The packaged update failure report is too large")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{report_path.name}.", suffix=".atc-new", dir=report_path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(report_path)
+    except BaseException:
+        with suppress(OSError):
+            temporary.unlink()
+        raise
+
+
 def _apply_packaged_update(report_value: str) -> int:
     if platform.system() != "Windows" or not getattr(sys, "frozen", False):
         raise RuntimeError("Packaged update application is available only on Windows")
     operation = _valid_update_operation()
     report_path = _update_report_path(report_value, operation, "apply-report.json")
-    installed, _ = prepare_installed_runtime(RuntimeCommand.current(), relaunch_args=None)
-    install_application_entrypoints(installed.executable)
-    app_digest, app_size = _file_digest(installed.executable)
-    helper = installed.mcp_executable
-    if helper is None or not helper.is_file():
-        raise RuntimeError("The installed MCP helper is unavailable after update")
-    helper_digest, helper_size = _file_digest(helper)
-    update_helper = installed.update_executable
-    if update_helper is None or not update_helper.is_file():
-        raise RuntimeError("The installed update helper is unavailable after update")
-    update_helper_digest, update_helper_size = _file_digest(update_helper)
-    recovery = installed.recovery_executable
-    if recovery is None or not recovery.is_file():
-        raise RuntimeError("The installed recovery helper is unavailable after update")
-    recovery_digest, recovery_size = _file_digest(recovery)
-    payload = {
-        "status": "installed",
-        "version": __version__,
-        "application": str(installed.executable),
-        "application_sha256": app_digest,
-        "application_size": app_size,
-        "mcp": str(helper),
-        "mcp_sha256": helper_digest,
-        "mcp_size": helper_size,
-        "recovery": str(recovery),
-        "recovery_sha256": recovery_digest,
-        "recovery_size": recovery_size,
-        "update_helper": str(update_helper),
-        "update_helper_sha256": update_helper_digest,
-        "update_helper_size": update_helper_size,
-    }
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
+    attempt = os.environ.get("ATC_UPDATE_ATTEMPT", "")
+    if not valid_update_failure_attempt(attempt):
+        raise RuntimeError("The packaged update attempt identity is invalid")
+    phase: PackagedUpdateFailurePhase = "build_identity"
+    bootstrap_subphase: PackagedUpdateBootstrapSubphase = "unknown"
+
+    prepare_subphase: HeadlessSetupSubphase | None = None
+
+    def record_bootstrap_subphase(value: HeadlessSetupSubphase) -> None:
+        nonlocal bootstrap_subphase, prepare_subphase
+        prepare_subphase = value
+        if value in {
+            "packaged_component_source_validation",
+            "core_probe",
+            "bootstrap_install_recovery",
+        }:
+            bootstrap_subphase = cast(PackagedUpdateBootstrapSubphase, value)
+
     try:
-        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(report_path)
-    finally:
-        temporary.unlink(missing_ok=True)
+        build_identity = runtime_build_identity(required=True)
+        if build_identity is None:
+            raise RuntimeError("The packaged build identity is unavailable")
+
+        phase = "component_bootstrap"
+        installed, _ = prepare_installed_runtime(
+            RuntimeCommand.current(),
+            relaunch_args=None,
+            progress=record_bootstrap_subphase,
+        )
+
+        phase = "component_presence"
+        helper = installed.mcp_executable
+        update_helper = installed.update_executable
+        recovery = installed.recovery_executable
+        components = (installed.executable, helper, recovery, update_helper)
+        if any(component is None or not component.is_file() for component in components):
+            raise RuntimeError("An installed update component is unavailable")
+        assert helper is not None
+        assert update_helper is not None
+        assert recovery is not None
+
+        phase = "component_digest"
+        app_digest, app_size = _file_digest(installed.executable)
+        helper_digest, helper_size = _file_digest(helper)
+        update_helper_digest, update_helper_size = _file_digest(update_helper)
+        recovery_digest, recovery_size = _file_digest(recovery)
+        payload = {
+            "status": "installed",
+            "version": build_identity.version,
+            "channel": build_identity.channel,
+            "source_commit": build_identity.source_commit,
+            "build_identity": build_identity.as_dict(),
+            "build_identity_sha256": build_identity.sha256,
+            "application": str(installed.executable),
+            "application_sha256": app_digest,
+            "application_size": app_size,
+            "mcp": str(helper),
+            "mcp_sha256": helper_digest,
+            "mcp_size": helper_size,
+            "recovery": str(recovery),
+            "recovery_sha256": recovery_digest,
+            "recovery_size": recovery_size,
+            "update_helper": str(update_helper),
+            "update_helper_sha256": update_helper_digest,
+            "update_helper_size": update_helper_size,
+        }
+        phase = "report_write"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
+        try:
+            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+            temporary.replace(report_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except Exception as error:
+        # Registration runs inside prepare after the binary transaction commits.
+        # Preserve existing classifications for other exception types.
+        if (
+            isinstance(error, OSError)
+            and phase == "component_bootstrap"
+            and prepare_subphase in {"entrypoint_refresh_probe", "entrypoint_registration"}
+        ):
+            phase = "entrypoint_registration"
+        failure_code = _packaged_update_failure_code(
+            error,
+            phase,
+            bootstrap_subphase=bootstrap_subphase,
+        )
+        with suppress(Exception):
+            _write_packaged_update_failure_report(
+                report_path,
+                attempt=attempt,
+                phase=phase,
+                code=failure_code,
+            )
+        return 1
     return 0
 
 
@@ -659,6 +1103,164 @@ def _run_silent_internal_mode(operation: Callable[[], int | None]) -> int:
         # content-free failure state and rollback decision.
         return 1
     return 0 if result is None else result
+
+
+def _find_windows_registration_error(error: BaseException) -> WindowsRegistrationError | None:
+    """Find only the typed registration cause; never inspect exception text."""
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    for _ in range(8):
+        if current is None or id(current) in seen:
+            return None
+        seen.add(id(current))
+        if isinstance(current, WindowsRegistrationError):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _bounded_registration_status_values(values: object) -> list[str] | None:
+    if not isinstance(values, tuple) or len(values) > PACKAGED_UNINSTALL_STATUS_MAX_ITEMS:
+        return None
+    if any(
+        type(value) is not str or value not in PACKAGED_UNINSTALL_STATUS_DETAIL_CODES
+        for value in values
+    ):
+        return None
+    return list(values)
+
+
+def _packaged_registration_status(
+    status: WindowsRegistrationRestoreStatus | None,
+) -> dict[str, object]:
+    unavailable = {
+        "available": False,
+        "complete": False,
+        "retryable": False,
+        "pending": [],
+        "errors": [],
+    }
+    if status is None or type(status.complete) is not bool or type(status.retryable) is not bool:
+        return unavailable
+    pending = _bounded_registration_status_values(status.pending)
+    errors = _bounded_registration_status_values(status.errors)
+    if pending is None or errors is None:
+        return unavailable
+    return {
+        "available": True,
+        "complete": status.complete,
+        "retryable": status.retryable,
+        "pending": pending,
+        "errors": errors,
+    }
+
+
+def _packaged_uninstall_failure_payload(error: BaseException) -> dict[str, object]:
+    registration_error = _find_windows_registration_error(error)
+    if registration_error is None:
+        stage = "cleanup"
+        code = "cleanup_failed"
+        status = None
+    else:
+        stage = "windows_registration"
+        code = (
+            registration_error.code
+            if (
+                type(registration_error.code) is str
+                and registration_error.code in PACKAGED_UNINSTALL_FAILURE_CODES
+            )
+            else "registration_failed"
+        )
+        status = registration_error.status
+    payload = {
+        "uninstalled": False,
+        "vault_preserved": True,
+        "stage": stage,
+        "code": code,
+        "registration_status": _packaged_registration_status(status),
+    }
+    if set(payload) != PACKAGED_UNINSTALL_FAILURE_FIELDS:
+        raise RuntimeError("The packaged uninstall failure report shape is invalid")
+    return payload
+
+
+def _write_packaged_uninstall_report(target: Path, payload: dict[str, object]) -> None:
+    """Atomically publish one bounded, content-free packaged-uninstall report."""
+
+    raw = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(raw) > PACKAGED_UNINSTALL_FAILURE_MAX_BYTES:
+        raise RuntimeError("The packaged uninstall report is too large")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{target.name}.", suffix=".atc-new", dir=target.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(target)
+    except BaseException:
+        with suppress(OSError):
+            temporary.unlink()
+        raise
+
+
+def _packaged_smoke_registration_failure() -> None:
+    """Inject one typed, content-free failure only for the isolated frozen smoke."""
+
+    if (
+        getattr(sys, "frozen", False)
+        and platform.system() == "Windows"
+        and os.environ.get("ATC_PACKAGED_SMOKE") == "1"
+        and os.environ.get("ATC_PACKAGED_SMOKE_INJECT_INCOMPLETE_REGISTRATION") == "1"
+    ):
+        raise WindowsRegistrationCompensationError(
+            "registration_uninstall_required",
+            status=WindowsRegistrationRestoreStatus(
+                False,
+                True,
+                0,
+                ("uninstall",),
+                ("registration_restore_target_changed",),
+            ),
+        )
+
+
+def _run_packaged_smoke_uninstall(report_value: str) -> int:
+    report_path = Path(report_value).expanduser().resolve()
+
+    def operation() -> int:
+        try:
+            if os.environ.get("ATC_PACKAGED_SMOKE") != "1":
+                raise RuntimeError("Packaged smoke uninstall is disabled")
+            _packaged_smoke_registration_failure()
+            result = _uninstall(RuntimeCommand.current(), unattended=True)
+        except Exception as error:
+            with suppress(Exception):
+                _write_packaged_uninstall_report(
+                    report_path, _packaged_uninstall_failure_payload(error)
+                )
+            return 1
+        if result != 0:
+            with suppress(Exception):
+                _write_packaged_uninstall_report(
+                    report_path,
+                    _packaged_uninstall_failure_payload(RuntimeError("uninstall_failed")),
+                )
+            return 1
+        try:
+            _write_packaged_uninstall_report(
+                report_path,
+                {"uninstalled": True, "vault_preserved": True},
+            )
+        except Exception:
+            return 1
+        return 0
+
+    return _run_silent_internal_mode(operation)
 
 
 def _run_packaged_update_health_check(report_value: str) -> int:
@@ -726,10 +1328,17 @@ def _headless_setup_error_code(error: Exception) -> str:
     return "setup_failed"
 
 
-def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path | None:
+def _write_headless_setup_failure_report(
+    target: Path,
+    error: Exception,
+    *,
+    setup_stage: HeadlessSetupStage,
+    setup_subphase: HeadlessSetupSubphase = "unknown",
+) -> Path | None:
     """Write a redacted headless failure report when the windowed app has no console."""
 
     error_code = _headless_setup_error_code(error)
+    setup_subphase = _normalize_headless_setup_subphase(setup_subphase)
     # The general graphical diagnostic path accepts a human-facing exception
     # message. Headless setup is automation-facing, so persist only a closed
     # code even if a lower layer accidentally embeds a token, path, or imported
@@ -741,6 +1350,8 @@ def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path
         if type(error).__name__ in {"RuntimeError", "OSError", "ValueError"}
         else "Exception",
         "error_code": error_code,
+        "setup_stage": setup_stage,
+        "setup_subphase": setup_subphase,
         # Never embed absolute developer paths; only a presence/basename signal.
         "diagnostics_written": diagnostics_path is not None,
         "diagnostics_name": diagnostics_path.name if diagnostics_path is not None else None,
@@ -794,8 +1405,20 @@ def _headless_claude_code_explicit_result(result: object) -> dict[str, Any] | No
 
 def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
     target = Path(args.headless_setup).expanduser().resolve()
+    setup_stage: HeadlessSetupStage = "prepare_installed_runtime"
+    setup_subphase: HeadlessSetupSubphase = "unknown"
+
+    def record_subphase(subphase: HeadlessSetupSubphase) -> None:
+        nonlocal setup_subphase
+        setup_subphase = _normalize_headless_setup_subphase(subphase)
+
     try:
-        installed, _ = prepare_installed_runtime(runtime, relaunch_args=None)
+        installed, _ = prepare_installed_runtime(
+            runtime,
+            relaunch_args=None,
+            progress=record_subphase,
+        )
+        setup_stage = "perform_setup"
         setup_kwargs: dict[str, Any] = {
             "vault_name": args.vault_name,
             "timezone": args.timezone or local_timezone(),
@@ -837,6 +1460,7 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         hermes_result = getattr(result, "hermes", None)
         report["hermes"] = asdict(hermes_result) if hermes_result else None
         report["startup"] = asdict(result.startup) if result.startup else None
+        setup_stage = "write_report"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
         return 0
@@ -844,7 +1468,12 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         # Windowed Windows packages have no console; persist a redacted report so
         # packaged smoke and operators can diagnose fail-closed setup without
         # relying on hidden stderr.
-        report_path = _write_headless_setup_failure_report(target, exc)
+        report_path = _write_headless_setup_failure_report(
+            target,
+            exc,
+            setup_stage=setup_stage,
+            setup_subphase=setup_subphase,
+        )
         error_code = _headless_setup_error_code(exc)
         if report_path is not None:
             print(
@@ -972,10 +1601,13 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
+        # Keep the helper console-free and in its own process group. On
+        # Windows, DETACHED_PROCESS can return zero without running this
+        # PowerShell command when combined with these flags.
         creationflags=windows_creation_flags("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"),
         # The real Start Menu uninstall shortcut starts inside install_dir.
         # A process cannot remove its own current directory on Windows, so the
-        # detached cleanup helper must explicitly run from the stable parent.
+        # cleanup helper must explicitly run from the stable parent.
         cwd=target.parent,
         env=environment,
     )
@@ -1053,7 +1685,16 @@ def _uninstall(runtime: RuntimeCommand, *, unattended: bool = False) -> int:
         apply_managed_client_cleanup(client_cleanup)
         remove_user_startup()
         remove_application_entrypoints()
-        _schedule_windows_install_removal(runtime.executable.parent)
+        # Packaged smoke and update recovery launch the cleanup mode from a
+        # staged helper, not necessarily from the canonical installed copy.
+        # When the install root is explicitly configured, remove that trusted
+        # root so rollback cleanup cannot target the staging directory.
+        cleanup_dir = (
+            windows_install_directory()
+            if os.environ.get("ATC_INSTALL_DIR")
+            else runtime.executable.parent
+        )
+        _schedule_windows_install_removal(cleanup_dir)
     except Exception as exc:
         raise RuntimeError(
             "Local uninstall cleanup did not finish. The installed files and local vault "
@@ -1413,16 +2054,7 @@ def main(argv: list[str] | None = None) -> int:
             lambda: _run_packaged_update_health_check(args.update_health_check)
         )
     if args.packaged_smoke_uninstall:
-        if os.environ.get("ATC_PACKAGED_SMOKE") != "1":
-            raise RuntimeError("Packaged smoke uninstall is disabled")
-        report_path = Path(args.packaged_smoke_uninstall).expanduser().resolve()
-        result = _uninstall(RuntimeCommand.current(), unattended=True)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps({"uninstalled": result == 0, "vault_preserved": True}) + "\n",
-            encoding="utf-8",
-        )
-        return result
+        return _run_packaged_smoke_uninstall(args.packaged_smoke_uninstall)
 
     while True:
         try:

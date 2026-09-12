@@ -60,7 +60,7 @@ def test_windows_startup_adapter_uses_mocked_per_user_registry(tmp_path: Path, m
             name, (name, kind, value)
         ),
     )
-    monkeypatch.setitem(__import__("sys").modules, "winreg", fake_winreg)
+    monkeypatch.setattr("allthecontext.user_startup.windows_registry", lambda: fake_winreg)
     monkeypatch.setattr("allthecontext.user_startup.platform.system", lambda: "Windows")
     executable = tmp_path / "Installed App" / "AllTheContext.exe"
 
@@ -168,7 +168,7 @@ def test_successful_smoke_startup_path_leaves_zero_orphan_registry_key(
         QueryInfoKey=query_info,
         DeleteKey=delete_key,
     )
-    monkeypatch.setitem(__import__("sys").modules, "winreg", fake_winreg)
+    monkeypatch.setattr("allthecontext.user_startup.windows_registry", lambda: fake_winreg)
     monkeypatch.setattr("allthecontext.user_startup.platform.system", lambda: "Windows")
     monkeypatch.setenv("ATC_PACKAGED_SMOKE", "1")
     monkeypatch.setenv("ATC_SMOKE_STARTUP_WINDOWS_KEY", smoke_key)

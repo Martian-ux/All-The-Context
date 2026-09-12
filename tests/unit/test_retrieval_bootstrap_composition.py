@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+from allthecontext.admissibility import ConflictState
 from allthecontext.content_evidence import CURATED_CONTENT_ALIASES, project_content_evidence
 from allthecontext.models import (
     ApprovalRequest,
@@ -10,11 +12,318 @@ from allthecontext.models import (
     CandidateInput,
     SearchRequest,
 )
-from allthecontext.retrieval import RetrievalEngine
+from allthecontext.retrieval import RetrievalEngine, _admissibility_inputs, parse_query_intent
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
 READER = ClientPrincipal("reader", "Synthetic reader", frozenset({"context:read"}))
+
+
+@pytest.mark.parametrize(
+    "exclusion",
+    [
+        "Do not mention unrelated preferences.",
+        "Don't include preferences.",
+        "Never discuss unrelated preferences.",
+    ],
+)
+def test_output_exclusions_preserve_factual_and_positive_preference_intent(exclusion: str) -> None:
+    intent = parse_query_intent(
+        "Prepare a brief deployment handoff for Project Aurora. "
+        f"State the current region, production blocker, and next action. {exclusion}"
+    )
+    assert set(intent.anchor_tokens) == {
+        "deployment",
+        "aurora",
+        "region",
+        "production",
+        "blocker",
+        "next",
+        "action",
+    }
+    assert intent.asks_current
+    assert "preferences" in parse_query_intent("State my current preferences.").anchor_tokens
+    assert "concise" in parse_query_intent("Do I prefer concise answers?").anchor_tokens
+    assert "not" in parse_query_intent("Which region is not deployed?").anchor_tokens
+    assert "state" in parse_query_intent("What is the deployment state?").anchor_tokens
+    assert "preferences" in parse_query_intent("No preferences changed for Aurora").anchor_tokens
+    assert "preferences" in parse_query_intent("Do not delete preferences").anchor_tokens
+    assert "latency" in parse_query_intent("not preferences, latency").anchor_tokens
+    assert "concise" in parse_query_intent("concise handoff preferences").anchor_tokens
+
+
+@pytest.mark.parametrize("request_prefix", ["Please prepare", "Write"])
+def test_output_request_verbs_are_not_content_anchors(request_prefix: str) -> None:
+    query = (
+        f"{request_prefix} a concise deployment handoff for Project Aurora. "
+        "State the current region, production blocker, and next action."
+    )
+    assert set(parse_query_intent(query).anchor_tokens) == {
+        "deployment",
+        "aurora",
+        "region",
+        "production",
+        "blocker",
+        "next",
+        "action",
+    }
+
+
+def test_generic_write_plan_keeps_the_request_subject_boundary() -> None:
+    assert parse_query_intent("write the Atlas project plan").anchor_tokens == (
+        "write",
+        "atlas",
+    )
+
+
+def test_explicit_kind_mismatch_overrides_kind_token_overlap(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "kind-mismatch.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    record_id = _approve(
+        store,
+        key="workflow-kind",
+        content="Atlas workflow",
+        kind="workflow",
+        scopes=["project:atlas"],
+    )
+    try:
+        with store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM context_records WHERE id=?", (record_id,)
+            ).fetchone()
+        assert row is not None
+        candidates, _context = _admissibility_inputs(
+            [row],
+            SearchRequest(
+                query="Atlas workflow",
+                kinds=["fact"],
+                current_project="atlas",
+            ),
+            {record_id: ConflictState.CLEAR},
+        )
+        assert candidates[0].signals.kind_compatibility == 0.0
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("request_prefix", ["Please prepare", "Write"])
+def test_output_request_verbs_do_not_create_required_handoff_anchors(
+    tmp_path: Path,
+    request_prefix: str,
+) -> None:
+    store = CoreStore(tmp_path / "request-verb.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    region = _approve(store, key="region", content="Aurora deployment region is west.")
+    blocker = _approve(
+        store, key="blocker", content="Aurora production is blocked pending approval."
+    )
+    action = _approve(store, key="action", content="The next Aurora action is to request approval.")
+    query = (
+        f"{request_prefix} a concise deployment handoff for Project Aurora. "
+        "State the current region, production blocker, and next action."
+    )
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(query=query, budget_chars=1600), READER
+        )
+        assert {region, blocker, action} <= {item.id for item in response.items}
+    finally:
+        store.close()
+
+
+def test_positive_preference_bootstrap_keeps_current_preference(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "preference.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    preference = _approve(
+        store,
+        key="preference",
+        content="I prefer concise answers.",
+        kind="interaction_preference",
+        explicit_user_statement=True,
+    )
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(query="State my current answer preferences.", budget_chars=1600),
+            READER,
+        )
+        assert preference in {item.id for item in response.items}
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "none",
+        "unknown",
+        "client",
+        "project",
+        "budget",
+        "correction",
+        "deletion",
+        "conflict",
+    ],
+)
+def test_project_handoff_composes_facts_only_when_eligible_union_fits(
+    tmp_path: Path,
+    boundary: str,
+) -> None:
+    store = CoreStore(tmp_path / "handoff.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    common = {"scopes": ["project:aurora"], "explicit_user_statement": True}
+    region = _approve(store, key="region", content="Aurora deployment region is west.", **common)
+    blocker = _approve(
+        store, key="blocker", content="Aurora production is blocked pending approval.", **common
+    )
+    action = _approve(
+        store,
+        key="action",
+        content="The next Aurora action is to request approval.",
+        scopes=["project:other"] if boundary == "project" else ["project:aurora"],
+        denied_clients=[READER.id] if boundary == "client" else [],
+        explicit_user_statement=boundary != "conflict",
+        entity_key="aurora",
+        attribute_key="next_action",
+        structured_value={"action": "request"},
+    )
+    if boundary == "correction":
+        store.correct_record(
+            region,
+            content="Aurora deployment region is east.",
+            reason="Synthetic correction",
+        )
+    if boundary == "deletion":
+        store.delete_record(action, reason="Synthetic deletion")
+    if boundary == "conflict":
+        _approve(
+            store,
+            key="conflicting-action",
+            content="The next Aurora action is to cancel approval.",
+            entity_key="aurora",
+            attribute_key="next_action",
+            structured_value={"action": "cancel"},
+            **{**common, "explicit_user_statement": False},
+        )
+    unrelated = _approve(
+        store,
+        key="unrelated",
+        content="Aurora deployment region production blocker next action.",
+        scopes=["project:other"],
+        explicit_user_statement=True,
+    )
+    query = (
+        "Prepare a concise deployment handoff for Project Aurora. "
+        "State the current deployment region, the production blocker, and the next action. "
+        "Do not mention unrelated preferences."
+    )
+    if boundary == "unknown":
+        query += " State the operator."
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(
+                query=query,
+                current_project="Aurora",
+                requested_scopes=["project:aurora"],
+                budget_chars=256 if boundary == "budget" else 1600,
+            ),
+            READER,
+        )
+        ids = {item.id for item in response.items}
+        assert unrelated not in ids
+        if boundary in {"none", "correction"}:
+            assert {region, blocker, action} <= ids
+            if boundary == "correction":
+                assert "Aurora deployment region is west." not in {
+                    item.content for item in response.items
+                }
+                assert "Aurora deployment region is east." in {
+                    item.content for item in response.items
+                }
+        else:
+            assert ids == set()
+        assert response.used_chars <= (256 if boundary == "budget" else 1600)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "exclusion",
+    [
+        "not preferences.",
+        "Not preferences!",
+        "Don\u2019t include preferences.",
+        "Do not include my preferences.",
+        "No preferences, please.",
+        "Don't include: preferences.",
+    ],
+)
+def test_preference_exclusion_does_not_block_project_facts(
+    tmp_path: Path,
+    exclusion: str,
+) -> None:
+    store = CoreStore(tmp_path / "exclusion.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    fact = _approve(
+        store,
+        key="region",
+        content="Aurora region is west.",
+        scopes=["project:aurora"],
+        explicit_user_statement=True,
+    )
+    preference = _approve(
+        store,
+        key="preference",
+        content="I prefer concise answers.",
+        kind="interaction_preference",
+        explicit_user_statement=True,
+    )
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(
+                query=f"Aurora region; {exclusion}",
+                current_project="Aurora",
+                budget_chars=1600,
+            ),
+            READER,
+        )
+        assert {fact, preference} <= {item.id for item in response.items}
+    finally:
+        store.close()
+
+
+def test_positive_preference_request_survives_unrelated_preference_exclusion() -> None:
+    query = "Do I prefer concise answers? Do not mention unrelated preferences."
+    intent = parse_query_intent(query)
+    assert intent.anchor_tokens == ("i", "prefer", "concise", "answers")
+
+
+@pytest.mark.parametrize(
+    "query, content",
+    [
+        ("State regulations for Aurora", "Aurora regulations require approval."),
+        ("Aurora handoff owner", "Aurora owner is Morgan."),
+        ("Aurora region; not preferences, latency", "Aurora region is west."),
+    ],
+)
+def test_meaningful_state_and_handoff_terms_require_content(
+    tmp_path: Path,
+    query: str,
+    content: str,
+) -> None:
+    store = CoreStore(tmp_path / "meaningful.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    _approve(store, key="near-miss", content=content, explicit_user_statement=True)
+    try:
+        assert (
+            not RetrievalEngine(store)
+            .bootstrap(
+                BootstrapRequest(query=query, budget_chars=1600),
+                READER,
+            )
+            .items
+        )
+    finally:
+        store.close()
 
 
 def _approve(store: CoreStore, *, key: str, content: str, **kwargs: Any) -> str:

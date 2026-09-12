@@ -12,6 +12,7 @@ from allthecontext.edge_distribution import (
     EdgeDistributionError,
     deployment_config,
     edge_image_metadata,
+    parse_edge_image_metadata,
     render_blueprint,
     render_packaged_defaults,
     validate_image_reference,
@@ -102,6 +103,15 @@ def test_distribution_metadata_and_blueprint_are_deterministic_and_digest_pinned
     assert repr(IMAGE) in defaults
     assert repr(SOURCE_COMMIT) in defaults
     assert repr(BLUEPRINT_COMMIT) in defaults
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_edge_image_metadata_rejects_non_integer_schema_version(schema_version: object) -> None:
+    metadata = edge_image_metadata(IMAGE, SOURCE_COMMIT)
+    metadata["schema_version"] = schema_version
+
+    with pytest.raises(EdgeDistributionError, match="schema"):
+        parse_edge_image_metadata(metadata)
 
 
 def test_isolated_experimental_template_can_render_multiple_immutable_images() -> None:

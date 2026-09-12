@@ -7,6 +7,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Literal
 
+from ..activity import CoreActivityGate
 from ..capture_runtime import compose_capture_coordinator
 from ..capture_scheduler import CoreCaptureScheduler
 from ..client_capture import CoreCaptureService
@@ -28,6 +29,7 @@ class CoreService:
     ) -> None:
         self.config = config
         self.config.prepare()
+        self.activity_gate = CoreActivityGate()
         capture_clock = utc_now if clock is None else clock
         self.store = CoreStore(config.database_path)
         self.store.initialize_vault()
@@ -35,12 +37,14 @@ class CoreService:
             self.store,
             self.config,
             clock=capture_clock,
+            activity_gate=self.activity_gate,
         )
         self.capture.ledger.recover_expired_runs()
         self.capture_scheduler = CoreCaptureScheduler(
             self.capture,
             self.config,
             clock=capture_clock,
+            activity_gate=self.activity_gate,
         )
         self.store.repair_preledger_secrets()
         while self.store.evaluate_staged_observations():
@@ -49,12 +53,17 @@ class CoreService:
         self.ingestion = IngestionService(self.store)
         self.client_capture = CoreCaptureService(self.store)
         self.retrieval = RetrievalEngine(self.store)
-        self.imports = ArchiveImportService(self.store, max_bytes=config.max_import_bytes)
+        self.imports = ArchiveImportService(
+            self.store,
+            max_bytes=config.max_import_bytes,
+            activity_gate=self.activity_gate,
+        )
         self.import_operations = ImportOperationService(
             self.store,
             self.imports,
             data_dir=config.data_dir,
             max_bytes=config.max_import_bytes,
+            activity_gate=self.activity_gate,
         )
         # Deterministic recovery for operations interrupted by process death.
         self.import_operations.recover_interrupted_operations()
@@ -63,12 +72,12 @@ class CoreService:
     def in_directory(cls, data_dir: Path, *, require_auth: bool = False) -> CoreService:
         return cls(CoreConfig.in_directory(data_dir, require_auth=require_auth))
 
-    def close(self) -> None:
+    def close(self, *, close_observer: bool = True) -> None:
         """Wait for the capture scheduler worker to die, then release store resources."""
         try:
             self.capture_scheduler.shutdown()
         finally:
-            self.store.close()
+            self.store.close(close_observer=close_observer)
 
     def __enter__(self) -> CoreService:
         return self

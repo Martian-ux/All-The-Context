@@ -10,7 +10,7 @@ import secrets
 import sqlite3
 import tempfile
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import IO, Any
 
@@ -18,9 +18,14 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from .config import MAX_IMPORT_BYTES
+from .memory_policy import UNKEYED_CONFLICT_KINDS
 from .storage import (
+    _ARCHIVE_PURGE_BARRIER_TABLE,
+    _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE,
     SOURCE_BLOB_CHUNK_BYTES,
     CoreStore,
+    _archive_purge_barrier_digest,
+    _archive_source_less_purge_barrier_digest,
     _mutation_evidence_hash,
     _normalize_actor,
     _stable_record_key_from_row,
@@ -28,11 +33,30 @@ from .storage import (
 )
 
 MAGIC = b"ATCEXP1\x00"
+EXPORT_FORMAT_VERSION = 1
+# Version 0 is the pre-Core/minimal export shape.  Versions 1 through 20 are
+# the current and retained legacy Core schemas represented by this checkout.
+SUPPORTED_SCHEMA_VERSIONS = frozenset(range(21))
 SALT_SIZE = 16
 NONCE_SIZE = 12
 TAG_SIZE = 16
 CHUNK_SIZE = 1024 * 1024
 MAX_RESTORE_ENTRY_BYTES = 512 * 1024 * 1024
+# These tables contain machine-local principals, credentials, grants, or
+# in-flight session state.  No existing product decision makes that security
+# state portable; keep this list explicit so a new table cannot silently join
+# the ordinary data export policy.
+NON_PORTABLE_SECURITY_TABLES = frozenset(
+    {
+        "client_registrations",
+        "permission_grants",
+        "remote_edge_clients",
+        "ingestion_sessions",
+        "ingestion_batches",
+        "import_operations",
+        "secret_refusal_receipts",
+    }
+)
 EXCLUDED_TABLES = {
     "schema_migrations",
     "context_fts",
@@ -43,7 +67,10 @@ EXCLUDED_TABLES = {
     "integrity_groups",
     "integrity_group_members",
     "source_blob_chunks",
-}
+    # Rebuilt from current and historical record lineage on each destination;
+    # never treat this derived lookup as portable authority.
+    "context_record_archive_identities",
+} | NON_PORTABLE_SECURITY_TABLES
 CAPTURE_RUNTIME_TABLES = frozenset(
     {
         "capture_sources",
@@ -53,6 +80,194 @@ CAPTURE_RUNTIME_TABLES = frozenset(
         "capture_runs",
     }
 )
+
+# This is deliberately an explicit inventory.  Restore is a security boundary:
+# a newly added portable table must be added here and to the reference inventory
+# below before it can silently introduce a destination-backed edge.
+PORTABLE_TABLE_INVENTORY = frozenset(
+    {
+        "archive_purge_barriers",
+        "archive_source_less_purge_barriers",
+        "audit_events",
+        "client_registrations",
+        "context_candidates",
+        "context_errors",
+        "context_observation_links",
+        "context_record_versions",
+        "context_records",
+        "context_user_mutations",
+        "deletion_tombstones",
+        "edge_proposal_receipts",
+        "import_operations",
+        "ingestion_batches",
+        "ingestion_sessions",
+        "memory_policies",
+        "permission_grants",
+        "purge_jobs",
+        "purge_tombstones",
+        "remote_edge_clients",
+        "replication_checkpoints",
+        "replication_events",
+        "secret_refusal_receipts",
+        "source_blobs",
+        "source_deletion_members",
+        "source_records",
+        "vaults",
+    }
+)
+
+# (table, column, target table).  This includes SQLite foreign keys and the
+# intentional semantic edges that SQLite cannot express because purge removes
+# the target or because old schemas predate the column.
+PORTABLE_RELATIONAL_REFERENCE_INVENTORY = frozenset(
+    {
+        ("archive_purge_barriers", "vault_id", "vaults"),
+        ("archive_purge_barriers", "source_id", "source_records"),
+        ("archive_source_less_purge_barriers", "vault_id", "vaults"),
+        ("audit_events", "vault_id", "vaults"),
+        ("client_registrations", "vault_id", "vaults"),
+        ("context_candidates", "vault_id", "vaults"),
+        ("context_candidates", "session_id", "ingestion_sessions"),
+        ("context_candidates", "source_id", "source_records"),
+        ("context_candidates", "submitted_by_client_id", "client_registrations"),
+        ("context_candidates", "record_id", "context_records"),
+        ("context_candidates", "supersedes", "context_records"),
+        ("context_candidates", "capture_source_id", "capture_sources"),
+        ("context_candidates", "capture_event_id", "capture_events"),
+        ("context_errors", "vault_id", "vaults"),
+        ("context_errors", "candidate_id", "context_candidates"),
+        ("context_errors", "record_id", "context_records"),
+        ("context_observation_links", "observation_id", "context_candidates"),
+        ("context_observation_links", "record_id", "context_records"),
+        ("context_record_versions", "record_id", "context_records"),
+        ("context_records", "vault_id", "vaults"),
+        ("context_records", "candidate_id", "context_candidates"),
+        ("context_records", "source_id", "source_records"),
+        ("context_records", "supersedes", "context_records"),
+        ("context_user_mutations", "vault_id", "vaults"),
+        ("context_user_mutations", "record_id", "context_records"),
+        ("context_user_mutations", "evidence_id", "context_record_versions"),
+        ("deletion_tombstones", "vault_id", "vaults"),
+        ("deletion_tombstones", "record_id", "context_records"),
+        ("deletion_tombstones", "deletion_source_id", "source_records"),
+        ("deletion_tombstones", "rebuild_session_id", "ingestion_sessions"),
+        ("edge_proposal_receipts", "vault_id", "vaults"),
+        ("edge_proposal_receipts", "candidate_id", "context_candidates"),
+        ("import_operations", "vault_id", "vaults"),
+        ("import_operations", "source_id", "source_records"),
+        ("import_operations", "content_hash", "source_blobs"),
+        ("ingestion_batches", "session_id", "ingestion_sessions"),
+        ("ingestion_sessions", "vault_id", "vaults"),
+        ("ingestion_sessions", "client_id", "client_registrations"),
+        ("memory_policies", "vault_id", "vaults"),
+        ("permission_grants", "client_id", "client_registrations"),
+        ("purge_jobs", "vault_id", "vaults"),
+        ("purge_jobs", "target_id", "purge_target"),
+        ("purge_tombstones", "vault_id", "vaults"),
+        ("purge_tombstones", "replication_event_id", "replication_events"),
+        ("replication_checkpoints", "vault_id", "vaults"),
+        ("replication_events", "vault_id", "vaults"),
+        ("replication_events", "record_id", "context_records"),
+        ("secret_refusal_receipts", "vault_id", "vaults"),
+        ("source_deletion_members", "source_id", "source_records"),
+        ("source_deletion_members", "record_id", "context_records"),
+        ("source_records", "vault_id", "vaults"),
+        ("source_records", "content_hash", "source_blobs"),
+    }
+)
+
+# (table, JSON column, JSON member, target type).  Lists are intentionally
+# enumerated rather than recursively treating arbitrary provider metadata as an
+# ID graph: imported text and structured values are data, not authority.
+PORTABLE_JSON_REFERENCE_INVENTORY = frozenset(
+    {
+        ("ingestion_sessions", "accessible_sources_json", "*", "source_records"),
+        ("ingestion_sessions", "unavailable_sources_json", "*", "source_records"),
+        ("ingestion_batches", "candidate_ids_json", "*", "context_candidates"),
+        ("context_candidates", "allowed_clients_json", "*", "client_principals"),
+        ("context_candidates", "denied_clients_json", "*", "client_principals"),
+        ("context_records", "allowed_clients_json", "*", "client_principals"),
+        ("context_records", "denied_clients_json", "*", "client_principals"),
+        ("context_record_versions", "snapshot_json", "source_id", "source_records"),
+        ("context_record_versions", "snapshot_json", "candidate_id", "context_candidates"),
+        ("context_record_versions", "snapshot_json", "supersedes", "context_records"),
+        ("context_record_versions", "snapshot_json", "allowed_clients", "client_principals"),
+        ("context_record_versions", "snapshot_json", "denied_clients", "client_principals"),
+        ("replication_events", "payload_json", "record_id", "context_records"),
+        ("replication_events", "payload_json", "source_id", "source_records"),
+        ("replication_events", "payload_json", "candidate_id", "context_candidates"),
+        ("replication_events", "payload_json", "allowed_clients", "client_principals"),
+        ("replication_events", "payload_json", "denied_clients", "client_principals"),
+        ("audit_events", "record_ids_json", "*", "context_records"),
+        ("audit_events", "denied_record_ids_json", "*", "context_records"),
+        ("source_records", "metadata_json", "import_operation_id", "import_operations"),
+        (
+            "source_records",
+            "metadata_json",
+            "rebuild_published_session_id",
+            "ingestion_sessions",
+        ),
+        ("import_operations", "result_json", "source.id", "source_records"),
+        ("import_operations", "result_json", "source.content_hash", "source_blobs"),
+        ("import_operations", "result_json", "session.session_id", "ingestion_sessions"),
+        ("import_operations", "result_json", "candidate_ids", "context_candidates"),
+        ("import_operations", "result_json", "record_ids", "context_records"),
+        ("import_operations", "result_json", "withdrawn_record_ids", "context_records"),
+    }
+)
+
+_PORTABLE_ROW_KEYS: dict[str, tuple[str, ...]] = {
+    "archive_purge_barriers": ("vault_id", "source_id", "source_kind", "barrier_digest"),
+    "archive_source_less_purge_barriers": ("vault_id", "source_kind", "barrier_digest"),
+    "audit_events": ("id",),
+    "client_registrations": ("id",),
+    "context_candidates": ("id",),
+    "context_errors": ("id",),
+    "context_observation_links": ("observation_id", "record_id"),
+    "context_record_versions": ("id",),
+    "context_records": ("id",),
+    "context_user_mutations": ("id",),
+    "deletion_tombstones": ("record_id",),
+    "edge_proposal_receipts": ("vault_id", "proposal_id"),
+    "import_operations": ("id",),
+    "ingestion_batches": ("id",),
+    "ingestion_sessions": ("id",),
+    "memory_policies": ("vault_id",),
+    "permission_grants": ("id",),
+    "purge_jobs": ("id",),
+    "purge_tombstones": ("stable_id",),
+    "remote_edge_clients": ("id",),
+    "replication_checkpoints": ("relay_id",),
+    "replication_events": ("id",),
+    "secret_refusal_receipts": ("id",),
+    "source_blobs": ("content_hash",),
+    "source_deletion_members": ("source_id", "record_id"),
+    "source_records": ("id",),
+    "vaults": ("id",),
+}
+
+_PORTABLE_ID_TYPES: dict[str, tuple[str, str]] = {
+    "audit_events": ("id", "audit_event"),
+    "client_registrations": ("id", "client"),
+    "context_candidates": ("id", "candidate"),
+    "context_errors": ("id", "context_error"),
+    "context_record_versions": ("id", "record_version"),
+    "context_records": ("id", "record"),
+    "context_user_mutations": ("id", "user_mutation"),
+    "edge_proposal_receipts": ("proposal_id", "edge_proposal"),
+    "import_operations": ("id", "import_operation"),
+    "ingestion_batches": ("id", "ingestion_batch"),
+    "ingestion_sessions": ("id", "ingestion_session"),
+    "permission_grants": ("id", "permission_grant"),
+    "purge_jobs": ("id", "purge_job"),
+    "remote_edge_clients": ("id", "remote_edge_client"),
+    "replication_checkpoints": ("relay_id", "replication_checkpoint"),
+    "replication_events": ("id", "replication_event"),
+    "secret_refusal_receipts": ("id", "secret_refusal_receipt"),
+    "source_blobs": ("content_hash", "source_blob"),
+    "source_records": ("id", "source"),
+    "vaults": ("id", "vault"),
+}
 
 
 def _derive_key(passphrase: str, salt: bytes) -> bytes:
@@ -68,7 +283,8 @@ def _table_names(connection: sqlite3.Connection) -> list[str]:
     return sorted(
         name
         for row in rows
-        if (name := str(row[0])) not in EXCLUDED_TABLES and not name.startswith("context_fts_")
+        if (name := str(row[0])) not in EXCLUDED_TABLES.difference(NON_PORTABLE_SECURITY_TABLES)
+        and not name.startswith("context_fts_")
     )
 
 
@@ -149,16 +365,98 @@ def _without_source_reference(
                         separators=(",", ":"),
                         ensure_ascii=False,
                     )
+    if table == "ingestion_sessions":
+        # A source-less package cannot carry provider/source identities that
+        # would later be mistaken for destination rows.
+        for field in ("accessible_sources_json", "unavailable_sources_json"):
+            if field in document:
+                document[field] = "[]"
+    if table == "import_operations":
+        # Import-operation source pointers are observer state, not portable
+        # source authority.  Keep the operation row but detach source bytes.
+        document["source_id"] = None
+        document["content_hash"] = None
+        raw_result = document.get("result_json")
+        if isinstance(raw_result, str):
+            try:
+                result = json.loads(raw_result)
+            except (TypeError, ValueError):
+                result = None
+            if isinstance(result, dict):
+                result.pop("source", None)
+                session = result.get("session")
+                if isinstance(session, dict):
+                    session["accessible_sources"] = []
+                    session["unavailable_sources"] = []
+                document["result_json"] = json.dumps(
+                    result,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+    if table == "deletion_tombstones":
+        document["deletion_source_id"] = None
     return document
 
 
-def _without_capture_runtime_reference(document: dict[str, Any]) -> dict[str, Any]:
-    """Keep admitted facts portable without dangling machine-local FKs."""
+def _without_machine_local_references(table: str, document: dict[str, Any]) -> dict[str, Any]:
+    """Keep ordinary facts portable without dangling machine-local FKs."""
 
     if "capture_source_id" in document:
         document["capture_source_id"] = None
     if "capture_event_id" in document:
         document["capture_event_id"] = None
+    if table == "context_candidates":
+        # Client registrations and ingestion sessions are deliberately not
+        # portable.  Preserve the candidate itself while removing references
+        # that could bind it to a destination's unrelated security state.
+        if "session_id" in document:
+            document["session_id"] = None
+        if "submitted_by_client_id" in document:
+            document["submitted_by_client_id"] = None
+    if table in {"context_candidates", "context_records"}:
+        # Client ACLs name registrations that are intentionally excluded from
+        # the package.  Carrying those IDs would either fail graph validation
+        # or accidentally bind restored facts to an unrelated destination
+        # principal.  An encrypted export is the explicit portability boundary,
+        # so restore the fact without source-machine authorization state.
+        for field in ("allowed_clients_json", "denied_clients_json"):
+            if field in document:
+                document[field] = "[]"
+    elif table == "context_record_versions":
+        raw_snapshot = document.get("snapshot_json")
+        if isinstance(raw_snapshot, str):
+            try:
+                snapshot = json.loads(raw_snapshot)
+            except (TypeError, ValueError):
+                snapshot = None
+            if isinstance(snapshot, dict):
+                for field in ("allowed_clients", "denied_clients"):
+                    if field in snapshot:
+                        snapshot[field] = []
+                document["snapshot_json"] = json.dumps(
+                    snapshot,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+    elif table == "replication_events":
+        raw_payload = document.get("payload_json")
+        if isinstance(raw_payload, str):
+            try:
+                payload = json.loads(raw_payload)
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                for field in ("allowed_clients", "denied_clients"):
+                    if field in payload:
+                        payload[field] = []
+                document["payload_json"] = json.dumps(
+                    payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
     return document
 
 
@@ -231,8 +529,14 @@ def _database_to_zip(
             for table in _table_names(connection):
                 if table in CAPTURE_RUNTIME_TABLES:
                     continue
+                if table in NON_PORTABLE_SECURITY_TABLES:
+                    continue
                 lowered = table.casefold()
-                if not include_sources and ("source" in lowered or "blob" in lowered):
+                if (
+                    not include_sources
+                    and table != _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE
+                    and ("source" in lowered or "blob" in lowered)
+                ):
                     continue
                 if not include_audit and "audit" in lowered:
                     continue
@@ -244,9 +548,13 @@ def _database_to_zip(
                 with archive.open(f"tables/{table}.jsonl", "w") as output:
                     for row in connection.execute(f'SELECT * FROM "{table}"'):
                         document = {column: _json_value(row[column]) for column in columns}
+                        if table == _ARCHIVE_PURGE_BARRIER_TABLE:
+                            _archive_purge_barrier_key(document)
+                        elif table == _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE:
+                            _archive_source_less_purge_barrier_key(document)
                         if not include_sources:
                             document = _without_source_reference(table, document)
-                        document = _without_capture_runtime_reference(document)
+                        document = _without_machine_local_references(table, document)
                         encoded = (
                             json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
                         ).encode("utf-8")
@@ -260,7 +568,7 @@ def _database_to_zip(
             )
             manifest = {
                 "format": "all-the-context",
-                "format_version": 1,
+                "format_version": EXPORT_FORMAT_VERSION,
                 "schema_version": schema_version,
                 "include_sources": include_sources,
                 "include_audit": include_audit,
@@ -348,14 +656,1033 @@ def _decode_value(value: Any) -> Any:
     return value
 
 
+def _json_object_from_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Decode JSON objects without silently shadowing a repeated key."""
+
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("portable JSON object contains duplicate keys")
+        value[key] = item
+    return value
+
+
 def _iter_jsonl(stream: IO[bytes]) -> Iterable[dict[str, Any]]:
     for line in stream:
         if not line.strip():
             continue
-        value = json.loads(line)
+        value = json.loads(line, object_pairs_hook=_json_object_from_pairs)
         if not isinstance(value, dict):
             raise ValueError("portable table row must be a JSON object")
         yield {key: _decode_value(item) for key, item in value.items()}
+
+
+def _archive_purge_barrier_key(row: dict[str, Any] | sqlite3.Row) -> tuple[str, str, str, str]:
+    """Validate and return the content-free key of one archive purge barrier."""
+
+    vault_id = row["vault_id"]
+    source_id = row["source_id"]
+    source_kind = row["source_kind"]
+    barrier_digest = row["barrier_digest"]
+    purged_at = row["purged_at"]
+    if (
+        set(row.keys()) != {"vault_id", "source_id", "source_kind", "barrier_digest", "purged_at"}
+        or not isinstance(vault_id, str)
+        or not vault_id.strip()
+        or not isinstance(source_id, str)
+        or not source_id.strip()
+        or not isinstance(source_kind, str)
+        or not source_kind.strip()
+        or source_kind != source_kind.casefold()
+        or not isinstance(barrier_digest, str)
+        or len(barrier_digest) != 64
+        or any(character not in "0123456789abcdef" for character in barrier_digest)
+        or not isinstance(purged_at, str)
+        or not purged_at.strip()
+    ):
+        raise ValueError("archive purge barrier row is invalid")
+    return vault_id, source_id, source_kind, barrier_digest
+
+
+def _archive_purge_barrier_key_for_content(
+    row: dict[str, Any],
+) -> tuple[str, str, str, str] | None:
+    try:
+        digest = _archive_purge_barrier_digest(row)
+    except KeyError:
+        # Pre-policy portable rows have no observation_origin column and
+        # cannot safely prove archive lineage during this pre-scan.
+        return None
+    source_id = row.get("source_id")
+    kind = row.get("kind")
+    vault_id = row.get("vault_id")
+    if (
+        digest is None
+        or not isinstance(vault_id, str)
+        or not isinstance(source_id, str)
+        or not isinstance(kind, str)
+    ):
+        return None
+    return vault_id, source_id, kind.casefold(), digest
+
+
+def _archive_source_less_purge_barrier_key(
+    row: dict[str, Any] | sqlite3.Row,
+) -> tuple[str, str, str]:
+    """Validate and return one opaque source-less archive purge key."""
+
+    vault_id = row["vault_id"]
+    source_kind = row["source_kind"]
+    barrier_digest = row["barrier_digest"]
+    purged_at = row["purged_at"]
+    if (
+        set(row.keys()) != {"vault_id", "source_kind", "barrier_digest", "purged_at"}
+        or not isinstance(vault_id, str)
+        or not vault_id.strip()
+        or not isinstance(source_kind, str)
+        or source_kind != source_kind.casefold()
+        or source_kind not in UNKEYED_CONFLICT_KINDS
+        or not isinstance(barrier_digest, str)
+        or len(barrier_digest) != 64
+        or any(character not in "0123456789abcdef" for character in barrier_digest)
+        or not isinstance(purged_at, str)
+        or not purged_at.strip()
+    ):
+        raise ValueError("source-less archive purge barrier row is invalid")
+    return vault_id, source_kind, barrier_digest
+
+
+def _archive_source_less_purge_barrier_key_for_content(
+    row: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    try:
+        digest = _archive_source_less_purge_barrier_digest(row)
+    except (KeyError, TypeError, ValueError):
+        return None
+    vault_id = row.get("vault_id")
+    kind = row.get("kind")
+    if (
+        digest is None
+        or not isinstance(vault_id, str)
+        or not isinstance(kind, str)
+        or kind.casefold() not in UNKEYED_CONFLICT_KINDS
+    ):
+        return None
+    return vault_id, kind.casefold(), digest
+
+
+def _portable_vault_ids(
+    archive: zipfile.ZipFile,
+    manifest_tables: dict[str, Any],
+) -> set[str]:
+    """Return the package-authenticated vault identities.
+
+    These identities are the only package-to-destination mapping available to
+    the format.  A destination row is not a mapping declaration: allowing one
+    to extend this set would let an imported barrier be reassigned to an
+    unrelated preexisting vault.
+    """
+
+    if "vaults" not in manifest_tables:
+        return set()
+    vault_ids: set[str] = set()
+    folded_vault_ids: set[str] = set()
+    with archive.open("tables/vaults.jsonl") as stream:
+        for row in _iter_jsonl(stream):
+            vault_id = row.get("id")
+            if not isinstance(vault_id, str) or not vault_id.strip():
+                raise ValueError("export vault row has an invalid id")
+            if vault_id in vault_ids:
+                raise ValueError("export vault rows are duplicated")
+            folded_vault_id = vault_id.casefold()
+            if folded_vault_id in folded_vault_ids:
+                raise ValueError("export vault rows have ambiguous identities")
+            vault_ids.add(vault_id)
+            folded_vault_ids.add(folded_vault_id)
+    return vault_ids
+
+
+def _manifest_schema_version(manifest: dict[str, Any]) -> int:
+    """Validate the explicit integer schema versions retained by this format."""
+
+    raw_version = manifest.get("schema_version", 0)
+    if type(raw_version) is not int or raw_version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ValueError("export schema version must be an integer from 0 through 20")
+    return raw_version
+
+
+def _validate_manifest_versions(manifest: dict[str, Any]) -> int:
+    """Validate format and schema versions without coercing JSON values."""
+
+    if (
+        manifest.get("format") != "all-the-context"
+        or type(manifest.get("format_version")) is not int
+        or manifest.get("format_version") != EXPORT_FORMAT_VERSION
+    ):
+        raise ValueError("unsupported export format")
+    return _manifest_schema_version(manifest)
+
+
+def _validate_package_vault_binding(
+    archive: zipfile.ZipFile,
+    manifest_tables: dict[str, Any],
+    *,
+    include_sources: bool,
+) -> set[str]:
+    """Validate one package-wide vault identity before touching the destination.
+
+    A portable Core database is single-vault.  The declaration in ``vaults``
+    is the only package-side identity/remap authority; every serialized
+    authoritative row that carries ``vault_id`` must use that exact identity.
+    Destination rows are deliberately not consulted here, so an existing
+    destination vault cannot authorize a cross-vault import.  Pre-Core minimal
+    exports without a vault table remain valid only when they contain no vault
+    references.
+    """
+
+    package_vault_ids = _portable_vault_ids(archive, manifest_tables)
+    if "vaults" in manifest_tables:
+        if len(package_vault_ids) != 1:
+            raise ValueError("portable export must declare exactly one package vault")
+        package_vault_id = next(iter(package_vault_ids))
+    else:
+        package_vault_id = None
+
+    package_source_ids: set[str] = set()
+    for table in manifest_tables:
+        if (
+            table in CAPTURE_RUNTIME_TABLES
+            or table in NON_PORTABLE_SECURITY_TABLES
+            or table == "vaults"
+        ):
+            continue
+        with archive.open(f"tables/{table}.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                if "vault_id" in row:
+                    vault_id = row["vault_id"]
+                    if (
+                        type(vault_id) is not str
+                        or not vault_id.strip()
+                        or package_vault_id is None
+                        or vault_id != package_vault_id
+                    ):
+                        raise ValueError(
+                            f"export table {table} row is not bound to the package vault"
+                        )
+                if table == "source_records":
+                    source_id = row.get("id")
+                    if isinstance(source_id, str) and source_id:
+                        package_source_ids.add(source_id)
+
+    if include_sources:
+        # Source-inclusive packages must not turn a source_id into an implicit
+        # lookup into the destination database.  Source-free exports clear
+        # these references during restore, so this check is intentionally
+        # scoped to the format that preserves them.
+        for table in ("context_candidates", "context_records"):
+            if table not in manifest_tables:
+                continue
+            with archive.open(f"tables/{table}.jsonl") as stream:
+                for row in _iter_jsonl(stream):
+                    source_id = row.get("source_id")
+                    if source_id is not None and (
+                        type(source_id) is not str or source_id not in package_source_ids
+                    ):
+                        raise ValueError(
+                            f"export {table} source reference is not bound to a package source"
+                        )
+    if "context_record_versions" in manifest_tables:
+        with archive.open("tables/context_record_versions.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                snapshot_json = row.get("snapshot_json")
+                if not isinstance(snapshot_json, str):
+                    continue
+                try:
+                    snapshot = json.loads(
+                        snapshot_json,
+                        object_pairs_hook=_json_object_from_pairs,
+                    )
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(snapshot, dict):
+                    continue
+                if "vault_id" in snapshot:
+                    vault_id = snapshot["vault_id"]
+                    if (
+                        type(vault_id) is not str
+                        or not vault_id.strip()
+                        or package_vault_id is None
+                        or vault_id != package_vault_id
+                    ):
+                        raise ValueError(
+                            "export record version snapshot is not bound to the package vault"
+                        )
+                if include_sources:
+                    source_id = snapshot.get("source_id")
+                    if source_id is not None and (
+                        type(source_id) is not str or source_id not in package_source_ids
+                    ):
+                        raise ValueError(
+                            "export record version source reference is not bound to a "
+                            "package source"
+                        )
+    if include_sources and "source_deletion_members" in manifest_tables:
+        with archive.open("tables/source_deletion_members.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                source_id = row.get("source_id")
+                if type(source_id) is not str or source_id not in package_source_ids:
+                    raise ValueError(
+                        "export source deletion reference is not bound to a package source"
+                    )
+
+    return package_vault_ids
+
+
+def _iter_portable_table_rows(
+    archive: zipfile.ZipFile,
+    table: str,
+) -> Iterator[dict[str, Any]]:
+    with archive.open(f"tables/{table}.jsonl") as stream:
+        yield from _iter_jsonl(stream)
+
+
+def _package_row_key(table: str, row: dict[str, Any]) -> tuple[str, ...]:
+    columns = _PORTABLE_ROW_KEYS[table]
+    values: list[str] = []
+    for column in columns:
+        value = row.get(column)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"portable {table} row has an invalid {column}")
+        values.append(value)
+    return tuple(values)
+
+
+def _decode_portable_json(
+    table: str,
+    row: dict[str, Any],
+    column: str,
+    *,
+    required: bool = False,
+) -> Any:
+    raw = row.get(column)
+    if raw is None:
+        if required:
+            raise ValueError(f"portable {table}.{column} is missing")
+        return None
+    if not isinstance(raw, str):
+        raise ValueError(f"portable {table}.{column} is not JSON text")
+    try:
+        return json.loads(raw, object_pairs_hook=_json_object_from_pairs)
+    except (TypeError, ValueError):
+        raise ValueError(f"portable {table}.{column} is invalid JSON") from None
+
+
+def _require_portable_reference(
+    *,
+    table: str,
+    column: str,
+    value: Any,
+    target: str,
+    target_ids: dict[str, set[str]],
+    allow_none: bool = True,
+) -> None:
+    if value is None and allow_none:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"portable {table}.{column} is not a valid {target} reference")
+    if value not in target_ids.get(target, set()):
+        if table == "purge_jobs" and column == "target_id":
+            raise ValueError("portable purge job target_id does not resolve inside the package")
+        raise ValueError(f"portable {table}.{column} does not resolve inside the package")
+
+
+def _require_portable_reference_list(
+    *,
+    table: str,
+    column: str,
+    value: Any,
+    target: str,
+    target_ids: dict[str, set[str]],
+    allow_wildcard: bool = False,
+    maximum: int = 512,
+) -> None:
+    if not isinstance(value, list) or len(value) > maximum:
+        raise ValueError(f"portable {table}.{column} must be a bounded JSON string list")
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item.strip() or item in seen:
+            raise ValueError(f"portable {table}.{column} contains an invalid or duplicate ID")
+        if not (allow_wildcard and item == "*") and item not in target_ids.get(target, set()):
+            raise ValueError(f"portable {table}.{column} contains an unresolved package ID")
+        seen.add(item)
+
+
+def _validate_portable_snapshot(
+    row: dict[str, Any],
+    *,
+    target_ids: dict[str, set[str]],
+    include_sources: bool,
+) -> None:
+    snapshot = _decode_portable_json(
+        "context_record_versions",
+        row,
+        "snapshot_json",
+        required=True,
+    )
+    if not isinstance(snapshot, dict):
+        raise ValueError("portable context record version snapshot is not an object")
+    record_id = row.get("record_id")
+    if snapshot.get("id") != record_id:
+        raise ValueError("portable context record version snapshot has the wrong record ID")
+    if "vault_id" in snapshot and snapshot["vault_id"] not in target_ids.get(
+        "package_vault", set()
+    ):
+        raise ValueError("portable context record version snapshot has the wrong vault")
+    source_id = snapshot.get("source_id")
+    if not include_sources and source_id is not None:
+        raise ValueError("source-less portable record version contains a source reference")
+    _require_portable_reference(
+        table="context_record_versions",
+        column="snapshot_json.source_id",
+        value=source_id,
+        target="sources",
+        target_ids=target_ids,
+    )
+    for field, target in (("candidate_id", "candidates"), ("supersedes", "records")):
+        _require_portable_reference(
+            table="context_record_versions",
+            column=f"snapshot_json.{field}",
+            value=snapshot.get(field),
+            target=target,
+            target_ids=target_ids,
+        )
+    for field in ("allowed_clients", "denied_clients"):
+        if field in snapshot:
+            _require_portable_reference_list(
+                table="context_record_versions",
+                column=f"snapshot_json.{field}",
+                value=snapshot[field],
+                target="client_principals",
+                target_ids=target_ids,
+                allow_wildcard=True,
+                maximum=256,
+            )
+
+
+def _validate_portable_replication_payload(
+    row: dict[str, Any],
+    *,
+    target_ids: dict[str, set[str]],
+    include_sources: bool,
+) -> None:
+    event_type = row.get("event_type")
+    if event_type not in {"record_upserted", "record_withdrawn", "record_deleted", "record_purged"}:
+        raise ValueError("portable replication event has an unsupported event type")
+    payload = _decode_portable_json("replication_events", row, "payload_json", required=True)
+    if not isinstance(payload, dict):
+        raise ValueError("portable replication event payload is not an object")
+    record_id = row.get("record_id")
+    record_target = "records" if event_type == "record_upserted" else "record_references"
+    _require_portable_reference(
+        table="replication_events",
+        column="record_id",
+        value=record_id,
+        target=record_target,
+        target_ids=target_ids,
+        allow_none=False,
+    )
+    if event_type == "record_upserted" and payload.get("id") != record_id:
+        raise ValueError("portable replication payload ID does not match its event")
+    if "record_id" in payload and payload["record_id"] != record_id:
+        raise ValueError("portable replication payload record ID does not match its event")
+    for field, target in (("source_id", "sources"), ("candidate_id", "candidates")):
+        if field in payload:
+            if not include_sources and field == "source_id" and payload[field] is not None:
+                raise ValueError("source-less portable replication payload contains a source")
+            _require_portable_reference(
+                table="replication_events",
+                column=f"payload_json.{field}",
+                value=payload[field],
+                target=target,
+                target_ids=target_ids,
+            )
+    for field in ("allowed_clients", "denied_clients"):
+        if field in payload:
+            _require_portable_reference_list(
+                table="replication_events",
+                column=f"payload_json.{field}",
+                value=payload[field],
+                target="client_principals",
+                target_ids=target_ids,
+                allow_wildcard=True,
+                maximum=256,
+            )
+
+
+def _validate_portable_import_result(
+    row: dict[str, Any],
+    *,
+    target_ids: dict[str, set[str]],
+    include_sources: bool,
+) -> None:
+    result = _decode_portable_json("import_operations", row, "result_json")
+    if result is None:
+        return
+    if not isinstance(result, dict):
+        raise ValueError("portable import operation result is not an object")
+    source = result.get("source")
+    if source is not None:
+        if not include_sources:
+            raise ValueError("source-less portable import result contains a source")
+        if not isinstance(source, dict):
+            raise ValueError("portable import result source is not an object")
+        _require_portable_reference(
+            table="import_operations",
+            column="result_json.source.id",
+            value=source.get("id"),
+            target="sources",
+            target_ids=target_ids,
+            allow_none=False,
+        )
+        _require_portable_reference(
+            table="import_operations",
+            column="result_json.source.content_hash",
+            value=source.get("content_hash"),
+            target="source_blobs",
+            target_ids=target_ids,
+            allow_none=False,
+        )
+    session = result.get("session")
+    if session is not None:
+        if not isinstance(session, dict):
+            raise ValueError("portable import result session is not an object")
+        _require_portable_reference(
+            table="import_operations",
+            column="result_json.session.session_id",
+            value=session.get("session_id"),
+            target="sessions",
+            target_ids=target_ids,
+            allow_none=False,
+        )
+        for field in ("accessible_sources", "unavailable_sources"):
+            if field in session:
+                _require_portable_reference_list(
+                    table="import_operations",
+                    column=f"result_json.session.{field}",
+                    value=session[field],
+                    target="sources",
+                    target_ids=target_ids,
+                )
+    for field, target in (
+        ("candidate_ids", "candidates"),
+        ("record_ids", "record_references"),
+        ("withdrawn_record_ids", "record_references"),
+    ):
+        if field in result:
+            _require_portable_reference_list(
+                table="import_operations",
+                column=f"result_json.{field}",
+                value=result[field],
+                target=target,
+                target_ids=target_ids,
+            )
+
+
+def _validate_portable_graph(
+    archive: zipfile.ZipFile,
+    manifest_tables: dict[str, Any],
+    source_chunks: list[dict[str, Any]],
+    *,
+    include_sources: bool,
+    package_vault_ids: set[str],
+) -> None:
+    """Validate the complete package graph without opening the destination."""
+
+    unknown_tables = set(manifest_tables).difference(PORTABLE_TABLE_INVENTORY)
+    unknown_tables.difference_update(CAPTURE_RUNTIME_TABLES)
+    if unknown_tables:
+        raise ValueError("portable export contains a table outside the supported inventory")
+    source_tables = {
+        "source_records",
+        "source_blobs",
+    }
+    if not include_sources and source_tables.intersection(manifest_tables):
+        raise ValueError("source-less portable export contains source material")
+
+    row_keys: dict[str, set[tuple[str, ...]]] = {}
+    ids_by_type: dict[str, set[str]] = {}
+    id_types: dict[str, set[str]] = {}
+    source_blob_info: dict[str, tuple[int, str, bytes]] = {}
+    record_supersedes: dict[str, str | None] = {}
+    purged_record_ids: set[str] = set()
+    purged_source_ids: set[str] = set()
+
+    for table in manifest_tables:
+        if table in CAPTURE_RUNTIME_TABLES or table in NON_PORTABLE_SECURITY_TABLES:
+            continue
+        if table not in _PORTABLE_ROW_KEYS:
+            raise ValueError("portable table has no identity inventory")
+        keys: set[tuple[str, ...]] = set()
+        count = 0
+        for row in _iter_portable_table_rows(archive, table):
+            count += 1
+            key = _package_row_key(table, row)
+            if key in keys:
+                if table == _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE:
+                    raise ValueError("source-less archive purge barrier entries are duplicated")
+                raise ValueError(f"portable {table} rows are duplicated")
+            keys.add(key)
+            if table == "source_blobs":
+                content_hash = key[0]
+                if len(content_hash) != 64 or any(
+                    character not in "0123456789abcdef" for character in content_hash
+                ):
+                    raise ValueError("portable source blob hash is not canonical")
+                content = row.get("content")
+                if not isinstance(content, bytes):
+                    raise ValueError("portable source blob content is not binary")
+                storage_kind = row.get("storage_kind", "inline")
+                if storage_kind not in {"inline", "chunked"}:
+                    raise ValueError("portable source blob storage kind is invalid")
+                byte_size = row.get("byte_size")
+                if (
+                    isinstance(byte_size, bool)
+                    or not isinstance(byte_size, int)
+                    or not 0 <= byte_size <= MAX_IMPORT_BYTES
+                ):
+                    raise ValueError("portable source blob size is invalid")
+                source_blob_info[content_hash] = (byte_size, storage_kind, content)
+            if table == "context_records":
+                record_supersedes[key[0]] = row.get("supersedes")
+            if table == "purge_tombstones":
+                target_type = row.get("target_type")
+                if target_type not in {"record", "source"}:
+                    raise ValueError("portable purge tombstone target type is invalid")
+                stable_id = key[0]
+                if target_type == "record":
+                    purged_record_ids.add(stable_id)
+                else:
+                    purged_source_ids.add(stable_id)
+        row_keys[table] = keys
+        expected_count = manifest_tables[table]
+        if count != expected_count:
+            raise ValueError("portable table row count does not match its manifest")
+
+    for table, (column, id_type) in _PORTABLE_ID_TYPES.items():
+        if table not in manifest_tables or table in NON_PORTABLE_SECURITY_TABLES:
+            continue
+        for key in row_keys[table]:
+            # edge_proposal_receipts has a scoped proposal identity; the first
+            # key element is the package vault and the second is the ID.
+            index = _PORTABLE_ROW_KEYS[table].index(column)
+            value = key[index]
+            ids_by_type.setdefault(id_type, set()).add(value)
+            id_types.setdefault(value, set()).add(id_type)
+    for value, types in id_types.items():
+        del value
+        if len(types) > 1:
+            raise ValueError("portable package reuses one ID across incompatible types")
+
+    if "purge_tombstones" in manifest_tables:
+        for row in _iter_portable_table_rows(archive, "purge_tombstones"):
+            stable_id = row["stable_id"]
+            target_type = row["target_type"]
+            id_type = "record" if target_type == "record" else "source"
+            existing_types = id_types.setdefault(stable_id, set())
+            if existing_types.difference({id_type}):
+                raise ValueError("portable purge tombstone has a cross-type target ID")
+            existing_types.add(id_type)
+
+    target_ids: dict[str, set[str]] = {
+        "vaults": set(ids_by_type.get("vault", set())),
+        "source_blobs": set(ids_by_type.get("source_blob", set())),
+        "sources": set(ids_by_type.get("source", set())) | purged_source_ids,
+        "clients": set(ids_by_type.get("client", set())),
+        "remote_clients": set(ids_by_type.get("remote_edge_client", set())),
+        "client_principals": set(ids_by_type.get("client", set()))
+        | set(ids_by_type.get("remote_edge_client", set()))
+        | {"*"},
+        "sessions": set(ids_by_type.get("ingestion_session", set())),
+        "batches": set(ids_by_type.get("ingestion_batch", set())),
+        "candidates": set(ids_by_type.get("candidate", set())),
+        "records": set(ids_by_type.get("record", set())),
+        "record_references": set(ids_by_type.get("record", set())) | purged_record_ids,
+        "record_versions": set(ids_by_type.get("record_version", set())),
+        "events": set(ids_by_type.get("replication_event", set())),
+        "operations": set(ids_by_type.get("import_operation", set())),
+    }
+    # The package vault is a declaration, not a destination lookup.  The
+    # existing binding check already enforces a single value; keep an explicit
+    # copy for snapshot checks without mutating the index.
+    if package_vault_ids:
+        target_ids["package_vault"] = set(package_vault_ids)
+    else:
+        target_ids["package_vault"] = set()
+
+    for table in manifest_tables:
+        if table in CAPTURE_RUNTIME_TABLES or table in NON_PORTABLE_SECURITY_TABLES:
+            continue
+        for row in _iter_portable_table_rows(archive, table):
+            if "vault_id" in row:
+                _require_portable_reference(
+                    table=table,
+                    column="vault_id",
+                    value=row["vault_id"],
+                    target="vaults",
+                    target_ids=target_ids,
+                    allow_none=False,
+                )
+                if row["vault_id"] not in package_vault_ids:
+                    raise ValueError(f"portable {table} row is outside the package vault")
+
+            for ref_table, column, target in PORTABLE_RELATIONAL_REFERENCE_INVENTORY:
+                if ref_table != table or column not in row:
+                    continue
+                if target in CAPTURE_RUNTIME_TABLES:
+                    # Capture rows are machine-local runtime evidence. Legacy
+                    # packages may still contain their IDs, but those rows and
+                    # references are discarded before any destination write.
+                    continue
+                if (
+                    table == "replication_events"
+                    or table in {"context_errors", "context_user_mutations"}
+                    or table == "deletion_tombstones"
+                ) and column == "record_id":
+                    allowed_target = "record_references"
+                elif (
+                    table in {"archive_purge_barriers", "import_operations"}
+                    or table == "deletion_tombstones"
+                ) and column in {"source_id", "deletion_source_id"}:
+                    allowed_target = "sources"
+                elif table == "purge_jobs" and column == "target_id":
+                    target_type = row.get("target_type")
+                    if target_type not in {"record", "source"}:
+                        raise ValueError("portable purge job target type is invalid")
+                    allowed_target = "record_references" if target_type == "record" else "sources"
+                else:
+                    allowed_target = {
+                        "vaults": "vaults",
+                        "source_records": "sources",
+                        "context_candidates": "candidates",
+                        "context_records": "records",
+                        "ingestion_sessions": "sessions",
+                        "context_record_versions": "record_versions",
+                        "client_registrations": "clients",
+                        "permission_grants": "clients",
+                        "edge_proposal_receipts": "candidates",
+                        "ingestion_batches": "sessions",
+                        "deletion_tombstones": "records",
+                        "replication_events": "events",
+                        "replication_checkpoints": "vaults",
+                        "memory_policies": "vaults",
+                        "secret_refusal_receipts": "vaults",
+                        "import_operations": "vaults",
+                        "archive_purge_barriers": "sources",
+                        "purge_tombstones": "vaults",
+                        "source_blobs": "source_blobs",
+                    }.get(target, target)
+                _require_portable_reference(
+                    table=table,
+                    column=column,
+                    value=row[column],
+                    target=allowed_target,
+                    target_ids=target_ids,
+                )
+
+            if table == "context_candidates":
+                for field in ("allowed_clients_json", "denied_clients_json"):
+                    if field in row:
+                        _require_portable_reference_list(
+                            table=table,
+                            column=field,
+                            value=_decode_portable_json(table, row, field, required=True),
+                            target="client_principals",
+                            target_ids=target_ids,
+                            allow_wildcard=True,
+                            maximum=256,
+                        )
+                if not include_sources and row.get("source_id") is not None:
+                    raise ValueError("source-less portable candidate contains a source reference")
+            elif table == "context_records":
+                for field in ("allowed_clients_json", "denied_clients_json"):
+                    if field in row:
+                        _require_portable_reference_list(
+                            table=table,
+                            column=field,
+                            value=_decode_portable_json(table, row, field, required=True),
+                            target="client_principals",
+                            target_ids=target_ids,
+                            allow_wildcard=True,
+                            maximum=256,
+                        )
+                if not include_sources and row.get("source_id") is not None:
+                    raise ValueError("source-less portable record contains a source reference")
+            elif table == "context_record_versions":
+                _validate_portable_snapshot(
+                    row,
+                    target_ids=target_ids,
+                    include_sources=include_sources,
+                )
+                if not include_sources and row.get("record_id") is None:
+                    raise ValueError("portable record version has no record")
+            elif table == "ingestion_sessions":
+                for field in ("accessible_sources_json", "unavailable_sources_json"):
+                    if field in row:
+                        values = _decode_portable_json(table, row, field, required=True)
+                        _require_portable_reference_list(
+                            table=table,
+                            column=field,
+                            value=values,
+                            target="sources",
+                            target_ids=target_ids,
+                        )
+                accessible = _decode_portable_json(
+                    table, row, "accessible_sources_json", required=False
+                )
+                unavailable = _decode_portable_json(
+                    table, row, "unavailable_sources_json", required=False
+                )
+                if (
+                    isinstance(accessible, list)
+                    and isinstance(unavailable, list)
+                    and set(accessible).intersection(unavailable)
+                ):
+                    raise ValueError("portable ingestion session overlaps source lists")
+            elif table == "ingestion_batches":
+                _require_portable_reference_list(
+                    table=table,
+                    column="candidate_ids_json",
+                    value=_decode_portable_json(table, row, "candidate_ids_json", required=True),
+                    target="candidates",
+                    target_ids=target_ids,
+                    maximum=512,
+                )
+            elif table == "audit_events":
+                for field in ("record_ids_json", "denied_record_ids_json"):
+                    if field in row:
+                        _require_portable_reference_list(
+                            table=table,
+                            column=field,
+                            value=_decode_portable_json(table, row, field, required=True),
+                            target="record_references",
+                            target_ids=target_ids,
+                            maximum=512,
+                        )
+            elif table == "replication_events":
+                _validate_portable_replication_payload(
+                    row,
+                    target_ids=target_ids,
+                    include_sources=include_sources,
+                )
+            elif table == "source_records":
+                metadata = _decode_portable_json(table, row, "metadata_json", required=True)
+                if not isinstance(metadata, dict):
+                    raise ValueError("portable source metadata is not an object")
+                for field, target in (
+                    ("import_operation_id", "operations"),
+                    ("rebuild_published_session_id", "sessions"),
+                ):
+                    if field in metadata:
+                        _require_portable_reference(
+                            table=table,
+                            column=f"metadata_json.{field}",
+                            value=metadata[field],
+                            target=target,
+                            target_ids=target_ids,
+                        )
+            elif table == "import_operations":
+                if not include_sources and (
+                    row.get("source_id") is not None or row.get("content_hash") is not None
+                ):
+                    raise ValueError("source-less portable import operation contains source state")
+                _validate_portable_import_result(
+                    row,
+                    target_ids=target_ids,
+                    include_sources=include_sources,
+                )
+
+    for record_id in record_supersedes:
+        seen: set[str] = set()
+        current = record_supersedes[record_id]
+        while current is not None:
+            if current in seen or current == record_id:
+                raise ValueError("portable record supersession contains a cycle")
+            seen.add(current)
+            current = record_supersedes.get(current)
+
+    if include_sources:
+        chunk_descriptors_by_hash: dict[str, list[dict[str, Any]]] = {}
+        for descriptor in source_chunks:
+            content_hash = str(descriptor["content_hash"])
+            if content_hash not in source_blob_info:
+                raise ValueError("portable source chunk has no package source blob")
+            chunk_descriptors_by_hash.setdefault(content_hash, []).append(descriptor)
+            content = archive.read(str(descriptor["path"]))
+            if len(content) != int(descriptor["byte_size"]):
+                raise ValueError("portable source chunk has an invalid size")
+        for content_hash, (byte_size, storage_kind, inline_content) in source_blob_info.items():
+            descriptors = chunk_descriptors_by_hash.get(content_hash, [])
+            if storage_kind == "inline":
+                if descriptors:
+                    raise ValueError("portable inline source blob has source chunks")
+                if (
+                    len(inline_content) != byte_size
+                    or len(inline_content) > SOURCE_BLOB_CHUNK_BYTES
+                    or hashlib.sha256(inline_content).hexdigest() != content_hash
+                ):
+                    raise ValueError("portable inline source blob failed its integrity check")
+                continue
+            if not descriptors or byte_size <= 0 or inline_content:
+                raise ValueError("portable chunked source blob has invalid package storage")
+            total = 0
+            digest = hashlib.sha256()
+            for expected_index, descriptor in enumerate(descriptors):
+                if int(descriptor["chunk_index"]) != expected_index:
+                    raise ValueError("portable source blob chunks are not contiguous")
+                content = archive.read(str(descriptor["path"]))
+                digest.update(content)
+                total += len(content)
+            if total != byte_size or digest.hexdigest() != content_hash:
+                raise ValueError("portable source blob chunks failed their integrity check")
+        if set(chunk_descriptors_by_hash).difference(source_blob_info):
+            raise ValueError("portable source chunks are not package-contained")
+    elif source_chunks:
+        raise ValueError("source chunks require source-inclusive package material")
+
+
+def _validate_package_purge_identity(
+    archive: zipfile.ZipFile,
+    manifest_tables: dict[str, Any],
+    package_vault_ids: set[str],
+) -> None:
+    """Require every portable purge row to name a package-owned target."""
+
+    tombstones: dict[tuple[str, str, str], dict[str, Any]] = {}
+    if "purge_tombstones" in manifest_tables:
+        with archive.open("tables/purge_tombstones.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                required = {"stable_id", "vault_id", "target_type", "purged_at"}
+                allowed = required | {"replication_sequence", "replication_event_id"}
+                if set(row) - allowed or not required.issubset(row):
+                    raise ValueError("portable purge tombstone row is invalid")
+                stable_id = row["stable_id"]
+                vault_id = row["vault_id"]
+                target_type = row["target_type"]
+                purged_at = row["purged_at"]
+                if (
+                    not isinstance(stable_id, str)
+                    or not stable_id.strip()
+                    or not isinstance(vault_id, str)
+                    or vault_id not in package_vault_ids
+                    or not isinstance(target_type, str)
+                    or target_type not in {"record", "source"}
+                    or not isinstance(purged_at, str)
+                    or not purged_at.strip()
+                ):
+                    raise ValueError("portable purge tombstone row is invalid")
+                sequence = row.get("replication_sequence")
+                event_id = row.get("replication_event_id")
+                if sequence is not None and (
+                    isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0
+                ):
+                    raise ValueError("portable purge tombstone sequence is invalid")
+                if event_id is not None and (not isinstance(event_id, str) or not event_id.strip()):
+                    raise ValueError("portable purge tombstone event identity is invalid")
+                key = (vault_id, target_type, stable_id)
+                if key in tombstones:
+                    raise ValueError("portable purge tombstones are duplicated")
+                tombstones[key] = row
+
+    purge_jobs: dict[tuple[str, str, str], dict[str, Any]] = {}
+    if "purge_jobs" in manifest_tables:
+        with archive.open("tables/purge_jobs.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                required = {"vault_id", "target_type", "target_id", "phase"}
+                if not required.issubset(row):
+                    raise ValueError("portable purge job row is invalid")
+                vault_id = row["vault_id"]
+                target_type = row["target_type"]
+                target_id = row["target_id"]
+                phase = row["phase"]
+                if (
+                    not isinstance(vault_id, str)
+                    or vault_id not in package_vault_ids
+                    or not isinstance(target_type, str)
+                    or target_type not in {"record", "source"}
+                    or not isinstance(target_id, str)
+                    or not target_id.strip()
+                    or phase not in {"compaction_pending", "completed"}
+                ):
+                    raise ValueError("portable purge job row is invalid")
+                key = (vault_id, target_type, target_id)
+                if key in purge_jobs:
+                    raise ValueError("portable purge jobs are duplicated")
+                purge_jobs[key] = row
+
+    for key in purge_jobs:
+        if key not in tombstones:
+            raise ValueError("portable purge job has no matching purge tombstone")
+
+    purged_events: dict[str, tuple[str, str, int, dict[str, Any]]] = {}
+    if "replication_events" in manifest_tables:
+        with archive.open("tables/replication_events.jsonl") as stream:
+            for row in _iter_jsonl(stream):
+                if row.get("event_type") != "record_purged":
+                    continue
+                event_id = row.get("id")
+                vault_id = row.get("vault_id")
+                record_id = row.get("record_id")
+                sequence = row.get("sequence")
+                payload_json = row.get("payload_json")
+                if (
+                    not isinstance(event_id, str)
+                    or not event_id.strip()
+                    or not isinstance(vault_id, str)
+                    or vault_id not in package_vault_ids
+                    or not isinstance(record_id, str)
+                    or not record_id.strip()
+                    or isinstance(sequence, bool)
+                    or not isinstance(sequence, int)
+                    or sequence < 0
+                    or not isinstance(payload_json, str)
+                ):
+                    raise ValueError("portable purge event row is invalid")
+                try:
+                    payload = json.loads(
+                        payload_json,
+                        object_pairs_hook=_json_object_from_pairs,
+                    )
+                except (TypeError, ValueError) as error:
+                    raise ValueError("portable purge event payload is invalid") from error
+                if (
+                    not isinstance(payload, dict)
+                    or set(payload) != {"record_id", "purged_at", "purge_scope", "irreversible"}
+                    or payload.get("record_id") != record_id
+                    or payload.get("purge_scope") not in {"record", "source"}
+                    or payload.get("irreversible") is not True
+                    or not isinstance(payload.get("purged_at"), str)
+                    or not payload["purged_at"].strip()
+                ):
+                    raise ValueError("portable purge event payload is invalid")
+                if event_id in purged_events:
+                    raise ValueError("portable purge events are duplicated")
+                purged_events[event_id] = (vault_id, record_id, sequence, payload)
+
+    for (vault_id, target_type, stable_id), row in tombstones.items():
+        event_id = row.get("replication_event_id")
+        sequence = row.get("replication_sequence")
+        if target_type == "record" and event_id is not None:
+            event = purged_events.get(event_id)
+            if (
+                event is None
+                or event[0] != vault_id
+                or event[1] != stable_id
+                or event[2] != sequence
+                or event[3]["purged_at"] != row["purged_at"]
+            ):
+                raise ValueError("portable record purge tombstone identity is invalid")
+        elif (vault_id, target_type, stable_id) not in purge_jobs:
+            raise ValueError("portable purge tombstone targets an unowned object")
 
 
 def _source_chunk_descriptors(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -408,6 +1735,111 @@ def _source_chunk_descriptors(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         if sum(size for _index, size in ordered) > MAX_IMPORT_BYTES:
             raise ValueError("export source exceeds the supported size limit")
     return descriptors
+
+
+def _manifest_table_members(manifest_tables: dict[str, Any]) -> set[str]:
+    """Return the canonical archive member for every serialized table."""
+
+    members: set[str] = set()
+    folded_members: set[str] = set()
+    for table, count in manifest_tables.items():
+        if (
+            not isinstance(table, str)
+            or not table
+            or table != table.strip()
+            or table != table.casefold()
+            or "/" in table
+            or "\\" in table
+            or ":" in table
+            or table in {".", ".."}
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 0
+        ):
+            raise ValueError("export manifest table entry is invalid")
+        member = f"tables/{table}.jsonl"
+        folded_member = member.casefold()
+        if folded_member in folded_members:
+            raise ValueError("export manifest table members are ambiguous")
+        members.add(member)
+        folded_members.add(folded_member)
+    return members
+
+
+def _validate_manifest_archive(
+    archive: zipfile.ZipFile,
+    manifest: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Validate archive topology and all member hashes before destination access."""
+
+    manifest_tables = manifest.get("tables")
+    if not isinstance(manifest_tables, dict):
+        raise ValueError("export manifest tables must be an object")
+    table_members = _manifest_table_members(manifest_tables)
+    source_chunks = _source_chunk_descriptors(manifest)
+    include_sources = manifest.get("include_sources", False)
+    if not isinstance(include_sources, bool):
+        raise ValueError("export include_sources flag is invalid")
+    if source_chunks and not include_sources:
+        raise ValueError("source chunks require a source-inclusive export")
+
+    expected_members = table_members | {str(item["path"]) for item in source_chunks}
+    if len(expected_members) != len(table_members) + len(source_chunks):
+        raise ValueError("export members have duplicate or shadowed paths")
+
+    infos = archive.infolist()
+    archive_names = [info.filename for info in infos]
+    if len(archive_names) != len(set(archive_names)):
+        raise ValueError("export archive contains duplicate entries")
+    folded_archive_names: dict[str, str] = {}
+    for name in archive_names:
+        if (
+            not name
+            or "\\" in name
+            or name.startswith("/")
+            or any(part in {"", ".", ".."} for part in name.split("/"))
+        ):
+            raise ValueError("unsafe or non-canonical export entry")
+        folded_name = name.casefold()
+        previous = folded_archive_names.setdefault(folded_name, name)
+        if previous != name:
+            raise ValueError("export archive contains shadowed paths")
+    if "manifest.json" not in archive_names:
+        raise ValueError("export manifest is missing")
+    expected_archive_names = {"manifest.json"} | expected_members
+    actual_archive_names = set(archive_names)
+    if actual_archive_names != expected_archive_names:
+        missing = sorted(expected_archive_names - actual_archive_names)
+        extra = sorted(actual_archive_names - expected_archive_names)
+        raise ValueError(
+            f"export archive members do not match manifest (missing={missing!r}, extra={extra!r})"
+        )
+
+    hashes_by_file = manifest.get("sha256")
+    if not isinstance(hashes_by_file, dict) or any(
+        not isinstance(name, str) or not isinstance(expected, str)
+        for name, expected in hashes_by_file.items()
+    ):
+        raise ValueError("export sha256 manifest must be a string mapping")
+    hash_names = set(hashes_by_file)
+    if hash_names != expected_members:
+        missing = sorted(expected_members - hash_names)
+        extra = sorted(hash_names - expected_members)
+        raise ValueError(
+            "export sha256 manifest does not exactly cover archive members"
+            f" (missing={missing!r}, extra={extra!r})"
+        )
+    for name, expected in hashes_by_file.items():
+        if (
+            len(expected) != 64
+            or expected != expected.casefold()
+            or any(character not in "0123456789abcdef" for character in expected)
+        ):
+            raise ValueError(f"export digest is not canonical for {name}")
+        actual = hashlib.sha256(archive.read(name)).hexdigest()
+        if actual != expected:
+            raise ValueError(f"integrity check failed for {name}")
+    return manifest_tables, source_chunks
 
 
 def _restore_source_chunks(
@@ -887,36 +2319,42 @@ def restore_export(
         _decrypt_file(source, archive_path, passphrase)
         with zipfile.ZipFile(archive_path) as archive:
             infos = archive.infolist()
-            if any(
-                info.file_size > MAX_RESTORE_ENTRY_BYTES
-                or Path(info.filename).is_absolute()
-                or ".." in Path(info.filename).parts
-                for info in infos
-            ):
+            if any(info.file_size > MAX_RESTORE_ENTRY_BYTES for info in infos):
                 raise ValueError("unsafe or oversized export entry")
-            manifest = json.loads(archive.read("manifest.json"))
-            if manifest.get("format") != "all-the-context" or manifest.get("format_version") != 1:
-                raise ValueError("unsupported export format")
-            source_chunks = _source_chunk_descriptors(manifest)
-            if source_chunks and not bool(manifest.get("include_sources", False)):
-                raise ValueError("source chunks require a source-inclusive export")
-            hashes_by_file = manifest.get("sha256")
-            if not isinstance(hashes_by_file, dict) or any(
-                not isinstance(name, str) or not isinstance(expected, str)
-                for name, expected in hashes_by_file.items()
-            ):
-                raise ValueError("export sha256 manifest must be a string mapping")
-            if any(descriptor["path"] not in hashes_by_file for descriptor in source_chunks):
-                raise ValueError("export source chunk is missing an integrity digest")
-            for name, expected in hashes_by_file.items():
-                actual = hashlib.sha256(archive.read(name)).hexdigest()
-                if actual != expected:
-                    raise ValueError(f"integrity check failed for {name}")
+            archive_names = [info.filename for info in infos]
+            if len(archive_names) != len(set(archive_names)):
+                raise ValueError("export archive contains duplicate entries")
+            if "manifest.json" not in archive_names:
+                raise ValueError("export manifest is missing")
+            manifest = json.loads(
+                archive.read("manifest.json"), object_pairs_hook=_json_object_from_pairs
+            )
+            if not isinstance(manifest, dict):
+                raise ValueError("export manifest must be an object")
+            source_schema_version = _validate_manifest_versions(manifest)
+            manifest_tables, source_chunks = _validate_manifest_archive(archive, manifest)
+            include_sources = manifest.get("include_sources", False)
+            if type(include_sources) is not bool:
+                raise ValueError("export include_sources flag is invalid")
+            package_vault_ids = _validate_package_vault_binding(
+                archive,
+                manifest_tables,
+                include_sources=include_sources,
+            )
+            _validate_portable_graph(
+                archive,
+                manifest_tables,
+                source_chunks,
+                include_sources=include_sources,
+                package_vault_ids=package_vault_ids,
+            )
+            _validate_package_purge_identity(archive, manifest_tables, package_vault_ids)
             if dry_run:
                 return {"valid": True, "dry_run": True, "manifest": manifest}
             connection = sqlite3.connect(database_path)
             connection.row_factory = sqlite3.Row
             try:
+                connection.execute("BEGIN IMMEDIATE")
                 all_tables = {
                     str(row[0])
                     for row in connection.execute(
@@ -931,22 +2369,65 @@ def restore_export(
                     }
                     for table in existing
                 }
-                manifest_tables = manifest.get("tables", {})
-                if not isinstance(manifest_tables, dict):
-                    raise ValueError("export manifest tables must be an object")
-                try:
-                    source_schema_version = int(manifest.get("schema_version", 0))
-                except (TypeError, ValueError) as error:
-                    raise ValueError("export schema version is invalid") from error
-                include_sources = bool(manifest.get("include_sources", False))
+                package_vault_id = next(iter(package_vault_ids), None)
                 blocked_records: set[str] = set()
                 blocked_sources: set[str] = set()
                 imported_user_mutations: list[dict[str, Any]] = []
                 accepted_user_mutations = 0
                 ignored_user_mutations = 0
+                archive_purge_barriers: set[tuple[str, str, str, str]] = set()
+                incoming_archive_purge_barriers: set[tuple[str, str, str, str]] = set()
+                if _ARCHIVE_PURGE_BARRIER_TABLE in existing:
+                    for barrier in connection.execute(
+                        f"SELECT vault_id,source_id,source_kind,barrier_digest,purged_at "
+                        f"FROM {_ARCHIVE_PURGE_BARRIER_TABLE}"
+                    ):
+                        key = _archive_purge_barrier_key(barrier)
+                        archive_purge_barriers.add(key)
+                if _ARCHIVE_PURGE_BARRIER_TABLE in manifest_tables:
+                    if _ARCHIVE_PURGE_BARRIER_TABLE not in existing:
+                        raise ValueError("destination does not support archive purge barriers")
+                    with archive.open(f"tables/{_ARCHIVE_PURGE_BARRIER_TABLE}.jsonl") as stream:
+                        for row in _iter_jsonl(stream):
+                            key = _archive_purge_barrier_key(row)
+                            if key[0] not in package_vault_ids:
+                                raise ValueError(
+                                    "export archive purge barrier is not bound to a package vault"
+                                )
+                            if key in incoming_archive_purge_barriers:
+                                raise ValueError("export archive purge barriers are duplicated")
+                            incoming_archive_purge_barriers.add(key)
+                            archive_purge_barriers.add(key)
+                archive_source_less_purge_barriers: set[tuple[str, str, str]] = set()
+                incoming_archive_source_less_purge_barriers: set[tuple[str, str, str]] = set()
+                if _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE in existing:
+                    for barrier in connection.execute(
+                        f"SELECT vault_id,source_kind,barrier_digest,purged_at "
+                        f"FROM {_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}"
+                    ):
+                        source_less_key = _archive_source_less_purge_barrier_key(barrier)
+                        archive_source_less_purge_barriers.add(source_less_key)
+                if _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE in manifest_tables:
+                    with archive.open(
+                        f"tables/{_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE}.jsonl"
+                    ) as stream:
+                        for row in _iter_jsonl(stream):
+                            source_less_key = _archive_source_less_purge_barrier_key(row)
+                            if source_less_key[0] not in package_vault_ids:
+                                raise ValueError(
+                                    "export source-less archive purge barrier is not bound to a "
+                                    "package vault"
+                                )
+                            if source_less_key in incoming_archive_source_less_purge_barriers:
+                                raise ValueError(
+                                    "export source-less archive purge barriers are duplicated"
+                                )
+                            incoming_archive_source_less_purge_barriers.add(source_less_key)
+                            archive_source_less_purge_barriers.add(source_less_key)
                 if "purge_tombstones" in existing:
                     for stable_id, target_type in connection.execute(
-                        "SELECT stable_id,target_type FROM purge_tombstones"
+                        "SELECT stable_id,target_type FROM purge_tombstones WHERE vault_id=?",
+                        (package_vault_id,),
                     ):
                         (blocked_records if target_type == "record" else blocked_sources).add(
                             str(stable_id)
@@ -954,6 +2435,10 @@ def restore_export(
                 if "purge_tombstones" in manifest_tables:
                     with archive.open("tables/purge_tombstones.jsonl") as stream:
                         for row in _iter_jsonl(stream):
+                            if row["vault_id"] != package_vault_id:
+                                raise ValueError(
+                                    "export purge tombstone is not bound to the package vault"
+                                )
                             target = (
                                 blocked_records
                                 if row.get("target_type") == "record"
@@ -961,7 +2446,12 @@ def restore_export(
                             )
                             target.add(str(row["stable_id"]))
                 blocked_candidates: set[str] = set()
-                if (blocked_records or blocked_sources) and "context_records" in manifest_tables:
+                if (
+                    blocked_records
+                    or blocked_sources
+                    or archive_purge_barriers
+                    or archive_source_less_purge_barriers
+                ) and "context_records" in manifest_tables:
                     with archive.open("tables/context_records.jsonl") as stream:
                         for row in _iter_jsonl(stream):
                             record_id = str(row.get("id"))
@@ -972,13 +2462,42 @@ def restore_export(
                                 blocked_records.add(record_id)
                                 if row.get("candidate_id"):
                                     blocked_candidates.add(str(row["candidate_id"]))
-                if (blocked_records or blocked_sources) and "context_candidates" in manifest_tables:
+                            if (
+                                _archive_purge_barrier_key_for_content(row)
+                                in archive_purge_barriers
+                            ):
+                                blocked_records.add(record_id)
+                                if row.get("candidate_id"):
+                                    blocked_candidates.add(str(row["candidate_id"]))
+                            if (
+                                _archive_source_less_purge_barrier_key_for_content(row)
+                                in archive_source_less_purge_barriers
+                            ):
+                                blocked_records.add(record_id)
+                                if row.get("candidate_id"):
+                                    blocked_candidates.add(str(row["candidate_id"]))
+                if (
+                    blocked_records
+                    or blocked_sources
+                    or archive_purge_barriers
+                    or archive_source_less_purge_barriers
+                ) and "context_candidates" in manifest_tables:
                     with archive.open("tables/context_candidates.jsonl") as stream:
                         for row in _iter_jsonl(stream):
                             if (
                                 str(row.get("source_id")) in blocked_sources
                                 or str(row.get("supersedes")) in blocked_records
                                 or str(row.get("record_id")) in blocked_records
+                            ):
+                                blocked_candidates.add(str(row["id"]))
+                            if (
+                                _archive_purge_barrier_key_for_content(row)
+                                in archive_purge_barriers
+                            ):
+                                blocked_candidates.add(str(row["id"]))
+                            if (
+                                _archive_source_less_purge_barrier_key_for_content(row)
+                                in archive_source_less_purge_barriers
                             ):
                                 blocked_candidates.add(str(row["id"]))
                 if blocked_records and "context_observation_links" in manifest_tables:
@@ -999,12 +2518,19 @@ def restore_export(
                         for row in _iter_jsonl(stream):
                             if str(row.get("id")) in blocked_sources:
                                 blocked_source_hashes.add(str(row.get("content_hash")))
+                CoreStore._ensure_archive_source_less_purge_barriers_tx(connection)
+                all_tables.add(_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE)
+                existing.add(_ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE)
+                columns_by_table.setdefault(
+                    _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE,
+                    {"vault_id", "source_kind", "barrier_digest", "purged_at"},
+                )
                 with connection:
                     for table in manifest_tables:
-                        if table in CAPTURE_RUNTIME_TABLES:
+                        if table in CAPTURE_RUNTIME_TABLES or table in NON_PORTABLE_SECURITY_TABLES:
                             # Portable archives never rehydrate machine-local
-                            # capture state, including legacy archives that
-                            # predate this explicit exclusion.
+                            # capture/security state, including legacy archives
+                            # that predate this explicit exclusion.
                             continue
                         if table not in existing:
                             continue
@@ -1076,7 +2602,7 @@ def restore_export(
                                     row["request_hash"] = secrets.token_hex(16)
                                 if not include_sources:
                                     row = _without_source_reference(table, row)
-                                row = _without_capture_runtime_reference(row)
+                                row = _without_machine_local_references(table, row)
                                 if table == "deletion_tombstones":
                                     _normalize_deletion_tombstone_row(row)
                                 if table == "context_candidates":
@@ -1114,6 +2640,13 @@ def restore_export(
                         all_tables,
                     )
                     _post_restore_upgrade(connection, all_tables, columns_by_table)
+                    # The archive identity ledger is derived state and is
+                    # intentionally excluded from the package. Rebuild it
+                    # after records and versions have been restored so
+                    # deletion/rebuild barriers work immediately, before the
+                    # destination's next startup.
+                    CoreStore._ensure_archive_identity_index_tx(connection)
+                    CoreStore._ensure_archive_source_less_purge_barriers_tx(connection)
                     if "context_user_mutations" in all_tables:
                         # The post-restore legacy inference may have created
                         # rows.  Repair evidence and canonical actor fields
@@ -1163,6 +2696,9 @@ def restore_export(
                         raise ValueError(
                             "restored export contains unresolved foreign-key references"
                         )
+            except BaseException:
+                connection.rollback()
+                raise
             finally:
                 connection.close()
     _repair_secret_boundary(database_path)

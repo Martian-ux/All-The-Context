@@ -17,16 +17,19 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import stat
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from time import sleep
 from typing import Any, NoReturn
 
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
+from .activity import CoreActivityGate
 from .capture import CaptureCoordinator, CaptureError, CaptureSource
 from .config import CoreConfig
 from .experimental_local_git_workspace_connector import (
@@ -60,6 +63,8 @@ _SCHEDULER_SIDECAR_KEYS = frozenset({"version", "enabled"})
 _ACCEPTABLE_WORKSPACE_LIFECYCLES = frozenset(
     {"disabled", "enabled", "paused", "degraded", "reconciling"}
 )
+_MAX_ADAPTER_REFRESH_ATTEMPTS = 3
+_ADAPTER_REFRESH_RETRY_SECONDS = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +74,14 @@ class CaptureSchedulerDurableState:
     present: bool
     valid: bool
     enabled: bool
+
+
+def _is_transient_sqlite_contention(error: sqlite3.OperationalError) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    return isinstance(code, int) and (code & 0xFF) in {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+    }
 
 
 def _fail_closed() -> NoReturn:
@@ -602,52 +615,59 @@ def _new_coordinator(
     store: CoreStore,
     *,
     clock: Callable[[], str] = utc_now,
+    activity_gate: CoreActivityGate | None = None,
 ) -> CaptureCoordinator:
     return CaptureCoordinator(
         store,
         sink=RegisteredSourceCaptureApplicationSink(store, clock=clock),
         clock=clock,
+        activity_gate=activity_gate,
     )
 
 
 def _register_authorized_adapter_unlocked(
     coordinator: CaptureCoordinator,
     config: CoreConfig,
-) -> None:
+) -> bool:
     document = _read_sidecar_document(config.data_dir)
     if document is None:
-        return
+        return False
     try:
         canonical = canonical_workspace_root(Path(document["canonical_root"]))
         adapter = _build_adapter(canonical, coordinator.ledger.store)
     except (CaptureError, TypeError, ValueError, OSError, RuntimeError):
-        return
+        return False
     if adapter.source_identity != document["source_identity"]:
-        return
+        return False
     workspace_sources = _workspace_source_rows(coordinator)
     if workspace_sources is None:
-        return
+        return False
     matching = [
         source
         for source in workspace_sources
         if _canonical_workspace_source(source, adapter.source_identity)
     ]
     if len(workspace_sources) != 1 or len(matching) != 1:
-        return
+        return False
     coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, adapter)
+    return True
 
 
 def _try_register_authorized_adapter(
     coordinator: CaptureCoordinator,
     config: CoreConfig,
-) -> None:
+) -> bool:
     try:
         with _authorization_lock(config.data_dir, timeout=0):
-            _register_authorized_adapter_unlocked(coordinator, config)
+            return _register_authorized_adapter_unlocked(coordinator, config)
     except FileLockTimeout:
-        return
+        return False
+    except sqlite3.OperationalError as error:
+        if _is_transient_sqlite_contention(error):
+            return False
+        raise
     except OSError:
-        return
+        return False
 
 
 def compose_capture_coordinator(
@@ -655,6 +675,7 @@ def compose_capture_coordinator(
     config: CoreConfig,
     *,
     clock: Callable[[], str] = utc_now,
+    activity_gate: CoreActivityGate | None = None,
 ) -> CaptureCoordinator:
     """Construct the shared foreground capture coordinator.
 
@@ -664,7 +685,7 @@ def compose_capture_coordinator(
     failures stay closed here and do not prevent Core from starting.
     """
 
-    coordinator = _new_coordinator(store, clock=clock)
+    coordinator = _new_coordinator(store, clock=clock, activity_gate=activity_gate)
     _try_register_authorized_adapter(coordinator, config)
     return coordinator
 
@@ -672,17 +693,23 @@ def compose_capture_coordinator(
 def refresh_local_workspace_adapter(
     coordinator: CaptureCoordinator,
     config: CoreConfig,
-) -> None:
+) -> bool:
     """Revalidate the local-workspace adapter on a long-lived coordinator.
 
-    The stale adapter is removed first. A nonblocking lock then revalidates the
-    sidecar, canonical root, and complete inventory before registration. Failure
-    leaves the adapter unavailable. CLI composition is unchanged: each CLI
-    command still constructs a fresh coordinator.
+    The stale adapter is removed first. A bounded sequence of nonblocking lock
+    attempts revalidates the sidecar, canonical root, and complete inventory
+    before registration. Failure leaves the adapter unavailable. CLI composition
+    is unchanged: each CLI command still constructs a fresh coordinator.
     """
 
     coordinator.adapters.pop(LOCAL_GIT_WORKSPACE_PROVIDER, None)
-    _try_register_authorized_adapter(coordinator, config)
+    for attempt in range(_MAX_ADAPTER_REFRESH_ATTEMPTS):
+        if _try_register_authorized_adapter(coordinator, config):
+            coordinator.recover_available_adapters(provider=LOCAL_GIT_WORKSPACE_PROVIDER)
+            return True
+        if attempt + 1 < _MAX_ADAPTER_REFRESH_ATTEMPTS:
+            sleep(_ADAPTER_REFRESH_RETRY_SECONDS * (attempt + 1))
+    return False
 
 
 def reject_reserved_workspace_provider(provider: str) -> None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -103,6 +104,8 @@ ZERO_DASHBOARD_AFTER_EXPIRY = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 ZERO_DASHBOARD_EXPIRY = datetime(2026, 8, 22, 13, 0, tzinfo=UTC)
 ZERO_DASHBOARD_CAPTURE_PROVIDER = "fake"
 ZERO_DASHBOARD_PROJECT_SCOPE = "project:atlas"
+ZERO_DASHBOARD_LATENCY_BOUND_MS = 5_000.0
+ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE = "comparable-hardware"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +115,32 @@ class SyntheticDirectTurn:
     reference: str
     content: str
     kind: str = "interaction_preference"
+
+
+def _elapsed_ms(started: float, finished: float) -> float:
+    """Convert a monotonic interval to milliseconds, failing closed on corruption."""
+
+    elapsed_ms = (finished - started) * 1_000
+    if not math.isfinite(elapsed_ms) or elapsed_ms < 0:
+        raise RuntimeError("synthetic monotonic latency measurement was invalid")
+    return elapsed_ms
+
+
+def _latency_under_bound(value: object, bound: object) -> bool:
+    if type(value) not in {int, float} or type(bound) not in {int, float}:
+        return False
+    try:
+        numeric_value = float(cast(int | float, value))
+        numeric_bound = float(cast(int | float, bound))
+    except (OverflowError, ValueError):
+        return False
+    return (
+        math.isfinite(numeric_value)
+        and numeric_value >= 0
+        and math.isfinite(numeric_bound)
+        and numeric_bound >= 0
+        and numeric_value < numeric_bound
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,11 +184,13 @@ class ZeroDashboardScorecard:
     terminal_purge: bool
     compile_latency_ms: float
     restart_context_latency_ms: float
-    compile_latency_bound_ms: float = 5_000.0
-    restart_context_latency_bound_ms: float = 5_000.0
+    compile_latency_bound_ms: float = ZERO_DASHBOARD_LATENCY_BOUND_MS
+    restart_context_latency_bound_ms: float = ZERO_DASHBOARD_LATENCY_BOUND_MS
 
     @property
-    def passed(self) -> bool:
+    def functional_passed(self) -> bool:
+        """Return deterministic behavior gates without host wall-clock time."""
+
         return all(
             (
                 self.required_first_useful_context,
@@ -174,10 +205,31 @@ class ZeroDashboardScorecard:
                 self.retention_and_expiry,
                 self.ordinary_delete,
                 self.terminal_purge,
-                self.compile_latency_ms <= self.compile_latency_bound_ms,
-                self.restart_context_latency_ms <= self.restart_context_latency_bound_ms,
             )
         )
+
+    @property
+    def latency_passed(self) -> bool:
+        """Apply the strict latency gate to one locally measured scorecard."""
+
+        return _latency_under_bound(
+            self.compile_latency_ms, self.compile_latency_bound_ms
+        ) and _latency_under_bound(
+            self.restart_context_latency_ms, self.restart_context_latency_bound_ms
+        )
+
+    @property
+    def passed(self) -> bool:
+        return self.functional_passed and self.latency_passed
+
+    def as_latency_evidence(self, *, profile: str) -> dict[str, object]:
+        """Return content-free latency evidence for an explicit hardware profile."""
+
+        return {
+            "profile": profile,
+            "compile_latency_ms": self.compile_latency_ms,
+            "restart_context_latency_ms": self.restart_context_latency_ms,
+        }
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -197,8 +249,52 @@ class ZeroDashboardScorecard:
             "restart_context_latency_ms": self.restart_context_latency_ms,
             "compile_latency_bound_ms": self.compile_latency_bound_ms,
             "restart_context_latency_bound_ms": self.restart_context_latency_bound_ms,
+            "functional_passed": self.functional_passed,
+            "latency_passed": self.latency_passed,
             "passed": self.passed,
         }
+
+
+def evaluate_zero_dashboard_operational_acceptance(
+    measured: Sequence[Mapping[str, object]],
+    *,
+    functional_passed: bool,
+    required_profile: str = ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE,
+) -> dict[str, bool]:
+    """Evaluate strict latency evidence separately from the functional smoke.
+
+    Evidence must be non-empty, use one explicitly comparable hardware profile,
+    and contain finite, non-negative measurements strictly below the frozen
+    five-second bound.  The result contains only bounded boolean diagnostics.
+    """
+
+    profile_ok = bool(measured) and type(required_profile) is str and bool(required_profile)
+    compile_ok = bool(measured)
+    restart_ok = bool(measured)
+    for item in measured:
+        if not isinstance(item, Mapping):
+            profile_ok = False
+            compile_ok = False
+            restart_ok = False
+            continue
+        profile_ok = profile_ok and type(item.get("profile")) is str
+        profile_ok = profile_ok and item.get("profile") == required_profile
+        compile_ok = compile_ok and _latency_under_bound(
+            item.get("compile_latency_ms"), ZERO_DASHBOARD_LATENCY_BOUND_MS
+        )
+        restart_ok = restart_ok and _latency_under_bound(
+            item.get("restart_context_latency_ms"), ZERO_DASHBOARD_LATENCY_BOUND_MS
+        )
+
+    all_latency_gates_passed = profile_ok and compile_ok and restart_ok
+    return {
+        "functional_contract_passed": functional_passed is True,
+        "comparable_hardware_profile": profile_ok,
+        "compile_latency_under_5000_ms": compile_ok,
+        "restart_context_latency_under_5000_ms": restart_ok,
+        "all_latency_gates_passed": all_latency_gates_passed,
+        "passed": functional_passed is True and all_latency_gates_passed,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -718,7 +814,7 @@ def run_zero_dashboard_journey(
             generation_id="generation-1",
             as_of=ZERO_DASHBOARD_TIME,
         )
-        restart_context_latency = (perf_counter() - recovery_started) * 1_000
+        restart_context_latency = _elapsed_ms(recovery_started, perf_counter())
         public_record_id = recovery_sink.record_id_for_item("item-project")
         public_observation_id = recovery_sink.observation_id_for_item("item-project")
         private_record_id = recovery_sink.record_id_for_item("item-private")
@@ -1279,7 +1375,7 @@ def _compile_before_generation(
     )
     with patch.object(retrieval_module, "utc_now", return_value=_iso(as_of)):
         response = retrieval.bootstrap(bootstrap_request, principal)
-    elapsed_ms = (perf_counter() - started) * 1_000
+    elapsed_ms = _elapsed_ms(started, perf_counter())
     references = tuple(
         PayloadReference(
             item.id,
@@ -1308,7 +1404,7 @@ def _bootstrap_at(
     started = perf_counter()
     with patch.object(retrieval_module, "utc_now", return_value=_iso(as_of)):
         response = retrieval.bootstrap(request, principal)
-    return tuple(response.items), (perf_counter() - started) * 1_000
+    return tuple(response.items), _elapsed_ms(started, perf_counter())
 
 
 def _phase_contexts_are_safe(
@@ -1547,10 +1643,13 @@ def _core_counts(store: CoreStore) -> dict[str, int]:
 
 
 __all__ = [
+    "ZERO_DASHBOARD_COMPARABLE_HARDWARE_PROFILE",
+    "ZERO_DASHBOARD_LATENCY_BOUND_MS",
     "SyntheticDirectTurn",
     "ZeroDashboardFixture",
     "ZeroDashboardJourneyReceipt",
     "ZeroDashboardScorecard",
     "default_zero_dashboard_fixture",
+    "evaluate_zero_dashboard_operational_acceptance",
     "run_zero_dashboard_journey",
 ]

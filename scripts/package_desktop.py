@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "allthecontext" / "src"))
 
 from allthecontext import __version__
+from allthecontext.build_identity import make_build_identity
 from allthecontext.macos_bundle import validate_macos_bundle_links
 from allthecontext.release_manifest import ReleaseVersion, sha256_file
 
@@ -253,27 +254,38 @@ def build_platform_package(
         "linux": "all-the-context",
     }[platform_name]
     report = output_dir / f"{base_name}.package.json"
-    report.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "version": version,
-                "platform": platform_name,
-                "architecture": architecture,
-                "trust": "unsigned-community",
-                "format": package_format,
-                "package": package.name,
-                "notice": notice.name,
-                "source": source.name,
-                "sha256": digest,
-                "size": size,
-                "recovery_surface": recovery_surface,
-                "recovery_console_helper": recovery_console_helper,
-            },
-            indent=2,
-            sort_keys=True,
+    report_payload: dict[str, object] = {
+        "schema_version": 1,
+        "version": version,
+        "platform": platform_name,
+        "architecture": architecture,
+        "trust": "unsigned-community",
+        "format": package_format,
+        "package": package.name,
+        "notice": notice.name,
+        "source": source.name,
+        "sha256": digest,
+        "size": size,
+        "recovery_surface": recovery_surface,
+        "recovery_console_helper": recovery_console_helper,
+    }
+    if source_commit is not None:
+        identity = make_build_identity(
+            version=version,
+            source_commit=source_commit,
+            platform_name=platform_name,
+            architecture=architecture,
         )
-        + "\n",
+        report_payload.update(
+            {
+                "channel": identity.channel,
+                "source_commit": identity.source_commit,
+                "build_identity": identity.as_dict(),
+                "build_identity_sha256": identity.sha256,
+            }
+        )
+    report.write_text(
+        json.dumps(report_payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
         newline="\n",
     )

@@ -49,7 +49,6 @@ CODEX_READ_TOOLS = (
     "bootstrap_context",
     "search_context",
     "get_context_item",
-    "context_status",
     CODEX_READ_HOOK_TOOL,
 )
 CODEX_CAPTURE_TOOLS = (CODEX_CAPTURE_USER_PROMPT_TOOL, CODEX_CAPTURE_STOP_TOOL)

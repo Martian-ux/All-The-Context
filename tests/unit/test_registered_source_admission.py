@@ -98,6 +98,37 @@ def test_registered_source_happy_path_uses_core_lineage_and_safe_projection(
     assert {str(row["id"]) for row in records} == {str(row["canonical_record_id"]) for row in items}
 
 
+def test_registered_source_reference_preserves_installed_v1_material_after_restart(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        item = connection.execute(
+            "SELECT i.provider_item_id,r.source_reference FROM capture_items i "
+            "JOIN context_records r ON r.id=i.canonical_record_id "
+            "WHERE i.source_id=? LIMIT 1",
+            (source_id,),
+        ).fetchone()
+    assert item is not None
+    expected = (
+        "registered-source-item-"
+        + hashlib.sha256(
+            f"registered-source-reference-v1\0{source_id}\0{item['provider_item_id']}".encode()
+        ).hexdigest()
+    )
+    assert item["source_reference"] == expected
+
+    restarted = CoreStore(store.database_path)
+    assert restarted.migrate() == 20
+    with restarted.connect() as connection:
+        retained = connection.execute(
+            "SELECT source_reference FROM context_records WHERE source_reference=?",
+            (expected,),
+        ).fetchone()
+    assert retained is not None
+
+
 def test_registered_source_item_update_advances_candidate_without_duplicate_record(
     tmp_path: Path,
 ) -> None:
@@ -1100,7 +1131,7 @@ def test_registered_source_event_id_uniqueness_and_restart_retain_capture_state(
             ).fetchone()
         ) == (4, 4)
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 19
+    assert restarted.migrate() == 20
     with restarted.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 4
         assert (

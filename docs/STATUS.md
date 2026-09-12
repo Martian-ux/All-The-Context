@@ -2,6 +2,255 @@
 
 ## Current milestone
 
+**2026-09-06 — PR #114 combined integration candidate**
+
+Product work remains ACTIVE under `ATC-WF-2026-09-05` and
+`ATC-LOCAL-CLI-LUNA-2026-09-06`. The bounded integration review checked branch
+`codex/windows-beta-combined-20260906`, source checkpoint HEAD
+`155abbf3869919b0cae8fff96076fc6c6ebcd197`, tree
+`5474d7ab0f1e8425e05e694531b9e4d2ee14c148`, and clean tracked/untracked status
+before this documentation-only diff. `d18b4b7724b0da95d286c191879f7ea4e2724bad`
+is an ancestor, and the nine post-`d18` commits occur once in order:
+`e0c60b5`, `517e162`, `cb2689d`, `893a393`, `b7cfd68`, `07b7382`, `563f7c0`,
+`b9c515e`, `155abbf`. The controller's stable patch-ID checks match their
+specified source counterparts. The resulting documentation commit intentionally does
+not name its own SHA.
+
+The truthful release boundary remains explicit:
+protected main contains the merged Import Truth, while this branch is only a
+source integration candidate and not a release.
+
+The integrated package keeps the accepted Windows update repair bounded:
+canonical WScript shortcut-generation siblings retain their final `.lnk` or
+`.url` suffix, and packaged setup records refresh/registration progress before a
+later `OSError` is classified as an entrypoint-registration failure. The
+accepted native review covered WScript COM edge cases, path/collision cases, and
+19 focused tests; full integrated and release gates remain separate.
+
+The separately published immutable `0.1.0-beta.6` remains the
+current downloadable release. No GA, new beta publication, exact-artifact,
+Defender, clean-machine, live provider/client, signing, or release acceptance is
+claimed. This source evidence does not
+become release evidence; exact-artifact and publication claims remain separate.
+The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
+documentation, hosted, artifact, and applicable platform/release gates.
+
+### 2026-09-08 — bounded beta.6-to-beta.7 registration adoption repair
+
+The diagnosed packaged failure was a real source defect: beta.7 rejected the
+supported journal-less beta.6 registration before it could begin metadata
+migration. The repair adopts only the complete fixed-path beta.6 surface,
+records an authenticated `migrating` journal before changing metadata, and
+updates exactly `DisplayVersion` plus the four build-identity values. Stock
+Windows registry value compare/set/delete now uses a bounded KTM transaction
+for existing keys while retaining the prior native handle ownership and full-key
+capability boundary. Focused tests cover adoption, every metadata-write
+compensation point, and the stock adapter path. The exact-source native
+cross-version proof, independent review, and downstream release gates remain
+controller-owned and pending.
+
+### 2026-09-08 — packaged registration repair (source-level)
+
+The exact diagnosis inputs identify candidate
+`d51a761ed8242e045cce1a848715eb8b2b598346` and a registration-journal mismatch
+after packaged first-run. The bounded source repair no longer regenerates
+WScript shortcut bytes as a cross-process canonical value: an authenticated
+installed journal supplies expected bytes only for its fixed path with the
+exact stored bytes and recorded file identity. Byte, replacement-identity,
+reparse, path, authentication, registry, and ownership checks remain
+fail-closed.
+
+Installed registration migration now journals and updates `DisplayVersion` plus
+the complete packaged build identity (`ATCReleaseChannel`, `ATCSourceCommit`,
+`ATCBuildIdentity`, and `ATCBuildIdentitySha256`) as one recoverable metadata
+surface. Older target versions remain blocked; partial writes compensate back
+to the authenticated old surface, and interrupted migrations can finish from
+the durable journal. Focused source tests cover nondeterministic shortcut
+generation, byte/identity tamper, metadata migration, recovery, and rollback.
+No tests, builds, executables, or native gates were run in this source-only
+attempt; controller-owned validation remains pending and this is not release
+evidence.
+
+The first native focused receipt then exposed one remaining cross-process
+validation path that bypassed the journal-aware shortcut lookup, plus a focused
+test's stale assumption about the expanded registry tuple shape. The bounded
+repair routes every installed-state shortcut comparison through the authenticated
+journal and updates that test's mapping conversion. Native validation remains
+controller-owned and pending.
+
+The exhaustive memory-reliability test optimization preserves 3,480 rejection
+checks and 39 module tests. Three paired local runs measured a median reduction
+from 61.837s to 55.804s (6.033s, 9.76%). This is focused local feedback-time
+evidence, not total-suite or hosted-CI proof.
+
+Windows CI now retains a complete Linux suite and uses a canonical two-shard
+Windows plan/digest. Each shard rechecks the complete digest, its assigned file
+targets, and sequential/parallel collection parity; the aggregate check fails
+closed on a missing or unsuccessful plan/shard or invalid canonical outputs. The
+accepted local proof covered 3,293 nodes across 178 files with zero overlap and
+full union. This review's collection-only smoke over the source checkpoint found
+3,352 nodeids across 179 files and passed both shard contracts in 56.953s. No
+hosted 5–10 minute timing claim is made.
+
+The cross-client reader bridge remains a packet/result contract, not a reader or
+model. The accepted local Borealis n=1 sanity found 3/3 facts with the maintained
+file, 0/3 with no memory, and 0/3 with the pre-repair actual-ATC bootstrap; Core
+admitted zero task-relevant candidates and selected one unrelated preference.
+This is a concrete retrieval miss, not model/user superiority evidence. The
+current repair chain narrows query normalization, preserves preference
+exclusions and meaningful request clauses, and removes Unicode ambiguity while
+keeping authorization, kind filters, and set-level content coverage separate.
+Native focused tests and static checks were accepted. The post-repair frozen
+Borealis known case then improved actual-ATC context from 0/3 to 3/3 facts and
+produced the correct answer; the maintained arm also answered correctly and the
+no-memory arm abstained honestly. The memory manager accepted the complete
+`c107899` chain after 34 affected/frozen tests, Ruff, and mypy. This is one known
+case, not holdout evidence or a superiority/general product-quality claim.
+
+### Prior diagnostic candidate history
+
+The following prior-candidate notes are retained as historical provenance, not
+as evidence for the combined source checkpoint.
+
+The first hosted rerun on pushed head `b8e19c1` was CI `34047006204`. Every
+listed job and CodeQL `34047004650` passed except Windows desktop job
+`101523747703`, which reproduced the same pre-injection transaction and cleanup
+failure. Its pull-request merge commit `4dd5032` has the exact candidate tree
+`39bb058`, so the package exercised the intended code. Diagnostic commit
+`fc8193a` adds only a fixed `component_bootstrap_os_error` versus
+`component_bootstrap_runtime_error` partition at `bootstrap_install_recovery`;
+all other exceptions retain the generic code. Schema, rollback, and raw-output
+suppression are unchanged. One hosted rerun must select a causal reproduction;
+if it remains generic, diagnostic-code iteration stops.
+
+The current Windows GA diagnostic integration candidate is a clean detached
+tree whose source tip is `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`, with
+parent `d9d294f6d8fd06338374e684731a273e402cc7ee`, and whose exact prior live
+PR #114 head was `7212d96991eb667a5df805145d3c9a97c73c470c`. Worker
+`a986e125ce62fbdf0bc57c71bf519bc153dd740d` and worker
+`8bbcfc5e56865bc404e473dd967a6ad378914af1` each had that exact parent and
+were cherry-picked exactly once without conflict as `d9d294f6d8fd06338374e684731a273e402cc7ee`
+and `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`. Their stable patch IDs match
+their integrated counterparts, and the original worker tips are not
+ancestors. Before any push of this candidate, the remote branch and
+`refs/pull/114/head` were still exactly `7212d96991eb667a5df805145d3c9a97c73c470c`,
+while remote `main` and the PR base remained exactly
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`; PR #114 remained open and draft.
+The candidate SHA is not a previously live PR head. The final documentation
+commit intentionally does not name its own SHA; post-push exact-ref
+verification supplies the final SHA evidence.
+The preceding Windows GA diagnostic integration commits
+`6b86129b4d401765cfaf84a4ba196e793bbe9b71`,
+`bfdc503658794dfb80f11bd3765d62f0d836d25b`, and
+`941968d7d5714a6a889b1990ab418b9aa0fc34b3` remain in this candidate's
+ancestry, with their historical source-parent records preserved below.
+The preceding 49-commit ancestry union and exact-head repairs remain recorded
+in `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. The earlier
+packaged-smoke repair `78e83e1320d263312aa2c7d70a636b951bc7972d` is historical
+provenance from then-live head `99fde17d8b850db561db057365efc4225e40b173`;
+that older SHA is not the current live head. No release claim is made: exact-
+artifact, hosted, signing, publication, Defender, clean-machine,
+provider/client, and downloaded-candidate evidence remain separately bounded.
+
+The prior exact-head hosted validation of `7212d96991eb667a5df805145d3c9a97c73c470c`
+was CI run `33960831539`. It had exactly two Windows failures: Desktop artifact
+job `101292314291` reported the injected updater crash point as
+`component_bootstrap_failed` with rollback phase `rolled_back` and return code
+`2`, then reported `packaged_first_run_cleanup` failed; Python 3.12 job
+`101292314305` failed only
+`test_packaged_surface_removes_its_disposable_vault` with `1 failed, 3222
+passed, 2 skipped, 3 warnings`. The other listed CI, dashboard, repository-
+security, and CodeQL checks passed. The packaged-provider failure did not
+reproduce in the local Windows source tree: the three-file focused run passed
+`300` tests with `3` expected filesystem-capability skips in `97.41s`, and the
+disposable-vault test passed `10/10` repeated runs in approximately `15.0s`
+with no skips or warnings. The provider change is test-only: it projects only
+the fixed content-free report schema and allowlisted error code in a failure
+message; it changes no production acceptance behavior.
+
+The updater change narrows unexpected non-`BootstrapInstallError` failures
+during component bootstrap to the fixed codes
+`component_bootstrap_source_invalid`, `component_bootstrap_core_probe_failed`,
+and `component_bootstrap_transaction_failed`, with
+`component_bootstrap_failed` as the closed fallback; existing allowlisted
+bootstrap codes and rollback control flow remain unchanged. Both changes are
+diagnostic/test evidence only. Neither is a root-cause fix or hosted success;
+the hosted Windows failures, exact-artifact behavior, and release/Defender/
+clean-machine/provider-client acceptance remain open.
+
+The first repair adds strict primitive-type validation before child-failure
+report membership and nonce comparison, so nested, boolean, numeric, null, and
+other untrusted scalar values fail closed as
+`child_failure_report_invalid` while rollback authority is retained. It also
+adds six closed headless setup subphases plus an `unknown` fallback through an
+optional, exception-contained progress callback at the existing setup seams.
+The follow-on repair guards all six projected setup fields, loads reports with
+a bounded limit-plus-one read, and contains decode, Unicode, JSON, recursion,
+oversize, non-dict, and JSON integer-limit `ValueError` failures in both summary
+and headless setup paths. Only the `json.loads` call is normalized to the
+private parse-error class; decoding, size, and surrounding control flow remain
+unchanged. The report and smoke projection expose only allowlisted authoritative
+fields; they contain no exception text, traceback, stream, path, environment,
+identity, credential, vault, or user-context data. These repairs are
+diagnostic-only and do not claim that the underlying Windows failure is fixed.
+
+The packaged smoke's four-component check uses same-build stable Setup, MCP,
+Recovery, and Updater helper copies to validate crash/rollback/component-set
+handling and exact hash binding. It does not establish independent candidate
+provenance or no-substitution evidence. The source-level smoke repair also
+preserves one absolute `CORE_STOP_TIMEOUT_SECONDS=10.0` monotonic deadline
+across shutdown request, health polling, and process-lock acquisition, and the
+integrated tree also preserves real `.lnk` and `.url` generator-failure
+cleanup of the exact temporary path.
+The distribution policy remains unsigned: SmartScreen reputation warnings are
+acceptable for the community package, while Defender quarantine or deletion
+remains a blocker; paid signing is not required.
+
+The terminal hosted validation for prior pushed/hosted head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac` was CI run `33955088215`, with
+green Windows/Ubuntu Python, Ubuntu desktop, dashboard, repository-security,
+and parity jobs. CodeQL run `33955085969` was green. The only failure was
+Windows desktop job `101276839940`, which failed before the updater at
+`setup_stage=prepare_installed_runtime` with
+`setup_error_code=setup_io_error`; it supplied no updater-child evidence, and
+c923224 did not change setup behavior. The new subphase is a diagnostic
+classification only, not root-cause evidence, hosted success, artifact proof,
+or a claim that the Windows setup failure is fixed. No release claim is made.
+The pre-repair full-suite attempt on `2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`
+was intentionally interrupted at approximately 45% after an exact-head
+review finding; it supplies no test result. The follow-on source worker
+reported 129 passed, no skips or warnings, Ruff lint/format over 378 files,
+mypy over 113 files, and `git diff --check` green. The final
+parser-normalization repair worker reported 73 focused tests passed, with no
+skips or warnings; its Ruff/format, mypy, and diff checks were also green. The
+integer-limit coverage is source-level only.
+
+**2026-09-05 — Historical packaged-smoke repair at the then-live PR #114 head**
+
+This is historical predecessor evidence from then-live head
+`99fde17d8b850db561db057365efc4225e40b173`, not the current live state.
+Prior exact-head evidence on that SHA
+recorded local full-suite evidence of 3,100 passed, 20 expected capability
+skips, and three known warnings, with all static, security, and evidence gates
+green. CodeQL run `33948694420` was fully green. CI run `33948695264` was
+terminal with every job green except Windows desktop: native build,
+resource/credential, and packaged console-recovery steps passed, but packaged
+first-run returned `2` instead of injected `86` before `binary_replaced`, and
+cleanup then failed. The old deterministic transaction contract also failed
+because `replacement/` contained only `AllTheContextSetup.exe`.
+
+Source repair `7f0677787e339a5fce96e4d21c6acf2cea29003c` had exact parent
+`99fde17d8b850db561db057365efc4225e40b173`, changes only the packaged-smoke
+script and its two unit-test files, and was cherry-picked without conflict as
+integrated commit `78e83e1320d263312aa2c7d70a636b951bc7972d`. The source worker
+reported 325 passed, 6 expected skips, and 76.46 seconds, with Ruff
+lint/format/diff green and a clean worktree. The integrated repair adds the
+four-candidate staging/manifest contract, the single overall ten-second Core
+stop budget, and real `.lnk`/`.url` generator-failure cleanup coverage. It is
+source-level evidence only; hosted confirmation on the final pushed tree is
+pending, and no hosted success, artifact, release, signing, Defender,
+clean-machine, provider/client, or downloaded-candidate acceptance is claimed.
+
 As of 2026-09-03 UTC, protected main integrates false-by-default Continuous
 Capture for Claude Code and Codex on top of the read-only and explicit-memory
 boundaries. After one setup opt-in, ordinary user prompts and rendered
@@ -41,6 +290,122 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-09-04 — Windows GA convergence integration candidate
+
+The candidate starts from fetched local and remote `origin/main` at exact
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`, with no open integration PR at
+the time of branch creation. All nine requested source tips were traversed,
+deduplicated, patch-equivalence checked, topologically ordered, and applied
+exactly once. The ledger records every source-to-integrated SHA mapping and
+the four conflict-resolution groups.
+
+The integrated scope covers Windows bootstrap recovery and cleanup, Core
+quiescence/activity and readiness recovery, reversible Windows registration
+and registry publication, immutable packaged build identity and terminal
+replay, portable restore graph/purge barriers, and exclusion of machine-local
+authorization state from portable exports. A stale export regression was
+updated to assert that explicit security boundary. Source-level tests and
+static checks are evidence contracts only; this candidate does not execute,
+install, update, sign, publish, or Defender-scan a candidate artifact.
+
+### 2026-09-04 — PR #114 hosted fix integration
+
+This follow-up starts from the live PR #114 head
+`f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`, with remote `main` still exactly
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. In a clean detached worktree,
+the integrator cherry-picked exactly once, in order:
+`af9f9111649a7bdc64b99494f92ed379aea33906`,
+`094cbf1216d779162accf6e0e8eed8be17feeeb1`, and
+`98f0d39bfc6482962c2d213ce265c233a07c8d55`, producing integrated commits
+`a2c751882436233cd89179d49f8fedd422f8b72f`,
+`81f50e7fcf5447ea6a3d508ce7e512896ddf9c5b`, and
+`9e2d1e609f677992567aec98a0c3988d57414046`.
+
+The repair preserves injectable cross-platform file deletion/replacement,
+explicit modeled-provider Win32 last-error reads on non-Windows, real-Windows
+fail-closed behavior, guarded `winreg` import, stock-CPython forward-only
+fresh-key registration, atomic-only existing-key mutation/cleanup, and the
+exact-40/resolving SHA ledger check. Zero-dashboard functional gates no longer
+depend on host-sensitive restart wall time; the separate operational gate
+remains fail-closed for comparable profiles and requires both measurements to
+be strictly below 5,000 ms. The source evidence is not artifact, release,
+Defender, clean-machine, provider/client, or downloaded-candidate evidence.
+
+### 2026-09-04 — PR #114 hosted follow-up repairs
+
+Hosted run `33934027316` failed both Python Documentation steps because the
+checkout was shallow; the Windows desktop job also failed its headless setup
+with exit 1. The remaining early jobs were green. Starting from exact live PR
+#114 head `bd401a77eb824452d84769dd2824c87e095cddce`, the integrator
+cherry-picked, in order, repair `0f7141e83fad7add4456ed925ddfdb68e23ca261`
+as `8e09cd7324dcd83cb5a4b0acbe9ae4e3c8194b47` and repair
+`247f74572ae69c87182f59e147ff98fde42f59ff` as
+`31a9875cb5992704bfbcf6c548b3b453dfe211ea`. The first sets full checkout
+history for the Python CI job and adds its workflow contract regression;
+focused evidence was 21 passed, with documentation, 48 Action pins, Ruff,
+format, and diff checks green.
+
+The second repair exposes only the existing allowlisted `setup_error_code` in
+packaged first-run terminal JSON. Its focused evidence was 163 passed with
+five expected symlink skips, including 16 diagnostic tests; Ruff, format,
+mypy over 112 source files, documentation, and diff checks were green. This
+is diagnostic-only: it does not fix or claim to fix the unresolved hosted
+Windows headless setup exit 1. The hosted rerun and final exact-SHA gates
+remain pending.
+
+### 2026-09-04 — PR #114 exact-head reviewer repairs
+
+Hosted run `33937672313` on exact PR head `3983cf3930b9462be8d2d9a175230618f74a4b04`
+failed both Python Documentation jobs because the convergence ledger named
+49 local-only source-tip objects that are not reachable from a fresh remote
+clone. The Windows desktop job again failed packaged headless setup, now
+classified as `setup_io_error`; all CodeQL, dashboard, repository-security,
+and Ubuntu desktop jobs passed. The exact-head reviewer found one P1
+provenance defect and two P2 fail-closed defects: the ledger required remote
+resolution for local-only tips, diagnostic projection accepted arbitrary
+lowercase tokens, and Linux attempted unsupported `unlinkat(...,
+AT_EMPTY_PATH)` identity deletion.
+
+Starting from exact PR head `3983cf3930b9462be8d2d9a175230618f74a4b04`, the
+integrator cherry-picked exactly once, in order, source repairs
+`df58c6c5a2e5b1691b969c6d89fa703fafe0d420`,
+`778f0c5f565ef3d9e34ec2f5379591e647b9e462`, and
+`7964ee859f2aa3a1520be5730595feb05e5ede22`, producing integrated commits
+`c04d7b5d881cb029e155eb89191c01776eafd4f6`,
+`dfb801ee0d4cd481382d716d7ca66fcc9bef306c`, and
+`9f1654b137646dc373e3566de75f8b7b2f4a31e5`. The ledger now distinguishes
+portable local-only source provenance from reachable integrated ancestors;
+diagnostics use a closed error-code and setup-stage vocabulary; and
+non-Windows identity deletion fails closed without a pathname fallback while
+real Windows handle deletion remains unchanged.
+
+This repair set narrows the next hosted diagnostic stage but does not claim
+that the Windows `setup_io_error` is fixed. On committed code head
+`2057a0e59c4012cba416d6d82d48a801a9cca563`, the focused suite passed 178 tests
+with 6 expected host-capability skips in 22.45 seconds, and sequential full
+pytest passed 3,097 tests with 20 expected capability skips and 3 warnings
+from 3,117 collected in 725.64 seconds. Ruff lint/format, default/Linux/
+Win32 mypy, documentation, 48 Action pins, acceptance receipt templates,
+collection parity, release-keyring audit, and zero-finding tree/history
+security scans passed. These are local source evidence; exact hosted rerun
+results, artifact, release, signing, Defender, clean-machine, provider/client,
+and downloaded-candidate evidence remain separately bounded.
+
+### 2026-09-04 — Cross-platform Windows last-error compatibility repair
+
+The Ubuntu failure in hosted run `33924062730` was isolated to seven mypy
+`attr-defined` errors for `ctypes.get_last_error` in
+`platform_compat.py`; Ruff was green. At the exact PR head
+`a68dc920bc185385225e1cf4dd1851a4bfb8aa18`, commit
+`6c9e90d1bd602b37609ed672564144fb52719a48` adds the typed private
+`_windows_last_error` boundary and routes every native last-error read through
+it. Non-Windows execution returns before looking up the Windows-only API;
+Windows retains the real thread last-error value and fails closed if its API
+is unavailable. Focused validation passed 70 tests with 4 capability skips.
+Default, Linux, and Windows mypy checks passed. Sequential full final-tree
+validation passed 3,072 tests with 19 capability skips and 3 warnings in
+758.09 seconds; the post-push hosted result remains pending.
 
 ### 2026-09-03 — Windows update evidence wave (integration candidate)
 
@@ -4475,3 +4840,91 @@ or papered over in this integration.
   #78/#79/#82/#84, existing CoreService/startup wiring, and this local
   composition checkout. Those later facts do not belong under this
   2026-08-22 heading.
+
+### 2026-09-08 packaged uninstall lifecycle repair
+
+The bounded packaged-first-run diagnosis identified the primary native failure
+as the installed uninstaller not returning within its unchanged 90-second
+subprocess bound; the separate disposable-root cleanup failure remains
+secondary. The Windows install-removal handoff now requests a detached helper
+while retaining the exact validated install root, process identity, null
+standard handles, stable-parent working directory, and existing 300-attempt /
+100-millisecond retry contract. Focused tests cover the launch flags and prove
+the caller does not wait for the live helper. A fresh exact-candidate native
+packaged journey, reproducible artifacts, review, and release gates are still
+required; this source change is not product acceptance.
+
+### 2026-09-08 packaged uninstall error boundary
+
+The unattended packaged-uninstall mode now runs through the existing silent
+internal-mode boundary. A typed Windows registration failure returns nonzero
+and atomically publishes only a bounded failure report: the uninstall outcome,
+vault retention, a closed stage/code, and validated registration compensation
+status. Unknown exception text, paths, registry material, credentials, and
+user context are not serialized. Missing or malformed typed status is explicit
+as unavailable. The success report remains the existing minimal two-field
+report.
+
+The packaged-first-run smoke first invokes the real installed WINDOWED binary
+with a deterministic isolated incomplete-registration injection, verifies the
+typed failure report, the unchanged install/vault evidence, and no remaining
+process that could own a modal, then executes its existing successful
+install/update/rollback/uninstall journey. The injected case is smoke-only and
+does not repair or infer the underlying live registration cause. Native
+exact-candidate build, OS lifecycle, and final release gates remain open.
+
+### 2026-09-08 packaged smoke process and uninstall diagnostics repair
+
+The packaged smoke now snapshots matching installed-executable process
+identities as PID, native creation identity, and executable, then accepts only
+those exact pre-existing identities after the injected windowed uninstall
+returns. A healthy already-running Core is therefore preserved and checked by
+the subsequent real journey; a new modal/child, PID reuse with a different
+creation identity, or native inventory error fails closed. The inventory is
+bounded and does not request command lines.
+
+Validated closed-schema uninstall failure status and bounded process
+classification are copied before cleanup into a run-unique external diagnostic
+directory for both the injected boundary and a real final uninstall failure.
+Final failure stdout includes the validated registration status without paths,
+PIDs, raw streams, tokens, or user data. Diagnostic write failure remains
+secondary to the native uninstall result. Native exact-candidate proof remains
+required.
+
+### 2026-09-08 stock Windows transacted registry handle repair
+
+The native Windows registry adapter now owns raw KTM key handles directly and
+passes their live integer HKEY to each bounded stock-winreg query/set call,
+keeping every operation bound to its active transaction. Close is single-attempt
+and interprets `RegCloseKey`'s returned status directly. Focused tests cover
+handle lifetime, transaction binding, ownership/CAS preservation, and stale
+last-error separation. The stock Windows lifecycle and packaged proof gates
+remain required and are not claimed here.
+
+### 2026-09-09 beta.6 updater-state compatibility repair
+
+The v3 cross-version proof observed a product defect after beta.7 component
+installation and authenticated registration migration: the frozen Core startup
+guard rejected the published beta.6 updater's valid 12-field inactive state
+before the current updater could canonicalize it. The bounded repair accepts
+only that exact beta.6 field set with a safe inactive phase, null transaction,
+download, and backup paths, valid scalar values, a known packaged source
+identity, and no transaction recovery evidence. It leaves the legacy bytes
+unchanged; the existing updater then atomically saves the complete beta.7
+version/source-bound state. Malformed, active, foreign, or evidence-bearing
+states remain blocked and byte-preserved. Focused startup/updater regressions
+and existing startup-guard tests passed; exact native cross-version proof,
+independent review, and downstream release gates remain controller-owned and
+pending. This source repair is not release acceptance.
+
+### 2026-09-08 packaged uninstall PowerShell launch repair
+
+The Windows install-removal helper no longer requests `DETACHED_PROCESS`.
+The host diagnostic showed that this flag combination can produce a zero-exit
+PowerShell process that never executes the removal command. `CREATE_NO_WINDOW`,
+`CREATE_NEW_PROCESS_GROUP`, discarded standard handles, `close_fds`, the stable
+parent cwd, exact install-root validation, caller-exit wait, and the existing
+bounded deletion retry remain unchanged. A short-lived-child native regression
+now accepts only actual removal of its unique checkout-owned dummy install
+directory. The exact packaged candidate journey and release gates remain
+pending; this source repair is not product acceptance.

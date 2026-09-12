@@ -27,6 +27,47 @@ The Windows hardening wave integration and check-only updater boundary are
 covered by ADR-199. Its four cherry-picked worker commits are preserved in
 the integration ancestry; the final integration commit adds only bounded
 configuration/lifecycle safeguards and documentation.
+The exact-PR hosted repair follow-up is covered by ADR-203 and adds three
+source tips on top of PR #114 head `f21f7edcbdd31d8d5e639eaa9da647f4b83e8532`.
+The hosted-history and packaged-first-run diagnostic follow-up is covered by
+ADR-204 and adds two exact source repairs on top of PR #114 head
+`bd401a77eb824452d84769dd2824c87e095cddce`.
+The exact-head reviewer repair follow-up is covered by ADR-205 and adds three
+exact source repairs on top of PR #114 head
+`3983cf3930b9462be8d2d9a175230618f74a4b04`.
+The current Windows GA diagnostic follow-up is covered by ADR-208 and starts
+from the prior pushed and hosted PR #114 head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac`, with remote `main` at
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The preceding packaged-smoke
+repair was integrated exactly once as
+`78e83e1320d263312aa2c7d70a636b951bc7972d` from then-live head
+`99fde17d8b850db561db057365efc4225e40b173`; that older SHA is historical, not
+the current live head. Diagnostic source
+`5433f8100ba0a3f7aab554cba70f41bd49184309` has exact parent
+`c923224f1cf2d29c495e9bc981a381b99bded2ac` and was cherry-picked exactly once
+without conflict as source integration commit
+`6b86129b4d401765cfaf84a4ba196e793bbe9b71`. The final documentation commit
+intentionally does not name its own SHA; post-push exact-ref verification
+supplies final SHA evidence.
+The follow-on source repair
+`5f78aeb861f1e0ae019ee7f048036d1b3f55511e` has exact parent
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3` and was cherry-picked exactly once
+without conflict as `bfdc503658794dfb80f11bd3765d62f0d836d25b`; its two-path
+scope closes the remaining setup-report projection boundary.
+The final parser-normalization source repair
+`cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2` has exact parent
+`33bc53769a2dc5d44d0b1ec673fe66595336b835` and was cherry-picked exactly once
+without conflict as `941968d7d5714a6a889b1990ab418b9aa0fc34b3`; its two-path
+scope closes the remaining JSON integer-limit containment boundary.
+The current two-worker exact-head diagnostic integration is covered by ADR-209.
+It starts from prior exact live PR #114 head
+`7212d96991eb667a5df805145d3c9a97c73c470c`; worker
+`a986e125ce62fbdf0bc57c71bf519bc153dd740d` was cherry-picked once as
+`d9d294f6d8fd06338374e684731a273e402cc7ee`, and worker
+`8bbcfc5e56865bc404e473dd967a6ad378914af1` was cherry-picked once as
+`0a19b6ecfd4419c311199fcbe4a734e22b5f46f6`. The worker tips are not
+ancestors; stable patch IDs match. The candidate is not that prior live head,
+and the final documentation commit intentionally does not name its own SHA.
 This Windows update evidence wave is covered by ADR-200. The integrated
 ancestry contains the content-equivalent cherry-pick commits below; each pair
 has the same stable patch ID, while the original worker object is not an
@@ -47,6 +88,333 @@ worker `14f351741c5b4cb2d2343aeea4cba88a27a4380b`; that original worker
 object is likewise not an ancestor. It adds single-flight update actions,
 bounded cancellation feedback, protected cancellation API coverage, and
 dashboard error-recovery coverage.
+
+ADR-210 covers the 2026-09-06 defensive-boundary and hosted-flake repair
+candidate based on exact prior live PR #114 head `bbe63194618350d5dfcd718d495f21b131f7e4a5`.
+The six integrated commits are `ab8a11b`, `64356a0`, `7497853`, `90d65d9`,
+`1110707`, and committed-code tip `ba9d17e`; each has the same stable patch ID
+as its reviewed source. Final exact-tree and hosted results remain separate.
+
+ADR-211 covers the combined integration checkpoint on branch
+`codex/windows-beta-combined-20260906`, source HEAD
+`155abbf3869919b0cae8fff96076fc6c6ebcd197`, and source tree
+`5474d7ab0f1e8425e05e694531b9e4d2ee14c148`. It descends from
+`d18b4b7724b0da95d286c191879f7ea4e2724bad` and contains the nine specified
+commits once, in order: `e0c60b5`, `517e162`, `cb2689d`, `893a393`, `b7cfd68`,
+`07b7382`, `563f7c0`, `b9c515e`, `155abbf`. Controller patch-ID verification
+matches each specified source counterpart. The three documentation files are the only
+working-tree changes made by this integration review; the documentation commit
+intentionally does not name its own SHA.
+
+### 2026-09-06 combined integration candidate
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Windows packaged-update repair interaction | `application_install.py` canonical shortcut sibling; `desktop.py` setup progress and packaged-update classification; `tests/unit/test_application_install.py`; `tests/unit/test_desktop_runtime.py`; integrated `e0c60b5`, `517e162` | Final suffixes remain `.lnk`/`.url`; refresh/registration progress is recorded before later `OSError` classification. Accepted native review covered WScript COM, path/collision, and 19 focused tests. Full integrated and release gates remain separate. |
+| Focused test feedback time | `tests/unit/test_memory_reliability_spec.py`; integrated `cb2689d` | Three paired local runs reduced the median from 61.837s to 55.804s (6.033s, 9.76%) while preserving 3,480 rejection checks and 39 module tests. This is not total-suite or hosted-CI evidence. |
+| Windows CI shard coverage | `.github/workflows/ci.yml`; `scripts/check_test_collection.py`; `tests/unit/test_pytest_collection_contract.py`; integrated `893a393`, `b7cfd68` | Canonical two-shard plan/digest, complete-digest and target verification, sequential/parallel parity, disjoint union, and fail-closed aggregate are present. Accepted local proof covered 3,293 nodes/178 files; this review's collection-only smoke covered 3,352 nodeids/179 files and passed both shards in 56.953s. Hosted timing, including 5–10 minutes, is unproven. |
+| Cross-client reader bridge and Core proof | `bench/cross_client_reader_outcomes.py`; `tests/integration/test_cross_client_memory_acceptance.py`; `tests/unit/test_cross_client_reader_outcomes.py`; `docs/research/ATC_READER_OUTCOME_PILOT.md`; integrated `07b7382` | The bridge is a no-model packet/result contract. Accepted Borealis n=1 evidence covered 3/3 facts with maintained context and 0/3 with no-memory and pre-repair actual-ATC context; Core admitted zero task-relevant candidates and selected one unrelated preference. No superiority, model-quality, or user-quality claim is permitted. |
+| Retrieval repair chain | `retrieval.py`; `tests/unit/test_retrieval_bootstrap_composition.py`; integrated `563f7c0`, `b9c515e`, `155abbf` | Narrow normalization preserves meaningful request clauses and factual negation, handles preference exclusions, adds the bounded blocker equivalence, and keeps authorization, kind filters, and set-level content coverage separate. The memory manager accepted the `c107899` chain after 34 affected/frozen tests, Ruff, and mypy. In the post-repair frozen Borealis known case, actual-ATC context improved from 0/3 to 3/3 facts and produced the correct answer; maintained context also answered correctly and no-memory abstained honestly. This n=1 result is not holdout, superiority, or general product-quality evidence. |
+
+The final integrated gates remain controller-owned: clean-HEAD Ruff, mypy, full
+pytest, documentation, hosted Windows/CI, exact artifact, Defender,
+clean-machine, live client/provider, publication, and release evidence. The
+current downloadable beta.6 and unsigned/loopback boundaries are unchanged; no
+GA or new beta publication is implied by these source and local-evidence rows.
+
+### 2026-09-08 bounded packaged-registration repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| WScript shortcut ownership across processes | `packages/allthecontext/src/allthecontext/application_install.py`; `tests/unit/test_application_install.py::test_installed_journal_reuses_nondeterministic_shortcut_bytes`; `tests/unit/test_application_install.py::test_installed_journal_rejects_shortcut_byte_or_identity_tamper` | Source-level repair. Authenticated installed journal bytes are bound to the fixed path and recorded file identity; every installed-state shortcut comparison now uses that journal-aware lookup, so fresh WScript output is not used as a cross-process canonical comparison. The first native focused receipt exposed and bounded this remaining comparison path; native validation remains pending. |
+| Full packaged build-identity migration | `application_install.py::_migrate_installed_journal`; `application_install.py::_complete_version_migration`; `application_install.py::_rollback_installed_migration`; `tests/unit/test_application_install.py::test_installed_identity_metadata_migrates_as_one_journaled_surface` | Source-level repair. `DisplayVersion` and all four build-identity values are journaled, compare-and-set, recovered, and compensated together; downgrade and native ownership checks remain. Native gates are pending. |
+| Migration recovery and compensation | `application_install.py::_recover_journal`; `application_install.py::_resume_restoring_journal`; focused recovery/rollback tests in `tests/unit/test_application_install.py` | Source-level focused coverage added for interrupted forward completion and partial-write rollback. No pytest, build, executable, or native-controller validation was run here. |
+
+### 2026-09-09 beta.6 updater-state compatibility repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Frozen startup compatibility with published beta.6 | `windows_update_helper.py::_validate_startup_state`; `windows_update_helper.py::ensure_recovery_before_core`; `tests/unit/test_windows_update_helper.py::test_core_start_guard_accepts_observed_beta6_state_without_rewriting_it`; `tests/unit/test_windows_update_helper.py::test_core_start_guard_rejects_unsafe_beta6_compatibility_state`; `tests/unit/test_windows_update_helper.py::test_core_start_guard_rejects_beta6_state_with_transaction_evidence`; ADR-138 | Source-level repair. The exact published beta.6 12-field inactive state is admitted only with bounded scalar validation, safe inactive phase, null transaction/download/backup paths, known packaged source identity, and no transaction evidence. Legacy state bytes are preserved; malformed, active, foreign, and evidence-bearing variants remain blocked and byte-preserved. |
+| Current updater schema binding | `updater.py::UpdateManager::_load_state`; `updater.py::UpdateManager::_save`; `tests/unit/test_updater.py::test_beta6_state_is_canonicalized_with_current_version_and_source` | The existing updater canonicalizes missing beta.7 fields and atomically persists the configured version and source commit before normal Core service. Focused source tests pass; exact native cross-version, independent review, hosted, artifact, Defender, and release gates remain pending. |
+
+### 2026-09-06 defensive-boundary and hosted-flake repair candidate
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Provider report boundary | `tests/unit/test_packaged_provider_acceptance.py`; source `b390e90`; integrated `ab8a11b` | Test acceptance requires the exact key set, primitive integer schema version `1`, exact parser version `provider-archives-v2`, and closed error-code vocabulary; unknown or raw payload fields fail closed. Production provider behavior is unchanged. |
+| Updater diagnostic primitive boundary | `desktop.py::_packaged_update_failure_code`; `tests/unit/test_desktop_runtime.py`; source `9d4acb2`; integrated `64356a0` | Only primitive string code/subphase values reach allowlist lookup. Unhashable, boolean, numeric, null, and unknown values return fixed `component_bootstrap_failed` without reflecting payload content or changing rollback control flow. |
+| Bootstrap contention and retry classification | `windows_bootstrap_install.py`; `tests/unit/test_windows_bootstrap_install.py`; sources `05b5a16`, `f03ed70`; integrated `7497853`, `90d65d9` | Lock timeout alone returns `bootstrap_busy`; other acquisition I/O returns fixed `bootstrap_retry_required`. Ownership/release and persisted rolled-back journal/backup retry cleanup are covered. Diagnostic/recovery hardening only; hosted root cause and artifact success remain unproved. |
+| Scheduler hosted-runner determinism | `tests/unit/test_capture_scheduler_productization.py`; sources `5df16b5`, `1cc893a`; integrated `1110707`, `ba9d17e` | Test-only event-driven entry observation checks terminal/failure/stop states and has a finite 30-second monotonic fail-safe. Fake-clock coverage proves termination without wall sleep. Production scheduler behavior is unchanged; hosted rerun is required. |
+| Prior exact-head hosted evidence | CI `33964833404`, Windows desktop job `101303010615`, Windows Python job `101303010487`; CodeQL `33964830399` | Historical `bbe6319` evidence: desktop updater crash/cleanup failed; Python failed only two five-second scheduler waits with 3,231 passed, 2 skipped, 3 warnings; CodeQL passed. It is not candidate acceptance. |
+| Review and remaining evidence | Independent reviewer `01a07766-be38-7f01-a4b3-eccb6d0714ff`; Python 3.12.10 preflight | CLEAN FOR INTEGRATION after two repair cycles. Final exact-tree local gates, hosted rerun, exact artifact, Defender, clean-machine, provider/client, signing, publication, and release evidence remain pending. |
+| One-run bootstrap discriminator | `desktop.py::_packaged_update_failure_code`; `windows_update_diagnostics.py`; `tests/unit/test_desktop_runtime.py`; `tests/unit/test_windows_update_helper.py`; commit `fc8193a` | After CI `34047006204` reproduced generic failure on the exact candidate tree, only `bootstrap_install_recovery` now partitions escaped `OSError` as `component_bootstrap_os_error` and `RuntimeError` as `component_bootstrap_runtime_error`; all other exceptions remain generic. Existing exact schema, allowlists, rollback projection, and no-leak behavior remain. One hosted rerun selects an OS/I/O or lifecycle reproduction; a generic result stops code-based diagnostic iteration. |
+
+### 2026-09-05 Windows GA exact-head failure-narrowing candidate
+
+This candidate starts from the prior exact live PR #114 head
+`7212d96991eb667a5df805145d3c9a97c73c470c`, with remote `main` and the PR base
+at `7bfd070fd51541cd77f3cde67576f447cdef50bd`. The candidate was not the prior
+live head and was not pushed at the time of integration. The preceding hosted
+run `33960831539` on that exact head had exactly two Windows failures:
+Desktop artifact job `101292314291` reported
+`component_bootstrap_failed`, rollback phase `rolled_back`, return code `2`,
+and packaged cleanup failure after the injected updater crash point; Python
+3.12 job `101292314305` failed
+`test_packaged_surface_removes_its_disposable_vault` with `1 failed, 3222
+passed, 2 skipped, 3 warnings`. Other listed CI, dashboard, repository-
+security, and CodeQL checks passed.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Packaged updater bootstrap failure narrowing | `desktop.py::_packaged_update_failure_code`; `prepare_installed_runtime` progress callback; `windows_update_diagnostics.py`; `tests/unit/test_desktop_runtime.py`; `tests/unit/test_windows_update_helper.py`; source `a986e125ce62fbdf0bc57c71bf519bc153dd740d`; integrated `d9d294f6d8fd06338374e684731a273e402cc7ee` | Diagnostic-only source contract. Unexpected component-bootstrap failures are narrowed to `component_bootstrap_source_invalid`, `component_bootstrap_core_probe_failed`, or `component_bootstrap_transaction_failed` for the three known setup subphases, with `component_bootstrap_failed` for unknown subphases. Existing allowlisted bootstrap codes and rollback authority remain unchanged; this is not a root-cause fix or hosted success |
+| Packaged provider failure projection | `tests/unit/test_packaged_provider_acceptance.py::_safe_packaged_failure_code`; source `8bbcfc5e56865bc404e473dd967a6ad378914af1`; integrated `0a19b6ecfd4419c311199fcbe4a734e22b5f46f6` | Test-only safe projection. Only the fixed content-free report shape and allowlisted error codes are returned for failure messages; production provider acceptance behavior is unchanged |
+| Provider non-reproduction/stress evidence | Integrated focused run over `tests/unit/test_desktop_runtime.py`, `tests/unit/test_windows_update_helper.py`, and `tests/unit/test_packaged_provider_acceptance.py`; ten repeated disposable-vault checks | Local Windows source evidence only: `300` passed, `3` expected filesystem-capability skips in `97.41s`; the disposable-vault test passed `10/10` repetitions in about `15.0s` with no skips or warnings. This does not override the exact-head hosted failure or establish hosted, artifact, live-provider/client, or release acceptance |
+
+The original worker tips are not ancestors of the integrated commits. Stable
+patch ID `f0eb8c44083db128045a41a8ad6c9928399cb281` matches updater source and
+integrated commits; stable patch ID `0683d6c15f548d6cdc3418c6ba447f4380619d9d`
+matches provider source and integrated commits. Neither change claims a
+root-cause repair or hosted success; the exact hosted failures, artifact-level
+behavior, and release/Defender/clean-machine/provider-client evidence remain
+open.
+
+### 2026-09-05 Windows GA diagnostic repair on prior hosted head
+
+This repair starts from prior pushed and hosted PR #114 head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac`, with remote `main` at
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. Source commit
+`5433f8100ba0a3f7aab554cba70f41bd49184309` has that exact parent and exactly
+seven changed paths; it was cherry-picked once without conflict as source
+integration commit `6b86129b4d401765cfaf84a4ba196e793bbe9b71`. The source
+worker reported 508 focused tests passed, 8 expected capability skips, one
+known Starlette warning, and 122.45 seconds; Ruff lint/format over 378 files,
+mypy over 113 files, and `git diff --check` were green. No full suite was run
+for this source evidence. The new subphase is diagnostic-only and does not
+claim root-cause repair, hosted success, artifact proof, release, signing,
+publication, Defender, clean-machine, provider/client, or downloaded-candidate
+acceptance.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Strict child-report consumption and rollback-code preservation | `windows_update_helper.py::_read_apply_failure_report`; `_apply_replacement`; `tests/unit/test_windows_update_helper.py::test_child_failure_report_code_persists_through_rollback_without_user_data`; `test_adversarial_child_failure_report_values_reach_safe_rollback`; source `5433f8100ba0a3f7aab554cba70f41bd49184309`; integrated `6b86129b4d401765cfaf84a4ba196e793bbe9b71` | Implemented at source level. The helper clears each report before launch and type-checks every untrusted decoded scalar before allowlists or nonce comparison; nested, list, dict, boolean, numeric, null, malformed, stale, oversized, and wrong-attempt reports fail closed as `child_failure_report_invalid` without bypassing rollback. Existing safe child-code persistence and other exact-key/size/status/fresh-nonce/allowlist/path/reparse/stale-unlink rules remain. |
+| Headless setup subphase diagnostics | `desktop.py::prepare_installed_runtime`; `_notify_headless_setup_subphase`; `_headless_setup`; `tests/unit/test_desktop_runtime.py::test_headless_setup_injected_prepare_oserror_reports_exact_subphase`; `test_headless_setup_progress_callback_failure_is_contained`; source `5433f8100ba0a3f7aab554cba70f41bd49184309`; integrated `6b86129b4d401765cfaf84a4ba196e793bbe9b71` | Implemented at source level. The optional callback reports six fixed setup subphases with an `unknown` fallback, contains callback exceptions, preserves normal callers and setup control flow, and projects only the closed subphase/error schema. No exception text, path, identity, credential, stream, or user context is emitted. This is diagnostic evidence only, not root-cause or hosted/artifact proof. |
+| Packaged-smoke diagnostic projection | `scripts/smoke_packaged_first_run.py::project_setup_report_for_diagnostics`; `emit_failure_diagnostics`; `tests/unit/test_packaged_first_run_diagnostics.py::test_project_setup_report_discards_unknown_setup_codes_and_stages`; source `5433f8100ba0a3f7aab554cba70f41bd49184309`; integrated `6b86129b4d401765cfaf84a4ba196e793bbe9b71` | Implemented at source level. Smoke output accepts only allowlisted authoritative phase/code/stage/subphase values and never copies child output or sensitive fields. The inherited four-component transaction validation still uses same-build stable helper copies for crash/rollback/component-set handling and exact hash binding; it does not establish independent candidate provenance or no-substitution evidence. |
+
+Terminal hosted validation for prior pushed/hosted head
+`c923224f1cf2d29c495e9bc981a381b99bded2ac` is CI `33955088215`: Windows/Ubuntu
+Python, Ubuntu desktop, dashboard, repository-security, and parity jobs passed;
+CodeQL `33955085969` passed. Only Windows desktop job `101276839940` failed
+before the updater at `setup_stage=prepare_installed_runtime` with
+`setup_error_code=setup_io_error`. It supplied no updater-child evidence, and
+c923224 did not change setup behavior. The new subphase is diagnostic only and
+does not establish root cause, hosted success, artifact proof, or release
+acceptance. Post-push exact-ref verification remains the final SHA evidence.
+
+### 2026-09-05 Windows GA setup-report projection boundary repair
+
+This follow-on starts from exact pre-repair diagnostic candidate
+`2a5f5e5037c89cd2067b6b1b1b323ed802d3afb3`. Source commit
+`5f78aeb861f1e0ae019ee7f048036d1b3f55511e` has that exact parent and exactly
+two changed paths; it was cherry-picked once without conflict as
+`bfdc503658794dfb80f11bd3765d62f0d836d25b`. The source worker reported 129
+passed with no skips or warnings; Ruff lint/format over 378 files, mypy over
+113 files, and `git diff --check` were green. The earlier full-suite attempt
+on the pre-repair candidate was intentionally interrupted at approximately
+45% after an exact-head review finding and supplies no test result. This
+repair remains diagnostic-only and makes no root-cause, hosted, artifact,
+release, signing, Defender, clean-machine, provider/client, or downloaded-
+candidate claim.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Primitive-safe setup-report projection | `scripts/smoke_packaged_first_run.py::project_setup_report_for_diagnostics`; `tests/unit/test_packaged_first_run_diagnostics.py::test_project_setup_report_ignores_non_string_field_shapes`; source `5f78aeb861f1e0ae019ee7f048036d1b3f55511e`; integrated `bfdc503658794dfb80f11bd3765d62f0d836d25b` | Implemented at source level. All six projected setup fields require primitive strings before allowlist membership, so list, dict, boolean, numeric, null, and nested values are ignored without raising or leaking content. |
+| Bounded setup-report loading and failure containment | `scripts/smoke_packaged_first_run.py::_load_setup_report`; `_run_headless_setup`; `tests/unit/test_packaged_first_run_diagnostics.py::test_failure_summary_contains_malformed_and_oversized_reports_without_escape`; `test_headless_setup_fails_closed_for_non_dict_report`; source `5f78aeb861f1e0ae019ee7f048036d1b3f55511e`; integrated `bfdc503658794dfb80f11bd3765d62f0d836d25b` | Implemented at source level. The report is read with a bounded limit-plus-one loader, and decode, Unicode, JSON, recursion, oversize, and non-dict failures become fixed parseability diagnostics in summary and successful headless-setup paths. No raw report, path, identity, credential, stream, or user context is emitted, and broad exceptions are not swallowed. |
+
+The final documentation commit intentionally does not name its own SHA;
+post-push exact-ref verification supplies final SHA evidence. No hosted rerun,
+artifact execution, release, signing, Defender, clean-machine, provider/client,
+or downloaded-candidate acceptance is inferred from this source repair.
+
+### 2026-09-05 Windows GA setup-report integer-limit containment
+
+This final narrow repair starts from exact pre-repair candidate
+`33bc53769a2dc5d44d0b1ec673fe66595336b835`. Source commit
+`cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2` has that exact parent and exactly
+two changed paths; it was cherry-picked once without conflict as
+`941968d7d5714a6a889b1990ab418b9aa0fc34b3`. The source worker reported 73
+focused tests passed with no skips or warnings; Ruff lint/format over 378
+files, mypy over 113 files, and `git diff --check` were green. The repair is
+diagnostic-only and does not establish root cause, hosted success, artifact,
+release, signing, Defender, clean-machine, provider/client, or downloaded-
+candidate acceptance.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| JSON integer-limit parse containment | `scripts/smoke_packaged_first_run.py::_load_setup_report`; `tests/unit/test_packaged_first_run_diagnostics.py::test_failure_summary_contains_integer_limited_report_without_escape`; source `cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2`; integrated `941968d7d5714a6a889b1990ab418b9aa0fc34b3` | Implemented at source level. Only `ValueError` from the enclosed `json.loads` call is normalized to a private parse-error class; a sub-1 MiB 5,000-digit integer under `PYTHONINTMAXSTRDIGITS=4300` is contained as a fixed parseability result without leaking content. |
+| Headless integer-limit failure containment | `scripts/smoke_packaged_first_run.py::_run_headless_setup`; `tests/unit/test_packaged_first_run_diagnostics.py::test_headless_setup_fails_closed_for_integer_limited_report`; source `cc18cbc421b726cecf4cf551d89a9bb7d7f3a1f2`; integrated `941968d7d5714a6a889b1990ab418b9aa0fc34b3` | Implemented at source level. The successful return-code-zero headless path contains the same fixed parser error and emits only the bounded diagnostic schema; decoding, size checks, and surrounding control flow are unchanged, with no raw report, path, identity, credential, stream, or user-context leakage. |
+
+The final documentation commit intentionally does not name its own SHA;
+post-push exact-ref verification supplies final SHA evidence. No hosted rerun,
+artifact execution, release, signing, Defender, clean-machine, provider/client,
+or downloaded-candidate acceptance is inferred from this source repair.
+
+### 2026-09-05 Windows GA hosted follow-up repairs
+
+The follow-up starts from exact live PR #114 head
+`1cf496edf8bdf7a8566328decbd055e8900647cb`, with remote `main` still
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The two stable source commits
+were fetched from clean local worktrees and cherry-picked exactly once in
+order as `cbf08ea375ee035f018962573f0746665185a26f` and
+`0a0042059b7f7b2e4e74de764c0b755f416a05e7`; both source commits have the
+exact live-head parent and no conflict resolution was needed. This table
+records source-contract coverage only; it does not promote local tests to
+hosted, artifact, release, signing, publication, Defender, clean-machine,
+provider/client, or downloaded-candidate evidence.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Windows shortcut staging path contract | `tests/unit/test_application_install.py::test_shortcut_temporary_path_preserves_wscript_shortcut_suffix`; source `393ec111802ddad1136a0b88f09b159317a77a92`; integrated `cbf08ea375ee035f018962573f0746665185a26f` | Corrected at source-test level. Parameterized `.lnk`/`.url` cases assert parent, deterministic identity, and suffix preservation. Generator-failure cleanup, including the `.url` case, is bound to the separate repair row below. |
+| Packaged-smoke Core shutdown handoff | `scripts/smoke_packaged_first_run.py::stop_core`; `tests/unit/test_packaged_first_run_diagnostics.py::test_stop_core_waits_for_process_lock_after_health_disappears`; source `00823fcba2cf9821aaa6319ae3c6e7c4665c5ca9`; integrated `0a0042059b7f7b2e4e74de764c0b755f416a05e7` | Corrected at source-test level. After health disappears, the smoke waits for the installed Core `core.lock` to release, with explicit data-directory handoff and a bounded timeout. Hosted confirmation is pending against the final pushed SHA. |
+
+Prior exact-head evidence on `1cf496edf8bdf7a8566328decbd055e8900647cb`
+passed the full local suite with 3,098 passed, 20 expected capability skips,
+and three known warnings. CodeQL `33945244693` was green. CI
+`33945245778` failed only in Windows desktop updater crash recovery: the
+injected `binary_replaced` path produced exit `2` instead of the expected
+injected exit `86`. The packaged-smoke repair is awaiting hosted confirmation.
+No hosted, artifact, signing, publication, Defender, clean-machine,
+provider/client, or downloaded-candidate acceptance is credited by these
+repairs. Unsigned community distribution remains the policy, SmartScreen
+warnings are acceptable, paid signing is not required, and Defender
+quarantine/deletion remains a blocker.
+
+### 2026-09-05 Historical Windows GA packaged-smoke transaction repair
+
+The earlier repair started from the then-live PR #114 head
+`99fde17d8b850db561db057365efc4225e40b173`, with remote `main` at
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. Source
+`7f0677787e339a5fce96e4d21c6acf2cea29003c` has that exact parent and was
+cherry-picked exactly once, without conflict resolution, as integrated commit
+`78e83e1320d263312aa2c7d70a636b951bc7972d`. The source worker reported 325
+passed, 6 expected capability skips, and 76.46 seconds; Ruff lint/format/diff
+and worktree checks were green. These are source-contract results only, not
+hosted or artifact acceptance.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Packaged-smoke four-candidate transaction contract | `scripts/smoke_packaged_first_run.py::prepare_packaged_update_transaction`; `tests/unit/test_packaged_first_run_diagnostics.py::test_packaged_transaction_scopes_disposable_helper_authority`; source `7f0677787e339a5fce96e4d21c6acf2cea29003c`; integrated `78e83e1320d263312aa2c7d70a636b951bc7972d` | Corrected at source-test level. `replacement/` stages `AllTheContextSetup.exe`, `AllTheContextMCP.exe`, `AllTheContextRecovery.exe`, and `AllTheContextUpdater.exe`; the installed-component manifest binds each installed role to the exact staged SHA-256 and size. No product runtime/workflow change is introduced. |
+| Packaged-smoke single overall stop budget | `scripts/smoke_packaged_first_run.py::stop_core`; `tests/unit/test_packaged_first_run_diagnostics.py::test_stop_core_uses_one_overall_deadline_for_lock_timeout`; source `7f0677787e339a5fce96e4d21c6acf2cea29003c`; integrated `78e83e1320d263312aa2c7d70a636b951bc7972d` | Corrected at source-test level. One absolute `CORE_STOP_TIMEOUT_SECONDS=10.0` monotonic deadline covers shutdown request, health polling, and `core.lock` acquisition; the regression proves four seconds remain after two seconds of shutdown and four seconds of health work. |
+| Real application-entrypoint generator-failure cleanup | `tests/unit/test_application_install.py::test_generator_failure_cleans_written_temporary[suffix=.lnk]`; `tests/unit/test_application_install.py::test_generator_failure_cleans_written_temporary[suffix=.url]`; source `7f0677787e339a5fce96e4d21c6acf2cea29003c`; integrated `78e83e1320d263312aa2c7d70a636b951bc7972d` | Corrected at source-test level. The real transaction test parameterizes both suffixes, records the exact temporary path written by the generator, and proves that generator failure removes that path. This replaces the prior `.url` traceability overclaim. |
+
+This is historical predecessor evidence, not the current live state. Prior
+exact-head evidence on `99fde17d8b850db561db057365efc4225e40b173`
+recorded 3,100 passed, 20 expected capability skips, and three known warnings
+in the local full suite, with all static, security, and evidence gates green.
+CodeQL `33948694420` was fully green. CI `33948695264` was terminal with
+every job green except Windows desktop: native build, resource/credential, and
+packaged console-recovery steps passed; packaged first-run returned `2`
+instead of injected `86` before `binary_replaced`, then cleanup failed. The
+old deterministic transaction contract failed because `replacement/` contained
+only `AllTheContextSetup.exe`. Hosted confirmation against the final pushed
+tree is pending. No hosted success, artifact, release, signing, publication,
+Defender, clean-machine, provider/client, or downloaded-candidate acceptance
+is credited.
+
+### 2026-09-04 Cross-platform Windows last-error compatibility repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Cross-platform native error reporting | `platform_compat.py::_windows_last_error`; `tests/unit/test_platform_compat.py`; repair commit `6c9e90d1bd602b37609ed672564144fb52719a48`; hosted run `33924062730` Ubuntu mypy failure | Implemented at source level. All seven Windows-native callers use one typed helper; non-Windows paths do not inspect the missing ctypes API, Windows preserves the real thread last-error value, and missing Windows capability fails closed. Focused validation passed 70 tests with 4 capability skips; default/Linux/Windows mypy passed. Sequential full final-tree validation passed 3,072 tests with 19 capability skips and 3 warnings in 758.09 seconds. Post-push hosted evidence remains a separate gate |
+
+The repair is source/test evidence only and does not claim native service,
+process, registry, task, artifact, signing, publication, Defender,
+clean-machine, provider/client, or downloaded-candidate acceptance.
+
+### 2026-09-04 Exact PR #114 hosted repair follow-up
+
+The follow-up begins at exact PR #114 head
+`f21f7edcbdd31d8d5e639eaa9da647f4b83e8532` and remote `main`
+`7bfd070fd51541cd77f3cde67576f447cdef50bd`. The three source tips were
+cherry-picked exactly once, in order, and are recorded with their integrated
+SHAs in the convergence ledger. This table records source-contract coverage;
+it does not promote local tests to hosted, artifact, release, signing,
+Defender, clean-machine, provider/client, or downloaded-candidate evidence.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Cross-platform file replacement/deletion and Win32 last-error behavior | `application_install.py` injectable file-operation seams; `platform_compat.py` explicit modeled provider and native Windows last-error boundary; registration/platform regressions | Implemented at source level. Simulated Windows registration tests retain a provider seam; unsupported production hosts fail closed, modeled non-Windows providers must expose last-error, and real Windows remains native. |
+| Windows registry import and mutation safety | Guarded `windows_registry()` import; stock-CPython fresh-key forward-only path; atomic-only existing-key mutation, cleanup, and ownership checks; application-install regressions | Implemented at source level. A stock runtime without raw `PyHKEY` support does not enter KTM publication; existing-key mutation/cleanup is refused without atomic provider primitives. |
+| Zero-dashboard evidence boundary | `experimental_zero_dashboard_harness.py::evaluate_zero_dashboard_operational_acceptance`; `tests/unit/test_zero_dashboard_harness.py` | Implemented at source level. Functional gates exclude host-sensitive restart wall time; the comparable-profile observational gate is non-empty and fail-closed with finite, non-negative measurements strictly below 5,000 ms. |
+| Exact convergence ledger integrity | `scripts/check_docs.py::convergence_ledger_failures`; `tests/unit/test_docs.py`; corrected 40-character integrated SHA in `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md` | Implemented at source level. Long hexadecimal ledger tokens must be exactly 40 hex characters and resolve as local commits. |
+
+Focused local validation for this follow-up passed 394 tests with 10 expected
+host-capability skips and no warnings. Default, simulated-Linux, and
+simulated-Win32 mypy checks passed; final full-tree and hosted results remain
+bound to the final exact SHA.
+
+### 2026-09-04 Exact PR #114 hosted follow-up repairs
+
+The follow-up starts at exact PR #114 head
+`bd401a77eb824452d84769dd2824c87e095cddce`. Hosted run `33934027316` failed
+both Python Documentation steps because the checkout was shallow; the Windows
+desktop job also failed its headless setup with exit 1. The remaining early
+jobs were green. The two repairs below are source-contract and diagnostic
+evidence only; a hosted rerun must bind to the final pushed SHA.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Python CI documentation history | `.github/workflows/ci.yml` Python checkout; `tests/unit/test_release_workflow_contracts.py::test_ci_python_documentation_checks_have_full_history_and_pinned_actions`; repair `0f7141e83fad7add4456ed925ddfdb68e23ca261` integrated as `8e09cd7324dcd83cb5a4b0acbe9ae4e3c8194b47` | Corrected with `fetch-depth: 0` after the hosted shallow-checkout failure. Focused evidence passed 21 tests; documentation, 48 Action pins, Ruff, format, and diff checks were green. Hosted success remains pending |
+| Packaged first-run failure diagnosis | `scripts/smoke_packaged_first_run.py`; `tests/unit/test_packaged_first_run_diagnostics.py`; repair `247f74572ae69c87182f59e147ff98fde42f59ff` integrated as `31a9875cb5992704bfbcf6c548b3b453dfe211ea` | Diagnostic-only exposure of the allowlisted `setup_error_code`; focused evidence passed 163 tests with five expected symlink skips, including 16 diagnostic tests. Ruff, format, mypy over 112 source files, documentation, and diff checks were green. It does not fix or claim to fix the unresolved hosted Windows headless setup exit 1 |
+
+The prompt-supplied second source identifier with an extra trailing `f` did
+not resolve; the exact existing commit above was verified and used.
+
+### 2026-09-04 Exact PR #114 reviewer repairs
+
+This repair starts from exact PR #114 head
+`3983cf3930b9462be8d2d9a175230618f74a4b04`. Hosted run `33937672313` failed
+both Python Documentation jobs on remote-unresolvable local-only ledger tips
+and failed the Windows desktop job at packaged setup with `setup_io_error`.
+The exact-head reviewer findings and source-to-integrated mappings are bound
+to the three repair commits below. This table records source-contract
+coverage; it does not promote local tests to hosted, artifact, release,
+signing, Defender, clean-machine, provider/client, or downloaded-candidate
+evidence.
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Portable convergence-ledger provenance | `scripts/check_docs.py::convergence_ledger_failures`; `tests/unit/test_docs.py`; `docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`; source `df58c6c5a2e5b1691b969c6d89fa703fafe0d420`, integrated `c04d7b5d881cb029e155eb89191c01776eafd4f6` | Corrected at source level. Local-only source tips use format/count/uniqueness/lineage checks without Git resolution; declared integrated commits must be commit objects reachable from checked-out `HEAD`; unclassified long hexadecimal tokens fail closed. |
+| Identity-bound deletion portability | `platform_compat.py::delete_file_by_identity`; `tests/unit/test_platform_compat.py`; source `778f0c5f565ef3d9e34ec2f5379591e647b9e462`, integrated `dfb801ee0d4cd481382d716d7ca66fcc9bef306c` | Corrected at source level. Real Windows handle deletion is retained; unsupported non-Windows hosts fail closed without the invalid Linux `unlinkat(..., AT_EMPTY_PATH)` or unsafe pathname fallback. |
+| Packaged setup diagnostic containment | `desktop.py`; `scripts/smoke_packaged_first_run.py`; `tests/unit/test_desktop_runtime.py`; `tests/unit/test_packaged_first_run_diagnostics.py`; source `7964ee859f2aa3a1520be5730595feb05e5ede22`, integrated `9f1654b137646dc373e3566de75f8b7b2f4a31e5` | Corrected at source level. Only the closed setup error-code and stage vocabularies are projected, and raw error text remains excluded. The hosted Windows `setup_io_error` is narrowed diagnostically, not fixed or accepted. |
+
+The three repairs were cherry-picked exactly once in the listed order. Local
+validation on committed code head `2057a0e59c4012cba416d6d82d48a801a9cca563`
+passed the focused suite with 178 tests and 6 expected host-capability skips,
+and sequential full pytest with 3,097 passed, 20 expected capability skips,
+3 warnings, 3,117 collected, and 725.64 seconds. Ruff, default/Linux/Win32
+mypy, documentation, Action pins, receipt templates, collection parity,
+keyring audit, and zero-finding repository scans passed. Any hosted rerun
+remains bound to the later pushed SHA and does not inherit local evidence.
+
+### 2026-09-04 Windows GA convergence integration
+
+The candidate starts from exact `7bfd070fd51541cd77f3cde67576f447cdef50bd`.
+The nine requested source tips resolve to 49 unique, topologically ordered
+patches, each applied exactly once. The durable source/integrated SHA ledger
+and conflict decisions are in
+`docs/integrations/WINDOWS_GA_CONVERGENCE_20260904.md`. This table records
+source-contract coverage; it does not promote source tests to artifact,
+release, signing, Defender, clean-machine, provider/client, or
+downloaded-candidate evidence.
+
+| Requirement area | Integrated scope | Status |
+|---|---|---|
+| Windows bootstrap and recovery | Transactional install, retry-bounded cleanup, and failure recovery | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
+| Core lifecycle and runtime readiness | Quiescence, activity admission, shutdown/cancellation, dogfood recovery, and readiness containment | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
+| Windows registration and registry publication | Reversible registration, ownership/recovery boundaries, atomic publication, and cleanup | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
+| Cross-version beta.6 to beta.7 registration | Exact journal-less beta.6 adoption, authenticated five-value metadata migration, compensation/retry, and stock Windows value compare/set/delete | Implemented in this repair's focused source tests; exact native beta.6-to-beta.7 proof, independent review, artifact, hosted, Defender, and release gates remain pending; ADR-213 |
+| Packaged update identity and terminal replay | Immutable build identity, provenance binding, updater replay, and startup dispatch | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
+| Portable memory/export safety | Archive identity, restore graph containment, purge barriers, vault/target binding, machine-local security exclusion, and portable ACL detachment | Source-integrated; local source gates green at `5c79ada`; PR #114 hosted/exact-artifact gates pending |
 
 ### 2026-09-03 Windows update evidence wave
 
@@ -1143,3 +1511,93 @@ local source wheel passed a straight-only run in the same qualified guest with
 a 0.780195-second maximum durable timestamp gap and 0.786998/0.800204-second
 maximum API/direct receipt gaps. It emitted no receipt. A new immutable Linux
 candidate must pass the complete D01 matrix.
+
+### Packaged uninstall lifecycle handoff (2026-09-08)
+
+The packaged Windows removal handoff is a detached, bounded child operation:
+`desktop._schedule_windows_install_removal` retains exact resolved-root and
+minimum-depth validation, passes only the validated target and current PID via
+environment bindings, uses null standard handles and `close_fds`, runs from the
+stable parent, and preserves the existing 300 x 100 ms retry budget. Focused
+regressions require all creation flags, verify the caller returns while the
+helper remains live, and require the helper's bound-process wait before any
+delete attempt. The native uninstall timeout and secondary cleanup failure must
+be rerun on a fresh exact candidate; this trace does not claim acceptance.
+
+### Packaged unattended-uninstall error boundary (2026-09-08)
+
+The frozen uninstall boundary is implemented in
+`allthecontext.desktop._run_packaged_smoke_uninstall` and
+`_run_silent_internal_mode`. Failure reports are atomically written with the
+closed schema `uninstalled`, `vault_preserved`, `stage`, `code`, and
+`registration_status`. The boundary extracts only a typed
+`WindowsRegistrationError` cause, maps unknown codes to the closed
+`registration_failed` value, validates `WindowsRegistrationRestoreStatus`
+booleans and bounded pending/error vocabularies, and marks missing/invalid
+status unavailable without detail. The success report remains
+`{"uninstalled": true, "vault_preserved": true}`. Focused desktop regressions
+cover typed propagation, unavailable status, arbitrary-context redaction,
+atomic report failure, silent nonzero exit, and success preservation.
+
+`scripts/smoke_packaged_first_run.py` validates the same safe failure schema,
+checks the exact typed injected status from the real installed WINDOWED
+binary, checks the unchanged 90-second bound, verifies no process remains that
+could host a modal, and verifies install/vault evidence before continuing to
+the existing successful install/update/rollback/uninstall journey. The
+injection is explicit smoke-only evidence; the underlying live registration
+cause is intentionally not inferred or repaired here. Native exact-candidate
+and final release gates remain required.
+
+### Packaged smoke identity and failure-diagnostic repair (2026-09-08)
+
+`scripts/smoke_packaged_first_run.py` now snapshots a bounded native inventory
+of the isolated executable before the injected and final Windows uninstall
+invocations. The post-invocation check compares exact `(PID, creation
+identity, executable)` tuples, so an existing healthy Core is accepted, a new
+modal/child is rejected, PID reuse with a different creation identity is
+rejected, and inventory/schema errors fail closed. The native query is limited
+to `ProcessId`, `CreationDate`, and `ExecutablePath`; no command line or raw
+process inventory is emitted.
+
+After each validated uninstall failure, the smoke preserves only the existing
+closed uninstall-failure report and bounded process classification in a
+run-unique external diagnostics directory before disposable cleanup. A real
+final-uninstall failure prints the validated registration status while keeping
+diagnostic-write errors secondary to the native return code. Focused tests
+cover baseline Core acceptance, new modal/child rejection, same-PID replacement,
+inventory failure, safe external diagnostics, stdout status, and write-failure
+containment. Native exact-candidate lifecycle proof remains pending.
+
+### Stock Windows transacted registry handle repair (2026-09-08)
+
+`platform_compat.WindowsRegistryAdapter` now owns raw HKEY values returned by
+the native transacted registry APIs and converts that owner to its live integer
+handle at each bounded stock-winreg query/set call. The handle is closed once,
+including failure paths, while the owning KTM transaction remains in scope;
+`RegCloseKey`'s returned LSTATUS is used directly. Focused fake-provider tests
+exercise transaction binding, raw-handle lifetime, wrong-generation rejection,
+rollback, and close errors with stale last-error state. The independent stock
+Windows lifecycle, packaged recovery, full-suite, and release gates remain
+open.
+
+### Packaged uninstall PowerShell launch flag repair (2026-09-08)
+
+`desktop._schedule_windows_install_removal` now resolves only
+`CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP`; `DETACHED_PROCESS` was
+removed because the diagnosed host can report a zero-exit PowerShell launch
+without executing the command. Exact root validation, environment-bound target
+and caller identity, null standard handles, `close_fds`, stable-parent cwd,
+caller-exit wait, and the 300 x 100 ms retry contract are unchanged. The
+focused fake-call expectation covers the two retained flags, and the Windows
+native regression launches the production helper from a short-lived Python
+child inside a unique checkout-owned dummy install directory and asserts actual
+directory removal. Controller-owned normal-permission native execution and the
+fresh exact packaged candidate journey remain pending; no product acceptance is
+claimed here.
+
+### Documentation scanner scratch boundary (2026-09-08)
+
+The documentation link scanner skips the checkout-owned `.test-runs` pytest
+basetemp so invalid test output cannot be read as repository Markdown. Actual
+repository Markdown remains strict UTF-8 and missing local targets remain
+reported.

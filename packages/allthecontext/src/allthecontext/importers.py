@@ -9,16 +9,19 @@ import io
 import json
 import re
 import tempfile
+import threading
 import time
 import unicodedata
 import zipfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
+from .activity import CoreActivityGate
 from .config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES
 from .import_boundary import (
     DEFAULT_CANCEL_REGISTRY,
@@ -32,7 +35,12 @@ from .import_boundary import (
     refuse_if_over_boundary,
 )
 from .ingestion import IngestionService, archive_session_request
-from .memory_policy import classify_sensitivity
+from .memory_policy import (
+    classify_sensitivity,
+    normalize_imported_text,
+    normalized_import_candidate_key,
+    normalized_import_slot_key,
+)
 from .models import (
     CLOSED_COVERAGE_KEYS,
     MAX_CLOSED_COVERAGE_COUNT,
@@ -200,7 +208,7 @@ class _GenericCoverage:
 
 
 def _candidate(kind: str, content: str, *, evidence: str | None = None) -> CandidateInput | None:
-    normalized = " ".join(content.split()).strip()
+    normalized = normalize_imported_text(content)
     if not normalized or len(normalized) > 64_000:
         return None
     if _SECRET_HINT.search(normalized):
@@ -589,12 +597,23 @@ def _parse_csv_document(
 
 def _deduplicate(items: Iterable[CandidateInput]) -> list[CandidateInput]:
     result: list[CandidateInput] = []
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str, tuple[str, ...], str | None, str | None], int] = {}
     for item in items:
-        key = (item.kind.casefold(), " ".join(item.content.casefold().split()))
-        if key not in seen:
-            seen.add(key)
+        key = (
+            *normalized_import_candidate_key(item.kind, item.content),
+            tuple(item.scopes),
+            normalized_import_slot_key(item.entity_key),
+            normalized_import_slot_key(item.attribute_key),
+        )
+        duplicate_index = seen.get(key)
+        if duplicate_index is None:
+            seen[key] = len(result)
             result.append(item)
+        elif result[duplicate_index].source_reference is None and item.source_reference is not None:
+            # Prefer the provider-normalized entry when a generic extractor
+            # and a provider extractor describe the same logical item. This
+            # retains the addressable provenance without adding a duplicate.
+            result[duplicate_index] = item
     return result
 
 
@@ -2431,6 +2450,7 @@ class ArchiveImportService:
         max_expanded_bytes: int = DEFAULT_MAX_EXPANDED_TEXT_BYTES,
         cancel_registry: ImportCancelRegistry | None = None,
         skip_disk_preflight: bool = False,
+        activity_gate: CoreActivityGate | None = None,
     ) -> None:
         if not 1 <= max_bytes <= MAX_IMPORT_BYTES:
             raise ValueError(f"max_bytes must be between 1 and {MAX_IMPORT_BYTES}")
@@ -2440,8 +2460,50 @@ class ArchiveImportService:
         self.max_expanded_bytes = max(max_expanded_bytes, max_bytes)
         self.cancel_registry = cancel_registry or DEFAULT_CANCEL_REGISTRY
         self.skip_disk_preflight = skip_disk_preflight
+        self.activity_gate = activity_gate or CoreActivityGate()
+        self._activity_lock = threading.Lock()
+        self._active_activity_count = 0
+
+    @contextmanager
+    def _activity_scope(self) -> Iterator[None]:
+        with self.activity_gate.activity():
+            with self._activity_lock:
+                self._active_activity_count += 1
+            try:
+                yield
+            finally:
+                with self._activity_lock:
+                    self._active_activity_count -= 1
+
+    def activity_snapshot(self) -> dict[str, Any]:
+        """Return bounded, content-free direct importer activity."""
+
+        with self._activity_lock:
+            count = self._active_activity_count
+        bounded_count = min(count, 1)
+        return {
+            "active": count > 0,
+            "count": bounded_count,
+            "truncated": count > bounded_count,
+        }
 
     def import_path(
+        self,
+        path: Path,
+        *,
+        filename: str | None = None,
+        source_service: str = ArchiveProvider.AUTO.value,
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        with self._activity_scope():
+            return self._import_path(
+                path,
+                filename=filename,
+                source_service=source_service,
+                provider=provider,
+            )
+
+    def _import_path(
         self,
         path: Path,
         *,
@@ -2528,6 +2590,22 @@ class ArchiveImportService:
         source_service: str = ArchiveProvider.AUTO.value,
         provider: str | None = None,
     ) -> dict[str, Any]:
+        with self._activity_scope():
+            return self._import_bytes(
+                filename,
+                content,
+                source_service=source_service,
+                provider=provider,
+            )
+
+    def _import_bytes(
+        self,
+        filename: str,
+        content: bytes,
+        *,
+        source_service: str = ArchiveProvider.AUTO.value,
+        provider: str | None = None,
+    ) -> dict[str, Any]:
         refuse_if_over_boundary(len(content), limit=self.max_bytes)
         safe_name = Path(filename).name
         provider_hint = _provider_hint(provider, source_service)
@@ -2596,6 +2674,20 @@ class ArchiveImportService:
         return self._ingest(source, parsed, actual_service, tracker=tracker)
 
     def reprocess_source(
+        self,
+        source_id: str,
+        *,
+        progress_tracker: ImportProgressTracker | None = None,
+        rebuild: bool = False,
+    ) -> dict[str, Any]:
+        with self._activity_scope():
+            return self._reprocess_source(
+                source_id,
+                progress_tracker=progress_tracker,
+                rebuild=rebuild,
+            )
+
+    def _reprocess_source(
         self,
         source_id: str,
         *,

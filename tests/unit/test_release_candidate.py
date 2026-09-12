@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from allthecontext.build_identity import make_build_identity
 from allthecontext.exact_source_gate import (
     CANONICAL_CI_WORKFLOW_NAME,
     CANONICAL_CI_WORKFLOW_PATH,
@@ -184,10 +185,19 @@ def _write_target_artifacts(release_dir: Path, tmp_path: Path, target: ReleaseTa
     notice = release_dir / names["direct_package_notice"]
     notice.write_text("IMPORTANT: unsigned community build\n", encoding="utf-8")
     fields = DIRECT_PACKAGE_FIELDS[target.platform]
+    identity = make_build_identity(
+        version=VERSION,
+        platform_name=target.platform,
+        architecture=target.architecture,
+        source_commit=SOURCE_COMMIT,
+    )
     (release_dir / names["direct_package_report"]).write_text(
         json.dumps(
             {
                 "architecture": target.architecture,
+                "build_identity": identity.as_dict(),
+                "build_identity_sha256": identity.sha256,
+                "channel": identity.channel,
                 "format": fields["format"],
                 "notice": notice.name,
                 "package": direct_package.name,
@@ -197,6 +207,7 @@ def _write_target_artifacts(release_dir: Path, tmp_path: Path, target: ReleaseTa
                 "schema_version": 1,
                 "sha256": digest,
                 "size": size,
+                "source_commit": identity.source_commit,
                 "source": source.name,
                 "trust": "unsigned-community",
                 "version": VERSION,
@@ -364,6 +375,7 @@ def test_signed_beta_channel_is_exact_and_reproducibly_verified(tmp_path: Path) 
         release_notes_url=f"https://github.com/{repository}/releases/tag/{tag}",
         key_id="test-only-beta",
         private_key=private,
+        source_commit=SOURCE_COMMIT,
     )
     (release_dir / signed_manifest_name("beta", TARGET)).write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -394,8 +406,76 @@ def test_signed_beta_channel_is_exact_and_reproducibly_verified(tmp_path: Path) 
     )
 
     assert index["version"] == VERSION
+    assert index["repository"] == repository
     assert (site / "beta/linux/x86_64/manifest-v1.json").is_file()
     assert verify_beta_channel_site(site, keyring_path=keyring_path) == index
+    published_index = site / "beta" / "index-v1.json"
+
+    def republish_manifest(value: dict[str, object]) -> None:
+        manifest_path = site / "beta/linux/x86_64/manifest-v1.json"
+        manifest_path.write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        published = json.loads(published_index.read_text(encoding="utf-8"))
+        published["manifests"][0]["sha256"] = sha256_file(manifest_path)[0]
+        published_index.write_text(json.dumps(published), encoding="utf-8")
+
+    swapped_version = create_manifest(
+        artifact=artifact_path,
+        version="0.1.0-beta.2",
+        channel="beta",
+        platform_name=TARGET.platform,
+        architecture=TARGET.architecture,
+        artifact_url=(
+            f"https://github.com/{repository}/releases/download/v0.1.0-beta.2/{artifact_path.name}"
+        ),
+        minimum_supported_version="0.1.0-beta.2",
+        mandatory=False,
+        release_notes_url=f"https://github.com/{repository}/releases/tag/v0.1.0-beta.2",
+        key_id="test-only-beta",
+        private_key=private,
+        source_commit=SOURCE_COMMIT,
+    )
+    republish_manifest(swapped_version)
+    with pytest.raises(ManifestError, match="does not match candidate inventory"):
+        verify_beta_channel_site(site, keyring_path=keyring_path)
+
+    swapped_target = create_manifest(
+        artifact=artifact_path,
+        version=VERSION,
+        channel="beta",
+        platform_name=WINDOWS_TARGET.platform,
+        architecture=WINDOWS_TARGET.architecture,
+        artifact_url=(
+            f"https://github.com/{repository}/releases/download/{tag}/"
+            f"all-the-context-{VERSION}-windows-x86_64.zip"
+        ),
+        minimum_supported_version=VERSION,
+        mandatory=False,
+        release_notes_url=f"https://github.com/{repository}/releases/tag/{tag}",
+        key_id="test-only-beta",
+        private_key=private,
+        source_commit=SOURCE_COMMIT,
+    )
+    republish_manifest(swapped_target)
+    with pytest.raises(ManifestError, match="does not match candidate inventory"):
+        verify_beta_channel_site(site, keyring_path=keyring_path)
+
+    republish_manifest(manifest)
+    candidate_value = json.loads((site / "beta" / CANDIDATE_FILE_NAME).read_text(encoding="utf-8"))
+    candidate_value["artifacts"][0]["ota_archive"]["sha256"] = "b" * 64
+    (site / "beta" / CANDIDATE_FILE_NAME).write_text(json.dumps(candidate_value), encoding="utf-8")
+    index_value = json.loads(published_index.read_text(encoding="utf-8"))
+    index_value["candidate_sha256"] = sha256_file(site / "beta" / CANDIDATE_FILE_NAME)[0]
+    published_index.write_text(json.dumps(index_value), encoding="utf-8")
+    with pytest.raises(ManifestError, match="does not match candidate inventory"):
+        verify_beta_channel_site(site, keyring_path=keyring_path)
+
+    index_value = json.loads(published_index.read_text(encoding="utf-8"))
+    index_value["source_commit"] = "b" * 40
+    published_index.write_text(json.dumps(index_value), encoding="utf-8")
+    with pytest.raises(ManifestError, match="candidate identity"):
+        verify_beta_channel_site(site, keyring_path=keyring_path)
     with pytest.raises(ManifestError, match="digest"):
         prepare_beta_channel(
             release_dir,
@@ -406,6 +486,23 @@ def test_signed_beta_channel_is_exact_and_reproducibly_verified(tmp_path: Path) 
             source_commit=SOURCE_COMMIT,
             output_dir=tmp_path / "bad-site",
         )
+    manifest_path = release_dir / signed_manifest_name("beta", TARGET)
+    manifest_without_source = dict(manifest)
+    manifest_without_source.pop("source_commit")
+    manifest_path.write_text(json.dumps(manifest_without_source), encoding="utf-8")
+    with pytest.raises(ManifestError, match="source commit is required"):
+        prepare_beta_channel(
+            release_dir,
+            candidate_path=candidate_path,
+            candidate_sha256=candidate_digest,
+            keyring_path=keyring_path,
+            repository=repository,
+            source_commit=SOURCE_COMMIT,
+            output_dir=tmp_path / "missing-source-site",
+        )
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     (release_dir / "manifest-beta-macos-arm64-v1.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ManifestError, match="unexpected"):
         prepare_beta_channel(
@@ -828,5 +925,21 @@ def test_direct_package_report_tampering_is_rejected(tmp_path: Path, field: str)
     value: dict[str, Any] = json.loads(report.read_text(encoding="utf-8"))
     value[field] = "wrong"
     report.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ManifestError):
+        verify_candidate(candidate_path, release_dir)
+
+
+@pytest.mark.parametrize(
+    "field", ["channel", "source_commit", "build_identity", "build_identity_sha256"]
+)
+def test_direct_package_report_requires_complete_source_identity(
+    tmp_path: Path, field: str
+) -> None:
+    release_dir, candidate_path = _candidate_files(tmp_path)
+    report = release_dir / direct_package_names(VERSION, TARGET)["direct_package_report"]
+    value: dict[str, Any] = json.loads(report.read_text(encoding="utf-8"))
+    value.pop(field)
+    report.write_text(json.dumps(value), encoding="utf-8")
+
     with pytest.raises(ManifestError):
         verify_candidate(candidate_path, release_dir)
