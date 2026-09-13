@@ -4928,3 +4928,20 @@ bounded deletion retry remain unchanged. A short-lived-child native regression
 now accepts only actual removal of its unique checkout-owned dummy install
 directory. The exact packaged candidate journey and release gates remain
 pending; this source repair is not product acceptance.
+
+## Import-observer scheduling checkpoint repair (2026-09-13)
+
+The operation-owned streaming JSONL handoff now runs after the checkpointed
+line has been parsed and consumed. Because the existing initial checkpoint is
+at zero, the first consumed record is followed by the existing one-millisecond
+handoff; later handoffs retain the one-MiB byte cadence. This gives a waiting
+authenticated observer a deterministic scheduling turn before another CPU-heavy
+checkpoint window without adding a pause per record or changing any wall-clock
+threshold.
+
+Only trackers with the operation liveness sink take the handoff. Source-only
+parsing still has no pause, and durable progress, authenticated durable-state
+observation, the five-second liveness requirement, and ADR-073's operation-
+owned intent are unchanged. Focused coverage now proves handoff ordering,
+adverse-scheduler observer timing, and the source-only negative path. This is
+source validation only; downstream native full validation remains required.

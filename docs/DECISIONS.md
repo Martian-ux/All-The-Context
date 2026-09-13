@@ -6690,3 +6690,24 @@ preimage, five-value compensation/recovery, registry ownership, shortcut and
 uninstall ownership, vault preservation, loopback binding, and closed
 diagnostics are unchanged. Native cross-version, independent review, and
 release gates remain separate evidence.
+
+## ADR-145: Operation JSONL handoff follows the checkpointed line
+
+**Status:** implemented locally on 2026-09-13 as a narrow repair to ADR-073;
+downstream native validation remains required.
+
+The operation-owned streaming JSONL parser retains the existing one-millisecond
+handoff and one-MiB checkpoint cadence, but performs the handoff after the line
+that triggered the checkpoint has been parsed and consumed. The initial
+checkpoint is intentionally at zero, so the first consumed line receives the
+handoff before another CPU-heavy JSONL window can run. Blank and malformed
+checkpointed lines also complete their classification before the handoff.
+This is a deterministic ordering contract, not a timing-threshold adjustment,
+retry, or per-record sleep.
+
+The handoff remains conditional on the operation liveness sink. Plain
+source-only parsing has no pause. Progress bytes and messages, the durable
+operation row, authenticated/revocation-checked observer selection, and the
+five-second liveness requirement are unchanged. This placement correction
+preserves ADR-073's operation-owned scheduling intent while ensuring the
+observer can receive the initial checkpoint's scheduling turn.

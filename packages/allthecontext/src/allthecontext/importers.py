@@ -896,25 +896,25 @@ def _parse_jsonl_stream(
     with path.open("rb") as stream:
         for line_number, raw_line in enumerate(stream, start=1):
             processed += len(raw_line)
+            checkpoint = False
             if progress is not None and processed >= next_progress:
                 progress.advance_bytes(processed, message=f"parsed line {line_number}")
-                if progress.liveness_sink is not None:
-                    # Parsing millions of small JSON objects can keep this Core
-                    # process continuously runnable. Operation-owned imports
-                    # yield at the existing 1 MiB checkpoint so their dedicated
-                    # observer and ASGI loop get a scheduling turn without
-                    # changing durable progress semantics.
-                    time.sleep(_OPERATION_COOPERATIVE_YIELD_SECONDS)
+                checkpoint = True
                 next_progress = processed + 1024 * 1024
-            if not raw_line.strip():
-                continue
-            try:
-                value = json.loads(raw_line.decode("utf-8-sig"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                _append_warning(warnings, f"line {line_number}: invalid JSON skipped")
-                coverage.unparsed += 1
-                continue
-            _consume_json_value(builder, source_name, value, generic, coverage)
+            if raw_line.strip():
+                try:
+                    value = json.loads(raw_line.decode("utf-8-sig"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    _append_warning(warnings, f"line {line_number}: invalid JSON skipped")
+                    coverage.unparsed += 1
+                else:
+                    _consume_json_value(builder, source_name, value, generic, coverage)
+            if checkpoint and progress is not None and progress.liveness_sink is not None:
+                # The initial checkpoint is deliberately after the first line's
+                # consume. This lets an operation observer that is waiting on
+                # parser activity receive the existing one-millisecond handoff
+                # before another 1 MiB of CPU-heavy JSONL work can run.
+                time.sleep(_OPERATION_COOPERATIVE_YIELD_SECONDS)
     if progress is not None:
         progress.advance_bytes(processed, message="raw source parsing complete")
     return _combine(builder.finish(), generic, warnings, coverage)

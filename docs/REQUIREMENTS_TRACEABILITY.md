@@ -1601,3 +1601,16 @@ The documentation link scanner skips the checkout-owned `.test-runs` pytest
 basetemp so invalid test output cannot be read as repository Markdown. Actual
 repository Markdown remains strict UTF-8 and missing local targets remain
 reported.
+
+### 2026-09-13 import-observer scheduling checkpoint repair
+
+The operation-owned streaming JSONL parser keeps its one-millisecond,
+one-MiB-cadence cooperative handoff but performs it after the checkpointed line
+has been parsed and consumed. The initial zero-byte checkpoint therefore gives
+a waiting observer a scheduling turn after the first record, before the next
+CPU-heavy checkpoint window. `tests/unit/test_core_importers.py::test_operation_jsonl_handoff_follows_checkpointed_line_consumption`,
+`test_streaming_jsonl_yields_to_operation_observer_under_cpu_pressure`, and
+`test_streaming_jsonl_does_not_pause_source_only_progress` cover ordering,
+authenticated durable observation under the adverse scheduler, and the
+source-only negative path. The wall-clock assertions and five-second liveness
+requirement are unchanged; downstream native full validation remains required.
