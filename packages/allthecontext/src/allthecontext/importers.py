@@ -2832,7 +2832,10 @@ class ArchiveImportService:
                 # explicit processing/terminal writes below still close the source.
                 tracker.durable_sink = external_operation_sink
                 return
-            tracker.durable_sink = self._durable_progress_sink(bound_source_id)
+            tracker.durable_sink = self._durable_progress_sink(
+                bound_source_id,
+                rebuild_generation=rebuild_generation,
+            )
 
         attach_progress_sinks(source.id)
 
@@ -2939,7 +2942,12 @@ class ArchiveImportService:
             "cancel_requested": bool(source.metadata.get("cancel_requested")),
         }
 
-    def _durable_progress_sink(self, source_id: str) -> Any:
+    def _durable_progress_sink(
+        self,
+        source_id: str,
+        *,
+        rebuild_generation: int | None = None,
+    ) -> Any:
         def _sink(progress: ImportProgress) -> None:
             status: Any = None
             if progress.phase == "complete":
@@ -2966,6 +2974,7 @@ class ArchiveImportService:
                 source_id,
                 progress=progress.as_dict(),
                 import_status=status,
+                rebuild_generation=rebuild_generation,
             )
 
         return _sink
@@ -3023,7 +3032,10 @@ class ArchiveImportService:
             bytes_total=max(source.byte_size, 1),
             source_id=source.id,
             registry=self.cancel_registry,
-            durable_sink=self._durable_progress_sink(source.id),
+            durable_sink=self._durable_progress_sink(
+                source.id,
+                rebuild_generation=rebuild_generation,
+            ),
         )
         if source.duplicate and source.import_status == "complete":
             existing_ids = self.store.candidate_ids_for_source(source.id)

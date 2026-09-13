@@ -1614,3 +1614,16 @@ CPU-heavy checkpoint window. `tests/unit/test_core_importers.py::test_operation_
 authenticated durable observation under the adverse scheduler, and the
 source-only negative path. The wall-clock assertions and five-second liveness
 requirement are unchanged; downstream native full validation remains required.
+
+### 2026-09-13 provider rebuild canonical-state race repair
+
+Source-only rebuild progress is bound to the durable rebuild generation in
+`ArchiveImportService` and `CoreStore.update_source_progress`. A stale sibling
+processing heartbeat cannot reopen a source after the shared generation is
+complete or cancelled, and an older generation cannot replace current
+generation telemetry. The existing
+`tests/unit/test_provider_ingestion.py::test_concurrent_incomplete_coverage_repairs_are_idempotent`
+regression continues to require two successful returns with complete source
+status, one shared session and candidate set, generation-one publication, and
+preserved source candidates. This is source-level repair evidence only; the
+next maintained-native focused/static/full validation remains required.

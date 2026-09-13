@@ -6711,3 +6711,21 @@ operation row, authenticated/revocation-checked observer selection, and the
 five-second liveness requirement are unchanged. This placement correction
 preserves ADR-073's operation-owned scheduling intent while ensuring the
 observer can receive the initial checkpoint's scheduling turn.
+
+## ADR-146: Rebuild progress cannot reopen a completed generation
+
+**Status:** implemented locally on 2026-09-13; downstream maintained-native
+validation remains required.
+
+Source-only provider rebuild trackers carry the rebuild generation into their
+durable progress sink. Core ignores a processing progress write when the
+source is already terminal for that generation, or when the write belongs to a
+different generation. The guard is applied at the transactional storage
+boundary, so a sibling parser may still parse concurrently and the existing
+idempotent session, batches, and non-destructive publication ceremony remain
+shared and unchanged.
+
+This is a stale-telemetry guard, not a process-local rebuild lock, parser
+retry, or test timing change. It prevents a successful worker's canonical
+complete state and final progress from being overwritten by a slower sibling;
+failed and cancelled workers still use their existing terminal paths.

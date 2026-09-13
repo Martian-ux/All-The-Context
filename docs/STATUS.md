@@ -4945,3 +4945,18 @@ observation, the five-second liveness requirement, and ADR-073's operation-
 owned intent are unchanged. Focused coverage now proves handoff ordering,
 adverse-scheduler observer timing, and the source-only negative path. This is
 source validation only; downstream native full validation remains required.
+
+## Provider rebuild concurrency repair (2026-09-13)
+
+Source-only provider rebuild progress is now bound to its durable rebuild
+generation. A processing heartbeat from a sibling parser is ignored after that
+generation is canonically complete or cancelled, and an older generation
+cannot overwrite the current generation's progress. This closes the observed
+successful-return race where one rebuild returned a processing source snapshot
+after another idempotent worker had completed the shared session and candidate
+publication.
+
+The two-parser barrier, shared generation/session/candidate idempotency,
+non-destructive cutover, cancellation/failure paths, and existing progress
+observation remain unchanged. The repair is source-level and has not received
+the next maintained-native focused, static, or full-suite validation yet.

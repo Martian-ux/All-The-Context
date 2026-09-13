@@ -1773,6 +1773,7 @@ class CoreStore:
         *,
         progress: Mapping[str, Any],
         import_status: Literal["processing", "complete", "failed", "cancelled"] | None = None,
+        rebuild_generation: int | None = None,
     ) -> None:
         """Persist bounded import progress without rewriting parser warnings."""
         with self.transaction() as connection:
@@ -1784,8 +1785,22 @@ class CoreStore:
             if row is None:
                 raise NotFoundError("source not found")
             metadata = cast(dict[str, Any], _loads(row["metadata_json"], {}))
+            current_status = str(row["import_status"])
+            if rebuild_generation is not None and import_status == "processing":
+                # A concurrent rebuild shares one durable generation. Once one
+                # worker has finalized that generation, a sibling heartbeat is
+                # stale telemetry and must not reopen the canonical source. The
+                # marker check also keeps an older generation from overwriting
+                # progress after a later explicit rebuild has started.
+                current_generation = metadata.get("rebuild_generation")
+                if (
+                    current_status in {"complete", "cancelled"}
+                    or current_generation is None
+                    or str(current_generation) != str(rebuild_generation)
+                ):
+                    return
             metadata["import_progress"] = dict(progress)
-            status = import_status or cast(str, row["import_status"])
+            status = import_status or current_status
             connection.execute(
                 "UPDATE source_records SET metadata_json=?,import_status=? "
                 "WHERE id=? AND deleted_at IS NULL",
