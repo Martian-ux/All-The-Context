@@ -4965,3 +4965,22 @@ observation remain unchanged. Deterministic provider regressions cover
 terminal and superseded-generation writes. The repair is source-level and has
 not received the next maintained-native focused, static, or full-suite
 validation yet.
+
+## Provider publication binding repair (2026-09-15)
+
+The transactional source lifecycle boundary now treats a committed
+current-generation publication binding as authoritative while the source is
+still processing. A same-generation sibling processing snapshot is ignored;
+matching completion is accepted only with the current generation, publication
+session, and source marker. Current-generation failure and cancellation writes
+retain those protected publication fields, including the post-cutover retry
+path. Terminal and superseded-generation guards, shared idempotent sessions,
+batches and candidates, atomic publication, canonical identities, and all
+security/context behavior remain unchanged.
+
+The deterministic
+`test_post_publication_stale_rebuild_snapshot_is_bound_to_canonical_state`
+regression coordinates two `ArchiveImportService` workers at the committed
+publication boundary and covers delayed processing and failure lifecycle
+writes. Maintained-native focused/static/full validation remains pending; this
+source checkpoint is not release or publication acceptance.

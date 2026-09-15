@@ -6731,3 +6731,24 @@ This is a stale-telemetry guard, not a process-local rebuild lock, parser
 retry, or test timing change. A sibling parser may still parse concurrently,
 while the existing idempotent session, batches, non-destructive publication
 ceremony, and terminal cleanup paths remain shared and unchanged.
+
+## ADR-214: Published rebuild bindings survive stale lifecycle snapshots
+
+**Status:** implemented locally on 2026-09-15; maintained-native focused,
+static, full-suite, and downstream release validation remain required.
+
+`CoreStore.update_source_import` now enforces the publication binding at the
+transactional storage boundary. Once the current rebuild generation has a
+valid published generation, session, and source marker, a same-generation
+processing snapshot from a sibling is ignored. A terminal failure or
+cancellation may still establish the current-generation terminal authority,
+but its metadata is merged with the durable publication fields. Completion is
+accepted only when the incoming generation, publication session, and marker
+match the current row. The existing authorized idempotent resume remains able
+to reopen a published in-progress generation and also preserves the binding.
+
+The service regression uses separate worker stores and an event released only
+after the canonical publication transaction commits. It proves both delayed
+processing and failure writes preserve the returned source views, shared
+session/batch/candidate identity, and publication marker. No process-local
+serialization, timing retry, parser change, or observer change is introduced.

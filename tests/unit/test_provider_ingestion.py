@@ -26,7 +26,7 @@ from allthecontext.importers import (
     parse_zip_bundle,
 )
 from allthecontext.models import Availability, CandidateInput, SubmitBatchRequest
-from allthecontext.storage import InvalidStateError, source_rebuild_marker
+from allthecontext.storage import CoreStore, InvalidStateError, source_rebuild_marker
 
 
 def _zip(entries: dict[str, bytes | str]) -> bytes:
@@ -2505,6 +2505,234 @@ def test_concurrent_incomplete_coverage_repairs_are_idempotent(
     assert repaired_source.metadata["rebuild_generation"] == 1
     assert repaired_source.metadata["rebuild_published_generation"] == 1
     assert core.store.candidate_ids_for_source(source_id)
+
+
+@pytest.mark.parametrize("sibling_path", ["processing", "failure"])
+def test_post_publication_stale_rebuild_snapshot_is_bound_to_canonical_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sibling_path: Literal["processing", "failure"],
+) -> None:
+    """A sibling lifecycle snapshot cannot erase a committed rebuild publication."""
+
+    publisher_core = CoreService.in_directory(tmp_path)
+    publisher = ArchiveImportService(publisher_core.store)
+    sibling_store = CoreStore(publisher_core.store.database_path)
+    sibling = ArchiveImportService(sibling_store)
+    first = publisher.import_bytes(
+        "publication-binding.jsonl",
+        b'{"kind":"goal","content":"Keep this canonical identity"}\n',
+    )
+    source_id = str(first["source"]["id"])
+    source = publisher_core.store.get_source(source_id, duplicate=True)
+    incomplete_metadata = dict(source.metadata)
+    incomplete_metadata["coverage_complete"] = False
+    publisher_core.store.update_source_import(
+        source_id,
+        import_status="complete",
+        metadata=incomplete_metadata,
+        parser_warnings=source.parser_warnings,
+    )
+    expected_marker = source_rebuild_marker(source_id, source.content_hash, 1)
+
+    publication_committed = threading.Event()
+    sibling_snapshot_captured = threading.Event()
+    sibling_processing_written = threading.Event()
+    sibling_candidates_submitted = threading.Event()
+    sibling_failure_written = threading.Event()
+    captured_processing_metadata: dict[str, Any] | None = None
+    sibling_processing_view: Any = None
+    sibling_failure_view: Any = None
+    sibling_session: dict[str, Any] | None = None
+    sibling_candidate_ids: list[str] = []
+    publisher_result: dict[str, Any] | None = None
+    sibling_result: dict[str, Any] | None = None
+    publisher_error: BaseException | None = None
+    sibling_error: BaseException | None = None
+
+    original_publisher_publish = publisher_core.store.publish_source_rebuild
+
+    def publish_then_release_sibling(*args: Any, **kwargs: Any) -> list[str]:
+        withdrawn = original_publisher_publish(*args, **kwargs)
+        publication_committed.set()
+        gate = (
+            sibling_failure_written if sibling_path == "failure" else sibling_candidates_submitted
+        )
+        if not gate.wait(timeout=10):
+            raise AssertionError("sibling lifecycle write did not follow publication")
+        return withdrawn
+
+    monkeypatch.setattr(
+        publisher_core.store,
+        "publish_source_rebuild",
+        publish_then_release_sibling,
+    )
+
+    original_sibling_update = sibling_store.update_source_import
+
+    def synchronize_sibling_update(source_id_arg: str, **kwargs: Any) -> None:
+        nonlocal captured_processing_metadata, sibling_processing_view, sibling_failure_view
+        is_processing_snapshot = (
+            kwargs.get("import_status") == "processing"
+            and kwargs.get("rebuild_generation") == 1
+            and kwargs.get("metadata", {}).get("rebuild_in_progress") is True
+            and captured_processing_metadata is None
+        )
+        if is_processing_snapshot:
+            captured_processing_metadata = dict(kwargs["metadata"])
+            sibling_snapshot_captured.set()
+            if not publication_committed.wait(timeout=10):
+                raise AssertionError("publication did not precede sibling snapshot write")
+            try:
+                original_sibling_update(source_id_arg, **kwargs)
+                sibling_processing_view = sibling_store.get_source(source_id, duplicate=True)
+            finally:
+                sibling_processing_written.set()
+            return
+
+        is_failure_snapshot = (
+            sibling_path == "failure"
+            and kwargs.get("import_status") == "failed"
+            and kwargs.get("rebuild_generation") == 1
+        )
+        if is_failure_snapshot:
+            assert captured_processing_metadata is not None
+            stale_failure_metadata = dict(captured_processing_metadata)
+            stale_failure_metadata["coverage_complete"] = False
+            stale_failure_metadata["source_terminal_reason"] = "failed"
+            try:
+                original_sibling_update(
+                    source_id_arg,
+                    **{
+                        **kwargs,
+                        "metadata": stale_failure_metadata,
+                    },
+                )
+                sibling_failure_view = sibling_store.get_source(source_id, duplicate=True)
+            finally:
+                sibling_failure_written.set()
+            return
+
+        original_sibling_update(source_id_arg, **kwargs)
+
+    monkeypatch.setattr(sibling_store, "update_source_import", synchronize_sibling_update)
+
+    original_sibling_begin = sibling.ingestion.begin
+
+    def capture_sibling_begin(request: Any, principal: Any = None) -> dict[str, Any]:
+        nonlocal sibling_session
+        sibling_session = original_sibling_begin(request, principal)
+        return sibling_session
+
+    monkeypatch.setattr(sibling.ingestion, "begin", capture_sibling_begin)
+    original_sibling_submit = sibling.ingestion.submit
+
+    def capture_sibling_submit(request: Any, principal: Any = None) -> dict[str, Any]:
+        result = original_sibling_submit(request, principal)
+        sibling_candidate_ids.extend(str(item) for item in result["candidate_ids"])
+        sibling_candidates_submitted.set()
+        return result
+
+    monkeypatch.setattr(sibling.ingestion, "submit", capture_sibling_submit)
+    if sibling_path == "failure":
+
+        def fail_sibling_finish(
+            request: Any,
+            principal: Any = None,
+            *,
+            publish: bool = True,
+        ) -> dict[str, Any]:
+            del request, principal, publish
+            raise InvalidStateError("synthetic sibling finish failure")
+
+        monkeypatch.setattr(sibling.ingestion, "finish", fail_sibling_finish)
+
+    def run_publisher() -> None:
+        nonlocal publisher_result, publisher_error
+        try:
+            publisher_result = publisher.reprocess_source(source_id)
+        except BaseException as error:
+            publisher_error = error
+
+    def run_sibling() -> None:
+        nonlocal sibling_result, sibling_error
+        try:
+            sibling_result = sibling.reprocess_source(source_id)
+        except BaseException as error:
+            sibling_error = error
+
+    sibling_thread = threading.Thread(target=run_sibling, name="publication-binding-sibling")
+    sibling_thread.start()
+    assert sibling_snapshot_captured.wait(timeout=10)
+    publisher_thread = threading.Thread(target=run_publisher, name="publication-binding-publisher")
+    publisher_thread.start()
+    sibling_thread.join(timeout=30)
+    publisher_thread.join(timeout=30)
+
+    assert not sibling_thread.is_alive()
+    assert not publisher_thread.is_alive()
+    if publisher_error is not None:
+        raise publisher_error
+    assert captured_processing_metadata is not None
+    assert sibling_processing_view is not None
+    assert sibling_processing_view.import_status == "processing"
+    assert sibling_processing_view.metadata["rebuild_published_generation"] == 1
+    assert sibling_processing_view.metadata["rebuild_published_session_id"]
+    assert sibling_processing_view.metadata["rebuild_source_marker"] == expected_marker
+
+    assert publisher_result is not None
+    assert sibling_session is not None
+    assert sibling_candidate_ids
+    assert sibling_session["session_id"] == publisher_result["session"]["session_id"]
+    assert sibling_candidate_ids == publisher_result["candidate_ids"]
+    assert set(sibling_candidate_ids).issubset(
+        publisher_core.store.candidate_ids_for_source(source_id)
+    )
+    candidate = publisher_core.store.get_candidate(sibling_candidate_ids[0])
+    assert candidate.id == sibling_candidate_ids[0]
+    assert candidate.source_id == source_id
+    assert candidate.content == "Keep this canonical identity"
+
+    if sibling_path == "processing":
+        assert sibling_error is None
+        assert sibling_result is not None
+        returned_sources = [publisher_result["source"], sibling_result["source"]]
+        assert all(item["id"] == source_id for item in returned_sources)
+        assert all(item["import_status"] == "complete" for item in returned_sources)
+        assert all(
+            item["metadata"]["rebuild_published_generation"] == 1 for item in returned_sources
+        )
+        assert all(
+            item["metadata"]["rebuild_source_marker"] == expected_marker
+            for item in returned_sources
+        )
+    else:
+        assert isinstance(sibling_error, InvalidStateError)
+        assert sibling_result is None
+        assert sibling_failure_view is not None
+        assert sibling_failure_view.import_status == "failed"
+        assert sibling_failure_view.metadata["rebuild_published_generation"] == 1
+        assert sibling_failure_view.metadata["rebuild_published_session_id"]
+        assert sibling_failure_view.metadata["rebuild_source_marker"] == expected_marker
+        returned_sources = [
+            publisher_result["source"],
+            sibling_failure_view.model_dump(mode="json"),
+        ]
+        assert all(item["id"] == source_id for item in returned_sources)
+        assert all(item["import_status"] == "failed" for item in returned_sources)
+        assert all(
+            item["metadata"]["rebuild_source_marker"] == expected_marker
+            for item in returned_sources
+        )
+
+    final_source = publisher_core.store.get_source(source_id, duplicate=True)
+    assert final_source.import_status == ("complete" if sibling_path == "processing" else "failed")
+    assert final_source.metadata["rebuild_published_generation"] == 1
+    assert (
+        final_source.metadata["rebuild_published_session_id"]
+        == publisher_result["session"]["session_id"]
+    )
+    assert final_source.metadata["rebuild_source_marker"] == expected_marker
 
 
 @pytest.mark.parametrize("terminal_status", ["complete", "failed", "cancelled"])

@@ -1635,3 +1635,10 @@ preserved source candidates. The deterministic
 regressions cover terminal and superseded-generation writes. This is
 source-level repair evidence only; the next maintained-native focused/static/full
 validation remains required.
+
+### 2026-09-15 provider publication-binding repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Provider rebuild publication binding | `CoreStore.update_source_import`; `tests/unit/test_provider_ingestion.py::test_post_publication_stale_rebuild_snapshot_is_bound_to_canonical_state` | Implemented at the transactional source boundary. A committed current-generation publication generation/session/marker survives same-generation sibling processing and terminal failure/cancellation snapshots; completion requires the matching current publication. The regression covers deterministic two-worker delayed-processing and failure ordering, shared idempotent session/candidate identity, and both source views. |
+| Preserved lifecycle and security boundaries | Existing terminal/superseded guards, `ArchiveImportService` idempotent rebuild path, atomic `publish_source_rebuild`, canonical candidate identity and existing security/context tests | Preserved by the narrow source/test change. No process-local serialization, timing retry, observer change, parser trust change, or release/publication claim is introduced. Maintained-native focused/static/full validation and downstream gates remain required. |
