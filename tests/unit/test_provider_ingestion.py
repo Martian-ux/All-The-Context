@@ -25,7 +25,13 @@ from allthecontext.importers import (
     parse_text,
     parse_zip_bundle,
 )
-from allthecontext.models import Availability, CandidateInput, SubmitBatchRequest
+from allthecontext.models import (
+    Availability,
+    CandidateInput,
+    CoverageReport,
+    IngestionMode,
+    SubmitBatchRequest,
+)
 from allthecontext.storage import CoreStore, InvalidStateError, source_rebuild_marker
 
 
@@ -2766,13 +2772,43 @@ def test_rebuild_generation_writes_preserve_terminal_source_state(
         rebuild_generation=generation,
     )
     processing = core.store.get_source(source_id, duplicate=True)
+    if terminal_status == "complete":
+        publication_session = core.store.begin_ingestion(
+            mode=IngestionMode.ARCHIVE,
+            accessible_sources=[source_id],
+            unavailable_sources=[],
+            idempotency_key=f"archive:{source_id}:terminal-generation:rebuild:{generation}",
+        )
+        core.store.submit_batch(
+            str(publication_session["session_id"]),
+            "terminal-generation-rebuild",
+            [
+                CandidateInput(
+                    kind="goal",
+                    content="Terminal state is authoritative",
+                    source_id=source_id,
+                    source_reference="terminal-generation#rebuild=1",
+                    source_service=source.source_service,
+                    source_type=source.source_type,
+                    explicit_user_statement=True,
+                )
+            ],
+        )
+        core.store.finish_ingestion(
+            str(publication_session["session_id"]),
+            CoverageReport(available=[source_id], complete=True),
+            publish=False,
+        )
+        core.store.publish_source_rebuild(
+            source_id,
+            str(publication_session["session_id"]),
+            rebuild_generation=generation,
+        )
+        processing = core.store.get_source(source_id, duplicate=True)
     terminal_metadata = dict(processing.metadata)
     terminal_metadata["source_terminal_reason"] = terminal_status
     terminal_metadata["coverage_complete"] = terminal_status == "complete"
     terminal_metadata["rebuild_in_progress"] = terminal_status != "complete"
-    if terminal_status == "complete":
-        terminal_metadata["rebuild_published_generation"] = generation
-        terminal_metadata["rebuild_published_session_id"] = "session-1"
     core.store.update_source_import(
         source_id,
         import_status=terminal_status,
