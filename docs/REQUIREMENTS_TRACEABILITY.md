@@ -1617,13 +1617,21 @@ requirement are unchanged; downstream native full validation remains required.
 
 ### 2026-09-13 provider rebuild canonical-state race repair
 
-Source-only rebuild progress is bound to the durable rebuild generation in
-`ArchiveImportService` and `CoreStore.update_source_progress`. A stale sibling
-processing heartbeat cannot reopen a source after the shared generation is
-complete or cancelled, and an older generation cannot replace current
-generation telemetry. The existing
+Source-only rebuild progress and lifecycle writes are bound to the durable
+rebuild generation in `ArchiveImportService`,
+`CoreStore.update_source_progress`, and `CoreStore.update_source_import`. A
+stale sibling processing heartbeat, terminal cleanup, or metadata write cannot
+reopen a source after the shared generation is terminal or replace current
+generation state. Published generations retain their explicit idempotent
+resume; failed or cancelled unpublished generations advance before retry, and
+complete, failed, and cancelled rows remain authoritative against later
+same-generation success. The existing
 `tests/unit/test_provider_ingestion.py::test_concurrent_incomplete_coverage_repairs_are_idempotent`
 regression continues to require two successful returns with complete source
 status, one shared session and candidate set, generation-one publication, and
-preserved source candidates. This is source-level repair evidence only; the
-next maintained-native focused/static/full validation remains required.
+preserved source candidates. The deterministic
+`test_rebuild_generation_writes_preserve_terminal_source_state` and
+`test_stale_rebuild_generation_writes_cannot_overwrite_new_generation`
+regressions cover terminal and superseded-generation writes. This is
+source-level repair evidence only; the next maintained-native focused/static/full
+validation remains required.

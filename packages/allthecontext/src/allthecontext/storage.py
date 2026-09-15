@@ -1691,8 +1691,47 @@ class CoreStore:
         import_status: Literal["processing", "complete", "failed", "cancelled"],
         metadata: Mapping[str, Any],
         parser_warnings: Sequence[str],
+        rebuild_generation: int | None = None,
+        allow_terminal_rebuild_resume: bool = False,
     ) -> None:
         with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT metadata_json,import_status FROM source_records "
+                "WHERE id=? AND deleted_at IS NULL",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("source not found")
+            if rebuild_generation is not None:
+                current_metadata = cast(dict[str, Any], _loads(row["metadata_json"], {}))
+                try:
+                    requested_generation = int(metadata["rebuild_generation"])
+                    current_generation = int(current_metadata.get("rebuild_generation") or 0)
+                except (KeyError, TypeError, ValueError):
+                    return
+                if requested_generation != rebuild_generation:
+                    return
+                if current_generation > rebuild_generation:
+                    return
+                if current_generation == rebuild_generation and str(row["import_status"]) in {
+                    "complete",
+                    "failed",
+                    "cancelled",
+                } and not (
+                    allow_terminal_rebuild_resume
+                    and import_status == "processing"
+                    and current_metadata.get("rebuild_in_progress") is True
+                    and str(current_metadata.get("rebuild_published_generation"))
+                    == str(rebuild_generation)
+                ):
+                    # A terminal row is authoritative for its generation. A
+                    # retry starts a newer generation before it can process.
+                    return
+                if current_generation < rebuild_generation and (
+                    import_status != "processing"
+                    or metadata.get("rebuild_in_progress") is not True
+                ):
+                    return
             result = connection.execute(
                 "UPDATE source_records SET import_status=?,metadata_json=?,"
                 "parser_warnings_json=? WHERE id=? AND deleted_at IS NULL",
@@ -1786,18 +1825,16 @@ class CoreStore:
                 raise NotFoundError("source not found")
             metadata = cast(dict[str, Any], _loads(row["metadata_json"], {}))
             current_status = str(row["import_status"])
-            if rebuild_generation is not None and import_status == "processing":
-                # A concurrent rebuild shares one durable generation. Once one
-                # worker has finalized that generation, a sibling heartbeat is
-                # stale telemetry and must not reopen the canonical source. The
-                # marker check also keeps an older generation from overwriting
-                # progress after a later explicit rebuild has started.
-                current_generation = metadata.get("rebuild_generation")
-                if (
-                    current_status in {"complete", "cancelled"}
-                    or current_generation is None
-                    or str(current_generation) != str(rebuild_generation)
-                ):
+            if rebuild_generation is not None:
+                try:
+                    current_generation = int(metadata.get("rebuild_generation") or 0)
+                except (TypeError, ValueError):
+                    return
+                if current_generation != rebuild_generation or current_status in {
+                    "complete",
+                    "failed",
+                    "cancelled",
+                }:
                     return
             metadata["import_progress"] = dict(progress)
             status = import_status or current_status

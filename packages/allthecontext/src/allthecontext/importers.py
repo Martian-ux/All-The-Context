@@ -2745,11 +2745,38 @@ class ArchiveImportService:
                     import_status="processing",
                     metadata=metadata,
                     parser_warnings=source.parser_warnings,
+                    rebuild_generation=rebuild_generation,
                 )
                 source = self.store.get_source(source.id, duplicate=True)
             elif resume_rebuild:
-                rebuild_generation = int(source.metadata.get("rebuild_generation") or 1)
-                if resume_published_rebuild and source.import_status == "complete":
+                prior_generation = int(source.metadata.get("rebuild_generation") or 1)
+                published_same_generation = (
+                    str(source.metadata.get("rebuild_published_generation"))
+                    == str(prior_generation)
+                )
+                if (
+                    source.import_status in {"failed", "cancelled"}
+                    and not published_same_generation
+                ):
+                    # A terminal rebuild generation is authoritative. Explicit
+                    # retry starts a new generation instead of reopening it.
+                    rebuild_generation = prior_generation + 1
+                    metadata = dict(source.metadata)
+                    metadata["rebuild_generation"] = rebuild_generation
+                    metadata["rebuild_in_progress"] = True
+                    metadata["rebuild_source_marker"] = source_rebuild_marker(
+                        source.id, source.content_hash, rebuild_generation
+                    )
+                    self.store.update_source_import(
+                        source.id,
+                        import_status="processing",
+                        metadata=metadata,
+                        parser_warnings=source.parser_warnings,
+                        rebuild_generation=rebuild_generation,
+                    )
+                    source = self.store.get_source(source.id, duplicate=True)
+                elif published_same_generation:
+                    rebuild_generation = prior_generation
                     metadata = dict(source.metadata)
                     metadata["rebuild_in_progress"] = True
                     self.store.update_source_import(
@@ -2757,8 +2784,12 @@ class ArchiveImportService:
                         import_status="processing",
                         metadata=metadata,
                         parser_warnings=source.parser_warnings,
+                        rebuild_generation=rebuild_generation,
+                        allow_terminal_rebuild_resume=True,
                     )
                     source = self.store.get_source(source.id, duplicate=True)
+                else:
+                    rebuild_generation = prior_generation
         if source.import_status == "complete":
             candidate_ids = self.store.candidate_ids_for_source(source.id)
             observations = [self.store.get_candidate(item) for item in candidate_ids]
@@ -2907,13 +2938,14 @@ class ArchiveImportService:
                     import_status="processing",
                     metadata=metadata,
                     parser_warnings=parsed.warnings,
+                    rebuild_generation=rebuild_generation,
                 )
                 processing = self.store.get_source(source.id, duplicate=True)
         except ImportCancelledError:
-            self._mark_cancelled(source.id, tracker)
+            self._mark_cancelled(source.id, tracker, rebuild_generation=rebuild_generation)
             raise
         except Exception as error:
-            self._mark_failed(source.id, tracker, error)
+            self._mark_failed(source.id, tracker, error, rebuild_generation=rebuild_generation)
             raise
         return self._ingest(
             processing,
@@ -2969,6 +3001,10 @@ class ArchiveImportService:
                 "publishing",
             }:
                 status = "processing"
+            if rebuild_generation is not None and status in {"complete", "failed", "cancelled"}:
+                # Keep terminal progress durable without letting the progress
+                # heartbeat race the source lifecycle finalization write.
+                status = None
             # Durable progress must commit; silent success would claim false progress.
             self.store.update_source_progress(
                 source_id,
@@ -2979,7 +3015,13 @@ class ArchiveImportService:
 
         return _sink
 
-    def _mark_cancelled(self, source_id: str, tracker: ImportProgressTracker) -> None:
+    def _mark_cancelled(
+        self,
+        source_id: str,
+        tracker: ImportProgressTracker,
+        *,
+        rebuild_generation: int | None = None,
+    ) -> None:
         tracker.set_phase("cancelled", message="import cancelled")
         try:
             source = self.store.get_source(source_id, duplicate=True)
@@ -2991,6 +3033,7 @@ class ArchiveImportService:
                 import_status="cancelled",
                 metadata=metadata,
                 parser_warnings=source.parser_warnings,
+                rebuild_generation=rebuild_generation,
             )
         finally:
             tracker.close()
@@ -3000,6 +3043,8 @@ class ArchiveImportService:
         source_id: str,
         tracker: ImportProgressTracker,
         error: Exception,
+        *,
+        rebuild_generation: int | None = None,
     ) -> None:
         # Closed content-free code only; never persist raw exception text.
         tracker.fail(message=durable_import_error_code(error))
@@ -3012,6 +3057,7 @@ class ArchiveImportService:
                 import_status="failed",
                 metadata=metadata,
                 parser_warnings=source.parser_warnings,
+                rebuild_generation=rebuild_generation,
             )
         except Exception:
             pass
@@ -3149,6 +3195,7 @@ class ArchiveImportService:
                 import_status="complete",
                 metadata=metadata,
                 parser_warnings=parsed.warnings,
+                rebuild_generation=rebuild_generation,
             )
             refreshed = self.store.get_source(source.id, duplicate=source.duplicate)
             result = self._import_result(
@@ -3165,10 +3212,10 @@ class ArchiveImportService:
             progress.close()
             return result
         except ImportCancelledError:
-            self._mark_cancelled(source.id, progress)
+            self._mark_cancelled(source.id, progress, rebuild_generation=rebuild_generation)
             raise
         except Exception as error:
-            self._mark_failed(source.id, progress, error)
+            self._mark_failed(source.id, progress, error, rebuild_generation=rebuild_generation)
             raise
 
     def _import_result(

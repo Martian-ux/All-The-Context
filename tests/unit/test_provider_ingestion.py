@@ -7,7 +7,7 @@ import threading
 import zipfile
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from allthecontext import importers as importers_module
@@ -26,7 +26,7 @@ from allthecontext.importers import (
     parse_zip_bundle,
 )
 from allthecontext.models import Availability, CandidateInput, SubmitBatchRequest
-from allthecontext.storage import InvalidStateError
+from allthecontext.storage import InvalidStateError, source_rebuild_marker
 
 
 def _zip(entries: dict[str, bytes | str]) -> bytes:
@@ -2505,6 +2505,166 @@ def test_concurrent_incomplete_coverage_repairs_are_idempotent(
     assert repaired_source.metadata["rebuild_generation"] == 1
     assert repaired_source.metadata["rebuild_published_generation"] == 1
     assert core.store.candidate_ids_for_source(source_id)
+
+
+@pytest.mark.parametrize("terminal_status", ["complete", "failed", "cancelled"])
+def test_rebuild_generation_writes_preserve_terminal_source_state(
+    tmp_path: Path,
+    terminal_status: Literal["complete", "failed", "cancelled"],
+) -> None:
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    first = service.import_bytes(
+        "terminal-generation.jsonl",
+        b'{"kind":"goal","content":"Terminal state is authoritative"}\n',
+    )
+    source_id = str(first["source"]["id"])
+    source = core.store.get_source(source_id, duplicate=True)
+    generation = 1
+    marker = source_rebuild_marker(source_id, source.content_hash, generation)
+    processing_metadata = dict(source.metadata)
+    processing_metadata.update(
+        {
+            "rebuild_generation": generation,
+            "rebuild_in_progress": True,
+            "rebuild_source_marker": marker,
+        }
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="processing",
+        metadata=processing_metadata,
+        parser_warnings=source.parser_warnings,
+        rebuild_generation=generation,
+    )
+    processing = core.store.get_source(source_id, duplicate=True)
+    terminal_metadata = dict(processing.metadata)
+    terminal_metadata["source_terminal_reason"] = terminal_status
+    terminal_metadata["coverage_complete"] = terminal_status == "complete"
+    terminal_metadata["rebuild_in_progress"] = terminal_status != "complete"
+    if terminal_status == "complete":
+        terminal_metadata["rebuild_published_generation"] = generation
+        terminal_metadata["rebuild_published_session_id"] = "session-1"
+    core.store.update_source_import(
+        source_id,
+        import_status=terminal_status,
+        metadata=terminal_metadata,
+        parser_warnings=processing.parser_warnings,
+        rebuild_generation=generation,
+    )
+    before_stale_writes = core.store.get_source(source_id, duplicate=True)
+
+    core.store.update_source_progress(
+        source_id,
+        progress={"phase": "parsing", "message": "stale sibling"},
+        import_status="processing",
+        rebuild_generation=generation,
+    )
+    stale_processing_metadata = dict(before_stale_writes.metadata)
+    stale_processing_metadata["rebuild_in_progress"] = True
+    core.store.update_source_import(
+        source_id,
+        import_status="processing",
+        metadata=stale_processing_metadata,
+        parser_warnings=before_stale_writes.parser_warnings,
+        rebuild_generation=generation,
+    )
+    stale_terminal_metadata = dict(before_stale_writes.metadata)
+    stale_terminal_metadata["source_terminal_reason"] = "failed"
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=stale_terminal_metadata,
+        parser_warnings=before_stale_writes.parser_warnings,
+        rebuild_generation=generation,
+    )
+
+    after_stale_writes = core.store.get_source(source_id, duplicate=True)
+    assert after_stale_writes.import_status == terminal_status
+    assert after_stale_writes.metadata == before_stale_writes.metadata
+
+
+def test_stale_rebuild_generation_writes_cannot_overwrite_new_generation(
+    tmp_path: Path,
+) -> None:
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    first = service.import_bytes(
+        "superseded-generation.jsonl",
+        b'{"kind":"goal","content":"New generation wins"}\n',
+    )
+    source_id = str(first["source"]["id"])
+    source = core.store.get_source(source_id, duplicate=True)
+    first_marker = source_rebuild_marker(source_id, source.content_hash, 1)
+    first_metadata = dict(source.metadata)
+    first_metadata.update(
+        {
+            "rebuild_generation": 1,
+            "rebuild_in_progress": True,
+            "rebuild_source_marker": first_marker,
+        }
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="processing",
+        metadata=first_metadata,
+        parser_warnings=source.parser_warnings,
+        rebuild_generation=1,
+    )
+    first_processing = core.store.get_source(source_id, duplicate=True)
+    first_terminal_metadata = dict(first_processing.metadata)
+    first_terminal_metadata.update(
+        {
+            "rebuild_in_progress": False,
+            "rebuild_published_generation": 1,
+            "rebuild_published_session_id": "session-1",
+        }
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="complete",
+        metadata=first_terminal_metadata,
+        parser_warnings=first_processing.parser_warnings,
+        rebuild_generation=1,
+    )
+    first_complete = core.store.get_source(source_id, duplicate=True)
+    second_marker = source_rebuild_marker(source_id, source.content_hash, 2)
+    second_metadata = dict(first_complete.metadata)
+    second_metadata.update(
+        {
+            "rebuild_generation": 2,
+            "rebuild_in_progress": True,
+            "rebuild_source_marker": second_marker,
+        }
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="processing",
+        metadata=second_metadata,
+        parser_warnings=first_processing.parser_warnings,
+        rebuild_generation=2,
+    )
+    before_stale_writes = core.store.get_source(source_id, duplicate=True)
+
+    stale_metadata = dict(first_processing.metadata)
+    stale_metadata["import_progress"] = {"phase": "failed", "message": "old worker"}
+    core.store.update_source_progress(
+        source_id,
+        progress=stale_metadata["import_progress"],
+        import_status="failed",
+        rebuild_generation=1,
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=stale_metadata,
+        parser_warnings=first_processing.parser_warnings,
+        rebuild_generation=1,
+    )
+
+    after_stale_writes = core.store.get_source(source_id, duplicate=True)
+    assert after_stale_writes.import_status == "processing"
+    assert after_stale_writes.metadata == before_stale_writes.metadata
 
 
 def test_complete_healthy_source_reprocess_remains_a_noop(

@@ -6717,15 +6717,17 @@ observer can receive the initial checkpoint's scheduling turn.
 **Status:** implemented locally on 2026-09-13; downstream maintained-native
 validation remains required.
 
-Source-only provider rebuild trackers carry the rebuild generation into their
-durable progress sink. Core ignores a processing progress write when the
-source is already terminal for that generation, or when the write belongs to a
-different generation. The guard is applied at the transactional storage
-boundary, so a sibling parser may still parse concurrently and the existing
-idempotent session, batches, and non-destructive publication ceremony remain
-shared and unchanged.
+Source-only provider rebuild trackers carry the rebuild generation into both
+their durable progress and source-lifecycle sinks. Core accepts a
+generation-bound write only for the current in-progress generation; delayed
+processing, terminal cleanup, and metadata writes from a terminal or older
+generation are ignored at the transactional storage boundary. A published
+generation may still be explicitly resumed through its existing idempotent
+session; a failed or cancelled unpublished generation is retried as a newer
+generation. Current-generation complete, failed, and cancelled rows are
+authoritative, so a later successful sibling does not supersede a failure.
 
 This is a stale-telemetry guard, not a process-local rebuild lock, parser
-retry, or test timing change. It prevents a successful worker's canonical
-complete state and final progress from being overwritten by a slower sibling;
-failed and cancelled workers still use their existing terminal paths.
+retry, or test timing change. A sibling parser may still parse concurrently,
+while the existing idempotent session, batches, non-destructive publication
+ceremony, and terminal cleanup paths remain shared and unchanged.

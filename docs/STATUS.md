@@ -4948,15 +4948,20 @@ source validation only; downstream native full validation remains required.
 
 ## Provider rebuild concurrency repair (2026-09-13)
 
-Source-only provider rebuild progress is now bound to its durable rebuild
-generation. A processing heartbeat from a sibling parser is ignored after that
-generation is canonically complete or cancelled, and an older generation
-cannot overwrite the current generation's progress. This closes the observed
-successful-return race where one rebuild returned a processing source snapshot
-after another idempotent worker had completed the shared session and candidate
-publication.
+Source-only provider rebuild progress and lifecycle writes are now bound to
+their durable rebuild generation. A processing heartbeat, terminal cleanup, or
+metadata write from a sibling parser is ignored after that generation is
+terminal, and an older generation cannot overwrite current-generation state.
+Failed or cancelled unpublished generations advance before explicit retry;
+published generations retain their idempotent resume, while every current
+complete, failed, or cancelled row remains authoritative against later
+same-generation success. This closes the observed successful-return race where
+one rebuild returned a processing source snapshot after another idempotent
+worker had completed the shared session and candidate publication.
 
 The two-parser barrier, shared generation/session/candidate idempotency,
 non-destructive cutover, cancellation/failure paths, and existing progress
-observation remain unchanged. The repair is source-level and has not received
-the next maintained-native focused, static, or full-suite validation yet.
+observation remain unchanged. Deterministic provider regressions cover
+terminal and superseded-generation writes. The repair is source-level and has
+not received the next maintained-native focused, static, or full-suite
+validation yet.
