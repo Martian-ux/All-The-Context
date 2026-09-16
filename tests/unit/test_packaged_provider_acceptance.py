@@ -6,6 +6,7 @@ import shutil
 import weakref
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
@@ -829,7 +830,10 @@ def test_packaged_surface_converges_on_transient_owned_cleanup_contention(
         "allthecontext.packaged_provider_acceptance._make_temp_data_dir",
         fake_data_dir,
     )
-    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.shutil.rmtree", fake_rmtree)
+    monkeypatch.setattr(
+        "allthecontext.packaged_provider_acceptance.shutil",
+        SimpleNamespace(rmtree=fake_rmtree),
+    )
     monkeypatch.setattr("allthecontext.packaged_provider_acceptance.time.sleep", lambda _: None)
     assert (
         run_packaged_provider_acceptance(
