@@ -2750,10 +2750,9 @@ class ArchiveImportService:
                 source = self.store.get_source(source.id, duplicate=True)
             elif resume_rebuild:
                 prior_generation = int(source.metadata.get("rebuild_generation") or 1)
-                published_same_generation = (
-                    str(source.metadata.get("rebuild_published_generation"))
-                    == str(prior_generation)
-                )
+                published_same_generation = str(
+                    source.metadata.get("rebuild_published_generation")
+                ) == str(prior_generation)
                 if (
                     source.import_status in {"failed", "cancelled"}
                     and not published_same_generation
