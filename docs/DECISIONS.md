@@ -18,9 +18,13 @@ context, credential, or secret is retained.
 The Windows desktop workflow gives the smoke a dedicated directory and always
 uploads only those JSON observations with the existing pinned artifact action;
 missing observations fail the upload. The local probe calls the same
-PowerShell/CIM implementation. Inventory bounds, identity validation and
-duplication, launch/timeout/child-exit branches, success, and forbidden-data
-non-retention are covered deterministically. Existing inventory safety,
+PowerShell/CIM implementation. Its native-check `--output` mode uses the
+active pinned interpreter as the bounded host target and atomically publishes
+one observation at the requested path; explicit packaged-target mode remains
+available through `--executable` and `--diagnostics-dir`. Inventory bounds,
+identity validation and duplication, launch/timeout/child-exit branches,
+success, and forbidden-data non-retention are covered deterministically.
+Existing inventory safety,
 modal/process ownership, cleanup, install/vault preservation, security, and
 uninstall behavior are unchanged.
 

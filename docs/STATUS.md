@@ -49,9 +49,11 @@ The Windows desktop workflow prepares a dedicated diagnostics directory and
 always uploads only its JSON observations as
 `packaged-first-run-process-inventory-windows`; missing files fail the pinned
 artifact upload. The committed local probe uses the same PowerShell/CIM
-implementation. Launch, timeout, child-exit, JSON-bound, identity,
-success, schema-bound, and non-retention regressions are deterministic unit
-coverage. Existing inventory, modal/process ownership, cleanup,
+implementation and accepts the maintained native `--output` contract by
+atomically publishing one observation for the active pinned interpreter.
+Launch, timeout, child-exit, JSON-bound, identity, success, schema-bound, and
+non-retention regressions are deterministic unit coverage. Existing inventory,
+modal/process ownership, cleanup,
 install/vault-preservation, security, and uninstall behavior remain unchanged.
 This is a diagnostic contract change, not hosted or release acceptance.
 

@@ -36,6 +36,15 @@ def _load_smoke_module():
     return module
 
 
+def _load_process_inventory_probe_module():
+    path = ROOT / "scripts" / "probe_packaged_process_inventory.py"
+    spec = importlib.util.spec_from_file_location("probe_packaged_process_inventory", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 smoke = _load_smoke_module()
 
 TOKEN_CANARY = "atc-canary-token-NEVER-LOG-9f3c2b1a"
@@ -1129,6 +1138,49 @@ def test_packaged_uninstall_process_inventory_is_bounded_and_path_bound(
         "new_count": 0,
     }
     assert observed and observed[0][0] == "powershell.exe"
+
+
+def test_process_inventory_probe_accepts_native_output_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _load_process_inventory_probe_module()
+    output = tmp_path / "process-inventory-probe.json"
+    observation = {
+        "version": 1,
+        "kind": "packaged-process-inventory",
+        "status": "pass",
+        "stage": "complete",
+        "return_code": 0,
+        "stdout_present": True,
+        "stderr_present": False,
+        "json_status": "valid",
+        "identity_status": "valid",
+        "item_count": 0,
+        "bounded": True,
+    }
+    observed: list[tuple[Path, Path]] = []
+
+    def fake_snapshot(executable: Path, *, diagnostics_root: Path) -> tuple[()]:
+        observed.append((executable, diagnostics_root))
+        diagnostics_root.mkdir(parents=True, exist_ok=True)
+        (diagnostics_root / "packaged-process-inventory-test.json").write_text(
+            json.dumps(observation) + "\n",
+            encoding="utf-8",
+        )
+        return ()
+
+    monkeypatch.setattr(probe.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(probe, "snapshot_packaged_processes", fake_snapshot)
+    monkeypatch.setattr(
+        probe.sys,
+        "argv",
+        ["probe_packaged_process_inventory.py", "--output", str(output)],
+    )
+
+    assert probe.main() == 0
+    assert json.loads(output.read_text(encoding="utf-8")) == observation
+    assert observed == [(Path(probe.sys.executable), output.parent.resolve())]
 
 
 def _read_process_inventory_observation(root: Path) -> dict[str, object]:
