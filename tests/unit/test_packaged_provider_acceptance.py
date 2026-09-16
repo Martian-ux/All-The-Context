@@ -811,6 +811,7 @@ def test_packaged_surface_converges_on_transient_owned_cleanup_contention(
     report = tmp_path / "report.json"
     disposable = tmp_path / "owned-vault"
     attempts: list[Path] = []
+    real_rmtree = shutil.rmtree
 
     def fake_data_dir() -> Path:
         disposable.mkdir()
@@ -822,7 +823,7 @@ def test_packaged_surface_converges_on_transient_owned_cleanup_contention(
             error = PermissionError(32, "sharing violation")
             error.winerror = 32
             raise error
-        path.rmdir()
+        real_rmtree(path)
 
     monkeypatch.setattr(
         "allthecontext.packaged_provider_acceptance._make_temp_data_dir",
