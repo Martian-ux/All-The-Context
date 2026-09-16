@@ -35,6 +35,26 @@ become release evidence; exact-artifact and publication claims remain separate.
 The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
 documentation, hosted, artifact, and applicable platform/release gates.
 
+### 2026-09-16 — content-free packaged process-inventory diagnostics
+
+The packaged Windows first-run smoke now retains one exact closed observation
+for every native process-inventory attempt, including successful snapshots.
+Each JSON observation contains only version/kind, pass-or-failure stage,
+bounded return code, boolean stream presence, closed JSON and identity
+validation status, a zero-through-64 item count, and `bounded: true`. Paths,
+process identities, commands, streams, exceptions, environment values,
+personal context, and secrets are never serialized.
+
+The Windows desktop workflow prepares a dedicated diagnostics directory and
+always uploads only its JSON observations as
+`packaged-first-run-process-inventory-windows`; missing files fail the pinned
+artifact upload. The committed local probe uses the same PowerShell/CIM
+implementation. Launch, timeout, child-exit, JSON-bound, identity,
+success, schema-bound, and non-retention regressions are deterministic unit
+coverage. Existing inventory, modal/process ownership, cleanup,
+install/vault-preservation, security, and uninstall behavior remain unchanged.
+This is a diagnostic contract change, not hosted or release acceptance.
+
 ### 2026-09-08 — bounded beta.6-to-beta.7 registration adoption repair
 
 The diagnosed packaged failure was a real source defect: beta.7 rejected the

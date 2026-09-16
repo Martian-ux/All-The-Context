@@ -17,6 +17,7 @@ Manager and macOS Keychain round-trips are exercised separately by
 
 from __future__ import annotations
 
+import argparse
 import atexit
 import hashlib
 import html
@@ -154,6 +155,29 @@ class _SetupReportParseError(ValueError):
 
 ProcessIdentity = tuple[int, str, str]
 _MAX_PACKAGED_PROCESS_INVENTORY = 64
+_MAX_PACKAGED_PROCESS_INVENTORY_JSON_BYTES = 64 * 1024
+_MAX_PACKAGED_PROCESS_RETURN_CODE = 4_294_967_295
+_PROCESS_INVENTORY_DIAGNOSTICS_ENV = "ATC_PACKAGED_PROCESS_INVENTORY_DIAGNOSTICS_DIR"
+_PROCESS_INVENTORY_OBSERVATION_FIELDS = frozenset(
+    {
+        "version",
+        "kind",
+        "status",
+        "stage",
+        "return_code",
+        "stdout_present",
+        "stderr_present",
+        "json_status",
+        "identity_status",
+        "item_count",
+        "bounded",
+    }
+)
+_PROCESS_INVENTORY_STAGES = frozenset(
+    {"launch", "timeout", "child_exit", "json", "identity", "complete"}
+)
+_PROCESS_INVENTORY_JSON_STATUSES = frozenset({"not_run", "valid", "invalid", "unbounded"})
+_PROCESS_INVENTORY_IDENTITY_STATUSES = frozenset({"not_run", "valid", "invalid", "duplicate"})
 
 
 class PackagedProcessInventoryError(RuntimeError):
@@ -166,6 +190,120 @@ class PackagedProcessCheckError(RuntimeError):
     def __init__(self, classification: dict[str, Any]) -> None:
         self.classification = classification
         super().__init__("packaged uninstall process check failed closed")
+
+
+def validate_packaged_process_inventory_observation(value: object) -> dict[str, Any]:
+    """Validate the exact content-free process-inventory observation schema."""
+
+    if not isinstance(value, dict) or set(value) != _PROCESS_INVENTORY_OBSERVATION_FIELDS:
+        raise ValueError("packaged process inventory observation shape is invalid")
+    if type(value["version"]) is not int or value["version"] != 1:
+        raise ValueError("packaged process inventory observation version is invalid")
+    if type(value["kind"]) is not str or value["kind"] != "packaged-process-inventory":
+        raise ValueError("packaged process inventory observation kind is invalid")
+    if type(value["status"]) is not str or value["status"] not in {"pass", "failure"}:
+        raise ValueError("packaged process inventory observation status is invalid")
+    if type(value["stage"]) is not str or value["stage"] not in _PROCESS_INVENTORY_STAGES:
+        raise ValueError("packaged process inventory observation stage is invalid")
+    return_code = value["return_code"]
+    if return_code is not None and (
+        type(return_code) is not int or not 0 <= return_code <= _MAX_PACKAGED_PROCESS_RETURN_CODE
+    ):
+        raise ValueError("packaged process inventory observation return code is invalid")
+    if type(value["stdout_present"]) is not bool or type(value["stderr_present"]) is not bool:
+        raise ValueError("packaged process inventory observation stream flags are invalid")
+    if (
+        type(value["json_status"]) is not str
+        or value["json_status"] not in _PROCESS_INVENTORY_JSON_STATUSES
+    ):
+        raise ValueError("packaged process inventory observation JSON status is invalid")
+    if (
+        type(value["identity_status"]) is not str
+        or value["identity_status"] not in _PROCESS_INVENTORY_IDENTITY_STATUSES
+    ):
+        raise ValueError("packaged process inventory observation identity status is invalid")
+    item_count = value["item_count"]
+    if item_count is not None and (
+        type(item_count) is not int or not 0 <= item_count <= _MAX_PACKAGED_PROCESS_INVENTORY
+    ):
+        raise ValueError("packaged process inventory observation item count is invalid")
+    if value["bounded"] is not True or type(value["bounded"]) is not bool:
+        raise ValueError("packaged process inventory observation bound is invalid")
+    return value
+
+
+def build_packaged_process_inventory_observation(
+    *,
+    status: str,
+    stage: str,
+    return_code: int | None,
+    stdout_present: bool,
+    stderr_present: bool,
+    json_status: str,
+    identity_status: str,
+    item_count: int | None,
+) -> dict[str, Any]:
+    """Build one exact-schema process-inventory observation without source data."""
+
+    return validate_packaged_process_inventory_observation(
+        {
+            "version": 1,
+            "kind": "packaged-process-inventory",
+            "status": status,
+            "stage": stage,
+            "return_code": return_code,
+            "stdout_present": stdout_present,
+            "stderr_present": stderr_present,
+            "json_status": json_status,
+            "identity_status": identity_status,
+            "item_count": item_count,
+            "bounded": True,
+        }
+    )
+
+
+def write_packaged_process_inventory_observation(
+    observation: object,
+    *,
+    diagnostics_root: Path,
+) -> Path:
+    """Atomically retain one validated, content-free process observation."""
+
+    validated = validate_packaged_process_inventory_observation(observation)
+    diagnostics_root.mkdir(parents=True, exist_ok=True)
+    stamp = f"{time.time_ns()}"
+    target = diagnostics_root / f"packaged-process-inventory-{stamp}.json"
+    while target.exists():
+        stamp = f"{time.time_ns()}"
+        target = diagnostics_root / f"packaged-process-inventory-{stamp}.json"
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text(json.dumps(validated, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(target)
+    return target
+
+
+def _stream_present(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (str, bytes, bytearray)):
+        return bool(value)
+    return True
+
+
+def _output_size(value: object) -> int:
+    if isinstance(value, bytes):
+        return len(value)
+    if isinstance(value, str):
+        return len(value.encode("utf-8", errors="replace"))
+    if value is None:
+        return 0
+    return _MAX_PACKAGED_PROCESS_INVENTORY_JSON_BYTES + 1
+
+
+def _bounded_return_code(value: object) -> int | None:
+    if type(value) is int and 0 <= value <= _MAX_PACKAGED_PROCESS_RETURN_CODE:
+        return value
+    return None
 
 
 def _load_setup_report(path: Path) -> object:
@@ -399,12 +537,56 @@ def _normalized_process_path(value: str) -> str:
     return os.path.normpath(value).casefold()
 
 
-def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ...]:
-    """Read a bounded, content-free native process identity inventory."""
+def _inventory_packaged_processes(
+    executable: Path,
+    *,
+    diagnostics_root: Path | None = None,
+) -> tuple[ProcessIdentity, ...]:
+    """Read a bounded native process inventory and retain only its observation."""
 
     if platform.system() != "Windows":
         return ()
-    resolved_executable = executable.resolve()
+
+    def record(
+        *,
+        status: str,
+        stage: str,
+        return_code: int | None,
+        stdout_present: bool,
+        stderr_present: bool,
+        json_status: str,
+        identity_status: str,
+        item_count: int | None,
+    ) -> None:
+        if diagnostics_root is not None:
+            write_packaged_process_inventory_observation(
+                build_packaged_process_inventory_observation(
+                    status=status,
+                    stage=stage,
+                    return_code=return_code,
+                    stdout_present=stdout_present,
+                    stderr_present=stderr_present,
+                    json_status=json_status,
+                    identity_status=identity_status,
+                    item_count=item_count,
+                ),
+                diagnostics_root=diagnostics_root,
+            )
+
+    try:
+        resolved_executable = executable.resolve()
+    except OSError as exc:
+        record(
+            status="failure",
+            stage="launch",
+            return_code=None,
+            stdout_present=False,
+            stderr_present=False,
+            json_status="not_run",
+            identity_status="not_run",
+            item_count=None,
+        )
+        raise PackagedProcessInventoryError("native packaged process inventory failed") from exc
     process_environment = os.environ.copy()
     process_environment["ATC_SMOKE_PROCESS_PATH"] = str(resolved_executable)
     try:
@@ -442,17 +624,110 @@ def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ..
             text=True,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        record(
+            status="failure",
+            stage="timeout",
+            return_code=None,
+            stdout_present=_stream_present(exc.stdout),
+            stderr_present=_stream_present(exc.stderr),
+            json_status="not_run",
+            identity_status="not_run",
+            item_count=None,
+        )
         raise PackagedProcessInventoryError("native packaged process inventory failed") from exc
-    if completed.returncode != 0:
-        raise PackagedProcessInventoryError("native packaged process inventory failed")
-    try:
-        raw_inventory = json.loads(completed.stdout)
-    except (UnicodeError, ValueError) as exc:
+    except UnicodeError as exc:
+        record(
+            status="failure",
+            stage="json",
+            return_code=None,
+            stdout_present=_stream_present(getattr(exc, "object", None)),
+            stderr_present=False,
+            json_status="invalid",
+            identity_status="not_run",
+            item_count=None,
+        )
         raise PackagedProcessInventoryError(
             "native packaged process inventory was invalid"
         ) from exc
-    if not isinstance(raw_inventory, list) or len(raw_inventory) > _MAX_PACKAGED_PROCESS_INVENTORY:
+    except (OSError, subprocess.SubprocessError) as exc:
+        record(
+            status="failure",
+            stage="launch",
+            return_code=None,
+            stdout_present=False,
+            stderr_present=False,
+            json_status="not_run",
+            identity_status="not_run",
+            item_count=None,
+        )
+        raise PackagedProcessInventoryError("native packaged process inventory failed") from exc
+    if type(completed.returncode) is not int or completed.returncode != 0:
+        record(
+            status="failure",
+            stage="child_exit",
+            return_code=_bounded_return_code(completed.returncode),
+            stdout_present=_stream_present(completed.stdout),
+            stderr_present=_stream_present(completed.stderr),
+            json_status="not_run",
+            identity_status="not_run",
+            item_count=None,
+        )
+        raise PackagedProcessInventoryError("native packaged process inventory failed")
+
+    stdout_present = _stream_present(completed.stdout)
+    stderr_present = _stream_present(completed.stderr)
+    if _output_size(completed.stdout) > _MAX_PACKAGED_PROCESS_INVENTORY_JSON_BYTES:
+        record(
+            status="failure",
+            stage="json",
+            return_code=_bounded_return_code(completed.returncode),
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            json_status="unbounded",
+            identity_status="not_run",
+            item_count=None,
+        )
+        raise PackagedProcessInventoryError("native packaged process inventory was unbounded")
+    try:
+        raw_inventory = json.loads(completed.stdout)
+    except (RecursionError, TypeError, UnicodeError, ValueError) as exc:
+        record(
+            status="failure",
+            stage="json",
+            return_code=_bounded_return_code(completed.returncode),
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            json_status="invalid",
+            identity_status="not_run",
+            item_count=None,
+        )
+        raise PackagedProcessInventoryError(
+            "native packaged process inventory was invalid"
+        ) from exc
+    if not isinstance(raw_inventory, list):
+        record(
+            status="failure",
+            stage="json",
+            return_code=_bounded_return_code(completed.returncode),
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            json_status="invalid",
+            identity_status="not_run",
+            item_count=None,
+        )
+        raise PackagedProcessInventoryError("native packaged process inventory was invalid")
+    if len(raw_inventory) > _MAX_PACKAGED_PROCESS_INVENTORY:
+        record(
+            status="failure",
+            stage="json",
+            return_code=_bounded_return_code(completed.returncode),
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            json_status="unbounded",
+            identity_status="not_run",
+            item_count=None,
+        )
         raise PackagedProcessInventoryError("native packaged process inventory was unbounded")
 
     expected_executable = _normalized_process_path(str(resolved_executable))
@@ -460,12 +735,29 @@ def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ..
     seen: set[ProcessIdentity] = set()
     for item in raw_inventory:
         if not isinstance(item, dict) or set(item) != {"pid", "creation_identity", "exe"}:
+            record(
+                status="failure",
+                stage="identity",
+                return_code=_bounded_return_code(completed.returncode),
+                stdout_present=stdout_present,
+                stderr_present=stderr_present,
+                json_status="valid",
+                identity_status="invalid",
+                item_count=len(raw_inventory),
+            )
             raise PackagedProcessInventoryError(
                 "native packaged process identity shape was invalid"
             )
         pid = item["pid"]
         creation_identity = item["creation_identity"]
         reported_executable = item["exe"]
+        if type(reported_executable) is str:
+            try:
+                normalized_reported_executable = _normalized_process_path(reported_executable)
+            except (OSError, ValueError):
+                normalized_reported_executable = None
+        else:
+            normalized_reported_executable = None
         if (
             type(pid) is not int
             or not 1 <= pid <= 4_294_967_295
@@ -473,35 +765,73 @@ def _inventory_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ..
             or not creation_identity
             or len(creation_identity) > 128
             or type(reported_executable) is not str
-            or _normalized_process_path(reported_executable) != expected_executable
+            or normalized_reported_executable != expected_executable
         ):
+            record(
+                status="failure",
+                stage="identity",
+                return_code=_bounded_return_code(completed.returncode),
+                stdout_present=stdout_present,
+                stderr_present=stderr_present,
+                json_status="valid",
+                identity_status="invalid",
+                item_count=len(raw_inventory),
+            )
             raise PackagedProcessInventoryError("native packaged process identity was invalid")
         identity = (pid, creation_identity, expected_executable)
         if identity in seen:
+            record(
+                status="failure",
+                stage="identity",
+                return_code=_bounded_return_code(completed.returncode),
+                stdout_present=stdout_present,
+                stderr_present=stderr_present,
+                json_status="valid",
+                identity_status="duplicate",
+                item_count=len(raw_inventory),
+            )
             raise PackagedProcessInventoryError(
                 "native packaged process identities were duplicated"
             )
         seen.add(identity)
         identities.append(identity)
+    record(
+        status="pass",
+        stage="complete",
+        return_code=_bounded_return_code(completed.returncode),
+        stdout_present=stdout_present,
+        stderr_present=stderr_present,
+        json_status="valid",
+        identity_status="valid",
+        item_count=len(identities),
+    )
     return tuple(identities)
 
 
-def snapshot_packaged_processes(executable: Path) -> tuple[ProcessIdentity, ...]:
+def snapshot_packaged_processes(
+    executable: Path,
+    *,
+    diagnostics_root: Path | None = None,
+) -> tuple[ProcessIdentity, ...]:
     """Snapshot exact process identities before a windowed smoke invocation."""
 
-    return _inventory_packaged_processes(executable)
+    return _inventory_packaged_processes(executable, diagnostics_root=diagnostics_root)
 
 
 def assert_no_packaged_process_or_modal(
     executable: Path,
     *,
     baseline_processes: tuple[ProcessIdentity, ...],
+    diagnostics_root: Path | None = None,
 ) -> dict[str, Any]:
     """Reject only new exact executable identities, while preserving a healthy Core."""
 
     baseline = set(baseline_processes)
     try:
-        current = snapshot_packaged_processes(executable)
+        if diagnostics_root is None:
+            current = snapshot_packaged_processes(executable)
+        else:
+            current = snapshot_packaged_processes(executable, diagnostics_root=diagnostics_root)
     except (OSError, RuntimeError) as exc:
         classification = {
             "status": "inventory_error",
@@ -1328,7 +1658,20 @@ def _run_headless_setup(
     return report
 
 
+def _parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--process-inventory-diagnostics-dir",
+        "--diagnostics-dir",
+        dest="process_inventory_diagnostics_dir",
+        type=Path,
+        help="dedicated directory for content-free Windows process observations",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    arguments = _parse_arguments()
     system = os.environ.get("ATC_SMOKE_PLATFORM") or platform.system()
     executable = artifact_executable(system)
     if not executable.is_file():
@@ -1342,6 +1685,21 @@ def main() -> int:
     # directory and never hold secrets or disposable process identities.
     diagnostics_root = temp_parent / f"packaged-first-run-diagnostics-{work.name}"
     diagnostics_root.mkdir(parents=True, exist_ok=True)
+    configured_process_inventory_root = (
+        arguments.process_inventory_diagnostics_dir
+        or os.environ.get(_PROCESS_INVENTORY_DIAGNOSTICS_ENV)
+    )
+    if configured_process_inventory_root is None:
+        process_inventory_diagnostics_root = (
+            temp_parent / f"packaged-first-run-process-inventory-{work.name}"
+        )
+    else:
+        process_inventory_diagnostics_root = Path(configured_process_inventory_root).expanduser()
+        if not process_inventory_diagnostics_root.is_absolute():
+            raise SystemExit("process-inventory diagnostics directory must be absolute")
+        process_inventory_diagnostics_root = process_inventory_diagnostics_root.resolve()
+    if system == "Windows":
+        process_inventory_diagnostics_root.mkdir(parents=True, exist_ok=True)
     data_dir = work / "data"
     codex_home = work / "codex"
     report_path = work / "setup-report.json"
@@ -1566,7 +1924,10 @@ def main() -> int:
         failure_environment = dict(environment)
         failure_environment["ATC_PACKAGED_SMOKE_INJECT_INCOMPLETE_REGISTRATION"] = "1"
         try:
-            failure_baseline_processes = snapshot_packaged_processes(installed_app)
+            failure_baseline_processes = snapshot_packaged_processes(
+                installed_app,
+                diagnostics_root=process_inventory_diagnostics_root,
+            )
         except (OSError, RuntimeError):
             fail_smoke("packaged-uninstall-failure", "process_inventory_failed")
         try:
@@ -1609,6 +1970,7 @@ def main() -> int:
             failure_process_classification = assert_no_packaged_process_or_modal(
                 installed_app,
                 baseline_processes=failure_baseline_processes,
+                diagnostics_root=process_inventory_diagnostics_root,
             )
         except PackagedProcessCheckError as exc:
             failure_process_classification = exc.classification
@@ -1854,7 +2216,10 @@ def main() -> int:
     if system == "Windows":
         uninstall_report_path = work / "uninstall-report.json"
         try:
-            final_baseline_processes = snapshot_packaged_processes(installed_app)
+            final_baseline_processes = snapshot_packaged_processes(
+                installed_app,
+                diagnostics_root=process_inventory_diagnostics_root,
+            )
         except (OSError, RuntimeError):
             fail_smoke("packaged-uninstall", "process_inventory_failed")
         try:
@@ -1891,6 +2256,7 @@ def main() -> int:
                 final_process_classification = assert_no_packaged_process_or_modal(
                     installed_app,
                     baseline_processes=final_baseline_processes,
+                    diagnostics_root=process_inventory_diagnostics_root,
                 )
             except PackagedProcessCheckError as exc:
                 final_process_classification = exc.classification

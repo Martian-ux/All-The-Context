@@ -1131,6 +1131,312 @@ def test_packaged_uninstall_process_inventory_is_bounded_and_path_bound(
     assert observed and observed[0][0] == "powershell.exe"
 
 
+def _read_process_inventory_observation(root: Path) -> dict[str, object]:
+    files = sorted(root.glob("*.json"))
+    assert len(files) == 1
+    return json.loads(files[0].read_text(encoding="utf-8"))
+
+
+def test_packaged_process_inventory_records_launch_failure_before_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    canary = "launch-path-and-exception-canary"
+
+    def launch_error(*_args: object, **_kwargs: object) -> object:
+        raise OSError(canary)
+
+    monkeypatch.setattr(smoke.subprocess, "run", launch_error)
+    with pytest.raises(smoke.PackagedProcessInventoryError):
+        smoke.snapshot_packaged_processes(
+            tmp_path / "AllTheContext.exe",
+            diagnostics_root=tmp_path / "diagnostics",
+        )
+
+    observation = _read_process_inventory_observation(tmp_path / "diagnostics")
+    assert observation == {
+        "bounded": True,
+        "identity_status": "not_run",
+        "item_count": None,
+        "json_status": "not_run",
+        "kind": "packaged-process-inventory",
+        "return_code": None,
+        "stage": "launch",
+        "status": "failure",
+        "stderr_present": False,
+        "stdout_present": False,
+        "version": 1,
+    }
+    assert canary not in json.dumps(observation)
+
+
+def test_packaged_process_inventory_records_timeout_before_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    command_canary = "timeout-command-canary"
+    output_canary = "timeout-output-canary"
+    error_canary = "timeout-error-canary"
+
+    def timed_out(*_args: object, **_kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(
+            command_canary,
+            10,
+            output=output_canary,
+            stderr=error_canary,
+        )
+
+    monkeypatch.setattr(smoke.subprocess, "run", timed_out)
+    with pytest.raises(smoke.PackagedProcessInventoryError):
+        smoke.snapshot_packaged_processes(
+            tmp_path / "AllTheContext.exe",
+            diagnostics_root=tmp_path / "diagnostics",
+        )
+
+    observation = _read_process_inventory_observation(tmp_path / "diagnostics")
+    assert observation["stage"] == "timeout"
+    assert observation["status"] == "failure"
+    assert observation["stdout_present"] is True
+    assert observation["stderr_present"] is True
+    assert observation["return_code"] is None
+    assert observation["json_status"] == "not_run"
+    assert observation["identity_status"] == "not_run"
+    assert observation["item_count"] is None
+    rendered = json.dumps(observation)
+    assert command_canary not in rendered
+    assert output_canary not in rendered
+    assert error_canary not in rendered
+
+
+def test_packaged_process_inventory_records_child_exit_before_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    stdout_canary = "child-exit-output-canary"
+    stderr_canary = "child-exit-error-canary"
+
+    def child_exit(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 17, stdout_canary, stderr_canary)
+
+    monkeypatch.setattr(smoke.subprocess, "run", child_exit)
+    with pytest.raises(smoke.PackagedProcessInventoryError):
+        smoke.snapshot_packaged_processes(
+            tmp_path / "AllTheContext.exe",
+            diagnostics_root=tmp_path / "diagnostics",
+        )
+
+    observation = _read_process_inventory_observation(tmp_path / "diagnostics")
+    assert observation["stage"] == "child_exit"
+    assert observation["status"] == "failure"
+    assert observation["return_code"] == 17
+    assert observation["stdout_present"] is True
+    assert observation["stderr_present"] is True
+    assert observation["json_status"] == "not_run"
+    assert observation["identity_status"] == "not_run"
+    assert observation["item_count"] is None
+    rendered = json.dumps(observation)
+    assert stdout_canary not in rendered
+    assert stderr_canary not in rendered
+
+
+def test_packaged_process_inventory_records_unbounded_json_before_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    inventory = [
+        {"pid": index + 1, "creation_identity": f"creation-{index}", "exe": "ignored"}
+        for index in range(smoke._MAX_PACKAGED_PROCESS_INVENTORY + 1)
+    ]
+
+    def oversized_json(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, json.dumps(inventory), "")
+
+    monkeypatch.setattr(smoke.subprocess, "run", oversized_json)
+    with pytest.raises(smoke.PackagedProcessInventoryError):
+        smoke.snapshot_packaged_processes(
+            tmp_path / "AllTheContext.exe",
+            diagnostics_root=tmp_path / "diagnostics",
+        )
+
+    observation = _read_process_inventory_observation(tmp_path / "diagnostics")
+    assert observation["stage"] == "json"
+    assert observation["status"] == "failure"
+    assert observation["json_status"] == "unbounded"
+    assert observation["identity_status"] == "not_run"
+    assert observation["item_count"] is None
+    assert observation["return_code"] == 0
+    assert observation["bounded"] is True
+
+
+def test_packaged_process_inventory_records_invalid_json_before_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    canary = "invalid-json-output-canary"
+
+    def invalid_json(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, canary, "")
+
+    monkeypatch.setattr(smoke.subprocess, "run", invalid_json)
+    with pytest.raises(smoke.PackagedProcessInventoryError):
+        smoke.snapshot_packaged_processes(
+            tmp_path / "AllTheContext.exe",
+            diagnostics_root=tmp_path / "diagnostics",
+        )
+
+    observation = _read_process_inventory_observation(tmp_path / "diagnostics")
+    assert observation["stage"] == "json"
+    assert observation["status"] == "failure"
+    assert observation["json_status"] == "invalid"
+    assert observation["identity_status"] == "not_run"
+    assert observation["item_count"] is None
+    assert canary not in json.dumps(observation)
+
+
+@pytest.mark.parametrize(
+    ("inventory", "identity_status"),
+    [
+        (
+            [{"pid": True, "creation_identity": "creation", "exe": "C:/wrong.exe"}],
+            "invalid",
+        ),
+        (
+            [
+                {"pid": 17, "creation_identity": "creation", "exe": "C:/wrong.exe"},
+                {"pid": 17, "creation_identity": "creation", "exe": "C:/wrong.exe"},
+            ],
+            "duplicate",
+        ),
+    ],
+)
+def test_packaged_process_inventory_records_identity_validation_before_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inventory: list[dict[str, object]],
+    identity_status: str,
+) -> None:
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    target = tmp_path / "AllTheContext.exe"
+    expected_executable = str(target.resolve())
+    if identity_status == "duplicate":
+        inventory = [
+            {"pid": 17, "creation_identity": "creation", "exe": expected_executable},
+            {"pid": 17, "creation_identity": "creation", "exe": expected_executable},
+        ]
+
+    def invalid_identity(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, json.dumps(inventory), "")
+
+    monkeypatch.setattr(smoke.subprocess, "run", invalid_identity)
+    with pytest.raises(smoke.PackagedProcessInventoryError):
+        smoke.snapshot_packaged_processes(target, diagnostics_root=tmp_path / "diagnostics")
+
+    observation = _read_process_inventory_observation(tmp_path / "diagnostics")
+    assert observation["stage"] == "identity"
+    assert observation["status"] == "failure"
+    assert observation["json_status"] == "valid"
+    assert observation["identity_status"] == identity_status
+    assert observation["item_count"] == len(inventory)
+    assert observation["return_code"] == 0
+
+
+def test_packaged_process_inventory_records_success_with_exact_closed_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    target = tmp_path / "AllTheContext.exe"
+    inventory = [{"pid": 17, "creation_identity": "creation-a", "exe": str(target.resolve())}]
+
+    def successful_inventory(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, json.dumps(inventory), "warning-canary")
+
+    monkeypatch.setattr(smoke.subprocess, "run", successful_inventory)
+    assert smoke.snapshot_packaged_processes(
+        target,
+        diagnostics_root=tmp_path / "diagnostics",
+    ) == ((17, "creation-a", str(target.resolve()).casefold()),)
+
+    observation = _read_process_inventory_observation(tmp_path / "diagnostics")
+    assert observation == {
+        "bounded": True,
+        "identity_status": "valid",
+        "item_count": 1,
+        "json_status": "valid",
+        "kind": "packaged-process-inventory",
+        "return_code": 0,
+        "stage": "complete",
+        "status": "pass",
+        "stderr_present": True,
+        "stdout_present": True,
+        "version": 1,
+    }
+
+
+def test_packaged_process_inventory_observation_never_retains_forbidden_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    target = tmp_path / "forbidden-path-canary.exe"
+    canaries = (
+        "forbidden-identity-canary",
+        "forbidden-command-canary",
+        "forbidden-output-canary",
+        "forbidden-environment-canary",
+        "forbidden-context-canary",
+    )
+    monkeypatch.setenv("FORBIDDEN_ENV", canaries[3])
+
+    def invalid_inventory(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        environment = kwargs.get("env")
+        assert isinstance(environment, dict)
+        assert environment.get("FORBIDDEN_ENV") == canaries[3]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps({"identity": canaries[0], "context": canaries[4]}),
+            canaries[2],
+        )
+
+    monkeypatch.setattr(smoke.subprocess, "run", invalid_inventory)
+    with pytest.raises(smoke.PackagedProcessInventoryError) as raised:
+        smoke.snapshot_packaged_processes(target, diagnostics_root=tmp_path / "diagnostics")
+
+    observation = _read_process_inventory_observation(tmp_path / "diagnostics")
+    rendered = json.dumps(observation)
+    assert set(observation) == smoke._PROCESS_INVENTORY_OBSERVATION_FIELDS
+    for canary in canaries:
+        assert canary not in rendered
+    assert all(canary not in file.name for file in (tmp_path / "diagnostics").iterdir())
+    assert canaries[1] not in str(raised.value)
+
+
+def test_packaged_process_inventory_observation_schema_rejects_unbounded_values() -> None:
+    valid = smoke.build_packaged_process_inventory_observation(
+        status="pass",
+        stage="complete",
+        return_code=0,
+        stdout_present=False,
+        stderr_present=False,
+        json_status="valid",
+        identity_status="valid",
+        item_count=0,
+    )
+    for field, value in (("item_count", 65), ("return_code", 4_294_967_296)):
+        invalid = dict(valid)
+        invalid[field] = value
+        with pytest.raises(ValueError):
+            smoke.validate_packaged_process_inventory_observation(invalid)
+
+
 def test_packaged_uninstall_process_check_accepts_preexisting_core(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

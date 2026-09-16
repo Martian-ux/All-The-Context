@@ -1,5 +1,29 @@
 # Architecture decisions
 
+## ADR-215: Retain only bounded packaged process-inventory observations
+
+**Status:** implemented locally on 2026-09-16; maintained-native focused,
+static, hosted, and downstream release validation remain required.
+
+The packaged Windows first-run smoke records one content-free JSON observation
+for each native PowerShell/CIM process-inventory attempt, before returning a
+snapshot or raising its existing fail-closed error. The closed schema is
+version `1`, kind `packaged-process-inventory`, a pass/failure status, one of
+the six launch/timeout/child-exit/JSON/identity/complete stages, a bounded
+return code or null, boolean stdout/stderr presence, closed JSON and identity
+statuses, an item count from zero through 64 or null, and `bounded: true`.
+No path, process identity, command, stream, exception, environment, personal
+context, credential, or secret is retained.
+
+The Windows desktop workflow gives the smoke a dedicated directory and always
+uploads only those JSON observations with the existing pinned artifact action;
+missing observations fail the upload. The local probe calls the same
+PowerShell/CIM implementation. Inventory bounds, identity validation and
+duplication, launch/timeout/child-exit branches, success, and forbidden-data
+non-retention are covered deterministically. Existing inventory safety,
+modal/process ownership, cleanup, install/vault preservation, security, and
+uninstall behavior are unchanged.
+
 ## ADR-211: Combined integration preserves bounded evidence and fail-closed gates
 
 **Status:** accepted locally on 2026-09-06 for source checkpoint

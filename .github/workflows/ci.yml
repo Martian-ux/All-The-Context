@@ -315,8 +315,22 @@ jobs:
         run: python scripts/smoke_desktop_artifact.py
       - name: Smoke packaged console recovery from built bytes
         run: python scripts/smoke_packaged_recovery.py
+      - name: Prepare Windows packaged process-inventory diagnostics
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $diagnostics = Join-Path $env:RUNNER_TEMP 'packaged-first-run-process-inventory'
+          New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
+          "ATC_PACKAGED_PROCESS_INVENTORY_DIAGNOSTICS_DIR=$diagnostics" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Clean-install, startup, MCP, restart, and cleanup smoke
         run: python scripts/smoke_packaged_first_run.py
+      - name: Upload packaged first-run process-inventory diagnostics
+        if: ${{ always() && runner.os == 'Windows' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: packaged-first-run-process-inventory-windows
+          path: ${{ runner.temp }}/packaged-first-run-process-inventory/*.json
+          if-no-files-found: error
       - id: runtime-version
         name: Read runtime version
         shell: python
