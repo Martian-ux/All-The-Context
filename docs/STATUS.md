@@ -5006,3 +5006,32 @@ regression coordinates two `ArchiveImportService` workers at the committed
 publication boundary and covers delayed processing and failure lifecycle
 writes. Maintained-native focused/static/full validation remains pending; this
 source checkpoint is not release or publication acceptance.
+
+## Windows hosted lifecycle/capture repair (2026-09-16)
+
+Packaged provider acceptance now confines the Core import to a helper scope so
+the Core object graph is released before cleanup. Owned-root removal retries
+only Windows sharing/access contention (Win32 5/32) for a bounded 30 x 100 ms;
+the exact owned root remains the only target and the final failure still emits
+`data_dir_cleanup_failed`. Native instrumentation observed no live scheduler
+thread or operation observer at Core close; this checkout's disposable
+directories still hit its inherited WinError 5 ACL, so that local cleanup
+result is environment-blocked rather than product proof.
+
+The Windows uninstall helper retains exact-root/minimum-depth validation,
+stable parent cwd, PID-bound `Wait-Process`, no-console/process-group flags,
+and its 300 x 100 ms retry contract, while adding
+`CREATE_BREAKAWAY_FROM_JOB` for short-lived hosted/xdist callers in a
+kill-on-close job. A direct short-lived Python-to-PowerShell boundary was
+exercised locally; the exact hosted reproduction remains owned by maintained
+native validation.
+
+Core scheduler status now exposes a content-free monotonic
+`completed_cycle_count`; the worker no longer records a successful cycle twice.
+Packet G waits for that cycle boundary before asserting the intentionally
+transitional source fields, preserving the `reconciling` to `enabled`
+fail-closed transition, retrieval truth, restart semantics, and no-dashboard
+contract. Direct scheduler/Packet G assertions passed. The exact three-node
+pytest command was attempted with the pinned interpreter but was blocked by
+the checkout-owned basetemp ACL; no full suite or maintained-native static
+gate was run here.

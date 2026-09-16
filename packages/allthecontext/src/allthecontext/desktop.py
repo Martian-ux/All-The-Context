@@ -1601,10 +1601,15 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
-        # Keep the helper console-free and in its own process group. On
-        # Windows, DETACHED_PROCESS can return zero without running this
-        # PowerShell command when combined with these flags.
-        creationflags=windows_creation_flags("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"),
+        # Keep the helper console-free and in its own process group. A hosted
+        # xdist worker can itself be inside a kill-on-close job, so request a
+        # breakaway process for the helper that must outlive this short-lived
+        # caller. On Windows this is ignored outside a job and is accepted by
+        # jobs that permit descendants to detach; refusal fails the uninstall
+        # launch rather than silently leaving an unowned cleanup process.
+        creationflags=windows_creation_flags(
+            "CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP", "CREATE_BREAKAWAY_FROM_JOB"
+        ),
         # The real Start Menu uninstall shortcut starts inside install_dir.
         # A process cannot remove its own current directory on Windows, so the
         # cleanup helper must explicitly run from the stable parent.

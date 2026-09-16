@@ -68,24 +68,32 @@ def _wait_for_capture(
     source_id: str,
     clock: MutableClock,
     *,
+    minimum_completed_cycle: int,
     current_items: int,
     deleted_items: int = 0,
 ) -> None:
     expected_last_run_at = clock()
 
-    def captured() -> bool:
-        source = service.capture.get_source(source_id)
+    def cycle_completed() -> bool:
         return (
-            source.lifecycle_state == "enabled"
-            and source.next_retry_at is None
-            and source.last_error_code is None
-            and source.last_run_at == expected_last_run_at
-            and len(current_truth(service).items) == current_items
-            and len(deleted_truth(service).items) == deleted_items
-            and search(service.retrieval).total == current_items
+            service.capture_scheduler.status()["completed_cycle_count"] >= minimum_completed_cycle
         )
 
-    _wait_until(captured)
+    _wait_until(cycle_completed)
+
+    source = service.capture.get_source(source_id)
+    assert source.lifecycle_state == "enabled"
+    assert source.next_retry_at is None
+    assert source.last_error_code is None
+    assert source.last_run_at == expected_last_run_at
+    assert len(current_truth(service).items) == current_items
+    assert len(deleted_truth(service).items) == deleted_items
+    assert search(service.retrieval).total == current_items
+
+
+def _capture_cycle_boundary(service: CoreService) -> int:
+    status = service.capture_scheduler.status()
+    return int(status["completed_cycle_count"]) + 1
 
 
 def _compile(
@@ -143,9 +151,16 @@ def test_worker_capture_resumes_into_pre_generation_context_without_dashboard(
             core_config,
             workspace,
         )
+        initial_cycle = _capture_cycle_boundary(service)
         enabled_status = service.capture_scheduler.enable()
         assert enabled_status["running"] is True
-        _wait_for_capture(service, source_id, clock, current_items=4)
+        _wait_for_capture(
+            service,
+            source_id,
+            clock,
+            minimum_completed_cycle=initial_cycle,
+            current_items=4,
+        )
 
         initial = current_truth(service)
         initial_ids = {item.record.id for item in initial.items}
@@ -216,12 +231,14 @@ def test_worker_capture_resumes_into_pre_generation_context_without_dashboard(
             encoding="utf-8",
             newline="\n",
         )
+        update_cycle = _capture_cycle_boundary(restarted)
         clock.advance(interval)
         restarted.capture_scheduler._wakeup.set()
         _wait_for_capture(
             restarted,
             source_id,
             clock,
+            minimum_completed_cycle=update_cycle,
             current_items=3,
             deleted_items=1,
         )

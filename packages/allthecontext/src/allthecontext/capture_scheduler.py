@@ -740,6 +740,7 @@ class CoreCaptureScheduler:
         self._worker_failure_generation: int | None = None
         self._worker_restart_count = 0
         self._last_cycle_reason_code: str | None = None
+        self._completed_cycle_count = 0
         self._adapter_refresh_state: Literal["not_attempted", "available", "unavailable"] = (
             "not_attempted"
         )
@@ -760,6 +761,7 @@ class CoreCaptureScheduler:
         worker_failure_generation: int | None = None
         worker_restart_count = 0
         last_cycle_reason_code: str | None = None
+        completed_cycle_count = 0
         adapter_refresh_state: Literal["not_attempted", "available", "unavailable"] = (
             "not_attempted"
         )
@@ -773,6 +775,7 @@ class CoreCaptureScheduler:
                 worker_failure_generation = self._worker_failure_generation
                 worker_restart_count = self._worker_restart_count
                 last_cycle_reason_code = self._last_cycle_reason_code
+                completed_cycle_count = self._completed_cycle_count
                 adapter_refresh_state = self._adapter_refresh_state
                 closing = self._closing.is_set()
             payload = capture_scheduler_status_payload(
@@ -782,6 +785,7 @@ class CoreCaptureScheduler:
             payload.update(
                 {
                     "adapter_refresh_state": adapter_refresh_state,
+                    "completed_cycle_count": completed_cycle_count,
                     "last_cycle_reason_code": last_cycle_reason_code,
                     "worker_failure_code": worker_failure_code,
                     "worker_failure_generation": worker_failure_generation,
@@ -805,6 +809,7 @@ class CoreCaptureScheduler:
                 worker_generation=worker_generation,
                 worker_failure_generation=worker_failure_generation,
                 worker_restart_count=worker_restart_count,
+                completed_cycle_count=completed_cycle_count,
                 last_cycle_reason_code=last_cycle_reason_code or RUNTIME_READINESS_ERROR_CODE,
                 adapter_refresh_state=adapter_refresh_state,
             )
@@ -818,6 +823,7 @@ class CoreCaptureScheduler:
         worker_generation: int,
         worker_failure_generation: int | None,
         worker_restart_count: int,
+        completed_cycle_count: int,
         last_cycle_reason_code: str | None,
         adapter_refresh_state: Literal["not_attempted", "available", "unavailable"],
     ) -> dict[str, Any]:
@@ -826,6 +832,7 @@ class CoreCaptureScheduler:
         return {
             "adapter_refresh_state": adapter_refresh_state,
             "config_valid": False,
+            "completed_cycle_count": completed_cycle_count,
             "dispatch_allowed": False,
             "durable_enabled": False,
             "enabled": False,
@@ -900,6 +907,7 @@ class CoreCaptureScheduler:
                 worker_generation=0,
                 worker_failure_generation=None,
                 worker_restart_count=0,
+                completed_cycle_count=0,
                 last_cycle_reason_code=RUNTIME_READINESS_ERROR_CODE,
                 adapter_refresh_state="not_attempted",
             )
@@ -1177,7 +1185,9 @@ class CoreCaptureScheduler:
             reason for connector in report.health.connectors for reason in connector.reason_codes
         )
         reason_code = sorted(reason_codes)[0] if reason_codes else None
-        self._record_cycle_reason(reason_code)
+        with self._lifecycle_lock:
+            self._last_cycle_reason_code = reason_code
+            self._completed_cycle_count += 1
 
     def _try_exit(self) -> bool:
         with self._lifecycle_lock:
@@ -1244,7 +1254,7 @@ class CoreCaptureScheduler:
                     return
                 try:
                     if self.dispatch_allowed():
-                        self._record_cycle_report(self.run_cycle())
+                        self.run_cycle()
                 except sqlite3.OperationalError as error:
                     if not _is_transient_sqlite_contention(error):
                         self._record_worker_failure(error, generation=generation, current=current)

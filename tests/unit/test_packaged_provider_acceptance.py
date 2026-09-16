@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import weakref
 import zipfile
 from pathlib import Path
 from typing import Any, Literal
@@ -658,6 +660,7 @@ def test_packaged_surface_closes_owned_core_before_rmtree(
     report = tmp_path / "report.json"
     disposable = tmp_path / "owned-vault"
     events: list[str] = []
+    service_refs: list[weakref.ReferenceType[_ClosingFakeCore]] = []
 
     class _Ops:
         def import_path_via_operation(self, *_args: object, **_kwargs: object) -> dict[str, object]:
@@ -667,6 +670,7 @@ def test_packaged_surface_closes_owned_core_before_rmtree(
     class _Service(_ClosingFakeCore):
         def __init__(self, _config: object) -> None:
             self.import_operations = _Ops()
+            service_refs.append(weakref.ref(self))
 
         def close(self) -> None:
             events.append("close")
@@ -678,6 +682,7 @@ def test_packaged_surface_closes_owned_core_before_rmtree(
     def fake_rmtree(path: Path) -> None:
         events.append("rmtree")
         assert Path(path) == disposable
+        assert service_refs and service_refs[-1]() is None
 
     monkeypatch.setattr("allthecontext.packaged_provider_acceptance.CoreService", _Service)
     monkeypatch.setattr(
@@ -795,6 +800,47 @@ def test_packaged_surface_reports_cleanup_failure_after_close(
     assert payload["error_code"] == "data_dir_cleanup_failed"
     assert payload["status"] == "failed"
     assert payload["content_free"] is True
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows deletion semantics")
+def test_packaged_surface_converges_on_transient_owned_cleanup_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export = tmp_path / "conversations.json"
+    _chatgpt_export(export)
+    report = tmp_path / "report.json"
+    disposable = tmp_path / "owned-vault"
+    attempts: list[Path] = []
+
+    def fake_data_dir() -> Path:
+        disposable.mkdir()
+        return disposable
+
+    def fake_rmtree(path: Path) -> None:
+        attempts.append(Path(path))
+        if len(attempts) == 1:
+            error = PermissionError(32, "sharing violation")
+            error.winerror = 32
+            raise error
+        path.rmdir()
+
+    monkeypatch.setattr(
+        "allthecontext.packaged_provider_acceptance._make_temp_data_dir",
+        fake_data_dir,
+    )
+    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.shutil.rmtree", fake_rmtree)
+    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.time.sleep", lambda _: None)
+    assert (
+        run_packaged_provider_acceptance(
+            report_path=report,
+            export_path=export,
+            provider="chatgpt",
+        )
+        == 0
+    )
+    assert attempts == [disposable, disposable]
+    assert not disposable.exists()
+    assert json.loads(report.read_text(encoding="utf-8"))["status"] == "complete"
 
 
 def test_core_store_close_is_idempotent_and_allows_reuse(tmp_path: Path) -> None:

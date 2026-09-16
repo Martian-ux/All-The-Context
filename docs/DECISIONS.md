@@ -6780,3 +6780,33 @@ after the canonical publication transaction commits. It proves both delayed
 processing and failure writes preserve the returned source views, shared
 session/batch/candidate identity, and publication marker. No process-local
 serialization, timing retry, parser change, or observer change is introduced.
+
+## ADR-216: Windows lifecycle repairs converge only owned transient boundaries
+
+**Status:** implemented locally on 2026-09-16; maintained-native focused,
+static, full-suite, and hosted validation remain required.
+
+The hosted Windows failures had three distinct boundaries. Packaged import
+instrumentation showed Core close with no live scheduler thread or current
+operation observer; the remaining local deletion failure was the host's
+inherited WinError 5 ACL. The packaged path now releases the whole Core import
+scope before attempting its disposable root and retries only Win32 sharing or
+access contention for a fixed bound. It never retries other errors, targets a
+caller-supplied data directory, or converts a final cleanup failure into
+success.
+
+The short-lived uninstall test exercises Python -> PowerShell, while the
+hosted/xdist caller can inherit a kill-on-close job that the previous
+no-console/process-group flags did not escape. The helper therefore requests
+`CREATE_BREAKAWAY_FROM_JOB` while retaining the exact validated root, parent
+cwd, caller PID wait, detached ownership, and 300-attempt removal bound. A
+local short-lived boundary was run directly; hosted job behavior is not
+claimed from that passing local run.
+
+Packet G's first capture exposed a real transitional predicate: retrieval and
+`last_run_at` became visible while the source lifecycle was still
+`reconciling`. That source transition remains unchanged. A content-free
+completed-cycle counter is published under the scheduler lifecycle lock, and
+the worker no longer double-records a cycle. The acceptance waits for the
+counter boundary, then checks the existing final source/retrieval invariants;
+the five-second timeout is unchanged.
