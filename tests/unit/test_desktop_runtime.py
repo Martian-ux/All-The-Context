@@ -435,9 +435,7 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert "Remove-Item" in script
     assert "-ErrorAction Stop" in script
     assert f"Start-Sleep -Milliseconds {WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS}" in script
-    assert requested_flags == [
-        ("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP", "CREATE_BREAKAWAY_FROM_JOB")
-    ]
+    assert requested_flags == [("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP")]
     assert kwargs["creationflags"] == 0xA5
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["stdout"] is subprocess.DEVNULL

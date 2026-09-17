@@ -6795,13 +6795,16 @@ access contention for a fixed bound. It never retries other errors, targets a
 caller-supplied data directory, or converts a final cleanup failure into
 success.
 
-The short-lived uninstall test exercises Python -> PowerShell, while the
-hosted/xdist caller can inherit a kill-on-close job that the previous
-no-console/process-group flags did not escape. The helper therefore requests
-`CREATE_BREAKAWAY_FROM_JOB` while retaining the exact validated root, parent
-cwd, caller PID wait, detached ownership, and 300-attempt removal bound. A
-local short-lived boundary was run directly; hosted job behavior is not
-claimed from that passing local run.
+The short-lived uninstall test exercises Python -> PowerShell and retains the
+exact validated root, parent cwd, caller PID wait, detached ownership, and
+300-attempt removal bound. The later hosted run `35160925162` proved that the
+unconditional `CREATE_BREAKAWAY_FROM_JOB` addition was incompatible with the
+runner job: `CreateProcess` failed with WinError 5. The helper therefore keeps
+only `CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP`, uses one launch attempt,
+and leaves launch or cleanup failures visible. The setup smoke's
+`perform_setup` failure ended after an `installed_runtime_assembly` progress
+marker; that marker did not establish a setup launch-flag cause, so its flags
+remain unchanged.
 
 Packet G's first capture exposed a real transitional predicate: retrieval and
 `last_run_at` became visible while the source lifecycle was still
@@ -6810,3 +6813,26 @@ completed-cycle counter is published under the scheduler lifecycle lock, and
 the worker no longer double-records a cycle. The acceptance waits for the
 counter boundary, then checks the existing final source/retrieval invariants;
 the five-second timeout is unchanged.
+
+## ADR-217: Hosted Windows launch compatibility and first-run failure custody
+
+**Status:** repaired locally on 2026-09-17 from hosted run `35160925162`;
+focused validation and maintained-native hosted acceptance remain required.
+
+The Windows uninstall helper must launch inside the supported runner job. The
+hosted shard-0 trace showed that unconditional `CREATE_BREAKAWAY_FROM_JOB`
+caused `CreateProcess` to return WinError 5. The compatible contract uses only
+`CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP` with the existing exact-root,
+stable-parent, caller-PID wait, one-attempt launch, and bounded cleanup
+behavior. It has no retry fallback, swallowed launch error, timing extension,
+or broader deletion target.
+
+The desktop smoke's `perform_setup` failure is primary; its
+`installed_runtime_assembly` value is only the last recorded progress
+subphase. Setup launch flags are unchanged because the retained source and
+tests do not tie that marker to a launch failure. A separate absolute
+`--failure-diagnostics-dir` and CI environment binding retain the existing
+allowlisted closed failure summary. The failure artifact is always attempted
+with missing files ignored, while process-inventory upload remains required
+only after a passing smoke, so secondary artifact absence cannot obscure the
+primary stage.

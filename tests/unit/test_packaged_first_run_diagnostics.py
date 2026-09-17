@@ -482,6 +482,78 @@ def test_failure_summary_contains_malformed_and_oversized_reports_without_escape
     assert oversized_canary not in serialized
 
 
+def test_failure_diagnostics_directory_surface_is_absolute_and_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["smoke_packaged_first_run.py", "--failure-diagnostics-dir", str(tmp_path)],
+    )
+    parsed = smoke._parse_arguments()
+    assert parsed.failure_diagnostics_dir == tmp_path
+
+    resolved = smoke._resolve_diagnostics_directory(
+        tmp_path / "failure-diagnostics",
+        default=tmp_path / "unused-default",
+        label="failure",
+    )
+    assert resolved == (tmp_path / "failure-diagnostics").resolve()
+
+    with pytest.raises(SystemExit, match="failure diagnostics directory must be absolute"):
+        smoke._resolve_diagnostics_directory(
+            Path("relative-diagnostics"),
+            default=tmp_path / "unused-default",
+            label="failure",
+        )
+
+
+def test_failure_diagnostics_summary_is_retained_in_the_dedicated_root(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    dedicated = tmp_path / "failure-diagnostics"
+    report = work / "setup-report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "setup": "failed",
+                "error_type": "OSError",
+                "error_code": "setup_io_error",
+                "setup_stage": "perform_setup",
+                "setup_subphase": "installed_runtime_assembly",
+                "error": f"token={TOKEN_CANARY} path={PATH_CANARY}",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    target = smoke.emit_failure_diagnostics(
+        phase="headless first-run setup",
+        return_code=1,
+        work=work,
+        diagnostics_root=smoke._resolve_diagnostics_directory(
+            dedicated,
+            default=tmp_path / "unused-default",
+            label="failure",
+        ),
+        report_path=report,
+        stderr_present=True,
+        detail="subprocess_nonzero",
+    )
+
+    assert target.parent == dedicated.resolve()
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "failed"
+    assert payload["phase"] == "headless first-run setup"
+    assert payload["setup_report"]["setup_stage"] == "perform_setup"
+    assert payload["setup_report"]["setup_subphase"] == "installed_runtime_assembly"
+    serialized = target.read_text(encoding="utf-8")
+    assert TOKEN_CANARY not in serialized
+    assert PATH_CANARY not in serialized
+
+
 def test_failure_summary_contains_integer_limited_report_without_escape(tmp_path: Path) -> None:
     work = tmp_path / "work"
     work.mkdir()

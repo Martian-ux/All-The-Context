@@ -45,12 +45,13 @@ validation status, a zero-through-64 item count, and `bounded: true`. Paths,
 process identities, commands, streams, exceptions, environment values,
 personal context, and secrets are never serialized.
 
-The Windows desktop workflow prepares a dedicated diagnostics directory and
-always uploads only its JSON observations as
-`packaged-first-run-process-inventory-windows`; missing files fail the pinned
-artifact upload. The committed local probe uses the same PowerShell/CIM
-implementation and accepts the maintained native `--output` contract by
-atomically publishing one observation for the active pinned interpreter.
+The Windows desktop workflow prepares dedicated failure-summary and
+process-inventory directories. It always uploads the content-free failure
+summary with missing files ignored so a passing smoke remains green, while the
+process-inventory artifact remains required only after a passing smoke. The
+committed local probe uses the same PowerShell/CIM implementation and accepts
+the maintained native `--output` contract by atomically publishing one bounded
+observation for the active pinned interpreter.
 Launch, timeout, child-exit, JSON-bound, identity, success, schema-bound, and
 non-retention regressions are deterministic unit coverage. Existing inventory,
 modal/process ownership, cleanup,
@@ -5020,11 +5021,13 @@ result is environment-blocked rather than product proof.
 
 The Windows uninstall helper retains exact-root/minimum-depth validation,
 stable parent cwd, PID-bound `Wait-Process`, no-console/process-group flags,
-and its 300 x 100 ms retry contract, while adding
-`CREATE_BREAKAWAY_FROM_JOB` for short-lived hosted/xdist callers in a
-kill-on-close job. A direct short-lived Python-to-PowerShell boundary was
-exercised locally; the exact hosted reproduction remains owned by maintained
-native validation.
+and its 300 x 100 ms retry contract. The hosted run showed that the added
+`CREATE_BREAKAWAY_FROM_JOB` flag made `CreateProcess` fail with WinError 5, so
+the helper now stays in the compatible caller job with one launch attempt and
+no fallback. The setup record's `perform_setup` failure and
+`installed_runtime_assembly` last-progress marker did not establish a setup
+launch-flag cause, so setup flags are unchanged. Maintained-native hosted
+validation remains required.
 
 Core scheduler status now exposes a content-free monotonic
 `completed_cycle_count`; the worker no longer records a successful cycle twice.
@@ -5035,3 +5038,23 @@ contract. Direct scheduler/Packet G assertions passed. The exact three-node
 pytest command was attempted with the pinned interpreter but was blocked by
 the checkout-owned basetemp ACL; no full suite or maintained-native static
 gate was run here.
+
+## Windows hosted process launch and setup diagnostics repair (2026-09-17)
+
+Hosted run `35160925162` is the source of truth for this correction. Its
+Windows shard-0 failure was the uninstall helper's unconditional
+`CREATE_BREAKAWAY_FROM_JOB`, rejected by `CreateProcess` with WinError 5. The
+helper now requests only `CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP`; it
+keeps the exact install-root validation, stable parent working directory,
+caller-PID wait, single launch boundary, and bounded 300-attempt cleanup.
+
+The same run's desktop smoke failed in `perform_setup`; the recorded
+`installed_runtime_assembly` value was only the last progress subphase. No
+source or test evidence connected that marker to setup launch flags, so the
+existing setup launch contract remains unchanged. The new absolute
+`--failure-diagnostics-dir` surface and CI environment binding retain the
+existing allowlisted, content-free first-run failure summary. CI uploads that
+summary on every Windows desktop outcome and skips the process-inventory
+upload after an earlier smoke failure; a passing smoke still requires the
+process-inventory JSON artifact. Missing diagnostic artifacts are therefore
+secondary and cannot replace the primary setup or launch stage.

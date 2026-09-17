@@ -158,6 +158,7 @@ _MAX_PACKAGED_PROCESS_INVENTORY = 64
 _MAX_PACKAGED_PROCESS_INVENTORY_JSON_BYTES = 64 * 1024
 _MAX_PACKAGED_PROCESS_RETURN_CODE = 4_294_967_295
 _PROCESS_INVENTORY_DIAGNOSTICS_ENV = "ATC_PACKAGED_PROCESS_INVENTORY_DIAGNOSTICS_DIR"
+_FAILURE_DIAGNOSTICS_ENV = "ATC_PACKAGED_FAILURE_DIAGNOSTICS_DIR"
 _PROCESS_INVENTORY_OBSERVATION_FIELDS = frozenset(
     {
         "version",
@@ -1306,6 +1307,20 @@ def write_failure_diagnostic_summary(
     return target
 
 
+def _resolve_diagnostics_directory(
+    configured: Path | str | None,
+    *,
+    default: Path,
+    label: str,
+) -> Path:
+    """Resolve an externally retained diagnostics directory without accepting relative paths."""
+
+    root = default if configured is None else Path(configured).expanduser()
+    if not root.is_absolute():
+        raise SystemExit(f"{label} diagnostics directory must be absolute")
+    return root.resolve()
+
+
 def _validate_process_classification(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {
         "status",
@@ -1667,6 +1682,12 @@ def _parse_arguments() -> argparse.Namespace:
         type=Path,
         help="dedicated directory for content-free Windows process observations",
     )
+    parser.add_argument(
+        "--failure-diagnostics-dir",
+        dest="failure_diagnostics_dir",
+        type=Path,
+        help="dedicated directory for content-free first-run failure summaries",
+    )
     return parser.parse_args()
 
 
@@ -1679,25 +1700,45 @@ def main() -> int:
 
     temp_parent = packaged_smoke_parent()
     temp_parent.mkdir(parents=True, exist_ok=True)
-    # Disposable work holds credentials/vault/binaries and is always removed.
-    work = Path(tempfile.mkdtemp(prefix="packaged-first-run-", dir=temp_parent))
-    # Content-free failure summaries live outside the work tree in a run-unique
-    # directory and never hold secrets or disposable process identities.
-    diagnostics_root = temp_parent / f"packaged-first-run-diagnostics-{work.name}"
-    diagnostics_root.mkdir(parents=True, exist_ok=True)
+    configured_failure_root = arguments.failure_diagnostics_dir or os.environ.get(
+        _FAILURE_DIAGNOSTICS_ENV
+    )
+    failure_root_override = (
+        _resolve_diagnostics_directory(
+            configured_failure_root,
+            default=temp_parent / "packaged-first-run-failure-diagnostics",
+            label="failure",
+        )
+        if configured_failure_root is not None
+        else None
+    )
     configured_process_inventory_root = (
         arguments.process_inventory_diagnostics_dir
         or os.environ.get(_PROCESS_INVENTORY_DIAGNOSTICS_ENV)
     )
-    if configured_process_inventory_root is None:
+    process_inventory_root_override = (
+        _resolve_diagnostics_directory(
+            configured_process_inventory_root,
+            default=temp_parent / "packaged-first-run-process-inventory",
+            label="process-inventory",
+        )
+        if configured_process_inventory_root is not None
+        else None
+    )
+    # Disposable work holds credentials/vault/binaries and is always removed.
+    work = Path(tempfile.mkdtemp(prefix="packaged-first-run-", dir=temp_parent))
+    # Content-free failure summaries live outside the work tree in a run-unique
+    # directory and never hold secrets or disposable process identities.
+    diagnostics_root = failure_root_override or temp_parent / (
+        f"packaged-first-run-diagnostics-{work.name}"
+    )
+    diagnostics_root.mkdir(parents=True, exist_ok=True)
+    if process_inventory_root_override is None:
         process_inventory_diagnostics_root = (
             temp_parent / f"packaged-first-run-process-inventory-{work.name}"
         )
     else:
-        process_inventory_diagnostics_root = Path(configured_process_inventory_root).expanduser()
-        if not process_inventory_diagnostics_root.is_absolute():
-            raise SystemExit("process-inventory diagnostics directory must be absolute")
-        process_inventory_diagnostics_root = process_inventory_diagnostics_root.resolve()
+        process_inventory_diagnostics_root = process_inventory_root_override
     if system == "Windows":
         process_inventory_diagnostics_root.mkdir(parents=True, exist_ok=True)
     data_dir = work / "data"
