@@ -1601,9 +1601,11 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
-        # Keep the helper console-free and in its own process group. On
-        # Windows, DETACHED_PROCESS can return zero without running this
-        # PowerShell command when combined with these flags.
+        # Keep the helper console-free and in its own process group. The
+        # hosted Windows job rejects CREATE_BREAKAWAY_FROM_JOB with WinError 5;
+        # keeping the helper in the caller's job is the compatible launch path.
+        # A launch error remains the uninstall failure and is never retried or
+        # converted into a successful cleanup result.
         creationflags=windows_creation_flags("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"),
         # The real Start Menu uninstall shortcut starts inside install_dir.
         # A process cannot remove its own current directory on Windows, so the

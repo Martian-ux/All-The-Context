@@ -1601,3 +1601,69 @@ The documentation link scanner skips the checkout-owned `.test-runs` pytest
 basetemp so invalid test output cannot be read as repository Markdown. Actual
 repository Markdown remains strict UTF-8 and missing local targets remain
 reported.
+
+### 2026-09-13 import-observer scheduling checkpoint repair
+
+The operation-owned streaming JSONL parser keeps its one-millisecond,
+one-MiB-cadence cooperative handoff but performs it after the checkpointed line
+has been parsed and consumed. The initial zero-byte checkpoint therefore gives
+a waiting observer a scheduling turn after the first record, before the next
+CPU-heavy checkpoint window. `tests/unit/test_core_importers.py::test_operation_jsonl_handoff_follows_checkpointed_line_consumption`,
+`test_streaming_jsonl_yields_to_operation_observer_under_cpu_pressure`, and
+`test_streaming_jsonl_does_not_pause_source_only_progress` cover ordering,
+authenticated durable observation under the adverse scheduler, and the
+source-only negative path. The wall-clock assertions and five-second liveness
+requirement are unchanged; downstream native full validation remains required.
+
+### 2026-09-13 provider rebuild canonical-state race repair
+
+Source-only rebuild progress and lifecycle writes are bound to the durable
+rebuild generation in `ArchiveImportService`,
+`CoreStore.update_source_progress`, and `CoreStore.update_source_import`. A
+stale sibling processing heartbeat, terminal cleanup, or metadata write cannot
+reopen a source after the shared generation is terminal or replace current
+generation state. Published generations retain their explicit idempotent
+resume; failed or cancelled unpublished generations advance before retry, and
+complete, failed, and cancelled rows remain authoritative against later
+same-generation success. The existing
+`tests/unit/test_provider_ingestion.py::test_concurrent_incomplete_coverage_repairs_are_idempotent`
+regression continues to require two successful returns with complete source
+status, one shared session and candidate set, generation-one publication, and
+preserved source candidates. The deterministic
+`test_rebuild_generation_writes_preserve_terminal_source_state` and
+`test_stale_rebuild_generation_writes_cannot_overwrite_new_generation`
+regressions cover terminal and superseded-generation writes. This is
+source-level repair evidence only; the next maintained-native focused/static/full
+validation remains required.
+
+### 2026-09-15 provider publication-binding repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Provider rebuild publication binding | `CoreStore.update_source_import`; `tests/unit/test_provider_ingestion.py::test_post_publication_stale_rebuild_snapshot_is_bound_to_canonical_state` | Implemented at the transactional source boundary. A committed current-generation publication generation/session/marker survives same-generation sibling processing and terminal failure/cancellation snapshots; completion requires the matching current publication. The regression covers deterministic two-worker delayed-processing and failure ordering, shared idempotent session/candidate identity, and both source views. |
+| Preserved lifecycle and security boundaries | Existing terminal/superseded guards, `ArchiveImportService` idempotent rebuild path, atomic `publish_source_rebuild`, canonical candidate identity and existing security/context tests | Preserved by the narrow source/test change. No process-local serialization, timing retry, observer change, parser trust change, or release/publication claim is introduced. Maintained-native focused/static/full validation and downstream gates remain required. |
+
+### 2026-09-16 packaged process-inventory diagnostic contract
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Exact content-free inventory observation | `scripts/smoke_packaged_first_run.py::build_packaged_process_inventory_observation`; `validate_packaged_process_inventory_observation`; `write_packaged_process_inventory_observation` | Implemented at source level. Every Windows inventory attempt records exactly the closed version/kind/status/stage/return-code/stream-presence/JSON-status/identity-status/item-count/bounded schema. Values are allowlisted and bounded; no process data or free text is retained. |
+| Fail-closed inventory branch coverage | `scripts/smoke_packaged_first_run.py::_inventory_packaged_processes`; `tests/unit/test_packaged_first_run_diagnostics.py` launch, timeout, child-exit, JSON-bound, identity, success, schema-bound, and non-retention tests | Implemented at source-test level. Each launch, timeout, child exit, JSON, identity, duplicate, and successful completion branch writes its observation before its existing return/raise boundary. Inventory and process-ownership decisions remain unchanged. |
+| Windows diagnostic custody | `.github/workflows/ci.yml`; `scripts/probe_packaged_process_inventory.py`; `tests/unit/test_packaged_first_run_diagnostics.py::test_process_inventory_probe_accepts_native_output_contract`; `tests/unit/test_release_workflow_contracts.py::test_ci_packaged_failure_artifact_cannot_mask_an_early_smoke_failure` | Implemented at source level. Windows desktop smoke writes a dedicated absolute failure-summary directory and a process-inventory directory. The failure JSON is always uploaded with missing files ignored; process-inventory JSON remains a required upload after a passing smoke and is skipped after an earlier failure. The local probe reuses the same PowerShell/CIM implementation and its native `--output` mode atomically publishes one bounded observation for the active pinned interpreter. Hosted, artifact, and release acceptance remain separate. |
+
+### 2026-09-16 Windows lifecycle/capture repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Owned packaged-provider cleanup | `packages/allthecontext/src/allthecontext/packaged_provider_acceptance.py::_run_packaged_import`; `_remove_owned_data_dir`; `tests/unit/test_packaged_provider_acceptance.py` cleanup regressions | Implemented locally. Core import scope ends before owned cleanup; only Win32 5/32 deletion contention receives bounded 30 x 100 ms convergence. Caller-owned `data_dir` is never removed, other errors remain fail-closed, and the final report remains `data_dir_cleanup_failed`. Instrumentation found no live scheduler/observer handle at Core close; this host's inherited WinError 5 ACL prevented native disposable-root cleanup proof. |
+| Short-lived Windows uninstaller | `packages/allthecontext/src/allthecontext/desktop.py::_schedule_windows_install_removal`; `tests/unit/test_desktop_runtime.py` flag/process-boundary regressions | Implemented locally. Exact resolved-root/minimum-depth validation, parent cwd, caller PID wait, no-console/process-group ownership, one launch attempt, and 300 x 100 ms removal retries remain. Hosted run `35160925162` showed unconditional `CREATE_BREAKAWAY_FROM_JOB` was rejected with WinError 5, so the helper uses only the host-compatible no-console/process-group flags. Maintained-native hosted job validation remains required. |
+| Packet G scheduler synchronization | `packages/allthecontext/src/allthecontext/capture_scheduler.py::CoreCaptureScheduler`; `tests/unit/test_packet_g_worker_acceptance.py`; `tests/unit/test_capture_scheduler_productization.py` | Implemented locally. `completed_cycle_count` is monotonic and content-free under the lifecycle lock, successful worker cycles are recorded once, and Packet G synchronizes to that boundary before asserting final lifecycle/retrieval truth. The source's intentional `reconciling` -> `enabled` transition, restart, scheduler ownership, five-second timeout, and zero-dashboard assertion remain intact. Direct scheduler/Packet G assertions passed. |
+| Validation boundary | Pinned exact-node pytest command with `-p no:cacheprovider` and checkout-owned unique basetemp | The three exact nodes were attempted but all errored during fixture/basetemp setup because this checkout host denied the run-owned directory with WinError 5; session cleanup hit the same ACL. Narrow AST, Ruff, and Ruff-format checks passed; no full pytest or mypy/maintained-native static gate was run in this worker. |
+
+### 2026-09-17 hosted process launch/setup diagnostics repair
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Host/job-compatible uninstall launch | `packages/allthecontext/src/allthecontext/desktop.py::_schedule_windows_install_removal`; `tests/unit/test_desktop_runtime.py::test_windows_uninstall_retries_self_removal_after_bootloader_exits`; hosted truth `hosted-b16-exception-20260917/failed-jobs.log` | Corrected from hosted shard-0 run `35160925162`: unconditional `CREATE_BREAKAWAY_FROM_JOB` caused `CreateProcess` WinError 5. The helper now makes one compatible launch with `CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP`; exact-root cleanup and its bounded retry remain unchanged. |
+| Setup failure stage truth | `packages/allthecontext/src/allthecontext/desktop.py::_headless_setup`; `tests/unit/test_desktop_runtime.py::test_headless_setup_failure_reports_perform_setup_stage_without_error_text`; `HOSTED-FAILURE-TRUTH.md` | Preserved and clarified. `perform_setup` is the primary hosted setup stage; `installed_runtime_assembly` is only the last progress subphase. No setup launch-flag change is inferred without source/test cause. |
+| Dedicated first-run failure custody | `scripts/smoke_packaged_first_run.py::_resolve_diagnostics_directory`; `--failure-diagnostics-dir`; `.github/workflows/ci.yml`; `tests/unit/test_packaged_first_run_diagnostics.py::test_failure_diagnostics_summary_is_retained_in_the_dedicated_root`; `tests/unit/test_release_workflow_contracts.py::test_ci_packaged_failure_artifact_cannot_mask_an_early_smoke_failure` | Implemented at source/workflow level. Absolute configured paths retain only the existing closed outcome/error/stage summary. The dedicated upload always runs with `if-no-files-found: ignore`; process-inventory upload remains `error` only when the smoke passes, keeping an earlier setup or launch failure primary. |

@@ -1,5 +1,33 @@
 # Architecture decisions
 
+## ADR-215: Retain only bounded packaged process-inventory observations
+
+**Status:** implemented locally on 2026-09-16; maintained-native focused,
+static, hosted, and downstream release validation remain required.
+
+The packaged Windows first-run smoke records one content-free JSON observation
+for each native PowerShell/CIM process-inventory attempt, before returning a
+snapshot or raising its existing fail-closed error. The closed schema is
+version `1`, kind `packaged-process-inventory`, a pass/failure status, one of
+the six launch/timeout/child-exit/JSON/identity/complete stages, a bounded
+return code or null, boolean stdout/stderr presence, closed JSON and identity
+statuses, an item count from zero through 64 or null, and `bounded: true`.
+No path, process identity, command, stream, exception, environment, personal
+context, credential, or secret is retained.
+
+The Windows desktop workflow gives the smoke a dedicated directory and always
+uploads only those JSON observations with the existing pinned artifact action;
+missing observations fail the upload. The local probe calls the same
+PowerShell/CIM implementation. Its native-check `--output` mode uses the
+active pinned interpreter as the bounded host target and atomically publishes
+one observation at the requested path; explicit packaged-target mode remains
+available through `--executable` and `--diagnostics-dir`. Inventory bounds,
+identity validation and duplication, launch/timeout/child-exit branches,
+success, and forbidden-data non-retention are covered deterministically.
+Existing inventory safety,
+modal/process ownership, cleanup, install/vault preservation, security, and
+uninstall behavior are unchanged.
+
 ## ADR-211: Combined integration preserves bounded evidence and fail-closed gates
 
 **Status:** accepted locally on 2026-09-06 for source checkpoint
@@ -6690,3 +6718,121 @@ preimage, five-value compensation/recovery, registry ownership, shortcut and
 uninstall ownership, vault preservation, loopback binding, and closed
 diagnostics are unchanged. Native cross-version, independent review, and
 release gates remain separate evidence.
+
+## ADR-145: Operation JSONL handoff follows the checkpointed line
+
+**Status:** implemented locally on 2026-09-13 as a narrow repair to ADR-073;
+downstream native validation remains required.
+
+The operation-owned streaming JSONL parser retains the existing one-millisecond
+handoff and one-MiB checkpoint cadence, but performs the handoff after the line
+that triggered the checkpoint has been parsed and consumed. The initial
+checkpoint is intentionally at zero, so the first consumed line receives the
+handoff before another CPU-heavy JSONL window can run. Blank and malformed
+checkpointed lines also complete their classification before the handoff.
+This is a deterministic ordering contract, not a timing-threshold adjustment,
+retry, or per-record sleep.
+
+The handoff remains conditional on the operation liveness sink. Plain
+source-only parsing has no pause. Progress bytes and messages, the durable
+operation row, authenticated/revocation-checked observer selection, and the
+five-second liveness requirement are unchanged. This placement correction
+preserves ADR-073's operation-owned scheduling intent while ensuring the
+observer can receive the initial checkpoint's scheduling turn.
+
+## ADR-146: Rebuild progress cannot reopen a completed generation
+
+**Status:** implemented locally on 2026-09-13; downstream maintained-native
+validation remains required.
+
+Source-only provider rebuild trackers carry the rebuild generation into both
+their durable progress and source-lifecycle sinks. Core accepts a
+generation-bound write only for the current in-progress generation; delayed
+processing, terminal cleanup, and metadata writes from a terminal or older
+generation are ignored at the transactional storage boundary. A published
+generation may still be explicitly resumed through its existing idempotent
+session; a failed or cancelled unpublished generation is retried as a newer
+generation. Current-generation complete, failed, and cancelled rows are
+authoritative, so a later successful sibling does not supersede a failure.
+
+This is a stale-telemetry guard, not a process-local rebuild lock, parser
+retry, or test timing change. A sibling parser may still parse concurrently,
+while the existing idempotent session, batches, non-destructive publication
+ceremony, and terminal cleanup paths remain shared and unchanged.
+
+## ADR-214: Published rebuild bindings survive stale lifecycle snapshots
+
+**Status:** implemented locally on 2026-09-15; maintained-native focused,
+static, full-suite, and downstream release validation remain required.
+
+`CoreStore.update_source_import` now enforces the publication binding at the
+transactional storage boundary. Once the current rebuild generation has a
+valid published generation, session, and source marker, a same-generation
+processing snapshot from a sibling is ignored. A terminal failure or
+cancellation may still establish the current-generation terminal authority,
+but its metadata is merged with the durable publication fields. Completion is
+accepted only when the incoming generation, publication session, and marker
+match the current row. The existing authorized idempotent resume remains able
+to reopen a published in-progress generation and also preserves the binding.
+
+The service regression uses separate worker stores and an event released only
+after the canonical publication transaction commits. It proves both delayed
+processing and failure writes preserve the returned source views, shared
+session/batch/candidate identity, and publication marker. No process-local
+serialization, timing retry, parser change, or observer change is introduced.
+
+## ADR-216: Windows lifecycle repairs converge only owned transient boundaries
+
+**Status:** implemented locally on 2026-09-16; maintained-native focused,
+static, full-suite, and hosted validation remain required.
+
+The hosted Windows failures had three distinct boundaries. Packaged import
+instrumentation showed Core close with no live scheduler thread or current
+operation observer; the remaining local deletion failure was the host's
+inherited WinError 5 ACL. The packaged path now releases the whole Core import
+scope before attempting its disposable root and retries only Win32 sharing or
+access contention for a fixed bound. It never retries other errors, targets a
+caller-supplied data directory, or converts a final cleanup failure into
+success.
+
+The short-lived uninstall test exercises Python -> PowerShell and retains the
+exact validated root, parent cwd, caller PID wait, detached ownership, and
+300-attempt removal bound. The later hosted run `35160925162` proved that the
+unconditional `CREATE_BREAKAWAY_FROM_JOB` addition was incompatible with the
+runner job: `CreateProcess` failed with WinError 5. The helper therefore keeps
+only `CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP`, uses one launch attempt,
+and leaves launch or cleanup failures visible. The setup smoke's
+`perform_setup` failure ended after an `installed_runtime_assembly` progress
+marker; that marker did not establish a setup launch-flag cause, so its flags
+remain unchanged.
+
+Packet G's first capture exposed a real transitional predicate: retrieval and
+`last_run_at` became visible while the source lifecycle was still
+`reconciling`. That source transition remains unchanged. A content-free
+completed-cycle counter is published under the scheduler lifecycle lock, and
+the worker no longer double-records a cycle. The acceptance waits for the
+counter boundary, then checks the existing final source/retrieval invariants;
+the five-second timeout is unchanged.
+
+## ADR-217: Hosted Windows launch compatibility and first-run failure custody
+
+**Status:** repaired locally on 2026-09-17 from hosted run `35160925162`;
+focused validation and maintained-native hosted acceptance remain required.
+
+The Windows uninstall helper must launch inside the supported runner job. The
+hosted shard-0 trace showed that unconditional `CREATE_BREAKAWAY_FROM_JOB`
+caused `CreateProcess` to return WinError 5. The compatible contract uses only
+`CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP` with the existing exact-root,
+stable-parent, caller-PID wait, one-attempt launch, and bounded cleanup
+behavior. It has no retry fallback, swallowed launch error, timing extension,
+or broader deletion target.
+
+The desktop smoke's `perform_setup` failure is primary; its
+`installed_runtime_assembly` value is only the last recorded progress
+subphase. Setup launch flags are unchanged because the retained source and
+tests do not tie that marker to a launch failure. A separate absolute
+`--failure-diagnostics-dir` and CI environment binding retain the existing
+allowlisted closed failure summary. The failure artifact is always attempted
+with missing files ignored, while process-inventory upload remains required
+only after a passing smoke, so secondary artifact absence cannot obscure the
+primary stage.

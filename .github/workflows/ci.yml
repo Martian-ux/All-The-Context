@@ -315,8 +315,32 @@ jobs:
         run: python scripts/smoke_desktop_artifact.py
       - name: Smoke packaged console recovery from built bytes
         run: python scripts/smoke_packaged_recovery.py
-      - name: Clean-install, startup, MCP, restart, and cleanup smoke
+      - name: Prepare Windows packaged first-run diagnostics
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $inventory = Join-Path $env:RUNNER_TEMP 'packaged-first-run-process-inventory'
+          $failure = Join-Path $env:RUNNER_TEMP 'packaged-first-run-failure-diagnostics'
+          New-Item -ItemType Directory -Force -Path $inventory, $failure | Out-Null
+          "ATC_PACKAGED_PROCESS_INVENTORY_DIAGNOSTICS_DIR=$inventory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ATC_PACKAGED_FAILURE_DIAGNOSTICS_DIR=$failure" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - id: packaged_smoke
+        name: Clean-install, startup, MCP, restart, and cleanup smoke
         run: python scripts/smoke_packaged_first_run.py
+      - name: Upload packaged first-run failure diagnostics
+        if: ${{ always() && runner.os == 'Windows' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: packaged-first-run-failure-diagnostics-windows
+          path: ${{ runner.temp }}/packaged-first-run-failure-diagnostics/*.json
+          if-no-files-found: ignore
+      - name: Upload packaged first-run process-inventory diagnostics
+        if: ${{ always() && runner.os == 'Windows' && steps.packaged_smoke.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: packaged-first-run-process-inventory-windows
+          path: ${{ runner.temp }}/packaged-first-run-process-inventory/*.json
+          if-no-files-found: error
       - id: runtime-version
         name: Read runtime version
         shell: python

@@ -127,6 +127,7 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
     runtime = RuntimeCommand(tmp_path / "AllTheContext.exe")
     states = iter((CoreProbe.UNREACHABLE, CoreProbe.VERIFIED))
     launched: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    requested_flags: list[tuple[str, ...]] = []
 
     class Process:
         pass
@@ -141,6 +142,10 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
         lambda _config: next(states),
     )
     monkeypatch.setattr("allthecontext.desktop_setup.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.windows_creation_flags",
+        lambda *names: requested_flags.append(names) or 0xA5,
+    )
 
     launch_core(runtime, config, wait_seconds=0.1)
 
@@ -151,6 +156,8 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
     assert isinstance(environment, dict)
     assert environment["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert environment[CAPTURE_SCHEDULER_ENABLED_ENV] == "1"
+    assert requested_flags == [("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")]
+    assert kwargs["creationflags"] == 0xA5
     assert not scheduler_config_path(config.data_dir).exists()
 
     monkeypatch.setenv(CAPTURE_SCHEDULER_ENABLED_ENV, "1")

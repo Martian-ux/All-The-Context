@@ -35,6 +35,29 @@ become release evidence; exact-artifact and publication claims remain separate.
 The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
 documentation, hosted, artifact, and applicable platform/release gates.
 
+### 2026-09-16 — content-free packaged process-inventory diagnostics
+
+The packaged Windows first-run smoke now retains one exact closed observation
+for every native process-inventory attempt, including successful snapshots.
+Each JSON observation contains only version/kind, pass-or-failure stage,
+bounded return code, boolean stream presence, closed JSON and identity
+validation status, a zero-through-64 item count, and `bounded: true`. Paths,
+process identities, commands, streams, exceptions, environment values,
+personal context, and secrets are never serialized.
+
+The Windows desktop workflow prepares dedicated failure-summary and
+process-inventory directories. It always uploads the content-free failure
+summary with missing files ignored so a passing smoke remains green, while the
+process-inventory artifact remains required only after a passing smoke. The
+committed local probe uses the same PowerShell/CIM implementation and accepts
+the maintained native `--output` contract by atomically publishing one bounded
+observation for the active pinned interpreter.
+Launch, timeout, child-exit, JSON-bound, identity, success, schema-bound, and
+non-retention regressions are deterministic unit coverage. Existing inventory,
+modal/process ownership, cleanup,
+install/vault-preservation, security, and uninstall behavior remain unchanged.
+This is a diagnostic contract change, not hosted or release acceptance.
+
 ### 2026-09-08 — bounded beta.6-to-beta.7 registration adoption repair
 
 The diagnosed packaged failure was a real source defect: beta.7 rejected the
@@ -4928,3 +4951,110 @@ bounded deletion retry remain unchanged. A short-lived-child native regression
 now accepts only actual removal of its unique checkout-owned dummy install
 directory. The exact packaged candidate journey and release gates remain
 pending; this source repair is not product acceptance.
+
+## Import-observer scheduling checkpoint repair (2026-09-13)
+
+The operation-owned streaming JSONL handoff now runs after the checkpointed
+line has been parsed and consumed. Because the existing initial checkpoint is
+at zero, the first consumed record is followed by the existing one-millisecond
+handoff; later handoffs retain the one-MiB byte cadence. This gives a waiting
+authenticated observer a deterministic scheduling turn before another CPU-heavy
+checkpoint window without adding a pause per record or changing any wall-clock
+threshold.
+
+Only trackers with the operation liveness sink take the handoff. Source-only
+parsing still has no pause, and durable progress, authenticated durable-state
+observation, the five-second liveness requirement, and ADR-073's operation-
+owned intent are unchanged. Focused coverage now proves handoff ordering,
+adverse-scheduler observer timing, and the source-only negative path. This is
+source validation only; downstream native full validation remains required.
+
+## Provider rebuild concurrency repair (2026-09-13)
+
+Source-only provider rebuild progress and lifecycle writes are now bound to
+their durable rebuild generation. A processing heartbeat, terminal cleanup, or
+metadata write from a sibling parser is ignored after that generation is
+terminal, and an older generation cannot overwrite current-generation state.
+Failed or cancelled unpublished generations advance before explicit retry;
+published generations retain their idempotent resume, while every current
+complete, failed, or cancelled row remains authoritative against later
+same-generation success. This closes the observed successful-return race where
+one rebuild returned a processing source snapshot after another idempotent
+worker had completed the shared session and candidate publication.
+
+The two-parser barrier, shared generation/session/candidate idempotency,
+non-destructive cutover, cancellation/failure paths, and existing progress
+observation remain unchanged. Deterministic provider regressions cover
+terminal and superseded-generation writes. The repair is source-level and has
+not received the next maintained-native focused, static, or full-suite
+validation yet.
+
+## Provider publication binding repair (2026-09-15)
+
+The transactional source lifecycle boundary now treats a committed
+current-generation publication binding as authoritative while the source is
+still processing. A same-generation sibling processing snapshot is ignored;
+matching completion is accepted only with the current generation, publication
+session, and source marker. Current-generation failure and cancellation writes
+retain those protected publication fields, including the post-cutover retry
+path. Terminal and superseded-generation guards, shared idempotent sessions,
+batches and candidates, atomic publication, canonical identities, and all
+security/context behavior remain unchanged.
+
+The deterministic
+`test_post_publication_stale_rebuild_snapshot_is_bound_to_canonical_state`
+regression coordinates two `ArchiveImportService` workers at the committed
+publication boundary and covers delayed processing and failure lifecycle
+writes. Maintained-native focused/static/full validation remains pending; this
+source checkpoint is not release or publication acceptance.
+
+## Windows hosted lifecycle/capture repair (2026-09-16)
+
+Packaged provider acceptance now confines the Core import to a helper scope so
+the Core object graph is released before cleanup. Owned-root removal retries
+only Windows sharing/access contention (Win32 5/32) for a bounded 30 x 100 ms;
+the exact owned root remains the only target and the final failure still emits
+`data_dir_cleanup_failed`. Native instrumentation observed no live scheduler
+thread or operation observer at Core close; this checkout's disposable
+directories still hit its inherited WinError 5 ACL, so that local cleanup
+result is environment-blocked rather than product proof.
+
+The Windows uninstall helper retains exact-root/minimum-depth validation,
+stable parent cwd, PID-bound `Wait-Process`, no-console/process-group flags,
+and its 300 x 100 ms retry contract. The hosted run showed that the added
+`CREATE_BREAKAWAY_FROM_JOB` flag made `CreateProcess` fail with WinError 5, so
+the helper now stays in the compatible caller job with one launch attempt and
+no fallback. The setup record's `perform_setup` failure and
+`installed_runtime_assembly` last-progress marker did not establish a setup
+launch-flag cause, so setup flags are unchanged. Maintained-native hosted
+validation remains required.
+
+Core scheduler status now exposes a content-free monotonic
+`completed_cycle_count`; the worker no longer records a successful cycle twice.
+Packet G waits for that cycle boundary before asserting the intentionally
+transitional source fields, preserving the `reconciling` to `enabled`
+fail-closed transition, retrieval truth, restart semantics, and no-dashboard
+contract. Direct scheduler/Packet G assertions passed. The exact three-node
+pytest command was attempted with the pinned interpreter but was blocked by
+the checkout-owned basetemp ACL; no full suite or maintained-native static
+gate was run here.
+
+## Windows hosted process launch and setup diagnostics repair (2026-09-17)
+
+Hosted run `35160925162` is the source of truth for this correction. Its
+Windows shard-0 failure was the uninstall helper's unconditional
+`CREATE_BREAKAWAY_FROM_JOB`, rejected by `CreateProcess` with WinError 5. The
+helper now requests only `CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP`; it
+keeps the exact install-root validation, stable parent working directory,
+caller-PID wait, single launch boundary, and bounded 300-attempt cleanup.
+
+The same run's desktop smoke failed in `perform_setup`; the recorded
+`installed_runtime_assembly` value was only the last progress subphase. No
+source or test evidence connected that marker to setup launch flags, so the
+existing setup launch contract remains unchanged. The new absolute
+`--failure-diagnostics-dir` surface and CI environment binding retain the
+existing allowlisted, content-free first-run failure summary. CI uploads that
+summary on every Windows desktop outcome and skips the process-inventory
+upload after an earlier smoke failure; a passing smoke still requires the
+process-inventory JSON artifact. Missing diagnostic artifacts are therefore
+secondary and cannot replace the primary setup or launch stage.

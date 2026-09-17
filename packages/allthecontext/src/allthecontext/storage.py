@@ -1691,8 +1691,93 @@ class CoreStore:
         import_status: Literal["processing", "complete", "failed", "cancelled"],
         metadata: Mapping[str, Any],
         parser_warnings: Sequence[str],
+        rebuild_generation: int | None = None,
+        allow_terminal_rebuild_resume: bool = False,
     ) -> None:
         with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT metadata_json,import_status FROM source_records "
+                "WHERE id=? AND deleted_at IS NULL",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("source not found")
+            if rebuild_generation is not None:
+                current_metadata = cast(dict[str, Any], _loads(row["metadata_json"], {}))
+                try:
+                    requested_generation = int(metadata["rebuild_generation"])
+                    current_generation = int(current_metadata.get("rebuild_generation") or 0)
+                except (KeyError, TypeError, ValueError):
+                    return
+                if requested_generation != rebuild_generation:
+                    return
+                if current_generation > rebuild_generation:
+                    return
+                protected_publication_fields = (
+                    "rebuild_published_generation",
+                    "rebuild_published_session_id",
+                    "rebuild_source_marker",
+                )
+                current_publication_session_id = current_metadata.get(
+                    "rebuild_published_session_id"
+                )
+                current_publication_marker = current_metadata.get("rebuild_source_marker")
+                current_publication_binding = (
+                    str(current_metadata.get("rebuild_published_generation"))
+                    == str(rebuild_generation)
+                    and isinstance(current_publication_session_id, str)
+                    and bool(current_publication_session_id)
+                    and isinstance(current_publication_marker, str)
+                    and bool(current_publication_marker)
+                )
+                allow_rebuild_processing_resume = (
+                    allow_terminal_rebuild_resume
+                    and import_status == "processing"
+                    and current_metadata.get("rebuild_in_progress") is True
+                    and current_publication_binding
+                )
+                if (
+                    current_generation == rebuild_generation
+                    and str(row["import_status"])
+                    in {
+                        "complete",
+                        "failed",
+                        "cancelled",
+                    }
+                    and not allow_rebuild_processing_resume
+                ):
+                    # A terminal row is authoritative for its generation. A
+                    # retry starts a newer generation before it can process.
+                    return
+                if current_generation < rebuild_generation and (
+                    import_status != "processing" or metadata.get("rebuild_in_progress") is not True
+                ):
+                    return
+                if import_status == "complete" and not current_publication_binding:
+                    # A rebuild cannot become complete before its atomic
+                    # source publication has committed a matching binding.
+                    return
+                if current_publication_binding:
+                    incoming_publication_matches = (
+                        str(metadata.get("rebuild_published_generation")) == str(rebuild_generation)
+                        and metadata.get("rebuild_published_session_id")
+                        == current_publication_session_id
+                        and metadata.get("rebuild_source_marker") == current_publication_marker
+                    )
+                    if import_status == "processing" and not allow_rebuild_processing_resume:
+                        # A publication is durable while the source remains
+                        # processing. A sibling's pre-publication snapshot is
+                        # stale and must not reopen or replace that state.
+                        return
+                    if import_status == "complete" and not incoming_publication_matches:
+                        # Completion is valid only for the current generation
+                        # and the publication ceremony that produced it.
+                        return
+                    if import_status in {"processing", "failed", "cancelled"}:
+                        merged_metadata = dict(metadata)
+                        for field in protected_publication_fields:
+                            merged_metadata[field] = current_metadata[field]
+                        metadata = merged_metadata
             result = connection.execute(
                 "UPDATE source_records SET import_status=?,metadata_json=?,"
                 "parser_warnings_json=? WHERE id=? AND deleted_at IS NULL",
@@ -1773,6 +1858,7 @@ class CoreStore:
         *,
         progress: Mapping[str, Any],
         import_status: Literal["processing", "complete", "failed", "cancelled"] | None = None,
+        rebuild_generation: int | None = None,
     ) -> None:
         """Persist bounded import progress without rewriting parser warnings."""
         with self.transaction() as connection:
@@ -1784,8 +1870,20 @@ class CoreStore:
             if row is None:
                 raise NotFoundError("source not found")
             metadata = cast(dict[str, Any], _loads(row["metadata_json"], {}))
+            current_status = str(row["import_status"])
+            if rebuild_generation is not None:
+                try:
+                    current_generation = int(metadata.get("rebuild_generation") or 0)
+                except (TypeError, ValueError):
+                    return
+                if current_generation != rebuild_generation or current_status in {
+                    "complete",
+                    "failed",
+                    "cancelled",
+                }:
+                    return
             metadata["import_progress"] = dict(progress)
-            status = import_status or cast(str, row["import_status"])
+            status = import_status or current_status
             connection.execute(
                 "UPDATE source_records SET metadata_json=?,import_status=? "
                 "WHERE id=? AND deleted_at IS NULL",
