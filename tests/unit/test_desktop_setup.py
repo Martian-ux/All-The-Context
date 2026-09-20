@@ -7,6 +7,7 @@ import tomllib
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from allthecontext import claude_code_config, desktop_setup
@@ -119,8 +120,9 @@ def test_strict_core_probe_does_not_follow_a_redirect(
     assert type(handlers[1]).__name__ == "_NoRedirectHandler"
 
 
+@pytest.mark.parametrize("platform_name", ("nt", "posix"), ids=("windows", "posix"))
 def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform_name: str
 ) -> None:
     monkeypatch.delenv(CAPTURE_SCHEDULER_ENABLED_ENV, raising=False)
     config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_439)
@@ -142,6 +144,12 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
         lambda _config: next(states),
     )
     monkeypatch.setattr("allthecontext.desktop_setup.subprocess.Popen", fake_popen)
+    module_os = desktop_setup.os
+    monkeypatch.setattr(
+        desktop_setup,
+        "os",
+        SimpleNamespace(name=platform_name, environ=module_os.environ),
+    )
     monkeypatch.setattr(
         "allthecontext.desktop_setup.windows_creation_flags",
         lambda *names: requested_flags.append(names) or 0xA5,
@@ -156,8 +164,12 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
     assert isinstance(environment, dict)
     assert environment["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert environment[CAPTURE_SCHEDULER_ENABLED_ENV] == "1"
-    assert requested_flags == [("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")]
-    assert kwargs["creationflags"] == 0xA5
+    assert kwargs["creationflags"] == (0xA5 if platform_name == "nt" else 0)
+    assert kwargs["start_new_session"] is (platform_name == "posix")
+    if platform_name == "nt":
+        assert requested_flags == [("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")]
+    else:
+        assert requested_flags == []
     assert not scheduler_config_path(config.data_dir).exists()
 
     monkeypatch.setenv(CAPTURE_SCHEDULER_ENABLED_ENV, "1")
