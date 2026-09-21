@@ -145,6 +145,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
+      - name: Upload detached uninstall lifecycle evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: detached-uninstall-lifecycle-windows-shard-${{ matrix.shard }}
+          path: |
+            .test-runs/windows-install-removal-*.json
+            .test-runs/windows-install-removal-*.lifecycle.*
+            .test-runs/windows-install-failure-*.json
+            .test-runs/windows-install-failure-*.lifecycle.*
+          if-no-files-found: ignore
       - name: Build Python artifacts
         run: python -m build --outdir dist/python
       - name: Diagnose Python package resources

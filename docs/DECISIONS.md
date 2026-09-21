@@ -28,6 +28,32 @@ Existing inventory safety,
 modal/process ownership, cleanup, install/vault preservation, security, and
 uninstall behavior are unchanged.
 
+## ADR-216: Bind detached-uninstall lifecycle evidence to one helper
+
+**Status:** implemented locally on 2026-09-21; exact native, hosted, and
+downstream release validation remain required.
+
+The detached Windows uninstall launch creates one unique lifecycle base beside
+the external terminal receipt and outside the resolved installation root. The
+parent creates an empty `launch_requested` marker before the sole `Popen`, then
+records `launch_returned` or `launch_failed`. The real PowerShell helper writes
+empty `entry`, `terminal`, and `exit` markers through create-new file handles;
+`terminal` is published only after the existing atomic BOM-free fixed-schema
+receipt move succeeds. The lifecycle path is carried through the helper
+environment, so the markers describe one helper without retaining command
+lines, paths, credentials, or user data.
+
+The helper remains a real detached PowerShell process launched by the
+short-lived Python child. Caller-process capture/wait, exact target identity,
+stable-parent `cwd`, launch flags, bounded removal, vault preservation, and
+single-launch behavior are unchanged. A successful removal with no terminal
+receipt now leaves the helper non-successful. The deterministic launch-failure
+regression requires the owned target to remain and rejects any terminal or
+success evidence; the real Windows journey requires all lifecycle markers and
+the existing success receipt. Failed test evidence is retained and uploaded by
+the Windows pytest shard, while the hosted `35622074776` cause remains
+unresolved rather than being inferred from absence alone.
+
 ## ADR-211: Combined integration preserves bounded evidence and fail-closed gates
 
 **Status:** accepted locally on 2026-09-06 for source checkpoint

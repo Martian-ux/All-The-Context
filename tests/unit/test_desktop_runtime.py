@@ -22,6 +22,7 @@ from allthecontext.credentials import DevelopmentFileCredentialStore
 from allthecontext.desktop import (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS,
     WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS,
+    WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV,
     WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS,
     _apply_packaged_update,
     _copy_macos_bundle_atomically,
@@ -547,7 +548,10 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert "$atcResult.removal='present'" in script
     assert "$atcResult.error_code='removal_timeout'" in script
     assert "Write-AtcRemovalResult;" in script
-    assert "if($atcResult.outcome -eq 'success'){exit 0};exit 1" in script
+    assert "if($atcResult.outcome -eq 'success' -and $atcReceiptWritten){$atcExitCode=0}" in script
+    assert "Write-AtcRemovalMarker 'entry'" in script
+    assert "Write-AtcRemovalMarker 'terminal'" in script
+    assert "Write-AtcRemovalMarker 'exit'" in script
     assert (
         f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};$atcAttempt++){{"
     ) in script
@@ -562,12 +566,47 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert kwargs["close_fds"] is True
     assert kwargs["env"]["ATC_UNINSTALL_DIR"] == str(install_dir.resolve())  # type: ignore[index]
     assert kwargs["env"]["ATC_UNINSTALL_PID"] == str(desktop.os.getpid())  # type: ignore[index]
+    lifecycle_path = Path(kwargs["env"][WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV])  # type: ignore[index]
+    assert lifecycle_path.is_absolute()
+    assert install_dir not in lifecycle_path.parents
     diagnostics_path = Path(  # type: ignore[index]
         kwargs["env"][desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV]
     )
     assert diagnostics_path.is_absolute()
     assert install_dir not in diagnostics_path.parents
     assert kwargs["cwd"] == install_dir.resolve().parent
+
+
+def test_windows_uninstall_helper_records_spawn_failure_without_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    diagnostics_path = tmp_path / "terminal.json"
+    lifecycle_path = tmp_path / "helper-lifecycle"
+    launches: list[list[str]] = []
+
+    def rejected_popen(command: list[str], **_kwargs: object) -> object:
+        launches.append(command)
+        raise OSError("deterministic launch boundary")
+
+    monkeypatch.setattr("allthecontext.desktop.windows_install_directory", lambda: install_dir)
+    monkeypatch.setattr("allthecontext.desktop.subprocess.Popen", rejected_popen)
+    monkeypatch.setenv("ATC_UNINSTALL_DIAGNOSTICS_PATH", str(diagnostics_path))
+    monkeypatch.setenv(WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV, str(lifecycle_path))
+
+    with pytest.raises(OSError, match="deterministic launch boundary"):
+        _schedule_windows_install_removal(install_dir)
+
+    assert len(launches) == 1
+    assert install_dir.exists()
+    assert not diagnostics_path.exists()
+    assert (tmp_path / "helper-lifecycle.launch_requested").read_bytes() == b""
+    assert (tmp_path / "helper-lifecycle.launch_failed").read_bytes() == b""
+    assert not (tmp_path / "helper-lifecycle.launch_returned").exists()
+    assert not (tmp_path / "helper-lifecycle.entry").exists()
+    assert not (tmp_path / "helper-lifecycle.terminal").exists()
+    assert not (tmp_path / "helper-lifecycle.exit").exists()
 
 
 def test_windows_uninstall_helper_is_live_after_caller_returns(tmp_path: Path, monkeypatch) -> None:
@@ -610,6 +649,10 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
     diagnostics_path = (
         checkout_root / ".test-runs" / f"windows-install-removal-{uuid.uuid4().hex}.json"
     )
+    lifecycle_path = (
+        checkout_root / ".test-runs" / f"windows-install-removal-{uuid.uuid4().hex}.lifecycle"
+    )
+    completed_successfully = False
     try:
         try:
             install_dir.mkdir(parents=True)
@@ -620,6 +663,7 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
         environment = os.environ.copy()
         environment["ATC_INSTALL_DIR"] = str(install_dir)
         environment[desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
+        environment[WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV] = str(lifecycle_path)
         source_root = checkout_root / "packages" / "allthecontext" / "src"
         environment["PYTHONPATH"] = os.pathsep.join(
             filter(None, (str(source_root), environment.get("PYTHONPATH")))
@@ -660,9 +704,23 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
         assert receipt["removal"] in {"removed", "already_absent"}
         assert receipt["error_code"] == "none"
         assert 1 <= receipt["attempt_count"] <= WINDOWS_INSTALL_REMOVAL_ATTEMPTS
+        for phase in ("launch_requested", "launch_returned", "entry", "terminal", "exit"):
+            assert lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").read_bytes() == b""
+        assert not lifecycle_path.with_name(f"{lifecycle_path.name}.launch_failed").exists()
+        completed_successfully = True
     finally:
-        shutil.rmtree(install_dir, ignore_errors=True)
-        diagnostics_path.unlink(missing_ok=True)
+        if completed_successfully:
+            shutil.rmtree(install_dir, ignore_errors=True)
+            diagnostics_path.unlink(missing_ok=True)
+            for phase in (
+                "launch_requested",
+                "launch_returned",
+                "launch_failed",
+                "entry",
+                "terminal",
+                "exit",
+            ):
+                lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").unlink(missing_ok=True)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")
@@ -674,6 +732,10 @@ def test_windows_uninstall_helper_writes_bounded_failure_receipt_for_locked_targ
     diagnostics_path = (
         checkout_root / ".test-runs" / f"windows-install-failure-{uuid.uuid4().hex}.json"
     )
+    lifecycle_path = (
+        checkout_root / ".test-runs" / f"windows-install-failure-{uuid.uuid4().hex}.lifecycle"
+    )
+    completed_successfully = False
     handle = None
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateFileW.argtypes = [
@@ -713,6 +775,7 @@ def test_windows_uninstall_helper_writes_bounded_failure_receipt_for_locked_targ
         environment = os.environ.copy()
         environment["ATC_INSTALL_DIR"] = str(install_dir)
         environment[desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
+        environment[WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV] = str(lifecycle_path)
         source_root = checkout_root / "packages" / "allthecontext" / "src"
         environment["PYTHONPATH"] = os.pathsep.join(
             filter(None, (str(source_root), environment.get("PYTHONPATH")))
@@ -755,11 +818,25 @@ def test_windows_uninstall_helper_writes_bounded_failure_receipt_for_locked_targ
         assert receipt["caller_process"] in {"captured", "not_found"}
         assert receipt["caller_wait"] in {"completed", "not_required"}
         assert install_dir.exists()
+        for phase in ("launch_requested", "launch_returned", "entry", "terminal", "exit"):
+            assert lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").read_bytes() == b""
+        assert not lifecycle_path.with_name(f"{lifecycle_path.name}.launch_failed").exists()
+        completed_successfully = True
     finally:
         if handle is not None and handle != wintypes.HANDLE(-1).value:
             kernel32.CloseHandle(handle)
-        shutil.rmtree(install_dir, ignore_errors=True)
-        diagnostics_path.unlink(missing_ok=True)
+        if completed_successfully:
+            shutil.rmtree(install_dir, ignore_errors=True)
+            diagnostics_path.unlink(missing_ok=True)
+            for phase in (
+                "launch_requested",
+                "launch_returned",
+                "launch_failed",
+                "entry",
+                "terminal",
+                "exit",
+            ):
+                lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").unlink(missing_ok=True)
 
 
 def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(

@@ -5154,3 +5154,22 @@ boundaries. The required pytest handoff hit the managed host's WinError 5
 basetemp cleanup denial before assertions; frozen native red and fresh direct
 green evidence are recorded externally. The original uninstall cause remains
 unproven, and all downstream review and exact-candidate gates remain open.
+
+## Detached-helper lifecycle boundary correction (2026-09-21)
+
+The hosted `35622074776` failure established only that the verified install
+root was absent while the external terminal receipt was absent; it did not
+prove helper launch, script entry, exit, process ownership, or receipt-write
+failure. The detached helper now receives one unique sibling lifecycle base
+outside the verified root. Empty create-new markers record launch requested,
+launch returned, script entry, terminal receipt publication, and script exit;
+the parent records a launch-failed marker when `Popen` rejects the one launch.
+The existing fixed-schema BOM-free receipt and real PowerShell/Python
+removal path are unchanged. A deterministic spawn-boundary regression proves
+that the target remains and no missing receipt is reported as success, while
+the real positive journey proves all lifecycle markers and target removal.
+
+Failed focused-test evidence is retained under the checkout-owned `.test-runs`
+root and the Windows pytest shards upload only the bounded JSON/marker paths.
+The original hosted uninstall cause remains unknown; no hosted retry, package,
+full suite, merge, or publication gate is claimed here.

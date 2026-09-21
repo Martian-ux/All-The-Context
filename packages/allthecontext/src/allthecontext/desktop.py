@@ -89,6 +89,7 @@ WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS * WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS / 1000
 )
 WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV = "ATC_UNINSTALL_DIAGNOSTICS_PATH"
+WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV = "ATC_UNINSTALL_LIFECYCLE_PATH"
 PACKAGED_UNINSTALL_FAILURE_FIELDS = frozenset(
     {"uninstalled", "vault_preserved", "stage", "code", "registration_status"}
 )
@@ -1579,6 +1580,16 @@ def _dashboard_launch_fallback(config: CoreConfig, token: str, initial_url: str)
     root.mainloop()
 
 
+def _windows_install_removal_marker_path(lifecycle_path: Path, phase: str) -> Path:
+    return lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}")
+
+
+def _write_windows_install_removal_marker(lifecycle_path: Path, phase: str) -> None:
+    marker_path = _windows_install_removal_marker_path(lifecycle_path, phase)
+    descriptor = os.open(marker_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(descriptor)
+
+
 def _schedule_windows_install_removal(install_dir: Path) -> None:
     target = install_dir.resolve(strict=True)
     expected = windows_install_directory().resolve(strict=True)
@@ -1601,11 +1612,40 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
     diagnostics_path = diagnostics_path.resolve()
     if diagnostics_path == target or target in diagnostics_path.parents:
         raise RuntimeError("uninstall diagnostics must be outside the installation directory")
+    configured_lifecycle = environment.get(WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV)
+    if configured_lifecycle:
+        lifecycle_path = Path(configured_lifecycle).expanduser()
+        if not lifecycle_path.is_absolute():
+            raise RuntimeError("uninstall lifecycle path must be absolute")
+    else:
+        lifecycle_path = diagnostics_path.with_name(
+            f"{diagnostics_path.name}.lifecycle-{secrets.token_hex(8)}"
+        )
+    lifecycle_path = lifecycle_path.resolve()
+    if lifecycle_path == target or target in lifecycle_path.parents:
+        raise RuntimeError("uninstall lifecycle must be outside the installation directory")
     with suppress(OSError):
         diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(OSError):
+        lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
     environment[WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
+    environment[WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV] = str(lifecycle_path)
+    _write_windows_install_removal_marker(lifecycle_path, "launch_requested")
     script = (
+        "$atcLifecyclePath=$env:ATC_UNINSTALL_LIFECYCLE_PATH;"
+        "function Write-AtcRemovalMarker{"
+        "param([string]$atcPhase);"
+        "try{"
+        '$atcMarkerPath="$($atcLifecyclePath).$($atcPhase)";'
+        "$atcMarkerHandle=[System.IO.File]::Open($atcMarkerPath,"
+        "[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,"
+        "[System.IO.FileShare]::Read);"
+        "$atcMarkerHandle.Dispose()"
+        "}catch{}"
+        "};"
+        "Write-AtcRemovalMarker 'entry';"
         "$atcDiagnosticsPath=$env:ATC_UNINSTALL_DIAGNOSTICS_PATH;"
+        "$atcReceiptWritten=$false;"
         "$atcResult=[ordered]@{"
         "schema_version=1;"
         "outcome='failure';"
@@ -1624,9 +1664,11 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         "$atcJson=$atcResult | ConvertTo-Json -Compress;"
         "$atcUtf8NoBom=New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false;"
         "[System.IO.File]::WriteAllText($atcTemporary,$atcJson,$atcUtf8NoBom);"
-        "Move-Item -LiteralPath $atcTemporary -Destination $atcDiagnosticsPath -Force"
+        "Move-Item -LiteralPath $atcTemporary -Destination $atcDiagnosticsPath -Force;"
+        "$script:atcReceiptWritten=$true"
         "}catch{}"
         "};"
+        "$atcExitCode=1;"
         "try{"
         "$atcProcessId=[int]$env:ATC_UNINSTALL_PID;"
         # Capture the process object while the caller is still alive. Waiting
@@ -1669,37 +1711,50 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         "}catch{"
         "$atcResult.removal='unknown';"
         "$atcResult.error_code='helper_failed'"
-        "};"
+        "}"
+        "finally{"
         "Write-AtcRemovalResult;"
-        "if($atcResult.outcome -eq 'success'){exit 0};exit 1"
+        "if($atcResult.outcome -eq 'success' -and $atcReceiptWritten){$atcExitCode=0};"
+        "if($atcReceiptWritten){Write-AtcRemovalMarker 'terminal'};"
+        "Write-AtcRemovalMarker 'exit'"
+        "};"
+        "exit $atcExitCode"
     )
-    subprocess.Popen(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        # Keep the helper console-free and in its own process group. The
-        # hosted Windows job rejects CREATE_BREAKAWAY_FROM_JOB with WinError 5;
-        # keeping the helper in the caller's job is the compatible launch path.
-        # A launch error remains the uninstall failure and is never retried or
-        # converted into a successful cleanup result.
-        creationflags=windows_creation_flags("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"),
-        # The real Start Menu uninstall shortcut starts inside install_dir.
-        # A process cannot remove its own current directory on Windows, so the
-        # cleanup helper must explicitly run from the stable parent.
-        cwd=target.parent,
-        env=environment,
-    )
+    try:
+        subprocess.Popen(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            # Keep the helper console-free and in its own process group. The
+            # hosted Windows job rejects CREATE_BREAKAWAY_FROM_JOB with WinError 5;
+            # keeping the helper in the caller's job is the compatible launch path.
+            # A launch error remains the uninstall failure and is never retried or
+            # converted into a successful cleanup result.
+            creationflags=windows_creation_flags("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"),
+            # The real Start Menu uninstall shortcut starts inside install_dir.
+            # A process cannot remove its own current directory on Windows, so the
+            # cleanup helper must explicitly run from the stable parent.
+            cwd=target.parent,
+            env=environment,
+        )
+    except OSError:
+        with suppress(OSError):
+            _write_windows_install_removal_marker(lifecycle_path, "launch_failed")
+        raise
+    else:
+        with suppress(OSError):
+            _write_windows_install_removal_marker(lifecycle_path, "launch_returned")
 
 
 def _uninstall(runtime: RuntimeCommand, *, unattended: bool = False) -> int:
