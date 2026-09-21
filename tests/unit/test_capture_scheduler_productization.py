@@ -703,8 +703,7 @@ def test_worker_failure_is_content_free_and_restartable(
         scheduler.start()
         scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
         scheduler._wakeup.set()
-        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
-        _wait_until(lambda: scheduler.status()["running"] is False)
+        assert scheduler.wait_for_completed_cycle(1, timeout=5) is False
         failed = scheduler.status()
         assert failed["running"] is False
         assert failed["worker_failure_code"] == "worker_failed"

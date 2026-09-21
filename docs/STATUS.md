@@ -5123,3 +5123,21 @@ allowlisted failure fields. A direct real-worker probe completed the initial
 cycle with no worker failure; the frozen focused pytest handoff was attempted
 but its run-owned basetemp was denied by the managed host before assertions.
 No full suite, package, hosted retry, or publication was run here.
+
+## Windows-under-load repair2 contract closure (2026-09-21)
+
+The remaining review findings are addressed narrowly. Packet G now waits on a
+condition signaled by the real completed-cycle boundary and returns early for
+terminal worker failure or shutdown; its bounded timeout still projects only
+content-free scheduler state. The worker-failure regression uses the same wait
+contract and requires failure rather than treating a disabled worker as a
+completed capture.
+
+The detached uninstall helper now publishes one bounded content-free receipt
+outside the verified install root. It records helper launch, caller-process
+observation, caller wait, bounded attempt count, removal outcome, and an
+allowlisted error code on both success and the final removal-failure boundary.
+The short-lived-child regression requires the receipt and verified target
+absence; exact-root validation, caller ownership, launch flags, and bounded
+cleanup remain unchanged. Full, package, hosted, and publication gates remain
+outside this repair.

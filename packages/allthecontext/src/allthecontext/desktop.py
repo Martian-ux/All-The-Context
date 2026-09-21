@@ -88,6 +88,7 @@ WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS = 100
 WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS * WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS / 1000
 )
+WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV = "ATC_UNINSTALL_DIAGNOSTICS_PATH"
 PACKAGED_UNINSTALL_FAILURE_FIELDS = frozenset(
     {"uninstalled", "vault_preserved", "stage", "code", "registration_status"}
 )
@@ -1586,13 +1587,56 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
     environment = os.environ.copy()
     environment["ATC_UNINSTALL_DIR"] = str(target)
     environment["ATC_UNINSTALL_PID"] = str(os.getpid())
+    configured_diagnostics = environment.get(WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV)
+    if configured_diagnostics:
+        diagnostics_path = Path(configured_diagnostics).expanduser()
+        if not diagnostics_path.is_absolute():
+            raise RuntimeError("uninstall diagnostics path must be absolute")
+    else:
+        diagnostics_path = (
+            Path(tempfile.gettempdir())
+            / "AllTheContext"
+            / f"install-removal-{os.getpid()}-{time.time_ns()}.json"
+        )
+    diagnostics_path = diagnostics_path.resolve()
+    if diagnostics_path == target or target in diagnostics_path.parents:
+        raise RuntimeError("uninstall diagnostics must be outside the installation directory")
+    with suppress(OSError):
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+    environment[WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
     script = (
+        "$atcDiagnosticsPath=$env:ATC_UNINSTALL_DIAGNOSTICS_PATH;"
+        "$atcResult=[ordered]@{"
+        "schema_version=1;"
+        "outcome='failure';"
+        "helper_process='started';"
+        "caller_process='not_observed';"
+        "caller_wait='not_run';"
+        "removal='not_started';"
+        "attempt_count=0;"
+        "error_code='unknown'"
+        "};"
+        "function Write-AtcRemovalResult{"
+        "try{"
+        "$atcDiagnosticsParent=Split-Path -Parent $atcDiagnosticsPath;"
+        "New-Item -ItemType Directory -Force -Path $atcDiagnosticsParent | Out-Null;"
+        '$atcTemporary="$atcDiagnosticsPath.$PID.atc-new";'
+        "$atcResult | ConvertTo-Json -Compress | Set-Content -LiteralPath "
+        "$atcTemporary -Encoding utf8;"
+        "Move-Item -LiteralPath $atcTemporary -Destination $atcDiagnosticsPath -Force"
+        "}catch{}"
+        "};"
+        "try{"
         "$atcProcessId=[int]$env:ATC_UNINSTALL_PID;"
         # Capture the process object while the caller is still alive. Waiting
         # by PID alone can observe a different process after rapid PID reuse
         # on a busy Windows worker and leave the real install root behind.
         "$atcProcess=Get-Process -Id $atcProcessId -ErrorAction SilentlyContinue;"
-        "if($null -ne $atcProcess){$atcProcess.WaitForExit()};"
+        "if($null -ne $atcProcess){"
+        "$atcResult.caller_process='captured';"
+        "$atcProcess.WaitForExit();"
+        "$atcResult.caller_wait='completed'"
+        "}else{$atcResult.caller_process='not_found';$atcResult.caller_wait='not_required'};"
         # A frozen one-file executable has an outer bootloader process around
         # the Python child.  The child can be gone while the bootloader still
         # has the installed executable open, so one removal attempt can leave
@@ -1600,15 +1644,33 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         # final process and transient antivirus/indexer handles unwind.
         f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};"
         "$atcAttempt++){"
-        "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){exit 0};"
+        "$atcResult.attempt_count=$atcAttempt+1;"
+        "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){"
+        "$atcResult.outcome='success';"
+        "$atcResult.removal='already_absent';"
+        "$atcResult.error_code='none';"
+        "break};"
         "try{"
         "Remove-Item -LiteralPath $env:ATC_UNINSTALL_DIR -Recurse -Force "
         "-ErrorAction Stop;"
-        "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){exit 0}"
-        "}catch{};"
+        "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){"
+        "$atcResult.outcome='success';"
+        "$atcResult.removal='removed';"
+        "$atcResult.error_code='none';"
+        "break}"
+        "}catch{$atcResult.error_code='remove_failed'};"
         f"Start-Sleep -Milliseconds {WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS}"
         "};"
-        "exit 1"
+        "if($atcResult.outcome -ne 'success'){"
+        "$atcResult.removal='present';"
+        "if($atcResult.error_code -eq 'unknown'){$atcResult.error_code='removal_timeout'}"
+        "}"
+        "}catch{"
+        "$atcResult.removal='unknown';"
+        "$atcResult.error_code='helper_failed'"
+        "};"
+        "Write-AtcRemovalResult;"
+        "if($atcResult.outcome -eq 'success'){exit 0};exit 1"
     )
     subprocess.Popen(
         [

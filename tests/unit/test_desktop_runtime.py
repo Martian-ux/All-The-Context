@@ -541,6 +541,11 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert "Get-Process -Id $atcProcessId" in script
     assert "$atcProcess.WaitForExit()" in script
     assert script.index("Get-Process") < script.index("Remove-Item")
+    assert "helper_process='started'" in script
+    assert "$atcResult.removal='present'" in script
+    assert "$atcResult.error_code='removal_timeout'" in script
+    assert "Write-AtcRemovalResult;" in script
+    assert "if($atcResult.outcome -eq 'success'){exit 0};exit 1" in script
     assert (
         f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};$atcAttempt++){{"
     ) in script
@@ -555,6 +560,11 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert kwargs["close_fds"] is True
     assert kwargs["env"]["ATC_UNINSTALL_DIR"] == str(install_dir.resolve())  # type: ignore[index]
     assert kwargs["env"]["ATC_UNINSTALL_PID"] == str(desktop.os.getpid())  # type: ignore[index]
+    diagnostics_path = Path(  # type: ignore[index]
+        kwargs["env"][desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV]
+    )
+    assert diagnostics_path.is_absolute()
+    assert install_dir not in diagnostics_path.parents
     assert kwargs["cwd"] == install_dir.resolve().parent
 
 
@@ -595,6 +605,9 @@ def test_windows_uninstall_helper_is_live_after_caller_returns(tmp_path: Path, m
 def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> None:
     checkout_root = Path(__file__).resolve().parents[2]
     install_dir = checkout_root / ".test-runs" / f"windows-install-removal-{uuid.uuid4().hex}"
+    diagnostics_path = (
+        checkout_root / ".test-runs" / f"windows-install-removal-{uuid.uuid4().hex}.json"
+    )
     try:
         try:
             install_dir.mkdir(parents=True)
@@ -604,6 +617,7 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
 
         environment = os.environ.copy()
         environment["ATC_INSTALL_DIR"] = str(install_dir)
+        environment[desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
         source_root = checkout_root / "packages" / "allthecontext" / "src"
         environment["PYTHONPATH"] = os.pathsep.join(
             filter(None, (str(source_root), environment.get("PYTHONPATH")))
@@ -628,8 +642,21 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
         while install_dir.exists() and time.monotonic() < deadline:
             time.sleep(0.1)
         assert not install_dir.exists(), "PowerShell exited without executing directory removal"
+        receipt_deadline = time.monotonic() + 5.0
+        while not diagnostics_path.exists() and time.monotonic() < receipt_deadline:
+            time.sleep(0.1)
+        receipt = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+        assert receipt["schema_version"] == 1
+        assert receipt["outcome"] == "success"
+        assert receipt["helper_process"] == "started"
+        assert receipt["caller_process"] in {"captured", "not_found"}
+        assert receipt["caller_wait"] in {"completed", "not_required"}
+        assert receipt["removal"] in {"removed", "already_absent"}
+        assert receipt["error_code"] == "none"
+        assert 1 <= receipt["attempt_count"] <= WINDOWS_INSTALL_REMOVAL_ATTEMPTS
     finally:
         shutil.rmtree(install_dir, ignore_errors=True)
+        diagnostics_path.unlink(missing_ok=True)
 
 
 def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(

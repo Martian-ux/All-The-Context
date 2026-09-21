@@ -729,6 +729,7 @@ class CoreCaptureScheduler:
         self._join_timeout_seconds = float(join_timeout_seconds)
         self._control_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
+        self._cycle_condition = threading.Condition(self._lifecycle_lock)
         self._cycle_lock = threading.Lock()
         self._stop = threading.Event()
         self._wakeup = threading.Event()
@@ -814,6 +815,34 @@ class CoreCaptureScheduler:
                 adapter_refresh_state=adapter_refresh_state,
             )
 
+    def wait_for_completed_cycle(self, minimum_completed_cycle: int, *, timeout: float) -> bool:
+        """Wait for a real completed cycle or a terminal worker observation.
+
+        This is an observation boundary for lifecycle consumers. It never runs
+        scheduling work, changes durable state, or treats a worker failure as a
+        completed cycle. Callers can inspect :meth:`status` after ``False`` for
+        the bounded content-free failure reason.
+        """
+
+        if type(minimum_completed_cycle) is not int or minimum_completed_cycle < 1:
+            raise ValueError("minimum_completed_cycle must be a positive integer")
+        if timeout < 0:
+            raise ValueError("timeout must be non-negative")
+        deadline = monotonic() + timeout
+        with self._cycle_condition:
+            while self._completed_cycle_count < minimum_completed_cycle:
+                if (
+                    self._closing.is_set()
+                    or self._stop.is_set()
+                    or self._worker_state in {"failed", "stopped"}
+                ):
+                    return False
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return False
+                self._cycle_condition.wait(timeout=remaining)
+            return True
+
     @staticmethod
     def _status_failure_payload(
         *,
@@ -893,6 +922,7 @@ class CoreCaptureScheduler:
         self._worker_state = "failed"
         self._worker_failure_code = self._content_free_error_code(error)
         self._worker_failure_generation = generation
+        self._cycle_condition.notify_all()
 
     def readiness(self) -> dict[str, Any]:
         """Return content-free scheduler and capture readiness diagnostics."""
@@ -1178,6 +1208,7 @@ class CoreCaptureScheduler:
                     self._worker_state = "failed"
                     self._worker_failure_code = "worker_failed"
                     self._worker_failure_generation = generation
+            self._cycle_condition.notify_all()
 
     def _record_cycle_report(self, report: SchedulerRunReport) -> None:
         reason_codes = set(report.health.reason_codes)
@@ -1188,6 +1219,7 @@ class CoreCaptureScheduler:
         with self._lifecycle_lock:
             self._last_cycle_reason_code = reason_code
             self._completed_cycle_count += 1
+            self._cycle_condition.notify_all()
 
     def _try_exit(self) -> bool:
         with self._lifecycle_lock:

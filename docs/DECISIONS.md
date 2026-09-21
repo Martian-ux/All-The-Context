@@ -6903,3 +6903,23 @@ and SQLite scheduling rather than the contract. Packet G keeps real worker
 capture/restart/pre-generation behavior and uses the same finite loaded-worker
 bound as Packet F; timeout diagnostics are content-free and do not substitute
 for capture truth.
+
+## ADR-221: Windows-under-load repair2 uses explicit lifecycle observation boundaries
+
+**Status:** corrected locally on 2026-09-21 from the independent review of
+hosted run `35593718440`; exact focused native validation remains required.
+
+The scheduler's completed-cycle count is observed through a condition tied to
+the lifecycle lock. The wait is finite, does not mutate scheduling state, and
+wakes on a real completed cycle, worker failure, or shutdown. Packet G retains
+the actual worker, restart, pre-generation context, and no-dashboard journey;
+it cannot pass by waiting through a worker failure or by observing a later
+polling sample.
+
+The detached uninstall helper retains its one launch and exact-root removal
+contract while publishing a bounded external receipt. The receipt contains
+only allowlisted process-state, removal-state, attempt-count, and error-code
+facts. It is written after both successful removal and the final failure
+boundary, so a launched helper that cannot remove the verified root cannot be
+mistaken for a successful native observation. No product authority, vault,
+credential, process ownership, or deletion target changes.

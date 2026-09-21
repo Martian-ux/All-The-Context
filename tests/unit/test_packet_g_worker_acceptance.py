@@ -7,8 +7,6 @@ provider/client integration, packaged-install acceptance, or release support.
 
 from __future__ import annotations
 
-import time
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -50,20 +48,6 @@ from tests.fixtures.scheduled_packet_f import (
 )
 
 
-def _wait_until(
-    predicate: Callable[[], bool],
-    *,
-    timeout: float = 5.0,
-    interval: float = 0.01,
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(interval)
-    raise AssertionError("condition was not met before timeout")
-
-
 def _wait_for_capture(
     service: CoreService,
     source_id: str,
@@ -75,14 +59,11 @@ def _wait_for_capture(
 ) -> None:
     expected_last_run_at = clock()
 
-    def cycle_completed() -> bool:
-        return (
-            service.capture_scheduler.status()["completed_cycle_count"] >= minimum_completed_cycle
-        )
-
-    try:
-        _wait_until(cycle_completed, timeout=SCHEDULED_CAPTURE_WAIT_SECONDS)
-    except AssertionError as error:
+    completed = service.capture_scheduler.wait_for_completed_cycle(
+        minimum_completed_cycle,
+        timeout=SCHEDULED_CAPTURE_WAIT_SECONDS,
+    )
+    if not completed:
         status = service.capture_scheduler.status()
         safe_status = {
             key: status[key]
@@ -96,7 +77,7 @@ def _wait_for_capture(
                 "worker_state",
             )
         }
-        raise AssertionError(f"capture cycle did not complete; status={safe_status}") from error
+        raise AssertionError(f"capture cycle did not complete; status={safe_status}")
 
     source = service.capture.get_source(source_id)
     assert source.lifecycle_state == "enabled"
