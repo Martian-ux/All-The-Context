@@ -769,8 +769,12 @@ class CoreCaptureScheduler:
         try:
             with self._lifecycle_lock:
                 thread = self._thread
-                running = thread is not None and thread.is_alive()
                 worker_state = self._worker_state
+                running = (
+                    thread is not None
+                    and thread.is_alive()
+                    and worker_state in {"starting", "running"}
+                )
                 worker_failure_code = self._worker_failure_code
                 worker_generation = self._worker_generation
                 worker_failure_generation = self._worker_failure_generation
