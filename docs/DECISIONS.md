@@ -6836,3 +6836,23 @@ allowlisted closed failure summary. The failure artifact is always attempted
 with missing files ignored, while process-inventory upload remains required
 only after a passing smoke, so secondary artifact absence cannot obscure the
 primary stage.
+
+## ADR-218: Installed-copy setup is an identity-preserving reopen
+
+**Status:** repaired locally on 2026-09-20 from exact candidate
+`dcfd745557031b0757bdd92f571cf0f403883537`; focused validation and the
+maintained-native packaged lifecycle remain required.
+
+The retained Windows smoke proves the uninstall-injection branch is expected
+and not the later failure. A repeated setup launched from a complete installed
+component set must not probe or otherwise take ownership of Core before the
+bootstrap helper's existing locked, reparse-safe validation. The helper still
+owns the complete-install decision and all cutover/registration validation;
+the desktop caller only avoids the unnecessary Core lifecycle probe on the
+no-cutover path. No vault, credential, executable, registration, or process
+identity is deleted, recreated, weakened, or silently substituted.
+
+The headless report contract has separate, allowlisted Core startup and Core
+authentication failure codes and resets the prepare-only subphase at the
+`perform_setup` boundary. Unknown RuntimeErrors remain `setup_failed`; no
+exception text or arbitrary diagnostic string is persisted or projected.

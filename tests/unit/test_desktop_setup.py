@@ -545,6 +545,48 @@ def test_setup_initializes_recoverable_access_and_codex(tmp_path: Path, monkeypa
     assert repeated.client_id == result.client_id
 
 
+def test_repeated_setup_core_failure_preserves_vault_and_desktop_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_441)
+    runtime = RuntimeCommand(Path("python"), ("-m", "allthecontext.desktop"))
+    log_path = config.data_dir / "logs" / "core.log"
+
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.launch_core",
+        lambda _runtime, _config: log_path,
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.authenticated_dashboard_url",
+        lambda _config, _token: "http://127.0.0.1:17441/v1/browser/connect?ticket=opaque",
+    )
+
+    first = perform_setup(
+        SetupOptions(configure_codex=False, configure_claude=False, start_at_login=False),
+        runtime,
+        config=config,
+    )
+    vault_id = first.vault_id
+    client_id = first.client_id
+
+    def fail_launch(_runtime: RuntimeCommand, _config: CoreConfig) -> Path:
+        raise RuntimeError("path=/private/vault.sqlite3 token=never-log-this")
+
+    monkeypatch.setattr("allthecontext.desktop_setup.launch_core", fail_launch)
+    with pytest.raises(desktop_setup.SetupCoreStartupError):
+        perform_setup(
+            SetupOptions(configure_codex=False, configure_claude=False, start_at_login=False),
+            runtime,
+            config=config,
+        )
+
+    store = CoreStore(config.database_path)
+    assert store.vault_id() == vault_id
+    clients = [client for client in store.list_clients() if not client["revoked"]]
+    assert [client["id"] for client in clients] == [client_id]
+    assert (config.data_dir / "credentials.development.json").is_file()
+
+
 def test_setup_connects_claude_code_with_exact_read_only_principal_and_managed_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

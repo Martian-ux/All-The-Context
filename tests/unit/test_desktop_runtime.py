@@ -32,7 +32,12 @@ from allthecontext.desktop import (
     prepare_installed_runtime,
 )
 from allthecontext.desktop_runtime import RuntimeCommand
-from allthecontext.desktop_setup import CLAUDE_CLIENT_NAME, CODEX_CLIENT_NAME, CoreProbe
+from allthecontext.desktop_setup import (
+    CLAUDE_CLIENT_NAME,
+    CODEX_CLIENT_NAME,
+    CoreProbe,
+    SetupCoreStartupError,
+)
 from allthecontext.edge_connection import decommission_edge_connection
 from allthecontext.instance_identity import ensure_instance_secret
 from allthecontext.models import ClientCreate
@@ -136,6 +141,113 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
         "entrypoint_registration",
         "installed_runtime_assembly",
     ]
+
+
+def test_windows_reopen_reuses_complete_installed_components_without_touching_core(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    component_paths = {
+        "main": install_dir / "AllTheContext.exe",
+        "mcp": install_dir / "AllTheContextMCP.exe",
+        "recovery": install_dir / "AllTheContextRecovery.exe",
+        "updater": install_dir / "AllTheContextUpdater.exe",
+    }
+    for role, path in component_paths.items():
+        path.write_bytes(role.encode("ascii"))
+
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(desktop.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        desktop,
+        "probe_core",
+        lambda _config: (_ for _ in ()).throw(AssertionError("reopen probed Core")),
+    )
+    monkeypatch.setattr(
+        desktop,
+        "install_application_entrypoints",
+        lambda _target: (_ for _ in ()).throw(AssertionError("reopen rewrote registration")),
+    )
+    monkeypatch.setattr(desktop, "application_entrypoints_need_refresh", lambda: False)
+
+    subphases: list[str] = []
+    installed, relaunched = prepare_installed_runtime(
+        RuntimeCommand(
+            component_paths["main"],
+            mcp_executable=component_paths["mcp"],
+            update_executable=component_paths["updater"],
+            recovery_executable=component_paths["recovery"],
+        ),
+        relaunch_args=None,
+        progress=subphases.append,
+    )
+
+    assert relaunched is False
+    assert installed.executable == component_paths["main"]
+    assert installed.mcp_executable == component_paths["mcp"]
+    assert installed.update_executable == component_paths["updater"]
+    assert installed.recovery_executable == component_paths["recovery"]
+    assert subphases == [
+        "packaged_component_source_validation",
+        "entrypoint_refresh_probe",
+        "installed_runtime_assembly",
+    ]
+
+
+def test_headless_setup_reports_core_failure_without_stale_prepare_subphase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report_path = tmp_path / "setup-report.json"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    path_canary = str(tmp_path / "private" / "vault.sqlite3")
+    token_canary = "atc-core-start-canary-never-log"
+
+    monkeypatch.setattr(desktop.RuntimeCommand, "current", lambda: runtime)
+
+    def report_prepare_progress(
+        _runtime: RuntimeCommand,
+        *,
+        relaunch_args: tuple[str, ...] | None,
+        progress,
+    ) -> tuple[RuntimeCommand, bool]:
+        assert relaunch_args is None
+        progress("installed_runtime_assembly")
+        return runtime, False
+
+    monkeypatch.setattr(desktop, "prepare_installed_runtime", report_prepare_progress)
+    monkeypatch.setattr(
+        desktop,
+        "perform_setup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(SetupCoreStartupError()),
+    )
+    monkeypatch.setattr(
+        desktop,
+        "_write_failure_diagnostics",
+        lambda _error: (_ for _ in ()).throw(
+            RuntimeError(f"{path_canary}; token={token_canary}")
+        ),
+    )
+
+    assert desktop.main(["--headless-setup", str(report_path), "--no-claude"]) == 1
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "setup": "failed",
+        "error_type": "RuntimeError",
+        "error_code": "core_startup_failed",
+        "setup_stage": "perform_setup",
+        "setup_subphase": "unknown",
+        "diagnostics_written": False,
+        "diagnostics_name": None,
+    }
+    captured = capsys.readouterr()
+    serialized = json.dumps(payload)
+    assert path_canary not in serialized
+    assert token_canary not in serialized
+    assert path_canary not in captured.err
+    assert token_canary not in captured.err
 
 
 def test_macos_bundle_copy_replaces_existing_copy_atomically(tmp_path: Path) -> None:

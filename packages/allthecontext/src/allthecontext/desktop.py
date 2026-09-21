@@ -48,6 +48,8 @@ from .desktop_setup import (
     CODEX_CLIENT_NAME,
     CODEX_EXPLICIT_CLIENT_NAME,
     CoreProbe,
+    SetupCoreAuthenticationError,
+    SetupCoreStartupError,
     SetupOptions,
     authenticated_dashboard_url,
     delete_client_credential,
@@ -307,6 +309,8 @@ _PACKAGED_BOOTSTRAP_EXCEPTION_CODES: tuple[tuple[type[Exception], str], ...] = (
 _HEADLESS_SETUP_ERROR_CODES = frozenset(
     {
         "credential_store_unavailable",
+        "core_authentication_failed",
+        "core_startup_failed",
         "setup_io_error",
         "setup_invalid_value",
         "setup_failed",
@@ -726,10 +730,13 @@ def prepare_installed_runtime(
     }
     targets = canonical_targets(install_dir)
 
-    # Probe only for lifecycle bookkeeping.  The stop routine independently
-    # authenticates and waits for Core to exit before the first target replace.
-    _notify_headless_setup_subphase(progress, "core_probe")
-    core_was_running = probe_core(CoreConfig.default()) is not CoreProbe.UNREACHABLE
+    # The bootstrap helper decides completion under its install lock.  Defer
+    # the Core probe until it has proved a cutover is needed so a repeated
+    # complete-install setup does not take ownership of Core, while a real
+    # cutover retains the existing stop/restart contract.
+    def core_was_running() -> bool:
+        _notify_headless_setup_subphase(progress, "core_probe")
+        return probe_core(CoreConfig.default()) is not CoreProbe.UNREACHABLE
 
     def restart_prior_core() -> None:
         prior_runtime = RuntimeCommand(
@@ -1318,6 +1325,8 @@ def _packaged_provider_acceptance(args: argparse.Namespace) -> int:
 def _headless_setup_error_code(error: Exception) -> str:
     """Map arbitrary setup failures to the closed automation diagnostic vocabulary."""
 
+    if isinstance(error, (SetupCoreStartupError, SetupCoreAuthenticationError)):
+        return error.diagnostic_code
     message = str(error).casefold()
     if "credential store" in message or "credential storage" in message:
         return "credential_store_unavailable"
@@ -1346,9 +1355,13 @@ def _write_headless_setup_failure_report(
     diagnostics_path = _write_failure_diagnostics(RuntimeError(error_code))
     report: dict[str, Any] = {
         "setup": "failed",
-        "error_type": type(error).__name__
-        if type(error).__name__ in {"RuntimeError", "OSError", "ValueError"}
-        else "Exception",
+        "error_type": (
+            "RuntimeError"
+            if isinstance(error, RuntimeError)
+            else type(error).__name__
+            if type(error).__name__ in {"OSError", "ValueError"}
+            else "Exception"
+        ),
         "error_code": error_code,
         "setup_stage": setup_stage,
         "setup_subphase": setup_subphase,
@@ -1419,6 +1432,10 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
             progress=record_subphase,
         )
         setup_stage = "perform_setup"
+        # The prepare callback describes only the frozen component lifecycle.
+        # Do not carry its final assembly marker into the independent setup
+        # transaction or misattribute a later Core/setup failure to bootstrap.
+        setup_subphase = "unknown"
         setup_kwargs: dict[str, Any] = {
             "vault_name": args.vault_name,
             "timezone": args.timezone or local_timezone(),

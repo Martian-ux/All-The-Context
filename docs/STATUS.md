@@ -5058,3 +5058,24 @@ summary on every Windows desktop outcome and skips the process-inventory
 upload after an earlier smoke failure; a passing smoke still requires the
 process-inventory JSON artifact. Missing diagnostic artifacts are therefore
 secondary and cannot replace the primary setup or launch stage.
+
+## Installed-copy reopen repair (2026-09-20)
+
+The pinned hosted failure's injected `packaged-uninstall-injected` branch is
+retained as expected smoke evidence: it raises before real uninstall and
+preserves the installed copy and vault. Repeated Windows setup now recognizes
+an already-complete component set before Core lifecycle probing, while the
+bootstrap transaction still performs its locked, reparse-safe root and journal
+validation. This preserves component, registration, vault, credential, and
+Core ownership identity on the installed-copy reopen path.
+
+Headless setup resets the prepare-only subphase when entering
+`perform_setup`. Core startup and authenticated browser-session failures use
+the explicit closed codes `core_startup_failed` and
+`core_authentication_failed`; all other failures retain the closed fallback
+classification. Reports and smoke projections contain no exception text,
+traceback, path, URL, credential, configuration, or personal context. The
+focused source regressions cover complete-install reuse, authority/vault
+retention after a repeated setup failure, stale-subphase clearing, and the
+closed diagnostic projection. Native packaged reopen, static, full, and
+hosted gates remain required.

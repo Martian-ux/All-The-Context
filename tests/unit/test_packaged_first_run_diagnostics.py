@@ -409,6 +409,27 @@ def test_project_failed_setup_report_redacts_error_canaries() -> None:
         assert canary not in serialized
 
 
+def test_project_setup_report_allows_only_enumerated_core_failure_codes() -> None:
+    projected = smoke.project_setup_report_for_diagnostics(
+        {
+            "setup": "failed",
+            "error_type": "RuntimeError",
+            "error_code": "core_startup_failed",
+            "setup_stage": "perform_setup",
+            "setup_subphase": "unknown",
+            "exception": "raw traceback with a token=never-log-this and a private path",
+        }
+    )
+
+    assert projected["error_code"] == "core_startup_failed"
+    assert projected["setup_stage"] == "perform_setup"
+    assert projected["setup_subphase"] == "unknown"
+    serialized = json.dumps(projected)
+    assert "raw traceback" not in serialized
+    assert "never-log-this" not in serialized
+    assert "private path" not in serialized
+
+
 @pytest.mark.parametrize(
     "field",
     [
