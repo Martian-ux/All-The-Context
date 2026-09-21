@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import sys
 import time
 import urllib.request
 import uuid
+from ctypes import wintypes
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -645,6 +647,10 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
         receipt_deadline = time.monotonic() + 5.0
         while not diagnostics_path.exists() and time.monotonic() < receipt_deadline:
             time.sleep(0.1)
+        assert diagnostics_path.exists(), "PowerShell exited without writing a terminal receipt"
+        receipt_bytes = diagnostics_path.read_bytes()
+        assert receipt_bytes.startswith(b"{")
+        assert not receipt_bytes.startswith(b"\xef\xbb\xbf")
         receipt = json.loads(diagnostics_path.read_text(encoding="utf-8"))
         assert receipt["schema_version"] == 1
         assert receipt["outcome"] == "success"
@@ -655,6 +661,103 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
         assert receipt["error_code"] == "none"
         assert 1 <= receipt["attempt_count"] <= WINDOWS_INSTALL_REMOVAL_ATTEMPTS
     finally:
+        shutil.rmtree(install_dir, ignore_errors=True)
+        diagnostics_path.unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")
+def test_windows_uninstall_helper_writes_bounded_failure_receipt_for_locked_target() -> None:
+    """A real locked file exercises the helper's terminal failure boundary."""
+
+    checkout_root = Path(__file__).resolve().parents[2]
+    install_dir = checkout_root / ".test-runs" / f"windows-install-failure-{uuid.uuid4().hex}"
+    diagnostics_path = (
+        checkout_root / ".test-runs" / f"windows-install-failure-{uuid.uuid4().hex}.json"
+    )
+    handle = None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    try:
+        try:
+            install_dir.mkdir(parents=True)
+            lock_path = install_dir / "removal-lock.txt"
+            lock_path.write_text("held\n", encoding="utf-8")
+        except PermissionError as exc:
+            pytest.skip(f"checkout-owned native test directory is not writable: {exc}")
+
+        handle = kernel32.CreateFileW(
+            str(lock_path),
+            0x80000000,  # GENERIC_READ
+            0,  # deny all sharing, including delete
+            None,
+            3,  # OPEN_EXISTING
+            0x80,  # FILE_ATTRIBUTE_NORMAL
+            None,
+        )
+        if handle == wintypes.HANDLE(-1).value:
+            pytest.skip(
+                f"could not establish the test-only Windows file lock: {ctypes.get_last_error()}"
+            )
+
+        environment = os.environ.copy()
+        environment["ATC_INSTALL_DIR"] = str(install_dir)
+        environment[desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
+        source_root = checkout_root / "packages" / "allthecontext" / "src"
+        environment["PYTHONPATH"] = os.pathsep.join(
+            filter(None, (str(source_root), environment.get("PYTHONPATH")))
+        )
+        child_code = (
+            "from allthecontext import desktop;"
+            "from pathlib import Path;"
+            "import os;"
+            "desktop.WINDOWS_INSTALL_REMOVAL_ATTEMPTS=1;"
+            "desktop._schedule_windows_install_removal(Path(os.environ['ATC_INSTALL_DIR']))"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", child_code],
+            cwd=install_dir,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+
+        receipt_deadline = time.monotonic() + 5.0
+        while not diagnostics_path.exists() and time.monotonic() < receipt_deadline:
+            time.sleep(0.1)
+        assert diagnostics_path.exists(), "PowerShell exited without writing a failure receipt"
+        receipt_bytes = diagnostics_path.read_bytes()
+        assert receipt_bytes.startswith(b"{")
+        assert not receipt_bytes.startswith(b"\xef\xbb\xbf")
+        receipt = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+        assert receipt == {
+            "schema_version": 1,
+            "outcome": "failure",
+            "helper_process": "started",
+            "caller_process": receipt["caller_process"],
+            "caller_wait": receipt["caller_wait"],
+            "removal": "present",
+            "attempt_count": 1,
+            "error_code": "remove_failed",
+        }
+        assert receipt["caller_process"] in {"captured", "not_found"}
+        assert receipt["caller_wait"] in {"completed", "not_required"}
+        assert install_dir.exists()
+    finally:
+        if handle is not None and handle != wintypes.HANDLE(-1).value:
+            kernel32.CloseHandle(handle)
         shutil.rmtree(install_dir, ignore_errors=True)
         diagnostics_path.unlink(missing_ok=True)
 

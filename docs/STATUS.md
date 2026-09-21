@@ -5141,3 +5141,16 @@ The short-lived-child regression requires the receipt and verified target
 absence; exact-root validation, caller ownership, launch flags, and bounded
 cleanup remain unchanged. Full, package, hosted, and publication gates remain
 outside this repair.
+
+## Windows-under-load repair1 receipt encoding correction (2026-09-21)
+
+The detached helper now serializes that existing external temporary receipt
+with .NET `System.Text.UTF8Encoding(false)` and `System.IO.File.WriteAllText`
+before the unchanged atomic `Move-Item`; ordinary UTF-8 consumers remain
+unchanged. The focused regression checks the first bytes, fixed schema,
+process identity, removal outcome, and a bounded one-attempt exclusive-lock
+failure receipt. Pinned direct real-child runs passed both success and failure
+boundaries. The required pytest handoff hit the managed host's WinError 5
+basetemp cleanup denial before assertions; frozen native red and fresh direct
+green evidence are recorded externally. The original uninstall cause remains
+unproven, and all downstream review and exact-candidate gates remain open.

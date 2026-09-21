@@ -6923,3 +6923,18 @@ facts. It is written after both successful removal and the final failure
 boundary, so a launched helper that cannot remove the verified root cannot be
 mistaken for a successful native observation. No product authority, vault,
 credential, process ownership, or deletion target changes.
+
+## ADR-222: Detached-uninstall receipts use explicit BOM-free UTF-8
+
+**Status:** corrected locally on 2026-09-21 from the frozen native receipt
+failure; exact focused native validation remains required.
+
+The existing external temporary receipt is serialized with .NET
+`System.Text.UTF8Encoding(false)` and `System.IO.File.WriteAllText`, then
+published by the unchanged temporary-to-final `Move-Item`. This keeps ordinary
+`encoding="utf-8"` consumers interoperable without changing the schema,
+external-path validation, caller-process binding, bounded removal, or terminal
+failure reporting. A real short-lived child proves the successful receipt and
+a test-only one-attempt locked-target fault proves the final failure receipt;
+the historical uninstall cause and downstream exact-candidate gates remain
+unresolved.

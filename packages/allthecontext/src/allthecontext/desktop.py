@@ -1621,8 +1621,9 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         "$atcDiagnosticsParent=Split-Path -Parent $atcDiagnosticsPath;"
         "New-Item -ItemType Directory -Force -Path $atcDiagnosticsParent | Out-Null;"
         '$atcTemporary="$atcDiagnosticsPath.$PID.atc-new";'
-        "$atcResult | ConvertTo-Json -Compress | Set-Content -LiteralPath "
-        "$atcTemporary -Encoding utf8;"
+        "$atcJson=$atcResult | ConvertTo-Json -Compress;"
+        "$atcUtf8NoBom=New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false;"
+        "[System.IO.File]::WriteAllText($atcTemporary,$atcJson,$atcUtf8NoBom);"
         "Move-Item -LiteralPath $atcTemporary -Destination $atcDiagnosticsPath -Force"
         "}catch{}"
         "};"
