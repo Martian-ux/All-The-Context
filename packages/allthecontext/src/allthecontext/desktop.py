@@ -1055,10 +1055,11 @@ def _apply_packaged_update(report_value: str) -> int:
             temporary.unlink(missing_ok=True)
     except Exception as error:
         # Registration runs inside prepare after the binary transaction commits.
-        # Preserve existing classifications for other exception types.
+        # The refresh/registration callbacks are therefore their own failure
+        # boundary for every exception type; never reuse the earlier bootstrap
+        # or lazy-probe marker after the transaction has returned.
         if (
-            isinstance(error, OSError)
-            and phase == "component_bootstrap"
+            phase == "component_bootstrap"
             and prepare_subphase in {"entrypoint_refresh_probe", "entrypoint_registration"}
         ):
             phase = "entrypoint_registration"
@@ -1352,7 +1353,9 @@ def _write_headless_setup_failure_report(
     # message. Headless setup is automation-facing, so persist only a closed
     # code even if a lower layer accidentally embeds a token, path, or imported
     # text in its exception.
-    diagnostics_path = _write_failure_diagnostics(RuntimeError(error_code))
+    diagnostics_path: Path | None = None
+    with suppress(Exception):
+        diagnostics_path = _write_failure_diagnostics(RuntimeError(error_code))
     report: dict[str, Any] = {
         "setup": "failed",
         "error_type": (

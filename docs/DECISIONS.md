@@ -6856,3 +6856,26 @@ The headless report contract has separate, allowlisted Core startup and Core
 authentication failure codes and resets the prepare-only subphase at the
 `perform_setup` boundary. Unknown RuntimeErrors remain `setup_failed`; no
 exception text or arbitrary diagnostic string is persisted or projected.
+
+## ADR-219: Lazy bootstrap markers follow the locked execution boundary
+
+**Status:** corrected locally on 2026-09-21 from exact candidate
+`7f8181d050a2f549e605635e97ac29536b7dd855`; native focused and packaged gates
+remain required.
+
+The desktop caller emits the outer `bootstrap_install_recovery` marker before
+calling the bootstrap helper. The helper retains the complete-install decision
+inside its lock and invokes the caller's Core-running observation only after it
+has established that a real cutover is necessary. Thus complete installed-copy
+reuse includes locked validation without a no-op Core probe, while an incomplete
+or changed copy records the actual lazy probe after the outer marker. The probe
+regression must create a real cutover; it may not force probing on the complete
+reuse path.
+
+The headless failure report treats the optional graphical diagnostic writer as
+best effort so an exception there cannot suppress the closed atomic report.
+After the bootstrap transaction returns, entrypoint refresh and registration are
+an independent failure boundary for OSError, RuntimeError, registration guards,
+and other exceptions. Their report cannot inherit the stale bootstrap or
+Core-probe subphase. No transaction, identity, registration, vault, credential,
+process, rollback, redaction, or closed-schema invariant is relaxed.

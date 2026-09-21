@@ -135,8 +135,8 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     assert registered == [installed.executable]
     assert subphases == [
         "packaged_component_source_validation",
-        "core_probe",
         "bootstrap_install_recovery",
+        "core_probe",
         "entrypoint_refresh_probe",
         "entrypoint_registration",
         "installed_runtime_assembly",
@@ -191,6 +191,7 @@ def test_windows_reopen_reuses_complete_installed_components_without_touching_co
     assert installed.recovery_executable == component_paths["recovery"]
     assert subphases == [
         "packaged_component_source_validation",
+        "bootstrap_install_recovery",
         "entrypoint_refresh_probe",
         "installed_runtime_assembly",
     ]
@@ -802,11 +803,18 @@ def test_headless_setup_injected_prepare_oserror_reports_exact_subphase(
     }
     for role, path in component_paths.items():
         path.write_bytes(role.encode("ascii"))
+    source_paths = component_paths
+    if failure_subphase == "core_probe":
+        source_dir = tmp_path / "replacement"
+        source_dir.mkdir()
+        source_paths = {role: source_dir / path.name for role, path in component_paths.items()}
+        for role, path in source_paths.items():
+            path.write_bytes(role.encode("ascii") + b"-replacement")
     runtime = RuntimeCommand(
-        component_paths["main"],
-        mcp_executable=component_paths["mcp"],
-        update_executable=component_paths["updater"],
-        recovery_executable=component_paths["recovery"],
+        source_paths["main"],
+        mcp_executable=source_paths["mcp"],
+        update_executable=source_paths["updater"],
+        recovery_executable=source_paths["recovery"],
     )
     report_path = tmp_path / "setup-report.json"
     path_canary = str(tmp_path / "private" / "context.sqlite3")
@@ -1933,16 +1941,10 @@ def test_packaged_update_entrypoint_failure_after_successful_bootstrap_is_bounde
     report = config.data_dir / "updates" / "transactions" / ("a" * 24) / "apply-report.json"
     assert _apply_packaged_update(str(report)) == 1
     assert events == ["bootstrap_returned", callback]
-    phase = "component_bootstrap" if error_kind == "runtime" else "entrypoint_registration"
-    code = (
-        "component_bootstrap_runtime_error"
-        if error_kind == "runtime"
-        else "entrypoint_registration_failed"
-    )
     assert json.loads(report.read_text(encoding="utf-8")) == {
         "attempt": "b" * 32,
-        "code": code,
-        "phase": phase,
+        "code": "entrypoint_registration_failed",
+        "phase": "entrypoint_registration",
         "status": "failed",
     }
     captured = capsys.readouterr()

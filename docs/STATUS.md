@@ -5079,3 +5079,22 @@ focused source regressions cover complete-install reuse, authority/vault
 retention after a repeated setup failure, stale-subphase clearing, and the
 closed diagnostic projection. Native packaged reopen, static, full, and
 hosted gates remain required.
+
+## Lazy bootstrap/reporting contract correction (2026-09-21)
+
+The installed-copy reopen correction now reports the actual Windows execution
+order: source validation, the outer locked-bootstrap marker, a lazy Core probe
+only when the locked helper proves a cutover is required, entrypoint refresh or
+registration, and runtime assembly. A complete installed component set still
+passes through the locked bootstrap validation but does not probe, stop, restart,
+replace, or re-register anything. The injected Core-probe regression uses a
+genuine source/target cutover so it exercises the reachable probe boundary.
+
+Optional graphical diagnostic writing is best effort at the headless report
+boundary; its failure cannot prevent the closed report from being atomically
+attempted. Once bootstrap returns, refresh and registration failures are
+classified as entrypoint-registration failures for every exception class, with
+no stale bootstrap or Core-probe attribution. Existing identity, registration,
+vault, credential, process, rollback, redaction, and closed-schema contracts
+remain unchanged. The focused source correction is committed; native packaged,
+static, full, and hosted gates remain required.
