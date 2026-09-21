@@ -538,8 +538,9 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert WINDOWS_INSTALL_REMOVAL_ATTEMPTS == 300
     assert WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS == 100
     assert WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS == 30.0
-    assert "Wait-Process" in script
-    assert script.index("Wait-Process") < script.index("Remove-Item")
+    assert "Get-Process -Id $atcProcessId" in script
+    assert "$atcProcess.WaitForExit()" in script
+    assert script.index("Get-Process") < script.index("Remove-Item")
     assert (
         f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};$atcAttempt++){{"
     ) in script
@@ -587,7 +588,7 @@ def test_windows_uninstall_helper_is_live_after_caller_returns(tmp_path: Path, m
     assert helper.poll() is None
     assert helper.waited is False
     script = launched[0][0][-1]
-    assert script.index("Wait-Process -Id $atcProcessId") < script.index("Remove-Item")
+    assert script.index("Get-Process -Id $atcProcessId") < script.index("Remove-Item")
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")

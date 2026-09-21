@@ -1979,7 +1979,10 @@ class CoreStore:
         return self.get_import_operation(operation_id)
 
     def get_import_operation(self, operation_id: str) -> dict[str, Any]:
-        with self.connect() as connection:
+        # Status observers must not join the normal ten-second writer queue.
+        # A promotion or parse transaction can legitimately hold that queue
+        # while its timestamp-only liveness writer remains available in WAL.
+        with self._connect_import_operation_reader() as connection:
             row = connection.execute(
                 "SELECT * FROM import_operations WHERE id=?",
                 (operation_id,),
@@ -1991,7 +1994,7 @@ class CoreStore:
     def _connect_import_operation_reader(self) -> sqlite3.Connection:
         """Open a bounded read-only WAL observer for the operation status route."""
         connection = sqlite3.connect(
-            f"{self.database_path.as_uri()}?mode=ro",
+            f"{self.database_path.resolve().as_uri()}?mode=ro",
             uri=True,
             timeout=LIVENESS_CONNECT_TIMEOUT_SECONDS,
             isolation_level=None,

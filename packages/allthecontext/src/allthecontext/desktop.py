@@ -1588,7 +1588,11 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
     environment["ATC_UNINSTALL_PID"] = str(os.getpid())
     script = (
         "$atcProcessId=[int]$env:ATC_UNINSTALL_PID;"
-        "Wait-Process -Id $atcProcessId -ErrorAction SilentlyContinue;"
+        # Capture the process object while the caller is still alive. Waiting
+        # by PID alone can observe a different process after rapid PID reuse
+        # on a busy Windows worker and leave the real install root behind.
+        "$atcProcess=Get-Process -Id $atcProcessId -ErrorAction SilentlyContinue;"
+        "if($null -ne $atcProcess){$atcProcess.WaitForExit()};"
         # A frozen one-file executable has an outer bootloader process around
         # the Python child.  The child can be gone while the bootloader still
         # has the installed executable open, so one removal attempt can leave

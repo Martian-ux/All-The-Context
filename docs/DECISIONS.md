@@ -6879,3 +6879,27 @@ an independent failure boundary for OSError, RuntimeError, registration guards,
 and other exceptions. Their report cannot inherit the stale bootstrap or
 Core-probe subphase. No transaction, identity, registration, vault, credential,
 process, rollback, redaction, or closed-schema invariant is relaxed.
+
+## ADR-220: Windows-under-load lifecycle observations remain bounded and truthful
+
+**Status:** corrected locally on 2026-09-21 from hosted run `35593718440`;
+focused native validation remains required.
+
+The detached Windows uninstall helper retains the exact resolved installation
+root and caller PID contract, but binds the wait to a `Get-Process` object
+captured while the caller is alive before calling `WaitForExit`. This avoids a
+PID-reuse race under process churn without adding a retry, changing job flags,
+expanding the deletion target, or hiding launch/removal failure.
+
+`CoreStore.get_import_operation` is an observer read and therefore uses the
+bounded read-only WAL connection already used by the authenticated status
+route. It never joins the normal writer queue or changes authoritative
+promotion, liveness, byte-progress, terminal-state, or closure semantics.
+
+The upload regression proves one changed durable timestamp during blocked
+promotion and separately holds an IMMEDIATE writer while reading operation
+status. Requiring three samples was removed because it measured host polling
+and SQLite scheduling rather than the contract. Packet G keeps real worker
+capture/restart/pre-generation behavior and uses the same finite loaded-worker
+bound as Packet F; timeout diagnostics are content-free and do not substitute
+for capture truth.

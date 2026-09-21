@@ -1708,12 +1708,16 @@ def test_upload_promotion_starts_and_closes_operation_heartbeats(
             failures,
             message="source finalization did not start",
         )
-        stamps: list[str] = []
+        initial_stamp = str(ops.get_operation(operation_id)["updated_at"])
+        observed_stamps = {initial_stamp}
         deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline and len(set(stamps)) < 3:
-            stamps.append(str(ops.get_operation(operation_id)["updated_at"]))
+        while time.monotonic() < deadline and len(observed_stamps) < 2:
+            observed_stamps.add(str(ops.get_operation(operation_id)["updated_at"]))
             time.sleep(0.01)
-        assert len(set(stamps)) >= 3
+        # One changed durable timestamp proves that the blocked promotion is
+        # still liveness-visible. Requiring three values made this a host
+        # scheduling/count assertion rather than a heartbeat regression.
+        assert len(observed_stamps) >= 2
     finally:
         release_finalize.set()
         _join_test_worker(thread, message="upload worker did not quiesce")
@@ -1722,6 +1726,24 @@ def test_upload_promotion_starts_and_closes_operation_heartbeats(
     assert outcomes[0]["status"] == "processing"
     assert trackers
     assert all(tracker._heartbeat_thread is None for tracker in trackers)
+
+
+def test_import_operation_status_read_does_not_join_promotion_writer(
+    tmp_path: Path,
+) -> None:
+    core, ops = _ops(tmp_path)
+    operation = ops.start_operation(declared_byte_size=1, filename="reader.bin")
+    operation_id = str(operation["operation_id"])
+    connection = core.store.connect()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        observed = ops.get_operation(operation_id)
+    finally:
+        connection.rollback()
+        connection.close()
+
+    assert observed["operation_id"] == operation_id
+    assert observed["status"] == "awaiting_upload"
 
 
 def test_parse_stall_heartbeats_durably_without_false_byte_progress(

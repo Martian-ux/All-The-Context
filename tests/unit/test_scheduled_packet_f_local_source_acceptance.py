@@ -22,6 +22,7 @@ from tests.fixtures.local_git_workspace import create_sanitized_workspace
 from tests.fixtures.scheduled_packet_f import (
     DELETE_RELATIVE_PATH,
     POST_UPDATE_FORBIDDEN,
+    SCHEDULED_CAPTURE_WAIT_SECONDS,
     UPDATE_RELATIVE_PATH,
     UPDATED_SOURCE_BYTES,
     MutableClock,
@@ -84,7 +85,7 @@ def _wait_for_successful_capture(
     # non-daemon Core worker and its SQLite work. The predicate returns as soon
     # as the durable capture projection is complete, so this larger bound adds
     # no delay to successful runs while keeping lifecycle failures bounded.
-    capture_timeout = 15.0
+    capture_timeout = SCHEDULED_CAPTURE_WAIT_SECONDS
     expected_last_run_at = clock()
 
     def captured() -> bool:

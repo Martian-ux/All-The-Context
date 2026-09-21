@@ -5098,3 +5098,28 @@ no stale bootstrap or Core-probe attribution. Existing identity, registration,
 vault, credential, process, rollback, redaction, and closed-schema contracts
 remain unchanged. The focused source correction is committed; native packaged,
 static, full, and hosted gates remain required.
+
+## Windows-under-load reliability correction (2026-09-21)
+
+The hosted run `35593718440` exposed three independent observation failures.
+The uninstall helper now captures the invoking process object before waiting,
+so a busy Windows worker cannot satisfy a PID-only wait with a reused process;
+the verified install-root identity, stable-parent working directory, one launch
+boundary, and 300-attempt bounded removal are unchanged. A direct short-lived
+child reproduction removed only its verified target.
+
+Import-operation status reads now use the existing bounded read-only WAL
+observer instead of the normal ten-second writer connection. This keeps
+durable timestamp heartbeats observable while promotion owns a write
+transaction. The promotion regression requires one additional durable
+timestamp and a separate IMMEDIATE-writer/read-observer regression proves the
+heartbeat cannot be disabled by reader contention; byte progress and tracker
+closure assertions remain unchanged.
+
+Packet G and Packet F share a 15-second loaded-Windows lifecycle allowance,
+returning immediately when the real durable capture boundary completes. Packet
+G timeout output contains only scheduler state, generation, restart, and
+allowlisted failure fields. A direct real-worker probe completed the initial
+cycle with no worker failure; the frozen focused pytest handoff was attempted
+but its run-owned basetemp was denied by the managed host before assertions.
+No full suite, package, hosted retry, or publication was run here.
