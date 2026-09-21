@@ -188,7 +188,15 @@ def test_failures_before_final_workspace_mutation_leave_no_authorization(
     }[failure_stage]
     monkeypatch.setattr(desktop_setup, target, fail)
 
-    with pytest.raises(RuntimeError, match=failure_stage):
+    expected_error = {
+        "credential": (RuntimeError, failure_stage),
+        "launch": (desktop_setup.SetupCoreStartupError, "core_startup_failed"),
+        "dashboard": (
+            desktop_setup.SetupCoreAuthenticationError,
+            "core_authentication_failed",
+        ),
+    }[failure_stage]
+    with pytest.raises(expected_error[0], match=expected_error[1]):
         setup_harness["run"](_options(workspace_root=root, acknowledged=True))
 
     assert not authorization_path(config.data_dir).exists()
