@@ -1572,9 +1572,7 @@ def install_windows_components(
         if is_complete_install(sources, root):
             return BootstrapInstallResult(root, targets, recovered=recovered)
         core_was_running_value = (
-            core_was_running
-            if isinstance(core_was_running, bool)
-            else core_was_running()
+            core_was_running if isinstance(core_was_running, bool) else core_was_running()
         )
         if not isinstance(core_was_running_value, bool):
             raise BootstrapInstallError("bootstrap_core_state_invalid")

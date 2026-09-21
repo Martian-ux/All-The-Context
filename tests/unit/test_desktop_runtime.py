@@ -226,9 +226,7 @@ def test_headless_setup_reports_core_failure_without_stale_prepare_subphase(
     monkeypatch.setattr(
         desktop,
         "_write_failure_diagnostics",
-        lambda _error: (_ for _ in ()).throw(
-            RuntimeError(f"{path_canary}; token={token_canary}")
-        ),
+        lambda _error: (_ for _ in ()).throw(RuntimeError(f"{path_canary}; token={token_canary}")),
     )
 
     assert desktop.main(["--headless-setup", str(report_path), "--no-claude"]) == 1

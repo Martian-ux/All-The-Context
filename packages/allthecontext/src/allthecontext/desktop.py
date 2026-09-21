@@ -1058,10 +1058,10 @@ def _apply_packaged_update(report_value: str) -> int:
         # The refresh/registration callbacks are therefore their own failure
         # boundary for every exception type; never reuse the earlier bootstrap
         # or lazy-probe marker after the transaction has returned.
-        if (
-            phase == "component_bootstrap"
-            and prepare_subphase in {"entrypoint_refresh_probe", "entrypoint_registration"}
-        ):
+        if phase == "component_bootstrap" and prepare_subphase in {
+            "entrypoint_refresh_probe",
+            "entrypoint_registration",
+        }:
             phase = "entrypoint_registration"
         failure_code = _packaged_update_failure_code(
             error,
