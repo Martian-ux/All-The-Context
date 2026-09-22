@@ -289,6 +289,28 @@ def _blocking_core_scheduler(
     return scheduler, started, release, store
 
 
+def test_completed_cycle_wait_rejects_an_in_flight_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
+    try:
+        scheduler.start()
+        assert started.wait(timeout=5)
+        assert scheduler.wait_for_completed_cycle(1, timeout=0.1) is False
+        status = scheduler.status()
+        assert status["completed_cycle_count"] == 0
+        assert status["running"] is True
+        assert status["worker_failure_code"] is None
+        assert status["worker_generation"] == 1
+        assert status["worker_restart_count"] == 1
+        assert status["worker_state"] == "running"
+    finally:
+        release.set()
+        scheduler.shutdown()
+        store.close()
+
+
 def test_scheduler_disabled_by_default_without_env_or_sidecar(tmp_path: Path) -> None:
     config = _config(tmp_path)
     with CoreService(config) as service:

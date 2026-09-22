@@ -6,6 +6,12 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-09-22 ZF010 loaded-worker observation correction
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| ZF-010/CI-WIN — loaded worker acceptance must synchronize on the asserted durable capture result without mistaking an in-flight worker for a restart or completion failure | `tests/unit/test_packet_g_worker_acceptance.py::_wait_for_capture`; `tests/unit/test_zf010_worker_continuity_acceptance.py`; `tests/unit/test_capture_scheduler_productization.py::test_completed_cycle_wait_rejects_an_in_flight_worker`; ADR-226 | Corrected at the test observation boundary. The finite 15-second allowance now returns on the durable source/memory/retrieval projection while preserving the real scheduler worker, durable enablement, explicit wakeup, content-free timeout diagnostics, source-safety, retrieval, forget, and security assertions. The injected blocking-provider regression preserves the distinction between a running generation 1 worker and a completed cycle. Pinned focused/native checks and all downstream gates remain pending |
+
 The UPDATER-04 and UPDATER-05 rows below refer to ADR-184, the startup-
 recovery decision in this checkout. ADR-183 is retained for the separately
 merged packaged-uninstall observation decision. The follow-up JSON parser

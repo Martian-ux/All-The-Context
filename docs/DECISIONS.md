@@ -1,5 +1,28 @@
 # Architecture decisions
 
+## ADR-226: ZF010 waits on durable capture truth under loaded workers
+
+**Status:** corrected locally on 2026-09-22; maintained-native focused checks,
+independent review, and downstream product gates remain required.
+
+The Packet G/ZF010 acceptance helper must synchronize on the durable capture
+projection it asserts: the expected source `last_run_at`, enabled/error-free
+source state, current/deleted memory truth, and retrieval count. The scheduler's
+in-memory `completed_cycle_count` is deliberately retained as a content-free
+lifecycle diagnostic, but it is published only after adapter refresh, the
+coordinator run, and the post-run health scan. Under loaded Windows xdist, using
+that later diagnostic as the product-data barrier caused a healthy first worker
+to time out while still running.
+
+The correction restores the existing finite 15-second asynchronous observation
+without inflating it, preserves durable scheduler enablement and explicit
+restart wakeup, and keeps real-worker/no-dashboard/source-safety assertions.
+An injected blocking provider regression requires `wait_for_completed_cycle` to
+remain false for a running generation 1 worker with no failure and zero
+completed cycles, so the lifecycle API cannot falsely report completion. No
+production scheduler or provider behavior is changed, and no retrieval,
+forget, security, timeout, hosted, package, or publication gate is relaxed.
+
 ## ADR-215: Retain only bounded packaged process-inventory observations
 
 **Status:** implemented locally on 2026-09-16; maintained-native focused,

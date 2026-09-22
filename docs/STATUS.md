@@ -35,6 +35,32 @@ become release evidence; exact-artifact and publication claims remain separate.
 The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
 documentation, hosted, artifact, and applicable platform/release gates.
 
+### 2026-09-22 — ZF010 loaded-worker observation correction
+
+The failed merged-main Windows shard `35741347469` was narrowed to the first
+real ZF010 worker: generation 1/restart count 1 stayed running with no worker
+failure while `completed_cycle_count` remained zero at the finite 15-second
+boundary. The scheduler starts from the durable enablement sidecar, wakes the
+real provider-backed worker, and records `completed_cycle_count` only after the
+adapter refresh, capture run, and post-run health projection return. That
+counter is therefore a scheduler lifecycle observation, not the durable source
+truth boundary. The evidence describes an in-flight loaded worker, not a
+restart defect.
+
+Packet G and ZF010 now retain the same finite allowance but wait for the
+existing durable source projection (`last_run_at`, lifecycle/error state,
+current/deleted truth, and retrieval count), returning as soon as that truth is
+ready. The real worker start, durable scheduler enablement, explicit restart
+wakeup, no-dashboard boundary, and content-free timeout status remain covered.
+An injected blocking-provider regression proves that a healthy generation 1
+worker with restart count 1 and zero completed cycles is not treated as a
+completed cycle. No production scheduler, provider adapter, retrieval, forget,
+security, timeout, hosted, package, or publication contract was weakened.
+
+The pinned focused handoff was not runnable in this managed checkout because
+the owned `.test-runs` scratch path returned WinError 5; exact host-native
+focused checks and downstream gates remain required.
+
 ### 2026-09-16 — content-free packaged process-inventory diagnostics
 
 The packaged Windows first-run smoke now retains one exact closed observation
