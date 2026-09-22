@@ -53,11 +53,30 @@ def _retain_windows_uninstall_assertion_evidence(lifecycle_path: Path) -> None:
     """Leave one empty, narrowly scoped marker when a native assertion fails."""
     try:
         lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
-        marker_path = lifecycle_path.with_name(f"{lifecycle_path.name}.assertion-failed")
-        descriptor = os.open(marker_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except (FileExistsError, OSError):
+    except OSError as error:
+        print(
+            f"could not retain Windows uninstall assertion evidence at {lifecycle_path}: {error}",
+            file=sys.stderr,
+        )
         return
-    os.close(descriptor)
+    marker_path = lifecycle_path.with_name(f"{lifecycle_path.name}.assertion-failed")
+    try:
+        descriptor = os.open(marker_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return
+    except OSError as error:
+        print(
+            f"could not retain Windows uninstall assertion evidence at {marker_path}: {error}",
+            file=sys.stderr,
+        )
+        return
+    try:
+        os.close(descriptor)
+    except OSError as error:
+        print(
+            f"could not finalize Windows uninstall assertion evidence at {marker_path}: {error}",
+            file=sys.stderr,
+        )
 
 
 def test_bundled_dashboard_contains_direct_core_mobile_boundary() -> None:
@@ -866,6 +885,24 @@ def test_windows_uninstall_assertion_evidence_is_content_free_and_idempotent(
 
     marker_path = lifecycle_path.with_name(f"{lifecycle_path.name}.assertion-failed")
     assert marker_path.read_bytes() == b""
+
+
+def test_windows_uninstall_assertion_evidence_reports_write_failure_without_masking_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lifecycle_path = tmp_path / "windows-install-failure-456.lifecycle"
+
+    def fail_marker_open(*_args: object, **_kwargs: object) -> int:
+        raise OSError("injected marker write failure")
+
+    monkeypatch.setattr(os, "open", fail_marker_open)
+    with pytest.raises(AssertionError, match="primary assertion"):
+        try:
+            raise AssertionError("primary assertion")
+        finally:
+            _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+
+    assert "injected marker write failure" in capsys.readouterr().err
 
 
 def test_windows_uninstall_failure_artifacts_include_hidden_lifecycle_paths() -> None:

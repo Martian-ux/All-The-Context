@@ -2219,13 +2219,14 @@ def test_operation_liveness_bypasses_python_writer_lock_and_reader_stays_queryab
     sqlite_lock_failures: list[BaseException] = []
 
     def hold_sqlite_writer_lock() -> None:
-        blocker = sqlite3.connect(
-            core.store.database_path,
-            timeout=10.0,
-            isolation_level=None,
-            check_same_thread=False,
-        )
+        blocker: sqlite3.Connection | None = None
         try:
+            blocker = sqlite3.connect(
+                core.store.database_path,
+                timeout=10.0,
+                isolation_level=None,
+                check_same_thread=False,
+            )
             blocker.execute("PRAGMA busy_timeout = 10000")
             blocker.execute("PRAGMA journal_mode = WAL")
             blocker.execute("BEGIN IMMEDIATE")
@@ -2235,13 +2236,20 @@ def test_operation_liveness_bypasses_python_writer_lock_and_reader_stays_queryab
         except BaseException as error:
             sqlite_lock_failures.append(error)
         finally:
-            blocker.rollback()
-            blocker.close()
+            if blocker is not None:
+                try:
+                    blocker.rollback()
+                except BaseException as error:
+                    sqlite_lock_failures.append(error)
+                try:
+                    blocker.close()
+                except BaseException as error:
+                    sqlite_lock_failures.append(error)
 
     sqlite_holder = threading.Thread(target=hold_sqlite_writer_lock, daemon=True)
     sqlite_holder.start()
-    assert sqlite_lock_held.wait(timeout=1.0)
     try:
+        assert sqlite_lock_held.wait(timeout=1.0)
         started = time.monotonic()
         assert core.store.touch_import_operation_liveness(operation_id) is False
         assert time.monotonic() - started < 1.0
@@ -2259,16 +2267,21 @@ def test_operation_liveness_bypasses_python_writer_lock_and_reader_stays_queryab
 
     lock_held = threading.Event()
     release_lock = threading.Event()
+    writer_lock_failures: list[BaseException] = []
 
     def hold_writer_lock() -> None:
-        with core.store._write_lock:
-            lock_held.set()
-            assert release_lock.wait(timeout=5.0)
+        try:
+            with core.store._write_lock:
+                lock_held.set()
+                if not release_lock.wait(timeout=5.0):
+                    raise AssertionError("Python writer lock was not released")
+        except BaseException as error:
+            writer_lock_failures.append(error)
 
     holder = threading.Thread(target=hold_writer_lock, daemon=True)
     holder.start()
-    assert lock_held.wait(timeout=1.0)
     try:
+        assert lock_held.wait(timeout=1.0)
         started = time.monotonic()
         assert core.store.touch_import_operation_liveness(operation_id) is True
         assert time.monotonic() - started < 1.0
@@ -2280,6 +2293,7 @@ def test_operation_liveness_bypasses_python_writer_lock_and_reader_stays_queryab
         holder.join(timeout=1.0)
 
     assert not holder.is_alive()
+    assert writer_lock_failures == []
     assert observed["updated_at"] > before["updated_at"]
     assert observed["bytes_committed"] == before["bytes_committed"]
     assert observed["progress"] == before["progress"]
