@@ -241,6 +241,7 @@ def test_concurrent_progress_polling_during_upload(tmp_path: Path) -> None:
     operation = ops.start_operation(declared_byte_size=size, filename="large.jsonl")
     operation_id = operation["operation_id"]
     seen_phases: list[str] = []
+    poller_failures: list[BaseException] = []
     uploading_observed = threading.Event()
     stop = threading.Event()
 
@@ -251,6 +252,10 @@ def test_concurrent_progress_polling_during_upload(tmp_path: Path) -> None:
             except NotFoundError:
                 time.sleep(0.01)
                 continue
+            except BaseException as error:
+                poller_failures.append(error)
+                stop.set()
+                return
             phase = str(current["phase"])
             if not seen_phases or seen_phases[-1] != phase:
                 seen_phases.append(phase)
@@ -277,6 +282,7 @@ def test_concurrent_progress_polling_during_upload(tmp_path: Path) -> None:
         stop.set()
         thread.join(timeout=5)
     assert finished["status"] == "complete"
+    assert poller_failures == []
     assert "uploading" in seen_phases
     assert finished["source_id"]
     assert core.store.get_source(str(finished["source_id"])).byte_size == size
@@ -1515,6 +1521,7 @@ def test_upload_heartbeat_without_false_committed_bytes(
     operation_id = operation["operation_id"]
     stamps: list[str] = []
     committed_while_uploading: list[int] = []
+    poller_failures: list[BaseException] = []
     stop = threading.Event()
 
     def poller() -> None:
@@ -1524,6 +1531,10 @@ def test_upload_heartbeat_without_false_committed_bytes(
             except NotFoundError:
                 time.sleep(0.01)
                 continue
+            except BaseException as error:
+                poller_failures.append(error)
+                stop.set()
+                return
             stamps.append(str(current["updated_at"]))
             assert int(current["bytes_committed"]) <= int(current["bytes_received"])
             if current["status"] == "uploading":
@@ -1545,6 +1556,7 @@ def test_upload_heartbeat_without_false_committed_bytes(
         stop.set()
         thread.join(timeout=5)
     assert finished["status"] == "complete"
+    assert poller_failures == []
     assert finished["bytes_committed"] == size
     assert committed_while_uploading, "poller should observe uploading heartbeats"
     assert all(value == 0 for value in committed_while_uploading)
@@ -2201,6 +2213,49 @@ def test_operation_liveness_bypasses_python_writer_lock_and_reader_stays_queryab
     operation = ops.start_operation(declared_byte_size=1, filename="contended.bin")
     operation_id = str(operation["operation_id"])
     before = ops.get_operation(operation_id)
+
+    sqlite_lock_held = threading.Event()
+    release_sqlite_lock = threading.Event()
+    sqlite_lock_failures: list[BaseException] = []
+
+    def hold_sqlite_writer_lock() -> None:
+        blocker = sqlite3.connect(
+            core.store.database_path,
+            timeout=10.0,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        try:
+            blocker.execute("PRAGMA busy_timeout = 10000")
+            blocker.execute("PRAGMA journal_mode = WAL")
+            blocker.execute("BEGIN IMMEDIATE")
+            sqlite_lock_held.set()
+            if not release_sqlite_lock.wait(timeout=5.0):
+                sqlite_lock_failures.append(AssertionError("SQLite writer lock was not released"))
+        except BaseException as error:
+            sqlite_lock_failures.append(error)
+        finally:
+            blocker.rollback()
+            blocker.close()
+
+    sqlite_holder = threading.Thread(target=hold_sqlite_writer_lock, daemon=True)
+    sqlite_holder.start()
+    assert sqlite_lock_held.wait(timeout=1.0)
+    try:
+        started = time.monotonic()
+        assert core.store.touch_import_operation_liveness(operation_id) is False
+        assert time.monotonic() - started < 1.0
+        # A real SQLite writer lock may reject the telemetry write, but WAL
+        # keeps the independent read observer queryable from its prior snapshot.
+        observed_during_sqlite_lock = ops.get_operation(operation_id)
+        assert time.monotonic() - started < 1.0
+        assert observed_during_sqlite_lock == before
+    finally:
+        release_sqlite_lock.set()
+        sqlite_holder.join(timeout=1.0)
+
+    assert not sqlite_holder.is_alive()
+    assert sqlite_lock_failures == []
 
     lock_held = threading.Event()
     release_lock = threading.Event()

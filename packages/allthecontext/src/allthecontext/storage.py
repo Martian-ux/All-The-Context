@@ -626,7 +626,15 @@ class CoreStore:
         connection.execute("PRAGMA secure_delete = ON")
         connection.execute("PRAGMA temp_store = MEMORY")
         connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA journal_mode = WAL")
+        # Setting journal_mode is a database-wide transition.  Repeating the
+        # assignment for every short-lived writer connection can briefly take
+        # the SQLite journal lock and starve the independent status reader on
+        # Windows.  Existing databases are already WAL after initialization;
+        # only transition a legacy/new database once, while preserving the
+        # fail-closed mode check for every connection.
+        mode = connection.execute("PRAGMA journal_mode").fetchone()
+        if mode is None or str(mode[0]).casefold() != "wal":
+            connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
     def _connect_import_operation_liveness(self) -> sqlite3.Connection:

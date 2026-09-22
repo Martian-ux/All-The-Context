@@ -6964,3 +6964,36 @@ failure reporting. A real short-lived child proves the successful receipt and
 a test-only one-attempt locked-target fault proves the final failure receipt;
 the historical uninstall cause and downstream exact-candidate gates remain
 unresolved.
+
+## ADR-223: Failed native uninstall assertions retain only upload-visible lifecycle evidence
+
+**Status:** corrected locally on 2026-09-22 from hosted run
+`35682204688`, Windows shard 0 job `106601612504`; maintained native and hosted
+validation remain required.
+
+The two short-lived-child uninstall tests retain their pre-existing bounded
+JSON receipt and empty lifecycle markers when an assertion fails, and add only
+one empty `.assertion-failed` marker outside the install root before teardown
+removes the target contents. The Windows shard's exact lifecycle globs now set
+`include-hidden-files: true`; a source regression checks the hidden-file
+visibility contract. This records that the assertion reached teardown without
+inventing helper launch, script-entry, exit, or receipt-causality facts. Missing
+artifact matches remain non-fatal so artifact handling cannot create a false
+PASS.
+
+## ADR-224: Ordinary WAL setup must not re-enter the database-wide transition
+
+**Status:** corrected locally on 2026-09-22 from hosted run
+`35682204688`, Windows shard 0 job `106601612504`; maintained review, full,
+and a new targeted hosted observation remain required.
+
+The hosted lock symptom and poller warnings provide a measured basis for
+removing the repeated `PRAGMA journal_mode = WAL` assignment from ordinary
+`CoreStore` connection setup. Setup now queries the current mode and performs
+the transition only for a new or legacy database; the existing fail-closed WAL
+check and independent read-only observer remain. A deterministic regression
+holds a real `BEGIN IMMEDIATE` writer lock, requires the liveness write to
+return false within the existing bounded budget, and requires the independent
+reader to remain queryable; a separate Python-lock assertion preserves the
+positive bypass. No busy timeout or assertion threshold is widened, and
+non-lock SQLite errors still propagate.

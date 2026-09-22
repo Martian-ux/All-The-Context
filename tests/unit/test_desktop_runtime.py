@@ -49,6 +49,17 @@ from allthecontext.storage import CoreStore
 from allthecontext.windows_bootstrap_install import BootstrapInstallError
 
 
+def _retain_windows_uninstall_assertion_evidence(lifecycle_path: Path) -> None:
+    """Leave one empty, narrowly scoped marker when a native assertion fails."""
+    try:
+        lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path = lifecycle_path.with_name(f"{lifecycle_path.name}.assertion-failed")
+        descriptor = os.open(marker_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except (FileExistsError, OSError):
+        return
+    os.close(descriptor)
+
+
 def test_bundled_dashboard_contains_direct_core_mobile_boundary() -> None:
     package_root = Path(allthecontext.__file__).resolve().parent
     web_root = package_root / "web"
@@ -721,6 +732,9 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
                 "exit",
             ):
                 lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").unlink(missing_ok=True)
+        else:
+            _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+            shutil.rmtree(install_dir, ignore_errors=True)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")
@@ -837,6 +851,34 @@ def test_windows_uninstall_helper_writes_bounded_failure_receipt_for_locked_targ
                 "exit",
             ):
                 lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").unlink(missing_ok=True)
+        else:
+            _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+            shutil.rmtree(install_dir, ignore_errors=True)
+
+
+def test_windows_uninstall_assertion_evidence_is_content_free_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    lifecycle_path = tmp_path / "windows-install-failure-123.lifecycle"
+
+    _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+    _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+
+    marker_path = lifecycle_path.with_name(f"{lifecycle_path.name}.assertion-failed")
+    assert marker_path.read_bytes() == b""
+
+
+def test_windows_uninstall_failure_artifacts_include_hidden_lifecycle_paths() -> None:
+    workflow = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    marker = "      - name: Upload detached uninstall lifecycle evidence"
+    assert marker in workflow
+    upload_step = workflow.split(marker, 1)[1].split("      - name:", 1)[0]
+    assert "include-hidden-files: true" in upload_step
+    assert "if-no-files-found: ignore" in upload_step
+    assert ".test-runs/windows-install-removal-*.lifecycle.*" in upload_step
+    assert ".test-runs/windows-install-failure-*.lifecycle.*" in upload_step
 
 
 def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(

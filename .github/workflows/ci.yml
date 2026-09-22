@@ -155,6 +155,7 @@ jobs:
             .test-runs/windows-install-removal-*.lifecycle.*
             .test-runs/windows-install-failure-*.json
             .test-runs/windows-install-failure-*.lifecycle.*
+          include-hidden-files: true
           if-no-files-found: ignore
       - name: Build Python artifacts
         run: python -m build --outdir dist/python

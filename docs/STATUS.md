@@ -5173,3 +5173,28 @@ Failed focused-test evidence is retained under the checkout-owned `.test-runs`
 root and the Windows pytest shards upload only the bounded JSON/marker paths.
 The original hosted uninstall cause remains unknown; no hosted retry, package,
 full suite, merge, or publication gate is claimed here.
+
+## Hosted adc0 causal correction (2026-09-22)
+
+The retained hosted run `35682204688`, Windows shard 0 job `106601612504`, had
+two real detached-uninstall assertion failures and one import-operation
+liveness failure. The uninstall absence did not identify the helper launch or
+exit mechanism: the shard uploader used `include-hidden-files: false` while
+all retained `.test-runs` paths were hidden, so the failure evidence was not
+visible. Failed native assertions now retain only a content-free
+`.lifecycle.assertion-failed` marker alongside the existing bounded receipt
+and lifecycle paths; teardown still removes the test target contents, and the
+exact upload globs explicitly include hidden files. A focused regression
+fails if that upload visibility contract is removed.
+
+The same shard showed `sqlite3.OperationalError: database is locked` in
+status pollers and a 5.813-second liveness observation. The causal production
+change is limited to avoiding a repeated database-wide `journal_mode = WAL`
+assignment on every ordinary writer connection: existing WAL mode is queried,
+and only a new or legacy database transitions once. The liveness regression
+now holds a real SQLite `BEGIN IMMEDIATE` writer lock and proves the bounded
+negative write result plus an independent queryable read, then separately
+proves the existing Python writer-lock bypass. SQLite errors remain visible;
+no assertion threshold, authority boundary, install-root contract, or helper
+launch mechanism was changed. This clean descendant is ready only for
+maintained review/full gates and one new targeted hosted observation.
