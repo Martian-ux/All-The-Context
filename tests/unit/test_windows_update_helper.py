@@ -2207,6 +2207,7 @@ def test_atomic_json_retries_only_observed_windows_replace_contention(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target = tmp_path / "journal.json"
+    target.write_text('{"phase":"old"}\n', encoding="utf-8")
     original_replace = Path.replace
     attempts = 0
     sleeps: list[float] = []
@@ -2215,6 +2216,7 @@ def test_atomic_json_retries_only_observed_windows_replace_contention(
         nonlocal attempts
         attempts += 1
         if attempts == 1:
+            assert destination.read_text(encoding="utf-8") == '{"phase":"old"}\n'
             raise _access_denied_winerror()
         return original_replace(source, destination)
 
