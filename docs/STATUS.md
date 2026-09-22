@@ -5198,3 +5198,28 @@ proves the existing Python writer-lock bypass. SQLite errors remain visible;
 no assertion threshold, authority boundary, install-root contract, or helper
 launch mechanism was changed. This clean descendant is ready only for
 maintained review/full gates and one new targeted hosted observation.
+
+## 2026-09-22 causal repair: terminal completion and installed-reopen Core boundary
+
+The recovered `35710331436` Windows evidence separates eventual detached-helper
+completion from the five-second observation window: the same short-lived-child
+artifact later contains a successful removal receipt and all launch, entry,
+terminal, exit, and assertion-failed markers. The observer now uses the
+existing bounded removal budget as one deadline and requires the external
+receipt and the helper's terminal marker together. Deterministic tests cover a
+receipt-before-terminal delay and reject a receipt that never reaches the
+terminal boundary. Success still requires the verified install root to be
+absent, and the locked-target failure still requires the target to remain;
+target, vault, credential, and security contracts are unchanged.
+
+The independent installed-reopen failure remains a real `core_startup_failed`
+at `perform_setup`, distinct from the expected
+`packaged-uninstall-injected` / `registration_restore_target_changed` report.
+Headless setup now retains only content-free `core_startup` and
+`core_authentication` boundary subphases from the existing setup progress
+callback, allowing a new packaged observation to distinguish the two measured
+Core boundaries without guessing a process cause or retaining raw output.
+The required six-module pinned pytest command reached the managed host's
+fixture/basetemp boundary but errored with WinError 5; pinned Ruff, format, and
+targeted mypy checks passed. Full, package, hosted, and publication gates remain
+outside this correction.

@@ -47,6 +47,8 @@ from .desktop_setup import (
     CODEX_CAPTURE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
     CODEX_EXPLICIT_CLIENT_NAME,
+    CORE_AUTHENTICATION_PROGRESS_MESSAGE,
+    CORE_STARTUP_PROGRESS_MESSAGE,
     CoreProbe,
     SetupCoreAuthenticationError,
     SetupCoreStartupError,
@@ -265,6 +267,8 @@ HeadlessSetupStage = Literal["prepare_installed_runtime", "perform_setup", "writ
 HeadlessSetupSubphase = Literal[
     "packaged_component_source_validation",
     "core_probe",
+    "core_startup",
+    "core_authentication",
     "bootstrap_install_recovery",
     "entrypoint_refresh_probe",
     "entrypoint_registration",
@@ -275,6 +279,8 @@ _HEADLESS_SETUP_SUBPHASES: frozenset[str] = frozenset(
     {
         "packaged_component_source_validation",
         "core_probe",
+        "core_startup",
+        "core_authentication",
         "bootstrap_install_recovery",
         "entrypoint_refresh_probe",
         "entrypoint_registration",
@@ -1465,7 +1471,20 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
             setup_kwargs["configure_hermes_continuous_capture"] = True
         if getattr(args, "hermes_profile", None):
             setup_kwargs["hermes_profile"] = args.hermes_profile
-        result = perform_setup(SetupOptions(**setup_kwargs), installed)
+
+        def record_setup_progress(step: str, message: str) -> None:
+            if step != "core":
+                return
+            if message == CORE_STARTUP_PROGRESS_MESSAGE:
+                record_subphase("core_startup")
+            elif message == CORE_AUTHENTICATION_PROGRESS_MESSAGE:
+                record_subphase("core_authentication")
+
+        result = perform_setup(
+            SetupOptions(**setup_kwargs),
+            installed,
+            progress=record_setup_progress,
+        )
         report = asdict(result)
         for field_name in (
             "workspace_root",

@@ -9,6 +9,7 @@ import sys
 import time
 import urllib.request
 import uuid
+from collections.abc import Callable
 from ctypes import wintypes
 from pathlib import Path
 from types import SimpleNamespace
@@ -77,6 +78,85 @@ def _retain_windows_uninstall_assertion_evidence(lifecycle_path: Path) -> None:
             f"could not finalize Windows uninstall assertion evidence at {marker_path}: {error}",
             file=sys.stderr,
         )
+
+
+def _wait_for_windows_uninstall_terminal(
+    diagnostics_path: Path,
+    lifecycle_path: Path,
+    *,
+    deadline: float,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Wait for the helper's terminal marker and its published receipt together."""
+
+    terminal_path = lifecycle_path.with_name(f"{lifecycle_path.name}.terminal")
+    while True:
+        if terminal_path.exists() and diagnostics_path.exists():
+            return
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise AssertionError(
+                "bounded terminal completion criterion was not met: "
+                "expected terminal marker and receipt"
+            )
+        sleep(min(0.1, remaining))
+
+
+def test_windows_uninstall_terminal_observation_waits_for_delayed_completion(
+    tmp_path: Path,
+) -> None:
+    diagnostics_path = tmp_path / "terminal.json"
+    lifecycle_path = tmp_path / "helper-lifecycle"
+    elapsed = 0.0
+
+    def clock() -> float:
+        return elapsed
+
+    def delayed_sleep(interval: float) -> None:
+        nonlocal elapsed
+        elapsed += interval
+        if elapsed >= 0.1:
+            diagnostics_path.write_text("{}\n", encoding="utf-8")
+        if elapsed >= 0.2:
+            lifecycle_path.with_name(f"{lifecycle_path.name}.terminal").write_bytes(b"")
+
+    _wait_for_windows_uninstall_terminal(
+        diagnostics_path,
+        lifecycle_path,
+        deadline=1.0,
+        clock=clock,
+        sleep=delayed_sleep,
+    )
+
+    assert elapsed >= 0.2
+
+
+def test_windows_uninstall_terminal_observation_rejects_receipt_without_terminal(
+    tmp_path: Path,
+) -> None:
+    diagnostics_path = tmp_path / "terminal.json"
+    lifecycle_path = tmp_path / "helper-lifecycle"
+    diagnostics_path.write_text("{}\n", encoding="utf-8")
+    elapsed = 0.0
+
+    def clock() -> float:
+        return elapsed
+
+    def bounded_sleep(interval: float) -> None:
+        nonlocal elapsed
+        elapsed += interval
+
+    with pytest.raises(AssertionError, match="terminal completion criterion"):
+        _wait_for_windows_uninstall_terminal(
+            diagnostics_path,
+            lifecycle_path,
+            deadline=0.25,
+            clock=clock,
+            sleep=bounded_sleep,
+        )
+
+    assert not lifecycle_path.with_name(f"{lifecycle_path.name}.terminal").exists()
 
 
 def test_bundled_dashboard_contains_direct_core_mobile_boundary() -> None:
@@ -251,11 +331,14 @@ def test_headless_setup_reports_core_failure_without_stale_prepare_subphase(
         return runtime, False
 
     monkeypatch.setattr(desktop, "prepare_installed_runtime", report_prepare_progress)
-    monkeypatch.setattr(
-        desktop,
-        "perform_setup",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(SetupCoreStartupError()),
-    )
+
+    def fail_setup(*_args: object, **kwargs: object) -> object:
+        progress = kwargs["progress"]
+        assert callable(progress)
+        progress("core", "Starting Core on this device")
+        raise SetupCoreStartupError()
+
+    monkeypatch.setattr(desktop, "perform_setup", fail_setup)
     monkeypatch.setattr(
         desktop,
         "_write_failure_diagnostics",
@@ -270,7 +353,7 @@ def test_headless_setup_reports_core_failure_without_stale_prepare_subphase(
         "error_type": "RuntimeError",
         "error_code": "core_startup_failed",
         "setup_stage": "perform_setup",
-        "setup_subphase": "unknown",
+        "setup_subphase": "core_startup",
         "diagnostics_written": False,
         "diagnostics_name": None,
     }
@@ -715,13 +798,12 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
         assert completed.returncode == 0, completed.stderr
 
         deadline = time.monotonic() + WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS + 5.0
-        while install_dir.exists() and time.monotonic() < deadline:
-            time.sleep(0.1)
-        assert not install_dir.exists(), "PowerShell exited without executing directory removal"
-        receipt_deadline = time.monotonic() + 5.0
-        while not diagnostics_path.exists() and time.monotonic() < receipt_deadline:
-            time.sleep(0.1)
-        assert diagnostics_path.exists(), "PowerShell exited without writing a terminal receipt"
+        _wait_for_windows_uninstall_terminal(
+            diagnostics_path,
+            lifecycle_path,
+            deadline=deadline,
+        )
+        assert not install_dir.exists(), "terminal completion reported before target removal"
         receipt_bytes = diagnostics_path.read_bytes()
         assert receipt_bytes.startswith(b"{")
         assert not receipt_bytes.startswith(b"\xef\xbb\xbf")
@@ -830,10 +912,12 @@ def test_windows_uninstall_helper_writes_bounded_failure_receipt_for_locked_targ
         )
         assert completed.returncode == 0, completed.stderr
 
-        receipt_deadline = time.monotonic() + 5.0
-        while not diagnostics_path.exists() and time.monotonic() < receipt_deadline:
-            time.sleep(0.1)
-        assert diagnostics_path.exists(), "PowerShell exited without writing a failure receipt"
+        deadline = time.monotonic() + 5.0
+        _wait_for_windows_uninstall_terminal(
+            diagnostics_path,
+            lifecycle_path,
+            deadline=deadline,
+        )
         receipt_bytes = diagnostics_path.read_bytes()
         assert receipt_bytes.startswith(b"{")
         assert not receipt_bytes.startswith(b"\xef\xbb\xbf")

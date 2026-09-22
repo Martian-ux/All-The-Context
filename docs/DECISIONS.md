@@ -6997,3 +6997,26 @@ return false within the existing bounded budget, and requires the independent
 reader to remain queryable; a separate Python-lock assertion preserves the
 positive bypass. No busy timeout or assertion threshold is widened, and
 non-lock SQLite errors still propagate.
+
+## ADR-225: Observe detached-helper completion and Core setup boundaries explicitly
+
+**Status:** corrected locally on 2026-09-22 from recovered hosted run
+`35710331436`; maintained native, independent review, exact full, and a new
+targeted hosted observation remain required.
+
+The short-lived-child uninstall test treats the existing helper budget as one
+bounded observation window and completes only when both the external receipt
+and the helper's terminal lifecycle marker exist. A delayed-completion
+regression proves that a receipt can be observed before terminal publication,
+while a negative regression proves that a receipt without terminal publication
+cannot pass. The target-absence success assertion and locked-target failure
+assertion remain in force; no removal target, vault, process-ownership, or
+security boundary changes.
+
+The headless setup path forwards the existing setup progress callback through
+`perform_setup` and records only the explicit Core startup and authentication
+boundaries as closed subphases. This explains the observed
+`core_startup_failed`/`perform_setup` report boundary on a new packaged run
+without guessing a process cause, retaining raw output, or conflating it with
+the expected injected registration-uninstall report. The frozen observer
+parser and generic workflow runtime remain untouched.
