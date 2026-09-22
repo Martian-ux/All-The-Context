@@ -5262,3 +5262,19 @@ The required six-module pinned pytest command reached the managed host's
 fixture/basetemp boundary but errored with WinError 5; pinned Ruff, format, and
 targeted mypy checks passed. Full, package, hosted, and publication gates remain
 outside this correction.
+
+## 2026-09-22 updater journal and packaged artifact gate recovery
+
+The preserved full2 candidate evidence classifies the single rollback journal
+`os.replace` WinError 5 as a bounded Windows same-directory contention case,
+not a scheduler defect. `_atomic_json` retains its temporary-file fsync,
+directory/reparse checks, atomic replace, cleanup, and surfaced persistent
+failure; it retries only WinError 5 three times with a 50 ms bound. Focused
+proof covers one transient denial, persistent denial, and no broad retry.
+
+Packaged first-run and recovery smokes now expose explicit artifact-root and
+provenance manifest/checksum options. On Windows they verify the checked-out
+source commit and all four run-owned component size/SHA256 identities before
+launching the exact setup or recovery bytes. Wrong root/source/hash/missing
+component inputs fail closed; no fallback, copy, or relabel path is accepted.
+Maintained full, native/package, and hosted gates remain required.

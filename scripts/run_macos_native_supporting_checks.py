@@ -502,9 +502,31 @@ def run_supporting_checks(
         environment = dict(os.environ)
         environment["ATC_PACKAGED_SMOKE_PARENT"] = str(run_root / "packaged-first-run")
         for phase, script_name, extra_arguments in SUPPORTING_SCRIPTS:
+            command_arguments = list(extra_arguments)
+            if script_name in {"smoke_packaged_recovery.py", "smoke_packaged_first_run.py"}:
+                command_arguments.extend(
+                    [
+                        "--artifact-root",
+                        str(source),
+                        "--provenance-manifest",
+                        str(
+                            source
+                            / "dist"
+                            / "native-build-provenance"
+                            / "native-build-provenance-v1.json"
+                        ),
+                        "--provenance-checksum",
+                        str(
+                            source
+                            / "dist"
+                            / "native-build-provenance"
+                            / "native-build-provenance-v1.json.sha256"
+                        ),
+                    ]
+                )
             observation = run_subprocess_phase(
                 phase,
-                [sys.executable, str(source / "scripts" / script_name), *extra_arguments],
+                [sys.executable, str(source / "scripts" / script_name), *command_arguments],
                 project_root=source,
                 environment=environment,
             )

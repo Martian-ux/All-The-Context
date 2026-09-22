@@ -509,7 +509,17 @@ def test_failure_diagnostics_directory_surface_is_absolute_and_resolved(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["smoke_packaged_first_run.py", "--failure-diagnostics-dir", str(tmp_path)],
+        [
+            "smoke_packaged_first_run.py",
+            "--artifact-root",
+            str(tmp_path),
+            "--provenance-manifest",
+            str(tmp_path / "native-build-provenance-v1.json"),
+            "--provenance-checksum",
+            str(tmp_path / "native-build-provenance-v1.json.sha256"),
+            "--failure-diagnostics-dir",
+            str(tmp_path),
+        ],
     )
     parsed = smoke._parse_arguments()
     assert parsed.failure_diagnostics_dir == tmp_path

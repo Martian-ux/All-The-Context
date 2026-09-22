@@ -177,9 +177,15 @@ Build and smoke the native package for the current operating system with:
 ```text
 python -m pip install -e ".[packaging]"
 python scripts/build_desktop.py
-python scripts/smoke_desktop_artifact.py
-python scripts/smoke_packaged_first_run.py
+python scripts/smoke_desktop_artifact.py --artifact-root .
+python scripts/smoke_packaged_recovery.py --artifact-root . --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
+python scripts/smoke_packaged_first_run.py --artifact-root . --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
 ```
+
+On Windows, create `dist/native-build-provenance` with
+`scripts/verify_reproducible_build.py` before the packaged smokes. The smokes
+verify the checked-out source commit and exact component size/SHA256 values
+before launching any artifact.
 
 On macOS this command exercises retained source code only; its output is not a
 beta artifact and must not be uploaded to or advertised from the public

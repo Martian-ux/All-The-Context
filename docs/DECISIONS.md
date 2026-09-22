@@ -7066,3 +7066,23 @@ boundaries as closed subphases. This explains the observed
 without guessing a process cause, retaining raw output, or conflating it with
 the expected injected registration-uninstall report. The frozen observer
 parser and generic workflow runtime remain untouched.
+
+## ADR-226: Bound updater replace contention and bind packaged smokes to exact outputs
+
+**Status:** implemented locally on 2026-09-22; maintained native proof and
+independent review remain required.
+
+The full2 receipt records one rollback `UpdateJournal.save` same-directory
+atomic replace denied with Windows WinError 5. The recovery policy therefore
+recognizes only `PermissionError.winerror == 5` on Windows, permits three
+50-millisecond retries, and revalidates the plain directory and temporary and
+target files before each retry. It never replaces by copy, weakens fsync or
+reparse validation, suppresses the final error, or changes rollback semantics.
+
+Packaged smokes use one explicit artifact-root layout and explicit provenance
+manifest/checksum paths. The Windows contract binds the checkout HEAD and
+each of the four fixed component paths to the manifest's size and SHA256
+values before any setup or recovery executable is invoked. Wrong roots,
+source commits, hashes, and missing components fail closed; the old implicit
+checkout `dist/desktop` and staged recovery fallbacks are not used by the
+production smoke entry points.

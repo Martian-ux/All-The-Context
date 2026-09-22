@@ -2197,6 +2197,88 @@ def test_atomic_json_refuses_after_deterministic_parent_replacement(
     assert not target.exists()
 
 
+def _access_denied_winerror() -> PermissionError:
+    error = PermissionError(13, "Access is denied")
+    error.winerror = 5
+    return error
+
+
+def test_atomic_json_retries_only_observed_windows_replace_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "journal.json"
+    original_replace = Path.replace
+    attempts = 0
+    sleeps: list[float] = []
+
+    def replace_once(source: Path, destination: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise _access_denied_winerror()
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(helper_module.sys, "platform", "win32")
+    monkeypatch.setattr(helper_module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(Path, "replace", replace_once)
+
+    helper_module._atomic_json(target, {"phase": "rolled_back"})
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"phase": "rolled_back"}
+    assert attempts == 2
+    assert sleeps == [helper_module.ATOMIC_REPLACE_CONTENTION_DELAY_SECONDS]
+    assert list(tmp_path.glob("*.atc-new")) == []
+
+
+def test_atomic_json_does_not_retry_other_replace_denials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "journal.json"
+    attempts = 0
+
+    def denied_for_another_reason(source: Path, destination: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        error = PermissionError(13, "Access is denied")
+        error.winerror = 32
+        raise error
+
+    monkeypatch.setattr(helper_module.sys, "platform", "win32")
+    monkeypatch.setattr(Path, "replace", denied_for_another_reason)
+
+    with pytest.raises(PermissionError) as raised:
+        helper_module._atomic_json(target, {"phase": "new"})
+
+    assert getattr(raised.value, "winerror", None) == 32
+    assert attempts == 1
+    assert list(tmp_path.glob("*.atc-new")) == []
+
+
+def test_atomic_json_keeps_persistent_replace_denial_visible_and_cleans_temporary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "journal.json"
+    target.write_text('{"phase":"old"}\n', encoding="utf-8")
+    attempts = 0
+
+    def always_denied(source: Path, destination: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        raise _access_denied_winerror()
+
+    monkeypatch.setattr(helper_module.sys, "platform", "win32")
+    monkeypatch.setattr(helper_module.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(Path, "replace", always_denied)
+
+    with pytest.raises(PermissionError) as raised:
+        helper_module._atomic_json(target, {"phase": "new"})
+
+    assert getattr(raised.value, "winerror", None) == 5
+    assert attempts == 1 + helper_module.ATOMIC_REPLACE_CONTENTION_RETRIES
+    assert target.read_text(encoding="utf-8") == '{"phase":"old"}\n'
+    assert list(tmp_path.glob("*.atc-new")) == []
+
+
 def test_pre_cutover_abort_replay_cannot_resume_forward_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

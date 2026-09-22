@@ -553,10 +553,12 @@ def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
     smoke_recovery = _read(ROOT / "scripts" / "smoke_packaged_recovery.py")
     assert "frozen-windowed-desktop-fallback" not in smoke_recovery
     assert 'return [sys.executable, "-m", "allthecontext.desktop"]' not in smoke_recovery
-    assert "AllTheContextRecovery.exe" in smoke_recovery
-    assert "all-the-context-recovery" in smoke_recovery
+    assert "recovery_executable" in smoke_recovery
+    assert "--artifact-root" in smoke_recovery
+    assert "--provenance-manifest" in smoke_recovery
+    assert "--provenance-checksum" in smoke_recovery
     assert "SystemExit" in smoke_recovery
-    assert "recovery-helper-dist" in smoke_recovery
+    assert "recovery-helper-dist" not in smoke_recovery
     assert "beta_d03_acceptance" in smoke_recovery
 
     package_desktop = _read(ROOT / "scripts" / "package_desktop.py")
@@ -567,6 +569,9 @@ def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
     first_run = _read(ROOT / "scripts" / "smoke_packaged_first_run.py")
     assert "AllTheContextRecovery.exe" in first_run
     assert "rollback_recovery" in first_run
+    assert "--artifact-root" in first_run
+    assert "--provenance-manifest" in first_run
+    assert "--provenance-checksum" in first_run
     # Isolated first-run smoke must opt into the development credential file
     # while forcing a null OS keyring, assert the fallback store, and never
     # claim real OS credential acceptance (that is a separate gate).

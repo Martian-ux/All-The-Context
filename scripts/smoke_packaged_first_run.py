@@ -78,7 +78,21 @@ from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from smoke_desktop_artifact import artifact_executable
+
+try:
+    from scripts.packaged_artifact_contract import (
+        PackagedArtifactContractError,
+        artifact_executable,
+        resolve_artifact_root,
+        validate_windows_artifact_contract,
+    )
+except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+    from packaged_artifact_contract import (  # type: ignore[no-redef]
+        PackagedArtifactContractError,
+        artifact_executable,
+        resolve_artifact_root,
+        validate_windows_artifact_contract,
+    )
 
 # Explicit, isolated, non-secret smoke only. Production installs never set this.
 ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
@@ -1676,6 +1690,24 @@ def _run_headless_setup(
 def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        required=True,
+        help="explicit root containing the run-owned build/desktop and dist/desktop outputs",
+    )
+    parser.add_argument(
+        "--provenance-manifest",
+        type=Path,
+        required=True,
+        help="native build provenance manifest for the explicit Windows artifact root",
+    )
+    parser.add_argument(
+        "--provenance-checksum",
+        type=Path,
+        required=True,
+        help="checksum beside the native build provenance manifest",
+    )
+    parser.add_argument(
         "--process-inventory-diagnostics-dir",
         "--diagnostics-dir",
         dest="process_inventory_diagnostics_dir",
@@ -1694,7 +1726,19 @@ def _parse_arguments() -> argparse.Namespace:
 def main() -> int:
     arguments = _parse_arguments()
     system = os.environ.get("ATC_SMOKE_PLATFORM") or platform.system()
-    executable = artifact_executable(system)
+    try:
+        artifact_root = resolve_artifact_root(arguments.artifact_root)
+        if system == "Windows":
+            validate_windows_artifact_contract(
+                artifact_root=artifact_root,
+                provenance_manifest=arguments.provenance_manifest,
+                provenance_checksum=arguments.provenance_checksum,
+                source_root=ROOT,
+                version=__version__,
+            )
+    except PackagedArtifactContractError as exc:
+        raise SystemExit(f"packaged artifact contract failed: {exc}") from None
+    executable = artifact_executable(artifact_root, system)
     if not executable.is_file():
         raise SystemExit(f"desktop artifact is missing: {executable}")
 
