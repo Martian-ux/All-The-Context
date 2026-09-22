@@ -46,6 +46,7 @@ from .config import CoreConfig
 type SchedulerClock = Callable[[], str]
 type SchedulerSleeper = Callable[[float], None]
 type CaptureRunner = Callable[[str], CaptureRunResult]
+type DurableProjectionObserver = Callable[[], None]
 type ResourceCost = Callable[[CaptureSource], int]
 ScheduleKind = Literal["initial_backfill", "incremental", "retry"]
 HealthState = Literal["healthy", "degraded", "unavailable"]
@@ -226,6 +227,7 @@ class CaptureScheduler:
         clock: SchedulerClock | None = None,
         sleeper: SchedulerSleeper = sleep,
         runner: CaptureRunner | None = None,
+        durable_projection_observer: DurableProjectionObserver | None = None,
         connector_limits: Mapping[str, ConnectorLimits] | None = None,
         resource_cost: ResourceCost | None = None,
     ) -> None:
@@ -234,6 +236,7 @@ class CaptureScheduler:
         self.clock = clock or coordinator.clock
         self.sleeper = sleeper
         self.runner = runner or coordinator.run
+        self._durable_projection_observer = durable_projection_observer
         self.connector_limits = dict(connector_limits or {})
         self.resource_cost = resource_cost
         self._enabled = self.config.enabled
@@ -616,6 +619,8 @@ class CaptureScheduler:
                 ) as pool:
                     futures = [pool.submit(self._execute, entry) for entry in selected]
                     results.extend(future.result() for future in futures)
+        if results and self._durable_projection_observer is not None:
+            self._durable_projection_observer()
         return SchedulerRunReport(
             plan=plan,
             dispatched=selected,
@@ -711,6 +716,7 @@ class CoreCaptureScheduler:
         self.coordinator = coordinator
         self.config = config
         product_config = scheduler_config or SchedulerConfig()
+        self._durable_projection_count = 0
         self._scheduler = CaptureScheduler(
             coordinator,
             config=SchedulerConfig(
@@ -724,6 +730,7 @@ class CoreCaptureScheduler:
                 default_connector_limits=product_config.default_connector_limits,
             ),
             clock=clock or coordinator.clock,
+            durable_projection_observer=self._record_durable_projection,
         )
         self.activity_gate = activity_gate or CoreActivityGate()
         self._join_timeout_seconds = float(join_timeout_seconds)
@@ -847,6 +854,42 @@ class CoreCaptureScheduler:
                 self._cycle_condition.wait(timeout=remaining)
             return True
 
+    def durable_projection_count(self) -> int:
+        """Return the content-free count of coordinator projections observed."""
+
+        with self._lifecycle_lock:
+            return self._durable_projection_count
+
+    def wait_for_durable_projection(
+        self, minimum_durable_projection: int, *, timeout: float
+    ) -> bool:
+        """Wait for a durable coordinator projection or terminal worker state.
+
+        The boundary is emitted after the coordinator has committed its source
+        projection and before the scheduler's potentially slower health scan.
+        It never runs scheduling work, changes durable state, or treats a
+        worker failure as a successful projection.
+        """
+
+        if type(minimum_durable_projection) is not int or minimum_durable_projection < 1:
+            raise ValueError("minimum_durable_projection must be a positive integer")
+        if timeout < 0:
+            raise ValueError("timeout must be non-negative")
+        deadline = monotonic() + timeout
+        with self._cycle_condition:
+            while self._durable_projection_count < minimum_durable_projection:
+                if (
+                    self._closing.is_set()
+                    or self._stop.is_set()
+                    or self._worker_state in {"failed", "stopped"}
+                ):
+                    return False
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return False
+                self._cycle_condition.wait(timeout=remaining)
+            return True
+
     @staticmethod
     def _status_failure_payload(
         *,
@@ -894,6 +937,11 @@ class CoreCaptureScheduler:
     def _record_cycle_reason(self, reason_code: str | None) -> None:
         with self._lifecycle_lock:
             self._last_cycle_reason_code = reason_code
+
+    def _record_durable_projection(self) -> None:
+        with self._lifecycle_lock:
+            self._durable_projection_count += 1
+            self._cycle_condition.notify_all()
 
     def _record_worker_failure(
         self,

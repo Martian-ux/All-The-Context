@@ -40,6 +40,7 @@ from tests.fixtures.scheduled_packet_f import (
     open_process_gate,
 )
 from tests.unit.test_packet_g_worker_acceptance import (
+    _capture_projection_boundary,
     _wait_for_capture,
 )
 
@@ -132,12 +133,14 @@ def test_worker_backed_zf010_preference_continuity_across_core_restart(
             core_config,
             workspace,
         )
+        initial_projection = _capture_projection_boundary(service)
         scheduler_status = service.capture_scheduler.enable()
         assert scheduler_status["running"] is True
         _wait_for_capture(
             service,
             source_id,
             clock,
+            minimum_durable_projection=initial_projection,
             current_items=4,
         )
 

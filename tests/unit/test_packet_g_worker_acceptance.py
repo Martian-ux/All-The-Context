@@ -7,8 +7,6 @@ provider/client integration, packaged-install acceptance, or release support.
 
 from __future__ import annotations
 
-import time
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -50,59 +48,55 @@ from tests.fixtures.scheduled_packet_f import (
 )
 
 
-def _wait_until(
-    predicate: Callable[[], bool],
-    *,
-    timeout: float = SCHEDULED_CAPTURE_WAIT_SECONDS,
-    interval: float = 0.01,
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(interval)
-    raise AssertionError("condition was not met before the scheduled capture boundary")
-
-
 def _wait_for_capture(
     service: CoreService,
     source_id: str,
     clock: MutableClock,
     *,
+    minimum_durable_projection: int,
     current_items: int,
     deleted_items: int = 0,
 ) -> None:
     expected_last_run_at = clock()
 
-    def captured() -> bool:
-        source = service.capture.get_source(source_id)
-        return (
-            source.lifecycle_state == "enabled"
-            and source.next_retry_at is None
-            and source.last_error_code is None
-            and source.last_run_at == expected_last_run_at
-            and len(current_truth(service).items) == current_items
-            and len(deleted_truth(service).items) == deleted_items
-            and search(service.retrieval).total == current_items
+    projected = service.capture_scheduler.wait_for_durable_projection(
+        minimum_durable_projection,
+        timeout=SCHEDULED_CAPTURE_WAIT_SECONDS,
+    )
+    status = service.capture_scheduler.status()
+    safe_status = {
+        key: status[key]
+        for key in (
+            "completed_cycle_count",
+            "last_cycle_reason_code",
+            "running",
+            "worker_failure_code",
+            "worker_generation",
+            "worker_restart_count",
+            "worker_state",
+        )
+    }
+    if not projected:
+        raise AssertionError(
+            f"durable capture did not reach its projection boundary; status={safe_status}"
+        )
+    if status["worker_failure_code"] is not None or status["worker_state"] in {"failed", "stopped"}:
+        raise AssertionError(
+            f"durable capture worker failed at its projection boundary; status={safe_status}"
         )
 
-    try:
-        _wait_until(captured)
-    except AssertionError as error:
-        status = service.capture_scheduler.status()
-        safe_status = {
-            key: status[key]
-            for key in (
-                "completed_cycle_count",
-                "last_cycle_reason_code",
-                "running",
-                "worker_failure_code",
-                "worker_generation",
-                "worker_restart_count",
-                "worker_state",
-            )
-        }
-        raise AssertionError(f"durable capture did not complete; status={safe_status}") from error
+    source = service.capture.get_source(source_id)
+    assert source.lifecycle_state == "enabled"
+    assert source.next_retry_at is None
+    assert source.last_error_code is None
+    assert source.last_run_at == expected_last_run_at
+    assert len(current_truth(service).items) == current_items
+    assert len(deleted_truth(service).items) == deleted_items
+    assert search(service.retrieval).total == current_items
+
+
+def _capture_projection_boundary(service: CoreService) -> int:
+    return service.capture_scheduler.durable_projection_count() + 1
 
 
 def _compile(
@@ -160,12 +154,14 @@ def test_worker_capture_resumes_into_pre_generation_context_without_dashboard(
             core_config,
             workspace,
         )
+        initial_projection = _capture_projection_boundary(service)
         enabled_status = service.capture_scheduler.enable()
         assert enabled_status["running"] is True
         _wait_for_capture(
             service,
             source_id,
             clock,
+            minimum_durable_projection=initial_projection,
             current_items=4,
         )
 
@@ -232,6 +228,7 @@ def test_worker_capture_resumes_into_pre_generation_context_without_dashboard(
 
         restarted.capture_scheduler.start()
         assert restarted.capture_scheduler.status()["running"] is True
+        update_projection = _capture_projection_boundary(restarted)
         (workspace / DELETE_RELATIVE_PATH).unlink()
         (workspace / UPDATE_RELATIVE_PATH).write_text(
             UPDATED_SOURCE_BYTES,
@@ -244,6 +241,7 @@ def test_worker_capture_resumes_into_pre_generation_context_without_dashboard(
             restarted,
             source_id,
             clock,
+            minimum_durable_projection=update_projection,
             current_items=3,
             deleted_items=1,
         )

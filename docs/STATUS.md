@@ -61,6 +61,19 @@ The pinned focused handoff was not runnable in this managed checkout because
 the owned `.test-runs` scratch path returned WinError 5; exact host-native
 focused checks and downstream gates remain required.
 
+### 2026-09-22 — ZF010 durable-projection event follow-up
+
+The source-review repair closes the remaining observer race without changing
+capture authority or the finite 15-second allowance. The Core-owned scheduler
+now emits a content-free condition after coordinator durable projection and
+before the potentially slower health scan. Packet G and ZF010 wait on that
+condition, then inspect the content-free worker status before asserting source,
+memory, retrieval, forget, and security truth. A positive regression proves the
+condition can arrive while health is blocked; an injected failure after the
+durable commit proves the wait does not classify durable state alone as a
+successful worker projection. Fresh maintained-native, review, full, packaged,
+and hosted gates remain required.
+
 ### 2026-09-16 — content-free packaged process-inventory diagnostics
 
 The packaged Windows first-run smoke now retains one exact closed observation

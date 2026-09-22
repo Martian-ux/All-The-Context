@@ -311,6 +311,71 @@ def test_completed_cycle_wait_rejects_an_in_flight_worker(
         store.close()
 
 
+def test_durable_projection_wait_precedes_health_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
+    health_started = threading.Event()
+    release_health = threading.Event()
+    original_health = scheduler._scheduler.health
+
+    def blocking_health(*, consume_actions: bool = True) -> Any:
+        health_started.set()
+        assert release_health.wait(timeout=5)
+        return original_health(consume_actions=consume_actions)
+
+    monkeypatch.setattr(scheduler._scheduler, "health", blocking_health)
+    try:
+        scheduler.start()
+        assert started.wait(timeout=5)
+        release.set()
+        assert scheduler.wait_for_durable_projection(1, timeout=5) is True
+        assert health_started.wait(timeout=5)
+        source_id = scheduler._scheduler._sources().sources[0].id
+        source = scheduler.coordinator.get_source(source_id)
+        assert source.lifecycle_state == "enabled"
+        assert source.last_run_at is not None
+        assert scheduler.status()["worker_state"] == "running"
+    finally:
+        release_health.set()
+        release.set()
+        scheduler.shutdown()
+        store.close()
+
+
+def test_durable_projection_wait_rejects_failure_after_durable_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
+    original_execute = scheduler._scheduler._execute
+
+    def fail_after_durable_commit(entry: Any) -> Any:
+        original_execute(entry)
+        raise RuntimeError("injected-after-durable-commit")
+
+    monkeypatch.setattr(scheduler._scheduler, "_execute", fail_after_durable_commit)
+    try:
+        scheduler.start()
+        assert started.wait(timeout=5)
+        release.set()
+        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
+        source_id = scheduler._scheduler._sources().sources[0].id
+        source = scheduler.coordinator.get_source(source_id)
+        assert source.lifecycle_state == "enabled"
+        assert source.last_run_at is not None
+        assert source.last_error_code is None
+        assert scheduler.durable_projection_count() == 0
+        assert scheduler.wait_for_durable_projection(1, timeout=0.1) is False
+        status = scheduler.status()
+        assert status["worker_failure_code"] == "worker_failed"
+    finally:
+        release.set()
+        scheduler.shutdown()
+        store.close()
+
+
 def test_scheduler_disabled_by_default_without_env_or_sidecar(tmp_path: Path) -> None:
     config = _config(tmp_path)
     with CoreService(config) as service:

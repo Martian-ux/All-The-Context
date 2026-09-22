@@ -23,6 +23,29 @@ completed cycles, so the lifecycle API cannot falsely report completion. No
 production scheduler or provider behavior is changed, and no retrieval,
 forget, security, timeout, hosted, package, or publication gate is relaxed.
 
+## ADR-227: ZF010 uses the durable-projection observation boundary
+
+**Status:** corrected locally on 2026-09-22; maintained-native focused checks,
+independent review, and downstream product gates remain required.
+
+The first correction's durable-state polling could observe a committed source
+projection after a worker failed but before the lifecycle report was published.
+CoreCaptureScheduler now receives a content-free observer callback from the
+shared scheduler after coordinator results commit and before the post-cycle
+health scan. Its bounded condition wait is separate from
+`completed_cycle_count`, so a loaded health scan cannot turn a healthy in-flight
+worker into a false restart failure. The Packet G/ZF010 helper checks the
+worker's content-free status after the condition and rejects failed or stopped
+workers before asserting durable source, memory, retrieval, forget, and security
+truth.
+
+The positive regression blocks health after the durable projection and still
+requires the projection condition to arrive. The negative regression injects a
+worker failure after the durable commit but before the observer callback and
+requires the bounded wait to return false. No timeout, retry, scheduler
+authority, provider, retrieval, forget, security, hosted, packaging, or
+publication requirement is weakened.
+
 ## ADR-215: Retain only bounded packaged process-inventory observations
 
 **Status:** implemented locally on 2026-09-16; maintained-native focused,

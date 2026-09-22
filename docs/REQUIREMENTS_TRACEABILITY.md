@@ -12,6 +12,12 @@ evidence for this checkout.
 |---|---|---|
 | ZF-010/CI-WIN — loaded worker acceptance must synchronize on the asserted durable capture result without mistaking an in-flight worker for a restart or completion failure | `tests/unit/test_packet_g_worker_acceptance.py::_wait_for_capture`; `tests/unit/test_zf010_worker_continuity_acceptance.py`; `tests/unit/test_capture_scheduler_productization.py::test_completed_cycle_wait_rejects_an_in_flight_worker`; ADR-226 | Corrected at the test observation boundary. The finite 15-second allowance now returns on the durable source/memory/retrieval projection while preserving the real scheduler worker, durable enablement, explicit wakeup, content-free timeout diagnostics, source-safety, retrieval, forget, and security assertions. The injected blocking-provider regression preserves the distinction between a running generation 1 worker and a completed cycle. Pinned focused/native checks and all downstream gates remain pending |
 
+### 2026-09-22 ZF010 durable-projection event follow-up
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| ZF-010/CI-WIN — the loaded-worker observer must wait for the durable projection boundary and reject a worker failure before lifecycle completion | `packages/allthecontext/src/allthecontext/capture_scheduler.py::CoreCaptureScheduler.wait_for_durable_projection`; `tests/unit/test_packet_g_worker_acceptance.py::_wait_for_capture`; `tests/unit/test_capture_scheduler_productization.py::test_durable_projection_wait_precedes_health_scan`; `tests/unit/test_capture_scheduler_productization.py::test_durable_projection_wait_rejects_failure_after_durable_commit`; ADR-227 | Corrected locally with a content-free condition between coordinator projection and health scan. The existing finite bound and scheduler/truth/retrieval/forget/security assertions remain intact; fresh maintained-native, review, full, packaged, and hosted gates are pending |
+
 The UPDATER-04 and UPDATER-05 rows below refer to ADR-184, the startup-
 recovery decision in this checkout. ADR-183 is retained for the separately
 merged packaged-uninstall observation decision. The follow-up JSON parser
