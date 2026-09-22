@@ -58,6 +58,10 @@ POST_UPDATE_FORBIDDEN = (
     "'updated'",
     UPDATED_SOURCE_BYTES,
 )
+# Loaded Windows xdist workers need a bounded lifecycle allowance for the
+# first real capture cycle. Both Packet F and Packet G return immediately when
+# durable truth is ready; this is not a polling sleep or a retry budget.
+SCHEDULED_CAPTURE_WAIT_SECONDS = 15.0
 EXPECTED_INITIAL_FACT_COUNTS = {
     "markdown_documentation": 2,
     "python_source": 1,
@@ -296,6 +300,7 @@ __all__ = [
     "DELETE_RELATIVE_PATH",
     "EXPECTED_INITIAL_FACT_COUNTS",
     "POST_UPDATE_FORBIDDEN",
+    "SCHEDULED_CAPTURE_WAIT_SECONDS",
     "SCOPE",
     "UPDATED_SOURCE_BYTES",
     "UPDATE_RELATIVE_PATH",

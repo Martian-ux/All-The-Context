@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import shutil
@@ -8,6 +9,8 @@ import sys
 import time
 import urllib.request
 import uuid
+from collections.abc import Callable
+from ctypes import wintypes
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +23,7 @@ from allthecontext.credentials import DevelopmentFileCredentialStore
 from allthecontext.desktop import (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS,
     WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS,
+    WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV,
     WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS,
     _apply_packaged_update,
     _copy_macos_bundle_atomically,
@@ -32,13 +36,127 @@ from allthecontext.desktop import (
     prepare_installed_runtime,
 )
 from allthecontext.desktop_runtime import RuntimeCommand
-from allthecontext.desktop_setup import CLAUDE_CLIENT_NAME, CODEX_CLIENT_NAME, CoreProbe
+from allthecontext.desktop_setup import (
+    CLAUDE_CLIENT_NAME,
+    CODEX_CLIENT_NAME,
+    CoreProbe,
+    SetupCoreStartupError,
+)
 from allthecontext.edge_connection import decommission_edge_connection
 from allthecontext.instance_identity import ensure_instance_secret
 from allthecontext.models import ClientCreate
 from allthecontext.release_manifest import ManifestError
 from allthecontext.storage import CoreStore
 from allthecontext.windows_bootstrap_install import BootstrapInstallError
+
+
+def _retain_windows_uninstall_assertion_evidence(lifecycle_path: Path) -> None:
+    """Leave one empty, narrowly scoped marker when a native assertion fails."""
+    try:
+        lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        print(
+            f"could not retain Windows uninstall assertion evidence at {lifecycle_path}: {error}",
+            file=sys.stderr,
+        )
+        return
+    marker_path = lifecycle_path.with_name(f"{lifecycle_path.name}.assertion-failed")
+    try:
+        descriptor = os.open(marker_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return
+    except OSError as error:
+        print(
+            f"could not retain Windows uninstall assertion evidence at {marker_path}: {error}",
+            file=sys.stderr,
+        )
+        return
+    try:
+        os.close(descriptor)
+    except OSError as error:
+        print(
+            f"could not finalize Windows uninstall assertion evidence at {marker_path}: {error}",
+            file=sys.stderr,
+        )
+
+
+def _wait_for_windows_uninstall_terminal(
+    diagnostics_path: Path,
+    lifecycle_path: Path,
+    *,
+    deadline: float,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Wait for the helper's terminal marker and its published receipt together."""
+
+    terminal_path = lifecycle_path.with_name(f"{lifecycle_path.name}.terminal")
+    while True:
+        if terminal_path.exists() and diagnostics_path.exists():
+            return
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise AssertionError(
+                "bounded terminal completion criterion was not met: "
+                "expected terminal marker and receipt"
+            )
+        sleep(min(0.1, remaining))
+
+
+def test_windows_uninstall_terminal_observation_waits_for_delayed_completion(
+    tmp_path: Path,
+) -> None:
+    diagnostics_path = tmp_path / "terminal.json"
+    lifecycle_path = tmp_path / "helper-lifecycle"
+    elapsed = 0.0
+
+    def clock() -> float:
+        return elapsed
+
+    def delayed_sleep(interval: float) -> None:
+        nonlocal elapsed
+        elapsed += interval
+        if elapsed >= 0.1:
+            diagnostics_path.write_text("{}\n", encoding="utf-8")
+        if elapsed >= 0.2:
+            lifecycle_path.with_name(f"{lifecycle_path.name}.terminal").write_bytes(b"")
+
+    _wait_for_windows_uninstall_terminal(
+        diagnostics_path,
+        lifecycle_path,
+        deadline=1.0,
+        clock=clock,
+        sleep=delayed_sleep,
+    )
+
+    assert elapsed >= 0.2
+
+
+def test_windows_uninstall_terminal_observation_rejects_receipt_without_terminal(
+    tmp_path: Path,
+) -> None:
+    diagnostics_path = tmp_path / "terminal.json"
+    lifecycle_path = tmp_path / "helper-lifecycle"
+    diagnostics_path.write_text("{}\n", encoding="utf-8")
+    elapsed = 0.0
+
+    def clock() -> float:
+        return elapsed
+
+    def bounded_sleep(interval: float) -> None:
+        nonlocal elapsed
+        elapsed += interval
+
+    with pytest.raises(AssertionError, match="terminal completion criterion"):
+        _wait_for_windows_uninstall_terminal(
+            diagnostics_path,
+            lifecycle_path,
+            deadline=0.25,
+            clock=clock,
+            sleep=bounded_sleep,
+        )
+
+    assert not lifecycle_path.with_name(f"{lifecycle_path.name}.terminal").exists()
 
 
 def test_bundled_dashboard_contains_direct_core_mobile_boundary() -> None:
@@ -130,12 +248,121 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     assert registered == [installed.executable]
     assert subphases == [
         "packaged_component_source_validation",
-        "core_probe",
         "bootstrap_install_recovery",
+        "core_probe",
         "entrypoint_refresh_probe",
         "entrypoint_registration",
         "installed_runtime_assembly",
     ]
+
+
+def test_windows_reopen_reuses_complete_installed_components_without_touching_core(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    component_paths = {
+        "main": install_dir / "AllTheContext.exe",
+        "mcp": install_dir / "AllTheContextMCP.exe",
+        "recovery": install_dir / "AllTheContextRecovery.exe",
+        "updater": install_dir / "AllTheContextUpdater.exe",
+    }
+    for role, path in component_paths.items():
+        path.write_bytes(role.encode("ascii"))
+
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(desktop.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        desktop,
+        "probe_core",
+        lambda _config: (_ for _ in ()).throw(AssertionError("reopen probed Core")),
+    )
+    monkeypatch.setattr(
+        desktop,
+        "install_application_entrypoints",
+        lambda _target: (_ for _ in ()).throw(AssertionError("reopen rewrote registration")),
+    )
+    monkeypatch.setattr(desktop, "application_entrypoints_need_refresh", lambda: False)
+
+    subphases: list[str] = []
+    installed, relaunched = prepare_installed_runtime(
+        RuntimeCommand(
+            component_paths["main"],
+            mcp_executable=component_paths["mcp"],
+            update_executable=component_paths["updater"],
+            recovery_executable=component_paths["recovery"],
+        ),
+        relaunch_args=None,
+        progress=subphases.append,
+    )
+
+    assert relaunched is False
+    assert installed.executable == component_paths["main"]
+    assert installed.mcp_executable == component_paths["mcp"]
+    assert installed.update_executable == component_paths["updater"]
+    assert installed.recovery_executable == component_paths["recovery"]
+    assert subphases == [
+        "packaged_component_source_validation",
+        "bootstrap_install_recovery",
+        "entrypoint_refresh_probe",
+        "installed_runtime_assembly",
+    ]
+
+
+def test_headless_setup_reports_core_failure_without_stale_prepare_subphase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report_path = tmp_path / "setup-report.json"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    path_canary = str(tmp_path / "private" / "vault.sqlite3")
+    token_canary = "atc-core-start-canary-never-log"
+
+    monkeypatch.setattr(desktop.RuntimeCommand, "current", lambda: runtime)
+
+    def report_prepare_progress(
+        _runtime: RuntimeCommand,
+        *,
+        relaunch_args: tuple[str, ...] | None,
+        progress,
+    ) -> tuple[RuntimeCommand, bool]:
+        assert relaunch_args is None
+        progress("installed_runtime_assembly")
+        return runtime, False
+
+    monkeypatch.setattr(desktop, "prepare_installed_runtime", report_prepare_progress)
+
+    def fail_setup(*_args: object, **kwargs: object) -> object:
+        progress = kwargs["progress"]
+        assert callable(progress)
+        progress("core", "Starting Core on this device")
+        raise SetupCoreStartupError()
+
+    monkeypatch.setattr(desktop, "perform_setup", fail_setup)
+    monkeypatch.setattr(
+        desktop,
+        "_write_failure_diagnostics",
+        lambda _error: (_ for _ in ()).throw(RuntimeError(f"{path_canary}; token={token_canary}")),
+    )
+
+    assert desktop.main(["--headless-setup", str(report_path), "--no-claude"]) == 1
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "setup": "failed",
+        "error_type": "RuntimeError",
+        "error_code": "core_startup_failed",
+        "setup_stage": "perform_setup",
+        "setup_subphase": "core_startup",
+        "diagnostics_written": False,
+        "diagnostics_name": None,
+    }
+    captured = capsys.readouterr()
+    serialized = json.dumps(payload)
+    assert path_canary not in serialized
+    assert token_canary not in serialized
+    assert path_canary not in captured.err
+    assert token_canary not in captured.err
 
 
 def test_macos_bundle_copy_replaces_existing_copy_atomically(tmp_path: Path) -> None:
@@ -427,8 +654,17 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert WINDOWS_INSTALL_REMOVAL_ATTEMPTS == 300
     assert WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS == 100
     assert WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS == 30.0
-    assert "Wait-Process" in script
-    assert script.index("Wait-Process") < script.index("Remove-Item")
+    assert "Get-Process -Id $atcProcessId" in script
+    assert "$atcProcess.WaitForExit()" in script
+    assert script.index("Get-Process") < script.index("Remove-Item")
+    assert "helper_process='started'" in script
+    assert "$atcResult.removal='present'" in script
+    assert "$atcResult.error_code='removal_timeout'" in script
+    assert "Write-AtcRemovalResult;" in script
+    assert "if($atcResult.outcome -eq 'success' -and $atcReceiptWritten){$atcExitCode=0}" in script
+    assert "Write-AtcRemovalMarker 'entry'" in script
+    assert "Write-AtcRemovalMarker 'terminal'" in script
+    assert "Write-AtcRemovalMarker 'exit'" in script
     assert (
         f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};$atcAttempt++){{"
     ) in script
@@ -443,7 +679,47 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert kwargs["close_fds"] is True
     assert kwargs["env"]["ATC_UNINSTALL_DIR"] == str(install_dir.resolve())  # type: ignore[index]
     assert kwargs["env"]["ATC_UNINSTALL_PID"] == str(desktop.os.getpid())  # type: ignore[index]
+    lifecycle_path = Path(kwargs["env"][WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV])  # type: ignore[index]
+    assert lifecycle_path.is_absolute()
+    assert install_dir not in lifecycle_path.parents
+    diagnostics_path = Path(  # type: ignore[index]
+        kwargs["env"][desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV]
+    )
+    assert diagnostics_path.is_absolute()
+    assert install_dir not in diagnostics_path.parents
     assert kwargs["cwd"] == install_dir.resolve().parent
+
+
+def test_windows_uninstall_helper_records_spawn_failure_without_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    diagnostics_path = tmp_path / "terminal.json"
+    lifecycle_path = tmp_path / "helper-lifecycle"
+    launches: list[list[str]] = []
+
+    def rejected_popen(command: list[str], **_kwargs: object) -> object:
+        launches.append(command)
+        raise OSError("deterministic launch boundary")
+
+    monkeypatch.setattr("allthecontext.desktop.windows_install_directory", lambda: install_dir)
+    monkeypatch.setattr("allthecontext.desktop.subprocess.Popen", rejected_popen)
+    monkeypatch.setenv("ATC_UNINSTALL_DIAGNOSTICS_PATH", str(diagnostics_path))
+    monkeypatch.setenv(WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV, str(lifecycle_path))
+
+    with pytest.raises(OSError, match="deterministic launch boundary"):
+        _schedule_windows_install_removal(install_dir)
+
+    assert len(launches) == 1
+    assert install_dir.exists()
+    assert not diagnostics_path.exists()
+    assert (tmp_path / "helper-lifecycle.launch_requested").read_bytes() == b""
+    assert (tmp_path / "helper-lifecycle.launch_failed").read_bytes() == b""
+    assert not (tmp_path / "helper-lifecycle.launch_returned").exists()
+    assert not (tmp_path / "helper-lifecycle.entry").exists()
+    assert not (tmp_path / "helper-lifecycle.terminal").exists()
+    assert not (tmp_path / "helper-lifecycle.exit").exists()
 
 
 def test_windows_uninstall_helper_is_live_after_caller_returns(tmp_path: Path, monkeypatch) -> None:
@@ -476,13 +752,20 @@ def test_windows_uninstall_helper_is_live_after_caller_returns(tmp_path: Path, m
     assert helper.poll() is None
     assert helper.waited is False
     script = launched[0][0][-1]
-    assert script.index("Wait-Process -Id $atcProcessId") < script.index("Remove-Item")
+    assert script.index("Get-Process -Id $atcProcessId") < script.index("Remove-Item")
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")
 def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> None:
     checkout_root = Path(__file__).resolve().parents[2]
     install_dir = checkout_root / ".test-runs" / f"windows-install-removal-{uuid.uuid4().hex}"
+    diagnostics_path = (
+        checkout_root / ".test-runs" / f"windows-install-removal-{uuid.uuid4().hex}.json"
+    )
+    lifecycle_path = (
+        checkout_root / ".test-runs" / f"windows-install-removal-{uuid.uuid4().hex}.lifecycle"
+    )
+    completed_successfully = False
     try:
         try:
             install_dir.mkdir(parents=True)
@@ -492,6 +775,8 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
 
         environment = os.environ.copy()
         environment["ATC_INSTALL_DIR"] = str(install_dir)
+        environment[desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
+        environment[WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV] = str(lifecycle_path)
         source_root = checkout_root / "packages" / "allthecontext" / "src"
         environment["PYTHONPATH"] = os.pathsep.join(
             filter(None, (str(source_root), environment.get("PYTHONPATH")))
@@ -513,11 +798,208 @@ def test_windows_uninstall_helper_executes_from_short_lived_python_child() -> No
         assert completed.returncode == 0, completed.stderr
 
         deadline = time.monotonic() + WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS + 5.0
-        while install_dir.exists() and time.monotonic() < deadline:
-            time.sleep(0.1)
-        assert not install_dir.exists(), "PowerShell exited without executing directory removal"
+        _wait_for_windows_uninstall_terminal(
+            diagnostics_path,
+            lifecycle_path,
+            deadline=deadline,
+        )
+        assert not install_dir.exists(), "terminal completion reported before target removal"
+        receipt_bytes = diagnostics_path.read_bytes()
+        assert receipt_bytes.startswith(b"{")
+        assert not receipt_bytes.startswith(b"\xef\xbb\xbf")
+        receipt = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+        assert receipt["schema_version"] == 1
+        assert receipt["outcome"] == "success"
+        assert receipt["helper_process"] == "started"
+        assert receipt["caller_process"] in {"captured", "not_found"}
+        assert receipt["caller_wait"] in {"completed", "not_required"}
+        assert receipt["removal"] in {"removed", "already_absent"}
+        assert receipt["error_code"] == "none"
+        assert 1 <= receipt["attempt_count"] <= WINDOWS_INSTALL_REMOVAL_ATTEMPTS
+        for phase in ("launch_requested", "launch_returned", "entry", "terminal", "exit"):
+            assert lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").read_bytes() == b""
+        assert not lifecycle_path.with_name(f"{lifecycle_path.name}.launch_failed").exists()
+        completed_successfully = True
     finally:
-        shutil.rmtree(install_dir, ignore_errors=True)
+        if completed_successfully:
+            shutil.rmtree(install_dir, ignore_errors=True)
+            diagnostics_path.unlink(missing_ok=True)
+            for phase in (
+                "launch_requested",
+                "launch_returned",
+                "launch_failed",
+                "entry",
+                "terminal",
+                "exit",
+            ):
+                lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").unlink(missing_ok=True)
+        else:
+            _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+            shutil.rmtree(install_dir, ignore_errors=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell")
+def test_windows_uninstall_helper_writes_bounded_failure_receipt_for_locked_target() -> None:
+    """A real locked file exercises the helper's terminal failure boundary."""
+
+    checkout_root = Path(__file__).resolve().parents[2]
+    install_dir = checkout_root / ".test-runs" / f"windows-install-failure-{uuid.uuid4().hex}"
+    diagnostics_path = (
+        checkout_root / ".test-runs" / f"windows-install-failure-{uuid.uuid4().hex}.json"
+    )
+    lifecycle_path = (
+        checkout_root / ".test-runs" / f"windows-install-failure-{uuid.uuid4().hex}.lifecycle"
+    )
+    completed_successfully = False
+    handle = None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    try:
+        try:
+            install_dir.mkdir(parents=True)
+            lock_path = install_dir / "removal-lock.txt"
+            lock_path.write_text("held\n", encoding="utf-8")
+        except PermissionError as exc:
+            pytest.skip(f"checkout-owned native test directory is not writable: {exc}")
+
+        handle = kernel32.CreateFileW(
+            str(lock_path),
+            0x80000000,  # GENERIC_READ
+            0,  # deny all sharing, including delete
+            None,
+            3,  # OPEN_EXISTING
+            0x80,  # FILE_ATTRIBUTE_NORMAL
+            None,
+        )
+        if handle == wintypes.HANDLE(-1).value:
+            pytest.skip(
+                f"could not establish the test-only Windows file lock: {ctypes.get_last_error()}"
+            )
+
+        environment = os.environ.copy()
+        environment["ATC_INSTALL_DIR"] = str(install_dir)
+        environment[desktop.WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
+        environment[WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV] = str(lifecycle_path)
+        source_root = checkout_root / "packages" / "allthecontext" / "src"
+        environment["PYTHONPATH"] = os.pathsep.join(
+            filter(None, (str(source_root), environment.get("PYTHONPATH")))
+        )
+        child_code = (
+            "from allthecontext import desktop;"
+            "from pathlib import Path;"
+            "import os;"
+            "desktop.WINDOWS_INSTALL_REMOVAL_ATTEMPTS=1;"
+            "desktop._schedule_windows_install_removal(Path(os.environ['ATC_INSTALL_DIR']))"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", child_code],
+            cwd=install_dir,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+
+        deadline = time.monotonic() + 5.0
+        _wait_for_windows_uninstall_terminal(
+            diagnostics_path,
+            lifecycle_path,
+            deadline=deadline,
+        )
+        receipt_bytes = diagnostics_path.read_bytes()
+        assert receipt_bytes.startswith(b"{")
+        assert not receipt_bytes.startswith(b"\xef\xbb\xbf")
+        receipt = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+        assert receipt == {
+            "schema_version": 1,
+            "outcome": "failure",
+            "helper_process": "started",
+            "caller_process": receipt["caller_process"],
+            "caller_wait": receipt["caller_wait"],
+            "removal": "present",
+            "attempt_count": 1,
+            "error_code": "remove_failed",
+        }
+        assert receipt["caller_process"] in {"captured", "not_found"}
+        assert receipt["caller_wait"] in {"completed", "not_required"}
+        assert install_dir.exists()
+        for phase in ("launch_requested", "launch_returned", "entry", "terminal", "exit"):
+            assert lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").read_bytes() == b""
+        assert not lifecycle_path.with_name(f"{lifecycle_path.name}.launch_failed").exists()
+        completed_successfully = True
+    finally:
+        if handle is not None and handle != wintypes.HANDLE(-1).value:
+            kernel32.CloseHandle(handle)
+        if completed_successfully:
+            shutil.rmtree(install_dir, ignore_errors=True)
+            diagnostics_path.unlink(missing_ok=True)
+            for phase in (
+                "launch_requested",
+                "launch_returned",
+                "launch_failed",
+                "entry",
+                "terminal",
+                "exit",
+            ):
+                lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}").unlink(missing_ok=True)
+        else:
+            _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+            shutil.rmtree(install_dir, ignore_errors=True)
+
+
+def test_windows_uninstall_assertion_evidence_is_content_free_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    lifecycle_path = tmp_path / "windows-install-failure-123.lifecycle"
+
+    _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+    _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+
+    marker_path = lifecycle_path.with_name(f"{lifecycle_path.name}.assertion-failed")
+    assert marker_path.read_bytes() == b""
+
+
+def test_windows_uninstall_assertion_evidence_reports_write_failure_without_masking_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lifecycle_path = tmp_path / "windows-install-failure-456.lifecycle"
+
+    def fail_marker_open(*_args: object, **_kwargs: object) -> int:
+        raise OSError("injected marker write failure")
+
+    monkeypatch.setattr(os, "open", fail_marker_open)
+    with pytest.raises(AssertionError, match="primary assertion"):
+        try:
+            raise AssertionError("primary assertion")
+        finally:
+            _retain_windows_uninstall_assertion_evidence(lifecycle_path)
+
+    assert "injected marker write failure" in capsys.readouterr().err
+
+
+def test_windows_uninstall_failure_artifacts_include_hidden_lifecycle_paths() -> None:
+    workflow = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    marker = "      - name: Upload detached uninstall lifecycle evidence"
+    assert marker in workflow
+    upload_step = workflow.split(marker, 1)[1].split("      - name:", 1)[0]
+    assert "include-hidden-files: true" in upload_step
+    assert "if-no-files-found: ignore" in upload_step
+    assert ".test-runs/windows-install-removal-*.lifecycle.*" in upload_step
+    assert ".test-runs/windows-install-failure-*.lifecycle.*" in upload_step
 
 
 def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
@@ -690,11 +1172,18 @@ def test_headless_setup_injected_prepare_oserror_reports_exact_subphase(
     }
     for role, path in component_paths.items():
         path.write_bytes(role.encode("ascii"))
+    source_paths = component_paths
+    if failure_subphase == "core_probe":
+        source_dir = tmp_path / "replacement"
+        source_dir.mkdir()
+        source_paths = {role: source_dir / path.name for role, path in component_paths.items()}
+        for role, path in source_paths.items():
+            path.write_bytes(role.encode("ascii") + b"-replacement")
     runtime = RuntimeCommand(
-        component_paths["main"],
-        mcp_executable=component_paths["mcp"],
-        update_executable=component_paths["updater"],
-        recovery_executable=component_paths["recovery"],
+        source_paths["main"],
+        mcp_executable=source_paths["mcp"],
+        update_executable=source_paths["updater"],
+        recovery_executable=source_paths["recovery"],
     )
     report_path = tmp_path / "setup-report.json"
     path_canary = str(tmp_path / "private" / "context.sqlite3")
@@ -1821,16 +2310,10 @@ def test_packaged_update_entrypoint_failure_after_successful_bootstrap_is_bounde
     report = config.data_dir / "updates" / "transactions" / ("a" * 24) / "apply-report.json"
     assert _apply_packaged_update(str(report)) == 1
     assert events == ["bootstrap_returned", callback]
-    phase = "component_bootstrap" if error_kind == "runtime" else "entrypoint_registration"
-    code = (
-        "component_bootstrap_runtime_error"
-        if error_kind == "runtime"
-        else "entrypoint_registration_failed"
-    )
     assert json.loads(report.read_text(encoding="utf-8")) == {
         "attempt": "b" * 32,
-        "code": code,
-        "phase": phase,
+        "code": "entrypoint_registration_failed",
+        "phase": "entrypoint_registration",
         "status": "failed",
     }
     captured = capsys.readouterr()

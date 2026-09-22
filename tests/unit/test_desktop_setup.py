@@ -7,6 +7,7 @@ import tomllib
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from allthecontext import claude_code_config, desktop_setup
@@ -119,14 +120,16 @@ def test_strict_core_probe_does_not_follow_a_redirect(
     assert type(handlers[1]).__name__ == "_NoRedirectHandler"
 
 
+@pytest.mark.parametrize("platform_name", ("nt", "posix"), ids=("windows", "posix"))
 def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform_name: str
 ) -> None:
     monkeypatch.delenv(CAPTURE_SCHEDULER_ENABLED_ENV, raising=False)
     config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_439)
     runtime = RuntimeCommand(tmp_path / "AllTheContext.exe")
     states = iter((CoreProbe.UNREACHABLE, CoreProbe.VERIFIED))
     launched: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    requested_flags: list[tuple[str, ...]] = []
 
     class Process:
         pass
@@ -141,6 +144,16 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
         lambda _config: next(states),
     )
     monkeypatch.setattr("allthecontext.desktop_setup.subprocess.Popen", fake_popen)
+    module_os = desktop_setup.os
+    monkeypatch.setattr(
+        desktop_setup,
+        "os",
+        SimpleNamespace(name=platform_name, environ=module_os.environ),
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.windows_creation_flags",
+        lambda *names: requested_flags.append(names) or 0xA5,
+    )
 
     launch_core(runtime, config, wait_seconds=0.1)
 
@@ -151,6 +164,12 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
     assert isinstance(environment, dict)
     assert environment["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert environment[CAPTURE_SCHEDULER_ENABLED_ENV] == "1"
+    assert kwargs["creationflags"] == (0xA5 if platform_name == "nt" else 0)
+    assert kwargs["start_new_session"] is (platform_name == "posix")
+    if platform_name == "nt":
+        assert requested_flags == [("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")]
+    else:
+        assert requested_flags == []
     assert not scheduler_config_path(config.data_dir).exists()
 
     monkeypatch.setenv(CAPTURE_SCHEDULER_ENABLED_ENV, "1")
@@ -524,6 +543,48 @@ def test_setup_initializes_recoverable_access_and_codex(tmp_path: Path, monkeypa
         config=config,
     )
     assert repeated.client_id == result.client_id
+
+
+def test_repeated_setup_core_failure_preserves_vault_and_desktop_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_441)
+    runtime = RuntimeCommand(Path("python"), ("-m", "allthecontext.desktop"))
+    log_path = config.data_dir / "logs" / "core.log"
+
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.launch_core",
+        lambda _runtime, _config: log_path,
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.authenticated_dashboard_url",
+        lambda _config, _token: "http://127.0.0.1:17441/v1/browser/connect?ticket=opaque",
+    )
+
+    first = perform_setup(
+        SetupOptions(configure_codex=False, configure_claude=False, start_at_login=False),
+        runtime,
+        config=config,
+    )
+    vault_id = first.vault_id
+    client_id = first.client_id
+
+    def fail_launch(_runtime: RuntimeCommand, _config: CoreConfig) -> Path:
+        raise RuntimeError("path=/private/vault.sqlite3 token=never-log-this")
+
+    monkeypatch.setattr("allthecontext.desktop_setup.launch_core", fail_launch)
+    with pytest.raises(desktop_setup.SetupCoreStartupError):
+        perform_setup(
+            SetupOptions(configure_codex=False, configure_claude=False, start_at_login=False),
+            runtime,
+            config=config,
+        )
+
+    store = CoreStore(config.database_path)
+    assert store.vault_id() == vault_id
+    clients = [client for client in store.list_clients() if not client["revoked"]]
+    assert [client["id"] for client in clients] == [client_id]
+    assert (config.data_dir / "credentials.development.json").is_file()
 
 
 def test_setup_connects_claude_code_with_exact_read_only_principal_and_managed_environment(

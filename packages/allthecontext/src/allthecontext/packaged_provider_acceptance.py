@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,8 @@ _MANDATORY_PROVIDERS = frozenset({"chatgpt", "claude", "grok"})
 _OUTCOME_KEYS = frozenset(item.value for item in ObservationDisposition)
 _SAFE_EXPORT_FORMAT = re.compile(r"[a-z0-9_.+-]{1,120}")
 _SAFE_EXTENSIONS = frozenset({".zip", ".json", ".jsonl", ".md", ".markdown", ".txt"})
+_WINDOWS_CLEANUP_ATTEMPTS = 30
+_WINDOWS_CLEANUP_INTERVAL_SECONDS = 0.1
 
 
 def _make_temp_data_dir() -> Path:
@@ -51,6 +55,40 @@ def _write_report(path: Path, payload: dict[str, Any]) -> bool:
         return True
     except OSError:
         return False
+
+
+def _run_packaged_import(
+    config: CoreConfig,
+    source: Path,
+    *,
+    provider: str,
+) -> dict[str, Any]:
+    """Release the complete Core object graph before owned-root cleanup."""
+
+    with CoreService(config) as core:
+        return core.import_operations.import_path_via_operation(
+            source,
+            filename=_safe_display_name(provider, source),
+            source_service=provider,
+            provider=provider,
+        )
+
+
+def _remove_owned_data_dir(data_root: Path) -> None:
+    """Remove one owned root, converging only on Windows sharing contention."""
+
+    for attempt in range(_WINDOWS_CLEANUP_ATTEMPTS):
+        try:
+            shutil.rmtree(data_root)
+            return
+        except PermissionError as error:
+            if (
+                os.name != "nt"
+                or getattr(error, "winerror", None) not in {5, 32}
+                or attempt + 1 >= _WINDOWS_CLEANUP_ATTEMPTS
+            ):
+                raise
+            time.sleep(_WINDOWS_CLEANUP_INTERVAL_SECONDS)
 
 
 def _safe_display_name(provider: str, export_path: Path) -> str:
@@ -190,13 +228,7 @@ def run_packaged_provider_acceptance(
         if config.host != "127.0.0.1":
             raise InvalidStateError("non-loopback host")
         try:
-            with CoreService(config) as core:
-                operation = core.import_operations.import_path_via_operation(
-                    source,
-                    filename=_safe_display_name(normalized, source),
-                    source_service=normalized,
-                    provider=normalized,
-                )
+            operation = _run_packaged_import(config, source, provider=normalized)
         except (InvalidStateError, OSError, TypeError, UnicodeError, ValueError):
             # Production operation/import refused or failed before a complete result.
             payload = _failure("import_operation_failed")
@@ -227,7 +259,7 @@ def run_packaged_provider_acceptance(
     cleanup_ok = True
     if owned_data_dir:
         try:
-            shutil.rmtree(data_root)
+            _remove_owned_data_dir(data_root)
         except OSError:
             cleanup_ok = False
     if not cleanup_ok:

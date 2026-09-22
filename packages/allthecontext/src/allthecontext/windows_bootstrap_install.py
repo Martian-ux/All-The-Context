@@ -1506,7 +1506,7 @@ def install_windows_components(
     sources: Mapping[str, Path],
     install_root: Path,
     *,
-    core_was_running: bool,
+    core_was_running: bool | Callable[[], bool],
     stop_core: Callable[[], None] | None,
     restart_core: Callable[[], None] | None,
     journal_root: Path | None = None,
@@ -1571,6 +1571,11 @@ def install_windows_components(
             raise BootstrapInstallError("bootstrap_retry_required")
         if is_complete_install(sources, root):
             return BootstrapInstallResult(root, targets, recovered=recovered)
+        core_was_running_value = (
+            core_was_running if isinstance(core_was_running, bool) else core_was_running()
+        )
+        if not isinstance(core_was_running_value, bool):
+            raise BootstrapInstallError("bootstrap_core_state_invalid")
         prior_identities = [
             _optional_identity(targets[role], "bootstrap_target_invalid")
             for role, _filename in CANONICAL_COMPONENTS
@@ -1666,7 +1671,7 @@ def install_windows_components(
             operation_id=operation_id,
             install_root=str(root),
             transaction_dir=str(transaction),
-            core_was_running=core_was_running,
+            core_was_running=core_was_running_value,
             core_stop_complete=False,
             phase=BootstrapPhase.STAGING,
             cutover_index=0,

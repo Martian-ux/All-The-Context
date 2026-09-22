@@ -358,6 +358,7 @@ def test_due_execution_runs_enabled_workspace_source_through_shared_runtime(
         source_id = str(authorized["id"])
         service.capture.enable(source_id)
         write_scheduler_enabled(config.data_dir, enabled=True)
+        cycle_before = service.capture_scheduler.status()["completed_cycle_count"]
         report = service.capture_scheduler.run_cycle()
         assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
         assert report.plan.enabled is True
@@ -367,6 +368,7 @@ def test_due_execution_runs_enabled_workspace_source_through_shared_runtime(
         with service.store.connect() as connection:
             records = connection.execute("SELECT COUNT(*) FROM context_records").fetchone()[0]
         assert records == 4
+        assert service.capture_scheduler.status()["completed_cycle_count"] == cycle_before + 1
         _assert_no_root_leak(service.capture_scheduler.status(), workspace, config.data_dir)
 
 
@@ -701,8 +703,7 @@ def test_worker_failure_is_content_free_and_restartable(
         scheduler.start()
         scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
         scheduler._wakeup.set()
-        _wait_until(lambda: scheduler.status()["worker_state"] == "failed")
-        _wait_until(lambda: scheduler.status()["running"] is False)
+        assert scheduler.wait_for_completed_cycle(1, timeout=5) is False
         failed = scheduler.status()
         assert failed["running"] is False
         assert failed["worker_failure_code"] == "worker_failed"

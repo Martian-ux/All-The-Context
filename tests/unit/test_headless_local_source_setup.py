@@ -62,7 +62,11 @@ def _stub_setup(
     )
     monkeypatch.setattr(desktop, "SetupOptions", FakeSetupOptions)
 
-    def fake_perform_setup(options: FakeSetupOptions, installed: RuntimeCommand) -> FakeSetupResult:
+    def fake_perform_setup(
+        options: FakeSetupOptions,
+        installed: RuntimeCommand,
+        **_kwargs: object,
+    ) -> FakeSetupResult:
         captured.append((options, installed))
         return result
 
@@ -256,7 +260,7 @@ def test_headless_setup_failure_redacts_workspace_root_and_exception_text(
     monkeypatch.setattr(desktop, "SetupOptions", FakeSetupOptions)
 
     def fake_perform_setup(
-        _options: FakeSetupOptions, _installed: RuntimeCommand
+        _options: FakeSetupOptions, _installed: RuntimeCommand, **_kwargs: object
     ) -> FakeSetupResult:
         raise RuntimeError(f"workspace root={workspace_root}; {raw_exception}")
 

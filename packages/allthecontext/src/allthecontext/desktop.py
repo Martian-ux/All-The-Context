@@ -47,7 +47,11 @@ from .desktop_setup import (
     CODEX_CAPTURE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
     CODEX_EXPLICIT_CLIENT_NAME,
+    CORE_AUTHENTICATION_PROGRESS_MESSAGE,
+    CORE_STARTUP_PROGRESS_MESSAGE,
     CoreProbe,
+    SetupCoreAuthenticationError,
+    SetupCoreStartupError,
     SetupOptions,
     authenticated_dashboard_url,
     delete_client_credential,
@@ -86,6 +90,8 @@ WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS = 100
 WINDOWS_INSTALL_REMOVAL_TIMEOUT_SECONDS = (
     WINDOWS_INSTALL_REMOVAL_ATTEMPTS * WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS / 1000
 )
+WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV = "ATC_UNINSTALL_DIAGNOSTICS_PATH"
+WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV = "ATC_UNINSTALL_LIFECYCLE_PATH"
 PACKAGED_UNINSTALL_FAILURE_FIELDS = frozenset(
     {"uninstalled", "vault_preserved", "stage", "code", "registration_status"}
 )
@@ -261,6 +267,8 @@ HeadlessSetupStage = Literal["prepare_installed_runtime", "perform_setup", "writ
 HeadlessSetupSubphase = Literal[
     "packaged_component_source_validation",
     "core_probe",
+    "core_startup",
+    "core_authentication",
     "bootstrap_install_recovery",
     "entrypoint_refresh_probe",
     "entrypoint_registration",
@@ -271,6 +279,8 @@ _HEADLESS_SETUP_SUBPHASES: frozenset[str] = frozenset(
     {
         "packaged_component_source_validation",
         "core_probe",
+        "core_startup",
+        "core_authentication",
         "bootstrap_install_recovery",
         "entrypoint_refresh_probe",
         "entrypoint_registration",
@@ -307,6 +317,8 @@ _PACKAGED_BOOTSTRAP_EXCEPTION_CODES: tuple[tuple[type[Exception], str], ...] = (
 _HEADLESS_SETUP_ERROR_CODES = frozenset(
     {
         "credential_store_unavailable",
+        "core_authentication_failed",
+        "core_startup_failed",
         "setup_io_error",
         "setup_invalid_value",
         "setup_failed",
@@ -726,10 +738,13 @@ def prepare_installed_runtime(
     }
     targets = canonical_targets(install_dir)
 
-    # Probe only for lifecycle bookkeeping.  The stop routine independently
-    # authenticates and waits for Core to exit before the first target replace.
-    _notify_headless_setup_subphase(progress, "core_probe")
-    core_was_running = probe_core(CoreConfig.default()) is not CoreProbe.UNREACHABLE
+    # The bootstrap helper decides completion under its install lock.  Defer
+    # the Core probe until it has proved a cutover is needed so a repeated
+    # complete-install setup does not take ownership of Core, while a real
+    # cutover retains the existing stop/restart contract.
+    def core_was_running() -> bool:
+        _notify_headless_setup_subphase(progress, "core_probe")
+        return probe_core(CoreConfig.default()) is not CoreProbe.UNREACHABLE
 
     def restart_prior_core() -> None:
         prior_runtime = RuntimeCommand(
@@ -1048,12 +1063,13 @@ def _apply_packaged_update(report_value: str) -> int:
             temporary.unlink(missing_ok=True)
     except Exception as error:
         # Registration runs inside prepare after the binary transaction commits.
-        # Preserve existing classifications for other exception types.
-        if (
-            isinstance(error, OSError)
-            and phase == "component_bootstrap"
-            and prepare_subphase in {"entrypoint_refresh_probe", "entrypoint_registration"}
-        ):
+        # The refresh/registration callbacks are therefore their own failure
+        # boundary for every exception type; never reuse the earlier bootstrap
+        # or lazy-probe marker after the transaction has returned.
+        if phase == "component_bootstrap" and prepare_subphase in {
+            "entrypoint_refresh_probe",
+            "entrypoint_registration",
+        }:
             phase = "entrypoint_registration"
         failure_code = _packaged_update_failure_code(
             error,
@@ -1318,6 +1334,8 @@ def _packaged_provider_acceptance(args: argparse.Namespace) -> int:
 def _headless_setup_error_code(error: Exception) -> str:
     """Map arbitrary setup failures to the closed automation diagnostic vocabulary."""
 
+    if isinstance(error, (SetupCoreStartupError, SetupCoreAuthenticationError)):
+        return error.diagnostic_code
     message = str(error).casefold()
     if "credential store" in message or "credential storage" in message:
         return "credential_store_unavailable"
@@ -1343,12 +1361,18 @@ def _write_headless_setup_failure_report(
     # message. Headless setup is automation-facing, so persist only a closed
     # code even if a lower layer accidentally embeds a token, path, or imported
     # text in its exception.
-    diagnostics_path = _write_failure_diagnostics(RuntimeError(error_code))
+    diagnostics_path: Path | None = None
+    with suppress(Exception):
+        diagnostics_path = _write_failure_diagnostics(RuntimeError(error_code))
     report: dict[str, Any] = {
         "setup": "failed",
-        "error_type": type(error).__name__
-        if type(error).__name__ in {"RuntimeError", "OSError", "ValueError"}
-        else "Exception",
+        "error_type": (
+            "RuntimeError"
+            if isinstance(error, RuntimeError)
+            else type(error).__name__
+            if type(error).__name__ in {"OSError", "ValueError"}
+            else "Exception"
+        ),
         "error_code": error_code,
         "setup_stage": setup_stage,
         "setup_subphase": setup_subphase,
@@ -1419,6 +1443,10 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
             progress=record_subphase,
         )
         setup_stage = "perform_setup"
+        # The prepare callback describes only the frozen component lifecycle.
+        # Do not carry its final assembly marker into the independent setup
+        # transaction or misattribute a later Core/setup failure to bootstrap.
+        setup_subphase = "unknown"
         setup_kwargs: dict[str, Any] = {
             "vault_name": args.vault_name,
             "timezone": args.timezone or local_timezone(),
@@ -1443,7 +1471,20 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
             setup_kwargs["configure_hermes_continuous_capture"] = True
         if getattr(args, "hermes_profile", None):
             setup_kwargs["hermes_profile"] = args.hermes_profile
-        result = perform_setup(SetupOptions(**setup_kwargs), installed)
+
+        def record_setup_progress(step: str, message: str) -> None:
+            if step != "core":
+                return
+            if message == CORE_STARTUP_PROGRESS_MESSAGE:
+                record_subphase("core_startup")
+            elif message == CORE_AUTHENTICATION_PROGRESS_MESSAGE:
+                record_subphase("core_authentication")
+
+        result = perform_setup(
+            SetupOptions(**setup_kwargs),
+            installed,
+            progress=record_setup_progress,
+        )
         report = asdict(result)
         for field_name in (
             "workspace_root",
@@ -1558,6 +1599,16 @@ def _dashboard_launch_fallback(config: CoreConfig, token: str, initial_url: str)
     root.mainloop()
 
 
+def _windows_install_removal_marker_path(lifecycle_path: Path, phase: str) -> Path:
+    return lifecycle_path.with_name(f"{lifecycle_path.name}.{phase}")
+
+
+def _write_windows_install_removal_marker(lifecycle_path: Path, phase: str) -> None:
+    marker_path = _windows_install_removal_marker_path(lifecycle_path, phase)
+    descriptor = os.open(marker_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(descriptor)
+
+
 def _schedule_windows_install_removal(install_dir: Path) -> None:
     target = install_dir.resolve(strict=True)
     expected = windows_install_directory().resolve(strict=True)
@@ -1566,9 +1617,88 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
     environment = os.environ.copy()
     environment["ATC_UNINSTALL_DIR"] = str(target)
     environment["ATC_UNINSTALL_PID"] = str(os.getpid())
+    configured_diagnostics = environment.get(WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV)
+    if configured_diagnostics:
+        diagnostics_path = Path(configured_diagnostics).expanduser()
+        if not diagnostics_path.is_absolute():
+            raise RuntimeError("uninstall diagnostics path must be absolute")
+    else:
+        diagnostics_path = (
+            Path(tempfile.gettempdir())
+            / "AllTheContext"
+            / f"install-removal-{os.getpid()}-{time.time_ns()}.json"
+        )
+    diagnostics_path = diagnostics_path.resolve()
+    if diagnostics_path == target or target in diagnostics_path.parents:
+        raise RuntimeError("uninstall diagnostics must be outside the installation directory")
+    configured_lifecycle = environment.get(WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV)
+    if configured_lifecycle:
+        lifecycle_path = Path(configured_lifecycle).expanduser()
+        if not lifecycle_path.is_absolute():
+            raise RuntimeError("uninstall lifecycle path must be absolute")
+    else:
+        lifecycle_path = diagnostics_path.with_name(
+            f"{diagnostics_path.name}.lifecycle-{secrets.token_hex(8)}"
+        )
+    lifecycle_path = lifecycle_path.resolve()
+    if lifecycle_path == target or target in lifecycle_path.parents:
+        raise RuntimeError("uninstall lifecycle must be outside the installation directory")
+    with suppress(OSError):
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(OSError):
+        lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
+    environment[WINDOWS_INSTALL_REMOVAL_DIAGNOSTICS_ENV] = str(diagnostics_path)
+    environment[WINDOWS_INSTALL_REMOVAL_LIFECYCLE_ENV] = str(lifecycle_path)
+    _write_windows_install_removal_marker(lifecycle_path, "launch_requested")
     script = (
+        "$atcLifecyclePath=$env:ATC_UNINSTALL_LIFECYCLE_PATH;"
+        "function Write-AtcRemovalMarker{"
+        "param([string]$atcPhase);"
+        "try{"
+        '$atcMarkerPath="$($atcLifecyclePath).$($atcPhase)";'
+        "$atcMarkerHandle=[System.IO.File]::Open($atcMarkerPath,"
+        "[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,"
+        "[System.IO.FileShare]::Read);"
+        "$atcMarkerHandle.Dispose()"
+        "}catch{}"
+        "};"
+        "Write-AtcRemovalMarker 'entry';"
+        "$atcDiagnosticsPath=$env:ATC_UNINSTALL_DIAGNOSTICS_PATH;"
+        "$atcReceiptWritten=$false;"
+        "$atcResult=[ordered]@{"
+        "schema_version=1;"
+        "outcome='failure';"
+        "helper_process='started';"
+        "caller_process='not_observed';"
+        "caller_wait='not_run';"
+        "removal='not_started';"
+        "attempt_count=0;"
+        "error_code='unknown'"
+        "};"
+        "function Write-AtcRemovalResult{"
+        "try{"
+        "$atcDiagnosticsParent=Split-Path -Parent $atcDiagnosticsPath;"
+        "New-Item -ItemType Directory -Force -Path $atcDiagnosticsParent | Out-Null;"
+        '$atcTemporary="$atcDiagnosticsPath.$PID.atc-new";'
+        "$atcJson=$atcResult | ConvertTo-Json -Compress;"
+        "$atcUtf8NoBom=New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false;"
+        "[System.IO.File]::WriteAllText($atcTemporary,$atcJson,$atcUtf8NoBom);"
+        "Move-Item -LiteralPath $atcTemporary -Destination $atcDiagnosticsPath -Force;"
+        "$script:atcReceiptWritten=$true"
+        "}catch{}"
+        "};"
+        "$atcExitCode=1;"
+        "try{"
         "$atcProcessId=[int]$env:ATC_UNINSTALL_PID;"
-        "Wait-Process -Id $atcProcessId -ErrorAction SilentlyContinue;"
+        # Capture the process object while the caller is still alive. Waiting
+        # by PID alone can observe a different process after rapid PID reuse
+        # on a busy Windows worker and leave the real install root behind.
+        "$atcProcess=Get-Process -Id $atcProcessId -ErrorAction SilentlyContinue;"
+        "if($null -ne $atcProcess){"
+        "$atcResult.caller_process='captured';"
+        "$atcProcess.WaitForExit();"
+        "$atcResult.caller_wait='completed'"
+        "}else{$atcResult.caller_process='not_found';$atcResult.caller_wait='not_required'};"
         # A frozen one-file executable has an outer bootloader process around
         # the Python child.  The child can be gone while the bootloader still
         # has the installed executable open, so one removal attempt can leave
@@ -1576,41 +1706,74 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         # final process and transient antivirus/indexer handles unwind.
         f"for($atcAttempt=0;$atcAttempt -lt {WINDOWS_INSTALL_REMOVAL_ATTEMPTS};"
         "$atcAttempt++){"
-        "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){exit 0};"
+        "$atcResult.attempt_count=$atcAttempt+1;"
+        "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){"
+        "$atcResult.outcome='success';"
+        "$atcResult.removal='already_absent';"
+        "$atcResult.error_code='none';"
+        "break};"
         "try{"
         "Remove-Item -LiteralPath $env:ATC_UNINSTALL_DIR -Recurse -Force "
         "-ErrorAction Stop;"
-        "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){exit 0}"
-        "}catch{};"
+        "if(-not (Test-Path -LiteralPath $env:ATC_UNINSTALL_DIR)){"
+        "$atcResult.outcome='success';"
+        "$atcResult.removal='removed';"
+        "$atcResult.error_code='none';"
+        "break}"
+        "}catch{$atcResult.error_code='remove_failed'};"
         f"Start-Sleep -Milliseconds {WINDOWS_INSTALL_REMOVAL_INTERVAL_MILLISECONDS}"
         "};"
-        "exit 1"
+        "if($atcResult.outcome -ne 'success'){"
+        "$atcResult.removal='present';"
+        "if($atcResult.error_code -eq 'unknown'){$atcResult.error_code='removal_timeout'}"
+        "}"
+        "}catch{"
+        "$atcResult.removal='unknown';"
+        "$atcResult.error_code='helper_failed'"
+        "}"
+        "finally{"
+        "Write-AtcRemovalResult;"
+        "if($atcResult.outcome -eq 'success' -and $atcReceiptWritten){$atcExitCode=0};"
+        "if($atcReceiptWritten){Write-AtcRemovalMarker 'terminal'};"
+        "Write-AtcRemovalMarker 'exit'"
+        "};"
+        "exit $atcExitCode"
     )
-    subprocess.Popen(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        # Keep the helper console-free and in its own process group. On
-        # Windows, DETACHED_PROCESS can return zero without running this
-        # PowerShell command when combined with these flags.
-        creationflags=windows_creation_flags("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"),
-        # The real Start Menu uninstall shortcut starts inside install_dir.
-        # A process cannot remove its own current directory on Windows, so the
-        # cleanup helper must explicitly run from the stable parent.
-        cwd=target.parent,
-        env=environment,
-    )
+    try:
+        subprocess.Popen(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            # Keep the helper console-free and in its own process group. The
+            # hosted Windows job rejects CREATE_BREAKAWAY_FROM_JOB with WinError 5;
+            # keeping the helper in the caller's job is the compatible launch path.
+            # A launch error remains the uninstall failure and is never retried or
+            # converted into a successful cleanup result.
+            creationflags=windows_creation_flags("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"),
+            # The real Start Menu uninstall shortcut starts inside install_dir.
+            # A process cannot remove its own current directory on Windows, so the
+            # cleanup helper must explicitly run from the stable parent.
+            cwd=target.parent,
+            env=environment,
+        )
+    except OSError:
+        with suppress(OSError):
+            _write_windows_install_removal_marker(lifecycle_path, "launch_failed")
+        raise
+    else:
+        with suppress(OSError):
+            _write_windows_install_removal_marker(lifecycle_path, "launch_returned")
 
 
 def _uninstall(runtime: RuntimeCommand, *, unattended: bool = False) -> int:

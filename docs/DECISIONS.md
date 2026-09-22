@@ -1,5 +1,59 @@
 # Architecture decisions
 
+## ADR-215: Retain only bounded packaged process-inventory observations
+
+**Status:** implemented locally on 2026-09-16; maintained-native focused,
+static, hosted, and downstream release validation remain required.
+
+The packaged Windows first-run smoke records one content-free JSON observation
+for each native PowerShell/CIM process-inventory attempt, before returning a
+snapshot or raising its existing fail-closed error. The closed schema is
+version `1`, kind `packaged-process-inventory`, a pass/failure status, one of
+the six launch/timeout/child-exit/JSON/identity/complete stages, a bounded
+return code or null, boolean stdout/stderr presence, closed JSON and identity
+statuses, an item count from zero through 64 or null, and `bounded: true`.
+No path, process identity, command, stream, exception, environment, personal
+context, credential, or secret is retained.
+
+The Windows desktop workflow gives the smoke a dedicated directory and always
+uploads only those JSON observations with the existing pinned artifact action;
+missing observations fail the upload. The local probe calls the same
+PowerShell/CIM implementation. Its native-check `--output` mode uses the
+active pinned interpreter as the bounded host target and atomically publishes
+one observation at the requested path; explicit packaged-target mode remains
+available through `--executable` and `--diagnostics-dir`. Inventory bounds,
+identity validation and duplication, launch/timeout/child-exit branches,
+success, and forbidden-data non-retention are covered deterministically.
+Existing inventory safety,
+modal/process ownership, cleanup, install/vault preservation, security, and
+uninstall behavior are unchanged.
+
+## ADR-216: Bind detached-uninstall lifecycle evidence to one helper
+
+**Status:** implemented locally on 2026-09-21; exact native, hosted, and
+downstream release validation remain required.
+
+The detached Windows uninstall launch creates one unique lifecycle base beside
+the external terminal receipt and outside the resolved installation root. The
+parent creates an empty `launch_requested` marker before the sole `Popen`, then
+records `launch_returned` or `launch_failed`. The real PowerShell helper writes
+empty `entry`, `terminal`, and `exit` markers through create-new file handles;
+`terminal` is published only after the existing atomic BOM-free fixed-schema
+receipt move succeeds. The lifecycle path is carried through the helper
+environment, so the markers describe one helper without retaining command
+lines, paths, credentials, or user data.
+
+The helper remains a real detached PowerShell process launched by the
+short-lived Python child. Caller-process capture/wait, exact target identity,
+stable-parent `cwd`, launch flags, bounded removal, vault preservation, and
+single-launch behavior are unchanged. A successful removal with no terminal
+receipt now leaves the helper non-successful. The deterministic launch-failure
+regression requires the owned target to remain and rejects any terminal or
+success evidence; the real Windows journey requires all lifecycle markers and
+the existing success receipt. Failed test evidence is retained and uploaded by
+the Windows pytest shard, while the hosted `35622074776` cause remains
+unresolved rather than being inferred from absence alone.
+
 ## ADR-211: Combined integration preserves bounded evidence and fail-closed gates
 
 **Status:** accepted locally on 2026-09-06 for source checkpoint
@@ -6690,3 +6744,279 @@ preimage, five-value compensation/recovery, registry ownership, shortcut and
 uninstall ownership, vault preservation, loopback binding, and closed
 diagnostics are unchanged. Native cross-version, independent review, and
 release gates remain separate evidence.
+
+## ADR-145: Operation JSONL handoff follows the checkpointed line
+
+**Status:** implemented locally on 2026-09-13 as a narrow repair to ADR-073;
+downstream native validation remains required.
+
+The operation-owned streaming JSONL parser retains the existing one-millisecond
+handoff and one-MiB checkpoint cadence, but performs the handoff after the line
+that triggered the checkpoint has been parsed and consumed. The initial
+checkpoint is intentionally at zero, so the first consumed line receives the
+handoff before another CPU-heavy JSONL window can run. Blank and malformed
+checkpointed lines also complete their classification before the handoff.
+This is a deterministic ordering contract, not a timing-threshold adjustment,
+retry, or per-record sleep.
+
+The handoff remains conditional on the operation liveness sink. Plain
+source-only parsing has no pause. Progress bytes and messages, the durable
+operation row, authenticated/revocation-checked observer selection, and the
+five-second liveness requirement are unchanged. This placement correction
+preserves ADR-073's operation-owned scheduling intent while ensuring the
+observer can receive the initial checkpoint's scheduling turn.
+
+## ADR-146: Rebuild progress cannot reopen a completed generation
+
+**Status:** implemented locally on 2026-09-13; downstream maintained-native
+validation remains required.
+
+Source-only provider rebuild trackers carry the rebuild generation into both
+their durable progress and source-lifecycle sinks. Core accepts a
+generation-bound write only for the current in-progress generation; delayed
+processing, terminal cleanup, and metadata writes from a terminal or older
+generation are ignored at the transactional storage boundary. A published
+generation may still be explicitly resumed through its existing idempotent
+session; a failed or cancelled unpublished generation is retried as a newer
+generation. Current-generation complete, failed, and cancelled rows are
+authoritative, so a later successful sibling does not supersede a failure.
+
+This is a stale-telemetry guard, not a process-local rebuild lock, parser
+retry, or test timing change. A sibling parser may still parse concurrently,
+while the existing idempotent session, batches, non-destructive publication
+ceremony, and terminal cleanup paths remain shared and unchanged.
+
+## ADR-214: Published rebuild bindings survive stale lifecycle snapshots
+
+**Status:** implemented locally on 2026-09-15; maintained-native focused,
+static, full-suite, and downstream release validation remain required.
+
+`CoreStore.update_source_import` now enforces the publication binding at the
+transactional storage boundary. Once the current rebuild generation has a
+valid published generation, session, and source marker, a same-generation
+processing snapshot from a sibling is ignored. A terminal failure or
+cancellation may still establish the current-generation terminal authority,
+but its metadata is merged with the durable publication fields. Completion is
+accepted only when the incoming generation, publication session, and marker
+match the current row. The existing authorized idempotent resume remains able
+to reopen a published in-progress generation and also preserves the binding.
+
+The service regression uses separate worker stores and an event released only
+after the canonical publication transaction commits. It proves both delayed
+processing and failure writes preserve the returned source views, shared
+session/batch/candidate identity, and publication marker. No process-local
+serialization, timing retry, parser change, or observer change is introduced.
+
+## ADR-216: Windows lifecycle repairs converge only owned transient boundaries
+
+**Status:** implemented locally on 2026-09-16; maintained-native focused,
+static, full-suite, and hosted validation remain required.
+
+The hosted Windows failures had three distinct boundaries. Packaged import
+instrumentation showed Core close with no live scheduler thread or current
+operation observer; the remaining local deletion failure was the host's
+inherited WinError 5 ACL. The packaged path now releases the whole Core import
+scope before attempting its disposable root and retries only Win32 sharing or
+access contention for a fixed bound. It never retries other errors, targets a
+caller-supplied data directory, or converts a final cleanup failure into
+success.
+
+The short-lived uninstall test exercises Python -> PowerShell and retains the
+exact validated root, parent cwd, caller PID wait, detached ownership, and
+300-attempt removal bound. The later hosted run `35160925162` proved that the
+unconditional `CREATE_BREAKAWAY_FROM_JOB` addition was incompatible with the
+runner job: `CreateProcess` failed with WinError 5. The helper therefore keeps
+only `CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP`, uses one launch attempt,
+and leaves launch or cleanup failures visible. The setup smoke's
+`perform_setup` failure ended after an `installed_runtime_assembly` progress
+marker; that marker did not establish a setup launch-flag cause, so its flags
+remain unchanged.
+
+Packet G's first capture exposed a real transitional predicate: retrieval and
+`last_run_at` became visible while the source lifecycle was still
+`reconciling`. That source transition remains unchanged. A content-free
+completed-cycle counter is published under the scheduler lifecycle lock, and
+the worker no longer double-records a cycle. The acceptance waits for the
+counter boundary, then checks the existing final source/retrieval invariants;
+the five-second timeout is unchanged.
+
+## ADR-217: Hosted Windows launch compatibility and first-run failure custody
+
+**Status:** repaired locally on 2026-09-17 from hosted run `35160925162`;
+focused validation and maintained-native hosted acceptance remain required.
+
+The Windows uninstall helper must launch inside the supported runner job. The
+hosted shard-0 trace showed that unconditional `CREATE_BREAKAWAY_FROM_JOB`
+caused `CreateProcess` to return WinError 5. The compatible contract uses only
+`CREATE_NO_WINDOW` and `CREATE_NEW_PROCESS_GROUP` with the existing exact-root,
+stable-parent, caller-PID wait, one-attempt launch, and bounded cleanup
+behavior. It has no retry fallback, swallowed launch error, timing extension,
+or broader deletion target.
+
+The desktop smoke's `perform_setup` failure is primary; its
+`installed_runtime_assembly` value is only the last recorded progress
+subphase. Setup launch flags are unchanged because the retained source and
+tests do not tie that marker to a launch failure. A separate absolute
+`--failure-diagnostics-dir` and CI environment binding retain the existing
+allowlisted closed failure summary. The failure artifact is always attempted
+with missing files ignored, while process-inventory upload remains required
+only after a passing smoke, so secondary artifact absence cannot obscure the
+primary stage.
+
+## ADR-218: Installed-copy setup is an identity-preserving reopen
+
+**Status:** repaired locally on 2026-09-20 from exact candidate
+`dcfd745557031b0757bdd92f571cf0f403883537`; focused validation and the
+maintained-native packaged lifecycle remain required.
+
+The retained Windows smoke proves the uninstall-injection branch is expected
+and not the later failure. A repeated setup launched from a complete installed
+component set must not probe or otherwise take ownership of Core before the
+bootstrap helper's existing locked, reparse-safe validation. The helper still
+owns the complete-install decision and all cutover/registration validation;
+the desktop caller only avoids the unnecessary Core lifecycle probe on the
+no-cutover path. No vault, credential, executable, registration, or process
+identity is deleted, recreated, weakened, or silently substituted.
+
+The headless report contract has separate, allowlisted Core startup and Core
+authentication failure codes and resets the prepare-only subphase at the
+`perform_setup` boundary. Unknown RuntimeErrors remain `setup_failed`; no
+exception text or arbitrary diagnostic string is persisted or projected.
+
+## ADR-219: Lazy bootstrap markers follow the locked execution boundary
+
+**Status:** corrected locally on 2026-09-21 from exact candidate
+`7f8181d050a2f549e605635e97ac29536b7dd855`; native focused and packaged gates
+remain required.
+
+The desktop caller emits the outer `bootstrap_install_recovery` marker before
+calling the bootstrap helper. The helper retains the complete-install decision
+inside its lock and invokes the caller's Core-running observation only after it
+has established that a real cutover is necessary. Thus complete installed-copy
+reuse includes locked validation without a no-op Core probe, while an incomplete
+or changed copy records the actual lazy probe after the outer marker. The probe
+regression must create a real cutover; it may not force probing on the complete
+reuse path.
+
+The headless failure report treats the optional graphical diagnostic writer as
+best effort so an exception there cannot suppress the closed atomic report.
+After the bootstrap transaction returns, entrypoint refresh and registration are
+an independent failure boundary for OSError, RuntimeError, registration guards,
+and other exceptions. Their report cannot inherit the stale bootstrap or
+Core-probe subphase. No transaction, identity, registration, vault, credential,
+process, rollback, redaction, or closed-schema invariant is relaxed.
+
+## ADR-220: Windows-under-load lifecycle observations remain bounded and truthful
+
+**Status:** corrected locally on 2026-09-21 from hosted run `35593718440`;
+focused native validation remains required.
+
+The detached Windows uninstall helper retains the exact resolved installation
+root and caller PID contract, but binds the wait to a `Get-Process` object
+captured while the caller is alive before calling `WaitForExit`. This avoids a
+PID-reuse race under process churn without adding a retry, changing job flags,
+expanding the deletion target, or hiding launch/removal failure.
+
+`CoreStore.get_import_operation` is an observer read and therefore uses the
+bounded read-only WAL connection already used by the authenticated status
+route. It never joins the normal writer queue or changes authoritative
+promotion, liveness, byte-progress, terminal-state, or closure semantics.
+
+The upload regression proves one changed durable timestamp during blocked
+promotion and separately holds an IMMEDIATE writer while reading operation
+status. Requiring three samples was removed because it measured host polling
+and SQLite scheduling rather than the contract. Packet G keeps real worker
+capture/restart/pre-generation behavior and uses the same finite loaded-worker
+bound as Packet F; timeout diagnostics are content-free and do not substitute
+for capture truth.
+
+## ADR-221: Windows-under-load repair2 uses explicit lifecycle observation boundaries
+
+**Status:** corrected locally on 2026-09-21 from the independent review of
+hosted run `35593718440`; exact focused native validation remains required.
+
+The scheduler's completed-cycle count is observed through a condition tied to
+the lifecycle lock. The wait is finite, does not mutate scheduling state, and
+wakes on a real completed cycle, worker failure, or shutdown. Packet G retains
+the actual worker, restart, pre-generation context, and no-dashboard journey;
+it cannot pass by waiting through a worker failure or by observing a later
+polling sample.
+
+The detached uninstall helper retains its one launch and exact-root removal
+contract while publishing a bounded external receipt. The receipt contains
+only allowlisted process-state, removal-state, attempt-count, and error-code
+facts. It is written after both successful removal and the final failure
+boundary, so a launched helper that cannot remove the verified root cannot be
+mistaken for a successful native observation. No product authority, vault,
+credential, process ownership, or deletion target changes.
+
+## ADR-222: Detached-uninstall receipts use explicit BOM-free UTF-8
+
+**Status:** corrected locally on 2026-09-21 from the frozen native receipt
+failure; exact focused native validation remains required.
+
+The existing external temporary receipt is serialized with .NET
+`System.Text.UTF8Encoding(false)` and `System.IO.File.WriteAllText`, then
+published by the unchanged temporary-to-final `Move-Item`. This keeps ordinary
+`encoding="utf-8"` consumers interoperable without changing the schema,
+external-path validation, caller-process binding, bounded removal, or terminal
+failure reporting. A real short-lived child proves the successful receipt and
+a test-only one-attempt locked-target fault proves the final failure receipt;
+the historical uninstall cause and downstream exact-candidate gates remain
+unresolved.
+
+## ADR-223: Failed native uninstall assertions retain only upload-visible lifecycle evidence
+
+**Status:** corrected locally on 2026-09-22 from hosted run
+`35682204688`, Windows shard 0 job `106601612504`; maintained native and hosted
+validation remain required.
+
+The two short-lived-child uninstall tests retain their pre-existing bounded
+JSON receipt and empty lifecycle markers when an assertion fails, and add only
+one empty `.assertion-failed` marker outside the install root before teardown
+removes the target contents. The Windows shard's exact lifecycle globs now set
+`include-hidden-files: true`; a source regression checks the hidden-file
+visibility contract. This records that the assertion reached teardown without
+inventing helper launch, script-entry, exit, or receipt-causality facts. Missing
+artifact matches remain non-fatal so artifact handling cannot create a false
+PASS.
+
+## ADR-224: Ordinary WAL setup must not re-enter the database-wide transition
+
+**Status:** corrected locally on 2026-09-22 from hosted run
+`35682204688`, Windows shard 0 job `106601612504`; maintained review, full,
+and a new targeted hosted observation remain required.
+
+The hosted lock symptom and poller warnings provide a measured basis for
+removing the repeated `PRAGMA journal_mode = WAL` assignment from ordinary
+`CoreStore` connection setup. Setup now queries the current mode and performs
+the transition only for a new or legacy database; the existing fail-closed WAL
+check and independent read-only observer remain. A deterministic regression
+holds a real `BEGIN IMMEDIATE` writer lock, requires the liveness write to
+return false within the existing bounded budget, and requires the independent
+reader to remain queryable; a separate Python-lock assertion preserves the
+positive bypass. No busy timeout or assertion threshold is widened, and
+non-lock SQLite errors still propagate.
+
+## ADR-225: Observe detached-helper completion and Core setup boundaries explicitly
+
+**Status:** corrected locally on 2026-09-22 from recovered hosted run
+`35710331436`; maintained native, independent review, exact full, and a new
+targeted hosted observation remain required.
+
+The short-lived-child uninstall test treats the existing helper budget as one
+bounded observation window and completes only when both the external receipt
+and the helper's terminal lifecycle marker exist. A delayed-completion
+regression proves that a receipt can be observed before terminal publication,
+while a negative regression proves that a receipt without terminal publication
+cannot pass. The target-absence success assertion and locked-target failure
+assertion remain in force; no removal target, vault, process-ownership, or
+security boundary changes.
+
+The headless setup path forwards the existing setup progress callback through
+`perform_setup` and records only the explicit Core startup and authentication
+boundaries as closed subphases. This explains the observed
+`core_startup_failed`/`perform_setup` report boundary on a new packaged run
+without guessing a process cause, retaining raw output, or conflating it with
+the expected injected registration-uninstall report. The frozen observer
+parser and generic workflow runtime remain untouched.

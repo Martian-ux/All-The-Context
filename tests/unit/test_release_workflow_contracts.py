@@ -231,6 +231,32 @@ def test_ci_dashboard_audit_runs_only_on_node_22() -> None:
     assert any("npm run build" in step for step in steps)
 
 
+def test_ci_packaged_failure_artifact_cannot_mask_an_early_smoke_failure() -> None:
+    desktop = _job_bodies(_read(WORKFLOWS / "ci.yml"))["desktop-package"]
+    steps = _step_blocks(desktop)
+    preparation = next(
+        step for step in steps if "Prepare Windows packaged first-run diagnostics" in step
+    )
+    smoke = next(
+        step for step in steps if "Clean-install, startup, MCP, restart, and cleanup smoke" in step
+    )
+    failure_upload = next(
+        step for step in steps if "Upload packaged first-run failure diagnostics" in step
+    )
+    inventory_upload = next(
+        step for step in steps if "Upload packaged first-run process-inventory diagnostics" in step
+    )
+
+    assert "ATC_PACKAGED_FAILURE_DIAGNOSTICS_DIR" in preparation
+    assert "ATC_PACKAGED_PROCESS_INVENTORY_DIAGNOSTICS_DIR" in preparation
+    assert "id: packaged_smoke" in smoke
+    assert "always()" in failure_upload
+    assert "packaged-first-run-failure-diagnostics-windows" in failure_upload
+    assert "if-no-files-found: ignore" in failure_upload
+    assert "steps.packaged_smoke.outcome == 'success'" in inventory_upload
+    assert "if-no-files-found: error" in inventory_upload
+
+
 def test_ci_trigger_is_pr_main_and_version_tag_only() -> None:
     text = _read(WORKFLOWS / "ci.yml")
     trigger = re.search(r"(?ms)^on:\n(?P<body>.*?)^permissions:\n", text)

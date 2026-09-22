@@ -729,6 +729,7 @@ class CoreCaptureScheduler:
         self._join_timeout_seconds = float(join_timeout_seconds)
         self._control_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
+        self._cycle_condition = threading.Condition(self._lifecycle_lock)
         self._cycle_lock = threading.Lock()
         self._stop = threading.Event()
         self._wakeup = threading.Event()
@@ -740,6 +741,7 @@ class CoreCaptureScheduler:
         self._worker_failure_generation: int | None = None
         self._worker_restart_count = 0
         self._last_cycle_reason_code: str | None = None
+        self._completed_cycle_count = 0
         self._adapter_refresh_state: Literal["not_attempted", "available", "unavailable"] = (
             "not_attempted"
         )
@@ -760,19 +762,25 @@ class CoreCaptureScheduler:
         worker_failure_generation: int | None = None
         worker_restart_count = 0
         last_cycle_reason_code: str | None = None
+        completed_cycle_count = 0
         adapter_refresh_state: Literal["not_attempted", "available", "unavailable"] = (
             "not_attempted"
         )
         try:
             with self._lifecycle_lock:
                 thread = self._thread
-                running = thread is not None and thread.is_alive()
                 worker_state = self._worker_state
+                running = (
+                    thread is not None
+                    and thread.is_alive()
+                    and worker_state in {"starting", "running"}
+                )
                 worker_failure_code = self._worker_failure_code
                 worker_generation = self._worker_generation
                 worker_failure_generation = self._worker_failure_generation
                 worker_restart_count = self._worker_restart_count
                 last_cycle_reason_code = self._last_cycle_reason_code
+                completed_cycle_count = self._completed_cycle_count
                 adapter_refresh_state = self._adapter_refresh_state
                 closing = self._closing.is_set()
             payload = capture_scheduler_status_payload(
@@ -782,6 +790,7 @@ class CoreCaptureScheduler:
             payload.update(
                 {
                     "adapter_refresh_state": adapter_refresh_state,
+                    "completed_cycle_count": completed_cycle_count,
                     "last_cycle_reason_code": last_cycle_reason_code,
                     "worker_failure_code": worker_failure_code,
                     "worker_failure_generation": worker_failure_generation,
@@ -805,9 +814,38 @@ class CoreCaptureScheduler:
                 worker_generation=worker_generation,
                 worker_failure_generation=worker_failure_generation,
                 worker_restart_count=worker_restart_count,
+                completed_cycle_count=completed_cycle_count,
                 last_cycle_reason_code=last_cycle_reason_code or RUNTIME_READINESS_ERROR_CODE,
                 adapter_refresh_state=adapter_refresh_state,
             )
+
+    def wait_for_completed_cycle(self, minimum_completed_cycle: int, *, timeout: float) -> bool:
+        """Wait for a real completed cycle or a terminal worker observation.
+
+        This is an observation boundary for lifecycle consumers. It never runs
+        scheduling work, changes durable state, or treats a worker failure as a
+        completed cycle. Callers can inspect :meth:`status` after ``False`` for
+        the bounded content-free failure reason.
+        """
+
+        if type(minimum_completed_cycle) is not int or minimum_completed_cycle < 1:
+            raise ValueError("minimum_completed_cycle must be a positive integer")
+        if timeout < 0:
+            raise ValueError("timeout must be non-negative")
+        deadline = monotonic() + timeout
+        with self._cycle_condition:
+            while self._completed_cycle_count < minimum_completed_cycle:
+                if (
+                    self._closing.is_set()
+                    or self._stop.is_set()
+                    or self._worker_state in {"failed", "stopped"}
+                ):
+                    return False
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return False
+                self._cycle_condition.wait(timeout=remaining)
+            return True
 
     @staticmethod
     def _status_failure_payload(
@@ -818,6 +856,7 @@ class CoreCaptureScheduler:
         worker_generation: int,
         worker_failure_generation: int | None,
         worker_restart_count: int,
+        completed_cycle_count: int,
         last_cycle_reason_code: str | None,
         adapter_refresh_state: Literal["not_attempted", "available", "unavailable"],
     ) -> dict[str, Any]:
@@ -826,6 +865,7 @@ class CoreCaptureScheduler:
         return {
             "adapter_refresh_state": adapter_refresh_state,
             "config_valid": False,
+            "completed_cycle_count": completed_cycle_count,
             "dispatch_allowed": False,
             "durable_enabled": False,
             "enabled": False,
@@ -886,6 +926,7 @@ class CoreCaptureScheduler:
         self._worker_state = "failed"
         self._worker_failure_code = self._content_free_error_code(error)
         self._worker_failure_generation = generation
+        self._cycle_condition.notify_all()
 
     def readiness(self) -> dict[str, Any]:
         """Return content-free scheduler and capture readiness diagnostics."""
@@ -900,6 +941,7 @@ class CoreCaptureScheduler:
                 worker_generation=0,
                 worker_failure_generation=None,
                 worker_restart_count=0,
+                completed_cycle_count=0,
                 last_cycle_reason_code=RUNTIME_READINESS_ERROR_CODE,
                 adapter_refresh_state="not_attempted",
             )
@@ -1170,6 +1212,7 @@ class CoreCaptureScheduler:
                     self._worker_state = "failed"
                     self._worker_failure_code = "worker_failed"
                     self._worker_failure_generation = generation
+            self._cycle_condition.notify_all()
 
     def _record_cycle_report(self, report: SchedulerRunReport) -> None:
         reason_codes = set(report.health.reason_codes)
@@ -1177,7 +1220,10 @@ class CoreCaptureScheduler:
             reason for connector in report.health.connectors for reason in connector.reason_codes
         )
         reason_code = sorted(reason_codes)[0] if reason_codes else None
-        self._record_cycle_reason(reason_code)
+        with self._lifecycle_lock:
+            self._last_cycle_reason_code = reason_code
+            self._completed_cycle_count += 1
+            self._cycle_condition.notify_all()
 
     def _try_exit(self) -> bool:
         with self._lifecycle_lock:
@@ -1244,7 +1290,7 @@ class CoreCaptureScheduler:
                     return
                 try:
                     if self.dispatch_allowed():
-                        self._record_cycle_report(self.run_cycle())
+                        self.run_cycle()
                 except sqlite3.OperationalError as error:
                     if not _is_transient_sqlite_contention(error):
                         self._record_worker_failure(error, generation=generation, current=current)

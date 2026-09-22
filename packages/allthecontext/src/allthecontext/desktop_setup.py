@@ -108,6 +108,29 @@ CLAUDE_CODE_EXPLICIT_SCOPES = [
 HERMES_READ_SCOPES = ["context:read"]
 HERMES_CAPTURE_SCOPES = ["context:capture"]
 ProgressCallback = Callable[[str, str], None]
+CORE_STARTUP_PROGRESS_MESSAGE = "Starting Core on this device"
+CORE_AUTHENTICATION_PROGRESS_MESSAGE = "Authenticating Core session"
+
+
+class _HeadlessSetupDiagnosticError(RuntimeError):
+    """A setup failure with one closed, content-free diagnostic code."""
+
+    diagnostic_code: str
+
+    def __init__(self) -> None:
+        super().__init__(self.diagnostic_code)
+
+
+class SetupCoreStartupError(_HeadlessSetupDiagnosticError):
+    """Core could not be started or did not prove readiness."""
+
+    diagnostic_code = "core_startup_failed"
+
+
+class SetupCoreAuthenticationError(_HeadlessSetupDiagnosticError):
+    """Core was ready but rejected the setup browser-session handoff."""
+
+    diagnostic_code = "core_authentication_failed"
 
 
 def local_timezone() -> str:
@@ -1442,9 +1465,16 @@ def perform_setup(
         except OSError as exc:
             warnings.append(f"Automatic startup was not enabled: {exc}")
 
-    notify("core", "Starting Core on this device")
-    log_path = launch_core(active_runtime, active_config)
-    dashboard_url = authenticated_dashboard_url(active_config, access.token)
+    notify("core", CORE_STARTUP_PROGRESS_MESSAGE)
+    try:
+        log_path = launch_core(active_runtime, active_config)
+    except RuntimeError as exc:
+        raise SetupCoreStartupError from exc
+    notify("core", CORE_AUTHENTICATION_PROGRESS_MESSAGE)
+    try:
+        dashboard_url = authenticated_dashboard_url(active_config, access.token)
+    except RuntimeError as exc:
+        raise SetupCoreAuthenticationError from exc
 
     workspace_source_id, workspace_capture_ready = _configure_workspace_capture(
         options,

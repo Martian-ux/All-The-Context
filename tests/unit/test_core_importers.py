@@ -136,11 +136,46 @@ def test_streaming_jsonl_yields_to_operation_observer_under_cpu_pressure(
     assert observer_failures == []
     assert completed - started > 0.8
     assert set(observer_timings) == {"worker_start", "selected", "serialized"}
-    # Without the parser's checkpoint yield, the observer starts only after the
-    # roughly one-second parse completes under this deterministic scheduler.
+    # The initial checkpoint handoff follows the first consumed record, so the
+    # observer cannot be held behind the next roughly one-MiB CPU window.
     assert observer_timings["worker_start"] - started < 0.6
     assert observer_timings["selected"] - observer_timings["worker_start"] < 0.25
     assert observer_timings["serialized"] - observer_timings["selected"] < 0.1
+
+
+def test_operation_jsonl_handoff_follows_checkpointed_line_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import allthecontext.importers as importers_module
+
+    events: list[str] = []
+
+    class MemoryPath:
+        def open(self, *_args: object, **_kwargs: object) -> io.BytesIO:
+            return io.BytesIO(b'{"kind":"fact","content":"checkpoint"}\n')
+
+    monkeypatch.setattr(
+        importers_module,
+        "_consume_json_value",
+        lambda *_args, **_kwargs: events.append("consume"),
+    )
+    monkeypatch.setattr(
+        importers_module.time,
+        "sleep",
+        lambda _seconds: events.append("handoff"),
+    )
+
+    importers_module._parse_jsonl_stream(
+        MemoryPath(),
+        "operation.jsonl",
+        "generic",
+        progress=ImportProgressTracker(
+            bytes_total=64,
+            liveness_sink=lambda _progress: True,
+        ),
+    )
+
+    assert events == ["consume", "handoff"]
 
 
 def test_streaming_jsonl_does_not_pause_source_only_progress(

@@ -39,7 +39,10 @@ from tests.fixtures.scheduled_packet_f import (
     current_truth,
     open_process_gate,
 )
-from tests.unit.test_packet_g_worker_acceptance import _wait_for_capture
+from tests.unit.test_packet_g_worker_acceptance import (
+    _capture_cycle_boundary,
+    _wait_for_capture,
+)
 
 PREFERENCE = "Prefer concise scheduled vault answers."
 CORRECTED = "Prefer bounded scheduled vault answers."
@@ -130,9 +133,16 @@ def test_worker_backed_zf010_preference_continuity_across_core_restart(
             core_config,
             workspace,
         )
+        initial_cycle = _capture_cycle_boundary(service)
         scheduler_status = service.capture_scheduler.enable()
         assert scheduler_status["running"] is True
-        _wait_for_capture(service, source_id, clock, current_items=4)
+        _wait_for_capture(
+            service,
+            source_id,
+            clock,
+            minimum_completed_cycle=initial_cycle,
+            current_items=4,
+        )
 
         source_ids = _current_source_ids(service)
         assert len(source_ids) == 4
