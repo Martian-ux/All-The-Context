@@ -38,6 +38,7 @@ try:
         evaluate_host_facts,
         write_report,
     )
+    from scripts.macos_artifact_layout import darwin_recovery_helper_path
     from scripts.smoke_platform_package import verify_macos_app, verify_package
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
     from macos_acceptance_preflight import (  # type: ignore[no-redef]
@@ -46,6 +47,7 @@ except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
         evaluate_host_facts,
         write_report,
     )
+    from macos_artifact_layout import darwin_recovery_helper_path  # type: ignore[no-redef]
     from smoke_platform_package import (  # type: ignore[no-redef]
         verify_macos_app,
         verify_package,
@@ -271,6 +273,9 @@ def stage_macos_app_from_dmg(
         )
         if copied.returncode != 0:
             raise SupportingCheckError("dmg_application_copy_failed")
+        recovery_helper = darwin_recovery_helper_path(destination)
+        if not recovery_helper.is_file() or recovery_helper.is_symlink():
+            raise SupportingCheckError("macos_recovery_helper_layout_invalid")
     finally:
         detach = subprocess.run(
             ["hdiutil", "detach", str(mount_point)],

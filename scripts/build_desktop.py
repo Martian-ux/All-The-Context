@@ -34,6 +34,11 @@ from allthecontext.build_identity import (  # noqa: E402
 )
 from allthecontext.release_manifest import ReleaseVersion  # noqa: E402
 
+try:
+    from scripts.macos_artifact_layout import darwin_recovery_helper_path
+except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+    from macos_artifact_layout import darwin_recovery_helper_path  # type: ignore[no-redef]
+
 
 def executable_name(name: str, system: str) -> str:
     return f"{name}.exe" if system == "Windows" else name
@@ -474,6 +479,12 @@ def build(
     if not artifact.exists():
         raise RuntimeError(f"Desktop artifact was not produced at {artifact}")
     if active_system == "Darwin":
+        recovery_path = darwin_recovery_helper_path(artifact)
+        if not recovery_path.is_file() or recovery_path.is_symlink():
+            raise RuntimeError(
+                "Darwin recovery helper was not produced at the canonical path: "
+                f"{recovery_path}"
+            )
         finalize_macos_bundle(artifact, version=__version__, build_identity=identity)
         # PyInstaller seals the bundle before this script adds the final public
         # metadata. Re-seal with the identity-free ad-hoc marker so Gatekeeper

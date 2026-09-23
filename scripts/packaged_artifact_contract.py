@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from scripts.macos_artifact_layout import darwin_recovery_helper_path
     from scripts.native_build_provenance import (
         CHECKSUM_FILE_NAME,
         COMMIT_PATTERN,
@@ -15,6 +16,7 @@ try:
         verify_provenance,
     )
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+    from macos_artifact_layout import darwin_recovery_helper_path  # type: ignore[no-redef]
     from native_build_provenance import (  # type: ignore[no-redef]
         CHECKSUM_FILE_NAME,
         COMMIT_PATTERN,
@@ -62,7 +64,7 @@ def recovery_executable(artifact_root: Path, system: str) -> tuple[Path, str]:
         return desktop / "AllTheContextRecovery.exe", "frozen-console-recovery-helper"
     if system == "Darwin":
         return (
-            desktop / "AllTheContext.app" / "Contents" / "MacOS" / "all-the-context-recovery",
+            darwin_recovery_helper_path(desktop / "AllTheContext.app"),
             "frozen-console-recovery-helper",
         )
     return desktop / "all-the-context", "frozen-linux-console-desktop"

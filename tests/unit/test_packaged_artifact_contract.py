@@ -89,6 +89,51 @@ def test_explicit_root_manifest_and_checksum_bind_exact_component_bytes(
     assert payload["source_commit"] == SOURCE_COMMIT
 
 
+def test_darwin_paths_match_the_produced_bundle_structure(tmp_path: Path) -> None:
+    root = tmp_path / "artifact-root"
+    desktop = root / "dist" / "desktop"
+    app = desktop / "AllTheContext.app"
+    recovery, mode = contract.recovery_executable(root, "Darwin")
+
+    assert contract.artifact_executable(root, "Darwin") == (
+        app / "Contents" / "MacOS" / "AllTheContext"
+    )
+    assert recovery == app / "Contents" / "Frameworks" / "all-the-context-recovery"
+    assert mode == "frozen-console-recovery-helper"
+
+
+def test_darwin_wrong_or_missing_helper_is_rejected_without_fallback(tmp_path: Path) -> None:
+    import scripts.smoke_packaged_recovery as smoke
+
+    root = tmp_path / "artifact-root"
+    app = root / "dist" / "desktop" / "AllTheContext.app"
+    wrong_location = app / "Contents" / "MacOS" / "all-the-context-recovery"
+    wrong_location.parent.mkdir(parents=True)
+    wrong_location.write_bytes(b"stale helper")
+
+    with pytest.raises(SystemExit, match="recovery"):
+        smoke.recovery_command("Darwin", root)
+
+    wrong_location.unlink()
+    with pytest.raises(SystemExit, match="recovery"):
+        smoke.recovery_command("Darwin", root)
+
+
+def test_windows_contract_rejects_missing_provenance_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _manifest, _checksum = _artifact_tree(tmp_path)
+
+    with pytest.raises(contract.PackagedArtifactContractError, match="Windows"):
+        contract.validate_windows_artifact_contract(
+            artifact_root=root,
+            provenance_manifest=None,
+            provenance_checksum=None,
+            source_root=Path("source-checkout"),
+            version=VERSION,
+        )
+
+
 def test_contract_rejects_wrong_root_before_any_component_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

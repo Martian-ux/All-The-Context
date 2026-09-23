@@ -7086,3 +7086,11 @@ values before any setup or recovery executable is invoked. Wrong roots,
 source commits, hashes, and missing components fail closed; the old implicit
 checkout `dist/desktop` and staged recovery fallbacks are not used by the
 production smoke entry points.
+
+The Darwin continuation keeps the same fail-closed boundary and selects the
+actual pinned-builder output `AllTheContext.app/Contents/Frameworks/
+all-the-context-recovery` as the sole packaged recovery-helper location. The
+builder asserts that output, DMG staging and package verification consume that
+path, and the contract tests reject a `Contents/MacOS` or missing helper. No
+checkout, stale, or staged fallback is restored; downstream full, package,
+hosted, merge, and publication gates remain separate.

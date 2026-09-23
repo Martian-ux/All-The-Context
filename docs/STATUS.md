@@ -5278,3 +5278,11 @@ source commit and all four run-owned component size/SHA256 identities before
 launching the exact setup or recovery bytes. Wrong root/source/hash/missing
 component inputs fail closed; no fallback, copy, or relabel path is accepted.
 Maintained full, native/package, and hosted gates remain required.
+
+The Darwin packaged recovery contract now binds the helper to the one path the
+pinned PyInstaller builder produces: `AllTheContext.app/Contents/Frameworks/
+all-the-context-recovery`. The builder, DMG staging verifier, package verifier,
+and focused contract tests reject a helper in `Contents/MacOS`, a missing
+helper, or any implicit checkout/staged substitute. This is source-level
+repair evidence only; the downstream full, native/package, hosted, merge, and
+publication gates remain open.

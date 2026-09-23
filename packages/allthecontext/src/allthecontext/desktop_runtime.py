@@ -29,17 +29,10 @@ def update_helper_name() -> str:
 
 
 def _macos_bundle_helper(executable: Path, name: str) -> Path | None:
-    """Locate a console helper inside a macOS .app (MacOS sibling or Frameworks)."""
+    """Locate a helper at the canonical PyInstaller Contents/Frameworks path."""
 
-    sibling = executable.with_name(name)
-    if sibling.is_file():
-        return sibling
-    # PyInstaller onedir bundles commonly place --add-binary helpers under
-    # Contents/Frameworks while the GUI executable stays in Contents/MacOS.
     frameworks = executable.parent.parent / "Frameworks" / name
-    if frameworks.is_file():
-        return frameworks
-    return None
+    return frameworks if frameworks.is_file() and not frameworks.is_symlink() else None
 
 
 def _packaged_mcp_helper(executable: Path) -> Path | None:
