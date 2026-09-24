@@ -122,9 +122,7 @@ def test_dmg_staging_uses_read_only_mount_and_detaches(
     )
 
     assert destination.is_dir()
-    assert (
-        destination / "Contents" / "Frameworks" / "all-the-context-recovery"
-    ).is_file()
+    assert (destination / "Contents" / "Frameworks" / "all-the-context-recovery").is_file()
     attach = commands[0]
     assert "-readonly" in attach
     assert "-nobrowse" in attach
