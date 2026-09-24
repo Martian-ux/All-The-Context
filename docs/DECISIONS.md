@@ -7067,7 +7067,7 @@ without guessing a process cause, retaining raw output, or conflating it with
 the expected injected registration-uninstall report. The frozen observer
 parser and generic workflow runtime remain untouched.
 
-## ADR-226: Bound updater replace contention and bind packaged smokes to exact outputs
+## ADR-228: Bound updater replace contention and bind packaged smokes to exact outputs
 
 **Status:** implemented locally on 2026-09-22; maintained native proof and
 independent review remain required.
