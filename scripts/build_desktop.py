@@ -482,8 +482,7 @@ def build(
         recovery_path = darwin_recovery_helper_path(artifact)
         if not recovery_path.is_file() or recovery_path.is_symlink():
             raise RuntimeError(
-                "Darwin recovery helper was not produced at the canonical path: "
-                f"{recovery_path}"
+                f"Darwin recovery helper was not produced at the canonical path: {recovery_path}"
             )
         finalize_macos_bundle(artifact, version=__version__, build_identity=identity)
         # PyInstaller seals the bundle before this script adds the final public

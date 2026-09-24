@@ -138,9 +138,22 @@ def test_contract_rejects_wrong_root_before_any_component_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _root, manifest, checksum = _artifact_tree(tmp_path)
+    wrong_root = tmp_path / "wrong-root"
+    wrong_root.mkdir()
 
     with pytest.raises(contract.PackagedArtifactContractError, match="provenance paths"):
-        _validate(tmp_path / "wrong-root", manifest, checksum, monkeypatch)
+        _validate(wrong_root, manifest, checksum, monkeypatch)
+
+
+def test_contract_rejects_missing_root_before_any_component_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, manifest, checksum = _artifact_tree(tmp_path)
+
+    with pytest.raises(
+        contract.PackagedArtifactContractError, match="artifact root is unavailable"
+    ):
+        _validate(tmp_path / "missing-root", manifest, checksum, monkeypatch)
 
 
 def test_contract_rejects_manifest_bound_to_wrong_source_commit(
