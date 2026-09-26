@@ -54,6 +54,26 @@ the existing success receipt. Failed test evidence is retained and uploaded by
 the Windows pytest shard, while the hosted `35622074776` cause remains
 unresolved rather than being inferred from absence alone.
 
+## ADR-226: Reuse independent retrieval scorecards across related test assertions
+
+**Status:** locally measured test candidate based on
+`26e29be186148479d891a4b87fd72cef740b05c4`; full integration acceptance remains
+separate.
+
+The synthetic current-candidate test module retains all seven test functions and
+their assertions. A module-scoped fixture runs the benchmark in two separate,
+unique directories under the repository's ignored `tmp/` directory. The
+determinism test still compares those two fresh results; the content-free
+contract and quality-gate tests inspect the same read-only pair, avoiding two
+additional full benchmark executions. Keeping these benchmark paths inside the
+repository also satisfies the evaluator's path-containment check under the
+default CI pytest temporary-directory configuration.
+
+On the same Windows checkout and pinned interpreter, the selected file passed
+7 tests with no skips before and after. Wrapper wall time was 39.661s before and
+20.830s after (pytest time 38.87s and 19.94s). This single focused measurement
+does not establish a whole-suite or hosted-CI improvement.
+
 ## ADR-211: Combined integration preserves bounded evidence and fail-closed gates
 
 **Status:** accepted locally on 2026-09-06 for source checkpoint

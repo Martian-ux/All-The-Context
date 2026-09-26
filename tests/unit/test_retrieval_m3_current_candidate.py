@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +22,17 @@ from bench.retrieval_m3_current_candidate import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(scope="module")
+def current_candidate_reports() -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+    report_root = ROOT / "tmp"
+    report_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="test-retrieval-m3-current-candidate-", dir=report_root
+    ) as run_root:
+        root = Path(run_root)
+        yield run(root / "one"), run(root / "two")
 
 
 def test_current_candidate_fixture_requires_distinct_one_anchor_split_records() -> None:
@@ -77,9 +91,11 @@ def test_current_candidate_rejects_a_per_record_three_anchor_substitute() -> Non
         _validate_anchor_distribution(case, records)
 
 
-def test_current_candidate_report_is_content_free_deterministic_and_exactly_judged() -> None:
+def test_current_candidate_report_is_content_free_deterministic_and_exactly_judged(
+    current_candidate_reports: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
     fixture = load_fixture()
-    report = run(ROOT / "tmp" / "test-retrieval-m3-current-candidate")
+    report, _ = current_candidate_reports
     serialized = json.dumps(report, sort_keys=True)
     markdown = render_markdown(report)
 
@@ -110,9 +126,10 @@ def test_current_candidate_report_is_content_free_deterministic_and_exactly_judg
     assert report["scorecard"]["schema"] == SCORECARD_SCHEMA
 
 
-def test_current_candidate_repeated_runs_keep_content_free_scores_stable() -> None:
-    first = run(ROOT / "tmp" / "test-retrieval-m3-current-candidate-one")
-    second = run(ROOT / "tmp" / "test-retrieval-m3-current-candidate-two")
+def test_current_candidate_repeated_runs_keep_content_free_scores_stable(
+    current_candidate_reports: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    first, second = current_candidate_reports
 
     assert first == second
 
@@ -145,8 +162,10 @@ def test_positive_case_score_rejects_unjudged_false_positives() -> None:
     assert rendered["passed"] is False
 
 
-def test_current_candidate_quality_gate_reports_production_red_cases() -> None:
-    report = run(ROOT / "tmp" / "test-retrieval-m3-current-candidate-gate")
+def test_current_candidate_quality_gate_reports_production_red_cases(
+    current_candidate_reports: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    report, _ = current_candidate_reports
     failures = {
         case["case"]: case["reason_codes"] for case in report["cases"] if not case["passed"]
     }
@@ -155,17 +174,21 @@ def test_current_candidate_quality_gate_reports_production_red_cases() -> None:
 
 
 def test_current_candidate_isolation_rejects_existing_database() -> None:
-    work_dir = ROOT / "tmp" / "test-retrieval-m3-current-candidate-existing"
-    work_dir.mkdir(parents=True, exist_ok=True)
-    database = work_dir / "core.sqlite3"
-    database.write_text("synthetic sentinel", encoding="utf-8")
+    report_root = ROOT / "tmp"
+    report_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="test-retrieval-m3-current-candidate-existing-", dir=report_root
+    ) as work_dir_value:
+        work_dir = Path(work_dir_value)
+        database = work_dir / "core.sqlite3"
+        database.write_text("synthetic sentinel", encoding="utf-8")
 
-    try:
         try:
-            run(work_dir)
-        except CurrentCandidateEvaluationError as error:
-            assert "existing Core database" in str(error)
-        else:
-            raise AssertionError("existing Core database was not rejected")
-    finally:
-        database.unlink(missing_ok=True)
+            try:
+                run(work_dir)
+            except CurrentCandidateEvaluationError as error:
+                assert "existing Core database" in str(error)
+            else:
+                raise AssertionError("existing Core database was not rejected")
+        finally:
+            database.unlink(missing_ok=True)

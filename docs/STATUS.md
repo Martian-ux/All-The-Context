@@ -1,5 +1,16 @@
 # Project status
 
+## 2026-09-26 — focused retrieval test-speed candidate
+
+On branch `codex/test-speed-20260926`, based on `26e29be186148479d891a4b87fd72cef740b05c4`,
+the seven tests in `tests/unit/test_retrieval_m3_current_candidate.py` keep two
+independent fresh scorecard runs for the determinism assertion and reuse that
+pair for the content-free contract and quality-gate assertions. All seven tests
+passed with zero skips. On the same checkout and interpreter, wrapper wall time
+was 39.661s before and 20.830s after; pytest time was 38.87s and 19.94s. This is
+one focused local before/after measurement, not a suite-wide or hosted-CI claim.
+Full integration acceptance remains separate.
+
 ## Current milestone
 
 **2026-09-06 — PR #114 combined integration candidate**
