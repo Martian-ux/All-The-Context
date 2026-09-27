@@ -5223,3 +5223,11 @@ The required six-module pinned pytest command reached the managed host's
 fixture/basetemp boundary but errored with WinError 5; pinned Ruff, format, and
 targeted mypy checks passed. Full, package, hosted, and publication gates remain
 outside this correction.
+
+## 2026-09-27 Memory current-source attribution correction
+
+Content-changing CoreStore updates now carry source ID, source reference, and
+source metadata from the observation that supplies the replacement content.
+Earlier observations and version snapshots retain their original attribution;
+the focused synthetic ingestion, retrieval, duplicate, scope, and source-deletion
+regression passes. This focused result does not establish integrated acceptance.

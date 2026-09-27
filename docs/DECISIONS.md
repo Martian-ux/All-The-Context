@@ -7020,3 +7020,16 @@ boundaries as closed subphases. This explains the observed
 without guessing a process cause, retaining raw output, or conflating it with
 the expected injected registration-uninstall report. The frozen observer
 parser and generic workflow runtime remain untouched.
+
+## ADR-226: Current source attribution follows changed content
+
+**Status:** implemented locally on 2026-09-27; exact-commit review and final
+integration gates remain separate.
+
+When a CoreStore observation changes a record's content, the record's current
+source ID, reference, service, type, and evidence now come from that observation.
+Observation links and record-version snapshots retain prior content and
+provenance. Corrections continue to preserve the target record's
+scope and existing access behavior. Focused synthetic coverage exercises real
+archive ingestion, retrieval, duplicate reinforcement, scope filtering, and
+source deletion.
