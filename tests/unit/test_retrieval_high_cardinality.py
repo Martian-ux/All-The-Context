@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -760,9 +761,24 @@ def _apply_high_cardinality_store(store: CoreStore) -> None:
             store.approve_candidate(candidate.id, ApprovalRequest(), actor="synthetic-test")
 
 
-def test_bounded_search_only_materializes_complete_candidate_pool_ids(tmp_path: Path) -> None:
-    store = CoreStore(tmp_path / "bounded-pool-diagnostics.sqlite3")
-    _apply_high_cardinality_store(store)
+@pytest.fixture(scope="module")
+def high_cardinality_seed_database(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    database_path = tmp_path_factory.mktemp("high-cardinality-seed") / "core.sqlite3"
+    store = CoreStore(database_path)
+    try:
+        _apply_high_cardinality_store(store)
+    finally:
+        store.close()
+    return database_path
+
+
+def test_bounded_search_only_materializes_complete_candidate_pool_ids(
+    tmp_path: Path,
+    high_cardinality_seed_database: Path,
+) -> None:
+    database_path = tmp_path / "bounded-pool-diagnostics.sqlite3"
+    shutil.copyfile(high_cardinality_seed_database, database_path)
+    store = CoreStore(database_path)
     principal = ClientPrincipal("reader", "Synthetic reader", frozenset({"context:read"}))
     engine = RetrievalEngine(store)
     request = SearchRequest(
@@ -795,9 +811,11 @@ def test_bounded_search_only_materializes_complete_candidate_pool_ids(tmp_path: 
 
 def test_high_cardinality_bootstrap_regression_has_no_policy_or_pack_violations(
     tmp_path: Path,
+    high_cardinality_seed_database: Path,
 ) -> None:
-    store = CoreStore(tmp_path / "high-cardinality.sqlite3")
-    _apply_high_cardinality_store(store)
+    database_path = tmp_path / "high-cardinality.sqlite3"
+    shutil.copyfile(high_cardinality_seed_database, database_path)
+    store = CoreStore(database_path)
     principal = ClientPrincipal(
         "reader",
         "Synthetic reader",

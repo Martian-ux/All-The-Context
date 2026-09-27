@@ -7040,3 +7040,16 @@ boundaries as closed subphases. This explains the observed
 without guessing a process cause, retaining raw output, or conflating it with
 the expected injected registration-uninstall report. The frozen observer
 parser and generic workflow runtime remain untouched.
+
+## ADR-226: Reuse a closed high-cardinality test database seed
+
+**Status:** corrected locally on 2026-09-27.
+
+The bounded-pool and bootstrap regressions seed the same 100 synthetic records.
+A module-scoped fixture now builds and closes that seed once; each test copies it
+to its own temporary SQLite path before opening it. This removes one repeated
+set of inserts and approvals while preserving separate mutable databases and
+all existing policy, bounded-pool, and pack assertions. The exact two-test
+selection passed in 6.80s before and 4.87s after (pytest-reported time); the
+measured command wall times were 7.656s and 5.705s. Production behavior and CI
+workflow are unchanged.

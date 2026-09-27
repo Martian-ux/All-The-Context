@@ -5234,3 +5234,13 @@ The required six-module pinned pytest command reached the managed host's
 fixture/basetemp boundary but errored with WinError 5; pinned Ruff, format, and
 targeted mypy checks passed. Full, package, hosted, and publication gates remain
 outside this correction.
+
+## 2026-09-27 high-cardinality retrieval test setup reuse
+
+The two database-backed checks in `tests/unit/test_retrieval_high_cardinality.py`
+now build their identical synthetic seed database once per module and copy it
+into each test's own temporary directory. Their assertions and database
+isolation remain unchanged. The same two pinned test IDs passed before and
+after: pytest time fell from 6.80s to 4.87s, and command wall time fell from
+7.656s to 5.705s. Focused Ruff passed; full-suite and hosted runs were outside
+this task.
