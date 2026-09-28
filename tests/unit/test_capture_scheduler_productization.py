@@ -1668,6 +1668,8 @@ def test_transient_sqlite_contention_keeps_loop_alive_for_workspace_retry(
         original_list_sources = service.capture.list_sources
         attempts = 0
         first_contention = threading.Event()
+        contention_cycle_returned = threading.Event()
+        retry_waiting = threading.Event()
 
         def list_sources_with_one_transient_lock(
             *, limit: int = 100, offset: int = 0
@@ -1682,9 +1684,27 @@ def test_transient_sqlite_contention_keeps_loop_alive_for_workspace_retry(
             return original_list_sources(limit=limit, offset=offset)
 
         monkeypatch.setattr(service.capture, "list_sources", list_sources_with_one_transient_lock)
+        original_run_cycle = service.capture_scheduler.run_cycle
+
+        def observe_contention_cycle() -> Any:
+            report = original_run_cycle()
+            if first_contention.is_set():
+                contention_cycle_returned.set()
+            return report
+
+        monkeypatch.setattr(service.capture_scheduler, "run_cycle", observe_contention_cycle)
+        wakeup = service.capture_scheduler._wakeup
+        original_wakeup_wait = wakeup.wait
+
+        def observe_retry_wait(timeout: float | None = None) -> bool:
+            if contention_cycle_returned.is_set():
+                retry_waiting.set()
+            return original_wakeup_wait(timeout)
+
+        monkeypatch.setattr(wakeup, "wait", observe_retry_wait)
         service.capture_scheduler._scheduler.config = SchedulerConfig(
             enabled=False,
-            poll_interval_seconds=1,
+            poll_interval_seconds=300,
             incremental_interval_seconds=300,
             max_sources_per_cycle=500,
             max_source_pages_per_cycle=1,
@@ -1693,17 +1713,18 @@ def test_transient_sqlite_contention_keeps_loop_alive_for_workspace_retry(
         )
         try:
             service.capture_scheduler.start()
-            _wait_until(lambda: first_contention.is_set())
+            assert first_contention.wait(timeout=5)
+            assert contention_cycle_returned.wait(timeout=5)
+            assert retry_waiting.wait(timeout=5)
             assert service.capture_scheduler.status()["running"] is True
 
-            service.capture_scheduler._wakeup.set()
-            _wait_until(
-                lambda: (
-                    LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
-                    and service.capture.status(source_id).get("last_run", {}).get("state")
-                    == "completed"
-                )
+            completed_cycles = service.capture_scheduler.status()["completed_cycle_count"]
+            wakeup.set()
+            assert service.capture_scheduler.wait_for_completed_cycle(
+                completed_cycles + 1, timeout=5
             )
+            assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
+            assert service.capture.status(source_id).get("last_run", {}).get("state") == "completed"
             assert service.capture_scheduler.status()["running"] is True
             assert attempts >= 3
         finally:
