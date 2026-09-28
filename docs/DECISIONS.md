@@ -7049,10 +7049,14 @@ accepted, and exact-candidate integration gates remain separate.
 When a CoreStore observation changes a record's content, the record's current
 source ID, reference, service, type, and evidence now come from that observation.
 Observation links and record-version snapshots retain prior content and
-provenance. Corrections continue to preserve the target record's scope and
-existing access behavior. Focused synthetic coverage exercises real archive
-ingestion, retrieval, duplicate reinforcement, scope filtering, and source
-deletion.
+provenance. An explicit correction that omits the full provenance tuple retains
+the target's current attribution. When a correction supplies any provenance,
+the tuple is replaced together so a new source cannot inherit stale fields from
+the prior source. A disjoint ACL transfer still takes attribution from the
+replacement observation. Corrections continue to preserve the target record's
+scope and existing access behavior. Focused synthetic coverage exercises real
+archive ingestion, retrieval, duplicate reinforcement, scope filtering, and
+source deletion.
 
 The bounded-pool and bootstrap regressions seed the same 100 synthetic records.
 A module-scoped fixture now builds and closes that seed once; each test copies it

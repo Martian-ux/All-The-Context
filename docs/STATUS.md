@@ -5247,8 +5247,12 @@ this task.
 
 ## 2026-09-27 Memory current-source attribution correction
 
-Content-changing CoreStore updates now carry source ID, source reference, and
-source metadata from the observation that supplies the replacement content.
-Earlier observations and version snapshots retain their original attribution;
-the focused synthetic ingestion, retrieval, duplicate, scope, and source-deletion
-regression passes. This focused result does not establish integrated acceptance.
+Content-changing CoreStore updates carry source ID, source reference, and source
+metadata from the observation that supplies the replacement content. An
+explicit correction that omits provenance retains the current attribution; a
+replacement that supplies only part of its provenance replaces the tuple without
+mixing in fields from the old source. Earlier observations and version snapshots
+retain their original attribution. Focused synthetic ingestion, retrieval,
+duplicate, scope, source-deletion, and correction-compatibility coverage is
+recorded in the integration repair receipt. This focused result does not
+establish integrated acceptance.

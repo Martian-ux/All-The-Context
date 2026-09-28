@@ -22,10 +22,10 @@ def _ingest_event(
     *,
     event_id: str,
     content: str,
-    source_reference: str,
-    source_service: str,
-    source_type: str,
-    evidence: str,
+    source_reference: str | None,
+    source_service: str | None,
+    source_type: str | None,
+    evidence: str | None,
     scopes: list[str],
     kind: str = "fact",
     supersedes: str | None = None,
@@ -64,10 +64,14 @@ def _ingest_event(
 
 
 def _search(store: CoreStore, scope: str) -> list[ContextRecordOut]:
-    return RetrievalEngine(store).search(
-        SearchRequest(query="Atlas launch", scopes=[scope], limit=10),
-        ClientPrincipal("synthetic-reader", "Synthetic reader", frozenset({"context:read"})),
-    ).items
+    return (
+        RetrievalEngine(store)
+        .search(
+            SearchRequest(query="Atlas launch", scopes=[scope], limit=10),
+            ClientPrincipal("synthetic-reader", "Synthetic reader", frozenset({"context:read"})),
+        )
+        .items
+    )
 
 
 def test_changed_archive_content_uses_its_supporting_source_through_retrieval(
@@ -172,3 +176,95 @@ def test_changed_archive_content_uses_its_supporting_source_through_retrieval(
     assert _search(store, "project:atlas") == []
 
     store.close()
+
+
+def test_source_less_explicit_correction_preserves_current_provenance(
+    tmp_path: Path,
+) -> None:
+    store = CoreStore(tmp_path / "core.sqlite3")
+    store.initialize_vault(name="Synthetic explicit-correction provenance")
+    source = store.add_source(
+        b"Atlas launch is planned for May.",
+        source_service="planning-v1",
+        source_type="provider_archive",
+    )
+    original = _ingest_event(
+        store,
+        source.id,
+        event_id="source-less-before",
+        content="Atlas launch is planned for May.",
+        source_reference="may-plan",
+        source_service="planning-v1",
+        source_type="provider_archive",
+        evidence="May planning note",
+        scopes=["project:atlas"],
+    )
+    assert original.record_id is not None
+
+    correction = store.add_candidate(
+        CandidateInput(
+            kind="correction",
+            content="Atlas launch is now planned for June.",
+            supersedes=original.record_id,
+            explicit_user_statement=True,
+        )
+    )
+
+    updated = store.get_record(original.record_id)
+    assert correction.record_id == original.record_id
+    assert updated.source_id == source.id
+    assert updated.source_reference == "may-plan"
+    assert updated.source_service == "planning-v1"
+    assert updated.source_type == "provider_archive"
+    assert updated.evidence == "May planning note"
+
+
+def test_source_backed_replacement_does_not_mix_old_attribution(
+    tmp_path: Path,
+) -> None:
+    store = CoreStore(tmp_path / "core.sqlite3")
+    store.initialize_vault(name="Synthetic replacement provenance")
+    old_source = store.add_source(
+        b"Atlas launch is planned for May.",
+        source_service="planning-v1",
+        source_type="provider_archive",
+    )
+    original = _ingest_event(
+        store,
+        old_source.id,
+        event_id="source-mix-before",
+        content="Atlas launch is planned for May.",
+        source_reference="old-source#launch",
+        source_service="planning-v1",
+        source_type="provider_archive",
+        evidence="May planning note",
+        scopes=["project:atlas"],
+    )
+    assert original.record_id is not None
+
+    new_source = store.add_source(
+        b"Atlas launch is now planned for June.",
+        source_service="planning-v2",
+        source_type="meeting_minutes",
+    )
+    replacement = _ingest_event(
+        store,
+        new_source.id,
+        event_id="source-mix-after",
+        content="Atlas launch is now planned for June.",
+        source_reference=None,
+        source_service="planning-v2",
+        source_type="meeting_minutes",
+        evidence="June planning decision",
+        scopes=["project:atlas"],
+        kind="correction",
+        supersedes=original.record_id,
+    )
+
+    updated = store.get_record(original.record_id)
+    assert replacement.record_id == original.record_id
+    assert updated.source_id == new_source.id
+    assert updated.source_reference is None
+    assert updated.source_service == "planning-v2"
+    assert updated.source_type == "meeting_minutes"
+    assert updated.evidence == "June planning decision"
