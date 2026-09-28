@@ -5256,3 +5256,19 @@ retain their original attribution. Focused synthetic ingestion, retrieval,
 duplicate, scope, source-deletion, and correction-compatibility coverage is
 recorded in the integration repair receipt. This focused result does not
 establish integrated acceptance.
+
+## 2026-09-28 Windows updater atomic-replace integration
+
+The memory/test candidate now includes the already-reviewed Windows updater
+atomic-replace correction from beta commits `19d605eb` and `b5cba6e`. Only a
+Windows `PermissionError` with WinError 5 receives up to three 50 ms retries;
+each retry revalidates the existing plain-directory and file boundaries.
+Other replace errors remain visible, and persistent denial leaves the old
+target intact and removes the temporary file. Existing reparse and parent
+identity checks remain in place.
+
+The pinned Python 3.12.10 selection passed all five focused contention,
+boundary, and earlier cutover regressions. This does not establish why the
+later `a5223966` full suite hung at 92%; that cause remains unknown. The earlier
+`7df844c4` full-suite WinError 5 and five provenance failures remain preserved
+as historical failures. Exact-candidate full native validation is pending.

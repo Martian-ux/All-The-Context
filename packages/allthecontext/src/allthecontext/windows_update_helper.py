@@ -74,6 +74,8 @@ STARTUP_RECOVERY_DIAGNOSTIC_SCHEMA_VERSION = 1
 STARTUP_RECOVERY_DIAGNOSTIC_NAME = "startup-recovery.json"
 MAX_STARTUP_RECOVERY_DIAGNOSTIC_BYTES = 16 * 1024
 STARTUP_RECOVERY_DIAGNOSTIC_STATUSES = frozenset({"blocked", "cleared"})
+ATOMIC_REPLACE_CONTENTION_RETRIES = 3
+ATOMIC_REPLACE_CONTENTION_DELAY_SECONDS = 0.05
 RETIREMENT_TOMBSTONE_SCHEMA_VERSION = 1
 RETIREMENT_TOMBSTONE_DIRECTORY = "retirements"
 MAX_RETIREMENT_TOMBSTONE_BYTES = 16 * 1024
@@ -252,6 +254,59 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _is_windows_atomic_replace_contention(error: OSError) -> bool:
+    """Recognize only the observed transient Windows replace denial."""
+
+    return (
+        sys.platform == "win32"
+        and isinstance(error, PermissionError)
+        and getattr(error, "winerror", None) == 5
+    )
+
+
+def _validate_atomic_json_boundary(
+    path: Path,
+    temporary: Path,
+    parent_before: os.stat_result,
+    boundary_code: str,
+) -> None:
+    """Re-check the same plain directory and files before an atomic replace."""
+
+    parent_after = _plain_directory_stat(path.parent, boundary_code)
+    if not _same_directory(parent_before, parent_after):
+        raise HelperError(boundary_code)
+    _plain_file_stat(temporary, boundary_code)
+    _plain_file_stat_if_present(path, boundary_code)
+    parent_after = _plain_directory_stat(path.parent, boundary_code)
+    if not _same_directory(parent_before, parent_after):
+        raise HelperError(boundary_code)
+
+
+def _replace_with_bounded_windows_contention(
+    temporary: Path,
+    path: Path,
+    *,
+    parent_before: os.stat_result,
+    boundary_code: str,
+) -> None:
+    """Atomically replace once, with only a bounded WinError 5 retry window."""
+
+    retries = 0
+    while True:
+        try:
+            temporary.replace(path)
+            return
+        except OSError as error:
+            if (
+                not _is_windows_atomic_replace_contention(error)
+                or retries >= ATOMIC_REPLACE_CONTENTION_RETRIES
+            ):
+                raise
+            retries += 1
+            time.sleep(ATOMIC_REPLACE_CONTENTION_DELAY_SECONDS)
+            _validate_atomic_json_boundary(path, temporary, parent_before, boundary_code)
+
+
 def _atomic_json(
     path: Path,
     value: dict[str, Any],
@@ -272,15 +327,13 @@ def _atomic_json(
             stream.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
             stream.flush()
             os.fsync(stream.fileno())
-        parent_after = _plain_directory_stat(path.parent, boundary_code)
-        if not _same_directory(parent_before, parent_after):
-            raise HelperError(boundary_code)
-        _plain_file_stat(temporary, boundary_code)
-        _plain_file_stat_if_present(path, boundary_code)
-        parent_after = _plain_directory_stat(path.parent, boundary_code)
-        if not _same_directory(parent_before, parent_after):
-            raise HelperError(boundary_code)
-        temporary.replace(path)
+        _validate_atomic_json_boundary(path, temporary, parent_before, boundary_code)
+        _replace_with_bounded_windows_contention(
+            temporary,
+            path,
+            parent_before=parent_before,
+            boundary_code=boundary_code,
+        )
     except BaseException:
         with suppress(HelperError, OSError):
             _unlink_plain_file_if_present(temporary, boundary_code)

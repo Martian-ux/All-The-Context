@@ -7066,3 +7066,24 @@ all existing policy, bounded-pool, and pack assertions. The exact two-test
 selection passed in 6.80s before and 4.87s after (pytest-reported time); the
 measured command wall times were 7.656s and 5.705s. Production behavior and CI
 workflow are unchanged.
+
+## ADR-227: Bound Windows atomic JSON replacement retries
+
+**Status:** existing reviewed beta fix projected into the memory/test
+candidate on 2026-09-28; five focused pinned regressions pass; exact-candidate
+full native validation remains pending.
+
+For `_atomic_json`, retry only a Windows `PermissionError` whose `winerror` is
+5, with at most three retries and a 50 ms delay. Revalidate the same plain
+parent directory and temporary/target files after each denial and before the
+next replace. Keep the existing reparse and parent-identity guards, propagate
+other errors immediately, and preserve the old target if denial persists;
+temporary files are still cleaned up. The source behavior is projected from
+accepted beta commit `19d605ebc8c1a2a2ff5a87831d3d8591c1483e87`, and its
+contention proof from `b5cba6e719d2fa57607b89f25dc26a05a8c6162e`.
+
+The three contention regressions, the deterministic parent-replacement
+boundary regression, and the previously failing cutover case passed under the
+pinned Python 3.12.10 environment with imports bound to this checkout. The
+historical later full-suite hang remains unexplained; these focused passes do
+not establish its cause or integrated acceptance.
