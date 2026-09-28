@@ -6647,8 +6647,10 @@ class CoreStore:
             availability,
             content_replaced=True,
         )
-        source_id = cast(str | None, projection_or_existing("source_id"))
-        source_reference = cast(str | None, projection_or_existing("source_reference"))
+        # Current source attribution follows replacement content. The linked
+        # observation and record-version snapshots preserve the prior evidence.
+        source_id = cast(str | None, observation["source_id"])
+        source_reference = cast(str | None, observation["source_reference"])
         kind = str(observed_or_existing("kind"))
         entity_key = cast(str | None, observed_or_existing("entity_key"))
         attribute_key = cast(str | None, observed_or_existing("attribute_key"))
@@ -6685,9 +6687,9 @@ class CoreStore:
                 observed_or_existing("attribute_key"),
                 projection_or_existing("scopes_json"),
                 projection_or_existing("tags_json"),
-                projection_or_existing("source_service"),
-                projection_or_existing("source_type"),
-                projection_or_existing("evidence"),
+                observation["source_service"],
+                observation["source_type"],
+                observation["evidence"],
                 confidence,
                 effective_sensitivity.value,
                 effective_availability.value,

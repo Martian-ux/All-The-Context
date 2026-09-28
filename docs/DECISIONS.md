@@ -7041,9 +7041,18 @@ without guessing a process cause, retaining raw output, or conflating it with
 the expected injected registration-uninstall report. The frozen observer
 parser and generic workflow runtime remain untouched.
 
-## ADR-226: Reuse a closed high-cardinality test database seed
+## ADR-226: Correct current-source attribution and reuse retrieval test setup
 
-**Status:** corrected locally on 2026-09-27.
+**Status:** implemented locally on 2026-09-27; independent source review is
+accepted, and exact-candidate integration gates remain separate.
+
+When a CoreStore observation changes a record's content, the record's current
+source ID, reference, service, type, and evidence now come from that observation.
+Observation links and record-version snapshots retain prior content and
+provenance. Corrections continue to preserve the target record's scope and
+existing access behavior. Focused synthetic coverage exercises real archive
+ingestion, retrieval, duplicate reinforcement, scope filtering, and source
+deletion.
 
 The bounded-pool and bootstrap regressions seed the same 100 synthetic records.
 A module-scoped fixture now builds and closes that seed once; each test copies it

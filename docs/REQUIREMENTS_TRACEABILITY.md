@@ -1733,3 +1733,11 @@ validation remains required.
 | Requirement area | Implementation/evidence | Status |
 |---|---|---|
 | Bounded retrieval pool and bootstrap policy coverage | `tests/unit/test_retrieval_high_cardinality.py::test_bounded_search_only_materializes_complete_candidate_pool_ids`; `test_high_cardinality_bootstrap_regression_has_no_policy_or_pack_violations` | Preserved all assertions and per-test database isolation while building the identical synthetic seed once and copying it to each test's unique database. Both exact test IDs passed before and after; pytest time was 6.80s before and 4.87s after. |
+
+### 2026-09-27 Current-source attribution on content changes
+
+| Requirement area | Implementation/evidence | Status |
+|---|---|---|
+| Current content points to its supporting source | `storage.py::CoreStore._update_record_from_observation_tx`; `tests/unit/test_current_source_provenance.py::test_changed_archive_content_uses_its_supporting_source_through_retrieval` | Corrected locally. Real CoreStore archive ingestion and RetrievalEngine search verify that changed content carries the replacing observation's source ID, reference, service, type, and evidence. The regression failed before the correction on the stale source ID. |
+| Preserve evidence, scope, and deletion behavior | Observation links, record-version snapshots, unchanged duplicate reinforcement, and source deletion | Prior May content and attribution remain in history; duplicate June ingestion does not rewrite provenance; the correction does not widen the target scope; deleting the old source leaves June current, while deleting June's source withdraws it. |
+| Validation boundary | Pinned product Python and unique checkout basetemp | The focused regression and assigned Ruff checks are local evidence only. This evidence alone does not establish integrated acceptance or a reader improvement. |
