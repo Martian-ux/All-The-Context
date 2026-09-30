@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import platform
@@ -13,20 +14,25 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist" / "desktop"
 
 
-def artifact_executable(system: str) -> Path:
+def artifact_executable(system: str, artifact_root: Path = ROOT) -> Path:
+    desktop = artifact_root / "dist" / "desktop"
     if system == "Windows":
-        return DIST / "AllTheContextSetup.exe"
+        return desktop / "AllTheContextSetup.exe"
     if system == "Darwin":
-        return DIST / "AllTheContext.app" / "Contents" / "MacOS" / "AllTheContext"
-    return DIST / "all-the-context"
+        return desktop / "AllTheContext.app" / "Contents" / "MacOS" / "AllTheContext"
+    return desktop / "all-the-context"
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifact-root", type=Path, default=ROOT)
+    arguments = parser.parse_args()
     system = platform.system()
-    executable = artifact_executable(system)
+    artifact_root = arguments.artifact_root.expanduser().resolve(strict=True)
+    executable = artifact_executable(system, artifact_root)
     if not executable.is_file():
         raise SystemExit(f"desktop artifact is missing: {executable}")
-    report = DIST / "diagnostics.json"
+    report = artifact_root / "dist" / "desktop" / "diagnostics.json"
     subprocess.run([str(executable), "--diagnostics", str(report)], check=True, timeout=60)
     payload = json.loads(report.read_text(encoding="utf-8"))
     expected = {

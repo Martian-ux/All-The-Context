@@ -90,6 +90,9 @@ def test_dmg_staging_uses_read_only_mount_and_detaches(
             mountpoint = Path(command[command.index("-mountpoint") + 1])
             source = mountpoint / "All The Context.app"
             source.mkdir()
+            recovery = source / "Contents" / "Frameworks" / "all-the-context-recovery"
+            recovery.parent.mkdir(parents=True)
+            recovery.write_bytes(b"recovery")
             payload = {"system-entities": [{"mount-point": str(mountpoint)}]}
             return __import__("subprocess").CompletedProcess(
                 command, 0, plistlib.dumps(payload), b""
@@ -119,6 +122,7 @@ def test_dmg_staging_uses_read_only_mount_and_detaches(
     )
 
     assert destination.is_dir()
+    assert (destination / "Contents" / "Frameworks" / "all-the-context-recovery").is_file()
     attach = commands[0]
     assert "-readonly" in attach
     assert "-nobrowse" in attach

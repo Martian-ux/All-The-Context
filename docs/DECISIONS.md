@@ -1,5 +1,51 @@
 # Architecture decisions
 
+## ADR-226: ZF010 waits on durable capture truth under loaded workers
+
+**Status:** corrected locally on 2026-09-22; maintained-native focused checks,
+independent review, and downstream product gates remain required.
+
+The Packet G/ZF010 acceptance helper must synchronize on the durable capture
+projection it asserts: the expected source `last_run_at`, enabled/error-free
+source state, current/deleted memory truth, and retrieval count. The scheduler's
+in-memory `completed_cycle_count` is deliberately retained as a content-free
+lifecycle diagnostic, but it is published only after adapter refresh, the
+coordinator run, and the post-run health scan. Under loaded Windows xdist, using
+that later diagnostic as the product-data barrier caused a healthy first worker
+to time out while still running.
+
+The correction restores the existing finite 15-second asynchronous observation
+without inflating it, preserves durable scheduler enablement and explicit
+restart wakeup, and keeps real-worker/no-dashboard/source-safety assertions.
+An injected blocking provider regression requires `wait_for_completed_cycle` to
+remain false for a running generation 1 worker with no failure and zero
+completed cycles, so the lifecycle API cannot falsely report completion. No
+production scheduler or provider behavior is changed, and no retrieval,
+forget, security, timeout, hosted, package, or publication gate is relaxed.
+
+## ADR-227: ZF010 uses the durable-projection observation boundary
+
+**Status:** corrected locally on 2026-09-22; maintained-native focused checks,
+independent review, and downstream product gates remain required.
+
+The first correction's durable-state polling could observe a committed source
+projection after a worker failed but before the lifecycle report was published.
+CoreCaptureScheduler now receives a content-free observer callback from the
+shared scheduler after coordinator results commit and before the post-cycle
+health scan. Its bounded condition wait is separate from
+`completed_cycle_count`, so a loaded health scan cannot turn a healthy in-flight
+worker into a false restart failure. The Packet G/ZF010 helper checks the
+worker's content-free status after the condition and rejects failed or stopped
+workers before asserting durable source, memory, retrieval, forget, and security
+truth.
+
+The positive regression blocks health after the durable projection and still
+requires the projection condition to arrive. The negative regression injects a
+worker failure after the durable commit but before the observer callback and
+requires the bounded wait to return false. No timeout, retry, scheduler
+authority, provider, retrieval, forget, security, hosted, packaging, or
+publication requirement is weakened.
+
 ## ADR-215: Retain only bounded packaged process-inventory observations
 
 **Status:** implemented locally on 2026-09-16; maintained-native focused,
@@ -7111,3 +7157,44 @@ type check, 74 tests, build, high-severity audit, full audit JSON, and four-file
 asset parity passed locally. This decision does not claim exact-source native,
 new hosted CI, release, or merge acceptance. The earlier database, crash, and
 hang causes remain unproven.
+## ADR-228: Bound updater replace contention and bind packaged smokes to exact outputs
+
+**Status:** implemented locally on 2026-09-22; maintained native proof and
+independent review remain required.
+
+The full2 receipt records one rollback `UpdateJournal.save` same-directory
+atomic replace denied with Windows WinError 5. The recovery policy therefore
+recognizes only `PermissionError.winerror == 5` on Windows, permits three
+50-millisecond retries, and revalidates the plain directory and temporary and
+target files before each retry. It never replaces by copy, weakens fsync or
+reparse validation, suppresses the final error, or changes rollback semantics.
+
+Packaged smokes use one explicit artifact-root layout and explicit provenance
+manifest/checksum paths. The Windows contract binds the checkout HEAD and
+each of the four fixed component paths to the manifest's size and SHA256
+values before any setup or recovery executable is invoked. Wrong roots,
+source commits, hashes, and missing components fail closed; the old implicit
+checkout `dist/desktop` and staged recovery fallbacks are not used by the
+production smoke entry points.
+
+The Darwin continuation keeps the same fail-closed boundary and selects the
+actual pinned-builder output `AllTheContext.app/Contents/Frameworks/
+all-the-context-recovery` as the sole packaged recovery-helper location. The
+builder asserts that output, DMG staging and package verification consume that
+path, and the contract tests reject a `Contents/MacOS` or missing helper. No
+checkout, stale, or staged fallback is restored; downstream full, package,
+hosted, merge, and publication gates remain separate.
+
+## ADR-229: Preserve memory continuity and exact packaged artifact evidence in the combined beta candidate
+
+**Status:** integration decision for the September 30 combined source.
+
+The combination keeps PR117's current-source provenance, per-test retrieval seed
+reuse, dependency-lock audit corrections, and durable capture-projection boundary
+alongside PR118's bounded Windows updater retry and exact packaged-artifact
+contracts. Windows retries remain limited to the observed sharing/access
+`WinError 5`; packaged smokes remain bound to explicit artifact roots, source
+identity, and component hashes. Darwin recovery-helper verification remains at
+the pinned builder's Frameworks path. No version, release-gate, or security
+setting changes are part of this integration. Exact-candidate validation is
+recorded with PR118's external review and native/hosted receipts.

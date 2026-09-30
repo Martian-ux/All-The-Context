@@ -19,6 +19,11 @@ from allthecontext.macos_bundle import validate_macos_bundle_links
 from allthecontext.release_manifest import sha256_file
 
 try:
+    from scripts.macos_artifact_layout import darwin_bundle_helper_path
+except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+    from macos_artifact_layout import darwin_bundle_helper_path  # type: ignore[no-redef]
+
+try:
     from scripts.check_runner_architecture import normalized_architecture
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
     from check_runner_architecture import normalized_architecture
@@ -108,14 +113,10 @@ def _verify_windows_unsigned(package: Path) -> None:
 
 
 def _macos_helper(app: Path, name: str) -> Path:
-    candidates = (
-        app / "Contents" / "MacOS" / name,
-        app / "Contents" / "Frameworks" / name,
-    )
-    matches = [path for path in candidates if path.is_file()]
-    if len(matches) != 1:
-        raise RuntimeError(f"macOS package must contain exactly one {name} helper")
-    return matches[0]
+    path = darwin_bundle_helper_path(app, name)
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError(f"macOS package is missing its canonical {name} helper")
+    return path
 
 
 def _verify_macos_binary_architecture(binary: Path, *, expected_architecture: str) -> None:
