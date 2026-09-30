@@ -5366,3 +5366,7 @@ regressions. The integration adds no version change, new product feature, releas
 gate relaxation, or security-setting change. Exact source review, maintained
 native execution, hosted checks, and merge evidence are recorded in the PR118
 candidate receipts and PR body.
+
+The conflict-focused Windows, memory, package, and CI-contract selection passed
+348 tests with one filesystem capability skip. Its post-commit startup-guard
+regression now verifies recovery dispatch without executing a fixture helper.

@@ -1172,11 +1172,20 @@ def test_post_commit_side_effect_failure_keeps_terminal_install_authoritative(
     else:
         assert launched == []
 
+    recovery_dispatches: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        helper_module,
+        "_spawn_recovery_helper",
+        lambda helper, journal: recovery_dispatches.append((helper, journal)),
+    )
     monkeypatch.setattr(helper_module.sys, "frozen", True, raising=False)
     if failed_step == "state_cleanup":
         assert ensure_recovery_before_core() is False
+        assert len(recovery_dispatches) == 1
+        assert recovery_dispatches[0][1] == fixture.journal_path
     else:
         assert ensure_recovery_before_core() is True
+        assert recovery_dispatches == []
 
 
 def test_crash_after_committed_journal_publication_replays_without_rollback(

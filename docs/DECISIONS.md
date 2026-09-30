@@ -7198,3 +7198,6 @@ identity, and component hashes. Darwin recovery-helper verification remains at
 the pinned builder's Frameworks path. No version, release-gate, or security
 setting changes are part of this integration. Exact-candidate validation is
 recorded with PR118's external review and native/hosted receipts.
+
+The Windows post-commit startup-guard unit test checks authenticated helper
+dispatch at its process boundary without executing the fixture binary on-host.
