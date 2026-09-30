@@ -429,6 +429,21 @@ def test_native_workflows_pin_packaged_recovery_and_locked_python() -> None:
         assert "scripts/smoke_packaged_first_run.py" in text
         assert "scripts/package_desktop.py" in text
         assert "scripts/smoke_platform_package.py" in text
+        desktop_smoke = text.index("scripts/smoke_desktop_artifact.py")
+        recovery_smoke = text.index("scripts/smoke_packaged_recovery.py", desktop_smoke)
+        first_run_smoke = text.index("scripts/smoke_packaged_first_run.py", recovery_smoke)
+        desktop_smoke_command = text[desktop_smoke:recovery_smoke]
+        assert "--artifact-root ." in desktop_smoke_command
+        manifest_argument = (
+            "--provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json"
+        )
+        checksum_argument = (
+            "--provenance-checksum "
+            "dist/native-build-provenance/native-build-provenance-v1.json.sha256"
+        )
+        assert manifest_argument in desktop_smoke_command
+        assert checksum_argument in desktop_smoke_command
+        assert desktop_smoke < recovery_smoke < first_run_smoke
         assert "--architecture ${{ matrix.architecture }}" in text or (
             '--architecture "${{ matrix.architecture }}"' in text
         )

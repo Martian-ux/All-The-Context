@@ -7,6 +7,7 @@ import pytest
 
 from scripts import native_build_provenance as provenance
 from scripts import packaged_artifact_contract as contract
+from scripts import smoke_desktop_artifact as desktop_smoke
 
 VERSION = "0.1.0-beta.7"
 SOURCE_COMMIT = "a" * 40
@@ -163,6 +164,40 @@ def test_contract_rejects_manifest_bound_to_wrong_source_commit(
 
     with pytest.raises(contract.PackagedArtifactContractError, match="source commit"):
         _validate(root, manifest, checksum, monkeypatch)
+
+
+def test_desktop_smoke_rejects_wrong_source_provenance_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, manifest, checksum = _artifact_tree(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "smoke_desktop_artifact.py",
+            "--artifact-root",
+            str(root),
+            "--provenance-manifest",
+            str(manifest),
+            "--provenance-checksum",
+            str(checksum),
+        ],
+    )
+    monkeypatch.setattr(desktop_smoke.platform, "system", lambda: "Windows")
+    real_run = desktop_smoke.subprocess.run
+    executable_launches: list[list[str]] = []
+
+    def observe_run(command: list[str], *args: object, **kwargs: object) -> object:
+        if command[0] == "git":
+            return real_run(command, *args, **kwargs)  # type: ignore[arg-type]
+        executable_launches.append(command)
+        raise AssertionError(f"unexpected executable launch: {command}")
+
+    monkeypatch.setattr(desktop_smoke.subprocess, "run", observe_run)
+
+    with pytest.raises(SystemExit, match="source commit"):
+        desktop_smoke.main()
+
+    assert executable_launches == []
 
 
 def test_contract_rejects_component_hash_or_size_change(

@@ -5364,9 +5364,18 @@ provenance checks, and Darwin recovery-helper path contract. It also retains the
 capture scheduler's durable projection boundary and its contention/failure
 regressions. The integration adds no version change, new product feature, release
 gate relaxation, or security-setting change. Exact source review, maintained
-native execution, hosted checks, and merge evidence are recorded in the PR118
-candidate receipts and PR body.
+native execution, hosted checks, and merge remain pending matching combined-
+candidate receipts. Historical PR118 source review/native/hosted receipts bind
+`8d199bc7f05894fc0f9359655e68412ad0d77442` (tree
+`5f859844614a437a8242749abfd2180db67a731b`), not this combined candidate
+`9178e8a6de74fffa7f8a80ae2adb03fe9ec45fa0` (tree
+`d57ebcc918c113d4c652d505682e8ba351fc88eb`). No merge evidence exists for the
+combined candidate.
 
-The conflict-focused Windows, memory, package, and CI-contract selection passed
-348 tests with one filesystem capability skip. Its post-commit startup-guard
-regression now verifies recovery dispatch without executing a fixture helper.
+The conflict-focused Windows, memory, package, and CI-contract selection on the
+combined candidate passed 348 tests with one symlink-capability skip; a separate
+`scripts/check_docs.py` check passed (exit 0). These focused checks do not close
+combined source acceptance, the maintained exact-source native gate, hosted
+checks, or merge; each remains pending its matching receipt. The post-commit
+startup-guard regression verifies recovery dispatch without executing a fixture
+helper.

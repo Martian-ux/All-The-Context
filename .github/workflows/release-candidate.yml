@@ -203,7 +203,11 @@ jobs:
       - name: Build native Linux desktop artifact
         if: matrix.platform == 'linux'
         run: python scripts/build_desktop.py
-      - run: python scripts/smoke_desktop_artifact.py --artifact-root .
+      - run: >-
+          python scripts/smoke_desktop_artifact.py
+          --artifact-root .
+          --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json
+          --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
       - run: >-
           python scripts/smoke_packaged_recovery.py
           --artifact-root .

@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import argparse
 import json
 import os
 import platform
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist" / "desktop"
+sys.path.insert(0, str(ROOT / "packages" / "allthecontext" / "src"))
+
+from allthecontext import __version__
+
+try:
+    from scripts.packaged_artifact_contract import (
+        PackagedArtifactContractError,
+        validate_windows_artifact_contract,
+    )
+except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+    from packaged_artifact_contract import (  # type: ignore[no-redef]
+        PackagedArtifactContractError,
+        validate_windows_artifact_contract,
+    )
 
 
 def artifact_executable(system: str, artifact_root: Path = ROOT) -> Path:
@@ -26,12 +43,25 @@ def artifact_executable(system: str, artifact_root: Path = ROOT) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-root", type=Path, default=ROOT)
+    parser.add_argument("--provenance-manifest", type=Path)
+    parser.add_argument("--provenance-checksum", type=Path)
     arguments = parser.parse_args()
     system = platform.system()
     artifact_root = arguments.artifact_root.expanduser().resolve(strict=True)
     executable = artifact_executable(system, artifact_root)
     if not executable.is_file():
         raise SystemExit(f"desktop artifact is missing: {executable}")
+    if system == "Windows":
+        try:
+            validate_windows_artifact_contract(
+                artifact_root=artifact_root,
+                provenance_manifest=arguments.provenance_manifest,
+                provenance_checksum=arguments.provenance_checksum,
+                source_root=ROOT,
+                version=__version__,
+            )
+        except PackagedArtifactContractError as exc:
+            raise SystemExit(f"packaged artifact contract failed: {exc}") from None
     report = artifact_root / "dist" / "desktop" / "diagnostics.json"
     subprocess.run([str(executable), "--diagnostics", str(report)], check=True, timeout=60)
     payload = json.loads(report.read_text(encoding="utf-8"))

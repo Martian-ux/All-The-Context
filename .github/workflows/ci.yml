@@ -328,7 +328,11 @@ jobs:
         if: runner.os != 'Windows'
         run: python scripts/build_desktop.py
       - name: Smoke-test bundled resources and packaged OS credential access
-        run: python scripts/smoke_desktop_artifact.py --artifact-root .
+        run: >-
+          python scripts/smoke_desktop_artifact.py
+          --artifact-root .
+          --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json
+          --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
       - name: Smoke packaged console recovery from built bytes
         run: >-
           python scripts/smoke_packaged_recovery.py

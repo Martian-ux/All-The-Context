@@ -7197,7 +7197,17 @@ contracts. Windows retries remain limited to the observed sharing/access
 identity, and component hashes. Darwin recovery-helper verification remains at
 the pinned builder's Frameworks path. No version, release-gate, or security
 setting changes are part of this integration. Exact-candidate validation is
-recorded with PR118's external review and native/hosted receipts.
+not established by the historical PR118 receipts: those source review, native,
+and hosted records bind `8d199bc7f05894fc0f9359655e68412ad0d77442` (tree
+`5f859844614a437a8242749abfd2180db67a731b`), not combined candidate
+`9178e8a6de74fffa7f8a80ae2adb03fe9ec45fa0` (tree
+`d57ebcc918c113d4c652d505682e8ba351fc88eb`).
+
+The combined candidate's focused selection passed 348 tests with one
+symlink-capability skip, and its separate `scripts/check_docs.py` check passed
+(exit 0). Combined source acceptance, the maintained exact-source native gate,
+hosted checks, and merge remain pending until matching receipts exist; there is
+no merge evidence for this combined candidate.
 
 The Windows post-commit startup-guard unit test checks authenticated helper
 dispatch at its process boundary without executing the fixture binary on-host.
