@@ -1,5 +1,19 @@
 # Project status
 
+## 2026-09-30 — urllib3 correction for the PR118 combined candidate
+
+The prior exact-source review, native gates, and final review accept source
+`61364fca5c61dc550211bbd596d3672cf38a2bc2`; those receipts do not transfer to
+this correction. Its hosted Ubuntu dependency audit found three advisories in
+locked `urllib3` 2.7.0. The targeted frozen-lock update selects 2.8.0, the
+diagnosed fixed version, without changing the project constraint or refreshing
+other packages. The updated dev/packaging frozen export passes pip-audit 2.10.1
+with zero findings, and all 11 tests in `tests/unit/test_exact_lock_contracts.py`
+pass in the candidate's Python 3.12.10 environment. This preserves product
+version beta.7. The updated candidate still requires its own source review,
+maintained native gates, final evidence review, and exact-head hosted checks. No
+release readiness or publication is claimed.
+
 ## 2026-09-26 — focused retrieval test-speed candidate
 
 On branch `codex/test-speed-20260926`, based on `26e29be186148479d891a4b87fd72cef740b05c4`,

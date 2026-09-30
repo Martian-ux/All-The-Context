@@ -1,5 +1,15 @@
 # Architecture decisions
 
+## Dependency lock decision — urllib3 audit remediation (2026-09-30)
+
+The PR118 combined candidate's hosted frozen dependency audit found three
+advisories in `urllib3` 2.7.0 and reported 2.8.0 as the fixed version. Update
+only the `urllib3` entry in `uv.lock` to 2.8.0 using reviewed uv 0.11.32. The
+existing transitive version constraint accepts 2.8.0, so no project metadata
+constraint is added. Preserve the locked hashes and source metadata generated
+by uv. Keep the existing audit and downstream source, native, review, and
+hosted gates; this decision does not establish beta readiness or publication.
+
 ## ADR-226: ZF010 waits on durable capture truth under loaded workers
 
 **Status:** corrected locally on 2026-09-22; maintained-native focused checks,
