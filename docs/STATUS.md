@@ -1,5 +1,19 @@
 # Project status
 
+## 2026-09-30 — urllib3 correction for the PR118 combined candidate
+
+The prior exact-source review, native gates, and final review accept source
+`61364fca5c61dc550211bbd596d3672cf38a2bc2`; those receipts do not transfer to
+this correction. Its hosted Ubuntu dependency audit found three advisories in
+locked `urllib3` 2.7.0. The targeted frozen-lock update selects 2.8.0, the
+diagnosed fixed version, without changing the project constraint or refreshing
+other packages. The updated dev/packaging frozen export passes pip-audit 2.10.1
+with zero findings, and all 11 tests in `tests/unit/test_exact_lock_contracts.py`
+pass in the candidate's Python 3.12.10 environment. This preserves product
+version beta.7. The updated candidate still requires its own source review,
+maintained native gates, final evidence review, and exact-head hosted checks. No
+release readiness or publication is claimed.
+
 ## 2026-09-26 — focused retrieval test-speed candidate
 
 On branch `codex/test-speed-20260926`, based on `26e29be186148479d891a4b87fd72cef740b05c4`,
@@ -45,6 +59,45 @@ claimed. This source evidence does not
 become release evidence; exact-artifact and publication claims remain separate.
 The controller still owns the final clean-HEAD Ruff, mypy, full pytest,
 documentation, hosted, artifact, and applicable platform/release gates.
+
+### 2026-09-22 — ZF010 loaded-worker observation correction
+
+The failed merged-main Windows shard `35741347469` was narrowed to the first
+real ZF010 worker: generation 1/restart count 1 stayed running with no worker
+failure while `completed_cycle_count` remained zero at the finite 15-second
+boundary. The scheduler starts from the durable enablement sidecar, wakes the
+real provider-backed worker, and records `completed_cycle_count` only after the
+adapter refresh, capture run, and post-run health projection return. That
+counter is therefore a scheduler lifecycle observation, not the durable source
+truth boundary. The evidence describes an in-flight loaded worker, not a
+restart defect.
+
+Packet G and ZF010 now retain the same finite allowance but wait for the
+existing durable source projection (`last_run_at`, lifecycle/error state,
+current/deleted truth, and retrieval count), returning as soon as that truth is
+ready. The real worker start, durable scheduler enablement, explicit restart
+wakeup, no-dashboard boundary, and content-free timeout status remain covered.
+An injected blocking-provider regression proves that a healthy generation 1
+worker with restart count 1 and zero completed cycles is not treated as a
+completed cycle. No production scheduler, provider adapter, retrieval, forget,
+security, timeout, hosted, package, or publication contract was weakened.
+
+The pinned focused handoff was not runnable in this managed checkout because
+the owned `.test-runs` scratch path returned WinError 5; exact host-native
+focused checks and downstream gates remain required.
+
+### 2026-09-22 — ZF010 durable-projection event follow-up
+
+The source-review repair closes the remaining observer race without changing
+capture authority or the finite 15-second allowance. The Core-owned scheduler
+now emits a content-free condition after coordinator durable projection and
+before the potentially slower health scan. Packet G and ZF010 wait on that
+condition, then inspect the content-free worker status before asserting source,
+memory, retrieval, forget, and security truth. A positive regression proves the
+condition can arrive while health is blocked; an injected failure after the
+durable commit proves the wait does not classify durable state alone as a
+successful worker projection. Fresh maintained-native, review, full, packaged,
+and hosted gates remain required.
 
 ### 2026-09-16 — content-free packaged process-inventory diagnostics
 
@@ -5293,3 +5346,50 @@ regenerated. These are local candidate results; exact-source native validation,
 independent reviews, and new hosted PR checks remain pending. Release acceptance
 is not claimed. Historical scheduler/database and full-suite crash/hang
 uncertainty remains unchanged.
+## 2026-09-22 updater journal and packaged artifact gate recovery
+
+The preserved full2 candidate evidence classifies the single rollback journal
+`os.replace` WinError 5 as a bounded Windows same-directory contention case,
+not a scheduler defect. `_atomic_json` retains its temporary-file fsync,
+directory/reparse checks, atomic replace, cleanup, and surfaced persistent
+failure; it retries only WinError 5 three times with a 50 ms bound. Focused
+proof covers one transient denial, persistent denial, and no broad retry.
+
+Packaged first-run and recovery smokes now expose explicit artifact-root and
+provenance manifest/checksum options. On Windows they verify the checked-out
+source commit and all four run-owned component size/SHA256 identities before
+launching the exact setup or recovery bytes. Wrong root/source/hash/missing
+component inputs fail closed; no fallback, copy, or relabel path is accepted.
+Maintained full, native/package, and hosted gates remain required.
+
+The Darwin packaged recovery contract now binds the helper to the one path the
+pinned PyInstaller builder produces: `AllTheContext.app/Contents/Frameworks/
+all-the-context-recovery`. The builder, DMG staging verifier, package verifier,
+and focused contract tests reject a helper in `Contents/MacOS`, a missing
+helper, or any implicit checkout/staged substitute. This is source-level
+repair evidence only; the downstream full, native/package, hosted, merge, and
+publication gates remain open.
+
+## 2026-09-30 combined PR118 integration scope
+
+The integration combines the already merged PR117 memory, test, and dependency
+work with PR118's Windows journal contention repair, exact packaged executable
+provenance checks, and Darwin recovery-helper path contract. It also retains the
+capture scheduler's durable projection boundary and its contention/failure
+regressions. The integration adds no version change, new product feature, release
+gate relaxation, or security-setting change. Exact source review, maintained
+native execution, hosted checks, and merge remain pending matching combined-
+candidate receipts. Historical PR118 source review/native/hosted receipts bind
+`8d199bc7f05894fc0f9359655e68412ad0d77442` (tree
+`5f859844614a437a8242749abfd2180db67a731b`), not this combined candidate
+`9178e8a6de74fffa7f8a80ae2adb03fe9ec45fa0` (tree
+`d57ebcc918c113d4c652d505682e8ba351fc88eb`). No merge evidence exists for the
+combined candidate.
+
+The conflict-focused Windows, memory, package, and CI-contract selection on the
+combined candidate passed 348 tests with one symlink-capability skip; a separate
+`scripts/check_docs.py` check passed (exit 0). These focused checks do not close
+combined source acceptance, the maintained exact-source native gate, hosted
+checks, or merge; each remains pending its matching receipt. The post-commit
+startup-guard regression verifies recovery dispatch without executing a fixture
+helper.

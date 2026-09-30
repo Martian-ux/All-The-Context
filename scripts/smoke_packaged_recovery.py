@@ -8,6 +8,10 @@ windowed-only desktop binary: those soft-passes cannot prove a candidate.
 
 from __future__ import annotations
 
+# The smoke prepends the checkout package source before importing it.
+# ruff: noqa: E402, I001
+
+import argparse
 import json
 import os
 import platform
@@ -19,64 +23,37 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "allthecontext" / "src"))
 
+from allthecontext import __version__
+
+try:
+    from scripts.packaged_artifact_contract import (
+        PackagedArtifactContractError,
+        recovery_executable,
+        resolve_artifact_root,
+        validate_windows_artifact_contract,
+    )
+except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+    from packaged_artifact_contract import (  # type: ignore[no-redef]
+        PackagedArtifactContractError,
+        recovery_executable,
+        resolve_artifact_root,
+        validate_windows_artifact_contract,
+    )
+
 DIST = ROOT / "dist" / "desktop"
 BUILD = ROOT / "build" / "desktop"
 
 
-def recovery_command(system: str) -> tuple[list[str], str]:
+def recovery_command(system: str, artifact_root: Path = ROOT) -> tuple[list[str], str]:
     """Return (command_prefix, mode) for the operator-reachable recovery surface.
 
     Raises SystemExit when the frozen console surface is absent.
     """
 
-    if system == "Windows":
-        candidates = (
-            (DIST / "AllTheContextRecovery.exe", "frozen-console-recovery-helper"),
-            (
-                BUILD / "recovery-helper-dist" / "AllTheContextRecovery.exe",
-                "frozen-staged-console-recovery-helper",
-            ),
-        )
-        for path, mode in candidates:
-            if path.is_file():
-                return [str(path)], mode
-        raise SystemExit(
-            "Windows console recovery helper missing; expected dist/desktop/"
-            "AllTheContextRecovery.exe or build/desktop/recovery-helper-dist/"
-            "AllTheContextRecovery.exe (embedded in AllTheContextSetup.exe for install)"
-        )
-
-    if system == "Darwin":
-        app = DIST / "AllTheContext.app"
-        candidates = (
-            (
-                app / "Contents" / "MacOS" / "all-the-context-recovery",
-                "frozen-console-recovery-helper",
-            ),
-            (
-                app / "Contents" / "Frameworks" / "all-the-context-recovery",
-                "frozen-console-recovery-helper",
-            ),
-            (
-                BUILD / "recovery-helper-dist" / "all-the-context-recovery",
-                "frozen-staged-console-recovery-helper",
-            ),
-        )
-        for path, mode in candidates:
-            if path.is_file():
-                return [str(path)], mode
-        raise SystemExit(
-            "macOS console recovery helper missing; expected all-the-context-recovery "
-            "inside AllTheContext.app (Contents/MacOS or Contents/Frameworks) or "
-            "build/desktop/recovery-helper-dist/"
-        )
-
-    linux = DIST / "all-the-context"
-    if linux.is_file():
-        return [str(linux)], "frozen-linux-console-desktop"
-    raise SystemExit(
-        "Linux console recovery surface missing; expected dist/desktop/all-the-context"
-    )
+    path, mode = recovery_executable(artifact_root, system)
+    if path.is_file():
+        return [str(path)], mode
+    raise SystemExit(f"{system} console recovery surface missing: {path}")
 
 
 def _require_help_output(command_prefix: list[str], mode: str) -> None:
@@ -123,9 +100,45 @@ def _require_doctor(command_prefix: list[str], mode: str, data_dir: Path) -> Non
         )
 
 
+def _parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        required=True,
+        help="explicit root containing the run-owned build/desktop and dist/desktop outputs",
+    )
+    parser.add_argument(
+        "--provenance-manifest",
+        type=Path,
+        required=True,
+        help="native build provenance manifest for the explicit Windows artifact root",
+    )
+    parser.add_argument(
+        "--provenance-checksum",
+        type=Path,
+        required=True,
+        help="checksum beside the native build provenance manifest",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    arguments = _parse_arguments()
     system = platform.system()
-    command_prefix, mode = recovery_command(system)
+    try:
+        artifact_root = resolve_artifact_root(arguments.artifact_root)
+        if system == "Windows":
+            validate_windows_artifact_contract(
+                artifact_root=artifact_root,
+                provenance_manifest=arguments.provenance_manifest,
+                provenance_checksum=arguments.provenance_checksum,
+                source_root=ROOT,
+                version=__version__,
+            )
+    except PackagedArtifactContractError as exc:
+        raise SystemExit(f"packaged artifact contract failed: {exc}") from None
+    command_prefix, mode = recovery_command(system, artifact_root)
     if "windowed" in mode or mode == "source-desktop-mode":
         raise SystemExit(f"refusing non-console recovery surface: {mode}")
 

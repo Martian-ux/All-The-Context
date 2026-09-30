@@ -203,9 +203,21 @@ jobs:
       - name: Build native Linux desktop artifact
         if: matrix.platform == 'linux'
         run: python scripts/build_desktop.py
-      - run: python scripts/smoke_desktop_artifact.py
-      - run: python scripts/smoke_packaged_recovery.py
-      - run: python scripts/smoke_packaged_first_run.py
+      - run: >-
+          python scripts/smoke_desktop_artifact.py
+          --artifact-root .
+          --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json
+          --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
+      - run: >-
+          python scripts/smoke_packaged_recovery.py
+          --artifact-root .
+          --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json
+          --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
+      - run: >-
+          python scripts/smoke_packaged_first_run.py
+          --artifact-root .
+          --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json
+          --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
       - name: Build direct unsigned native package and disclosure sidecars
         run: >-
           python scripts/package_desktop.py
