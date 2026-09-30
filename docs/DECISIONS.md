@@ -7087,3 +7087,27 @@ boundary regression, and the previously failing cutover case passed under the
 pinned Python 3.12.10 environment with imports bound to this checkout. The
 historical later full-suite hang remains unexplained; these focused passes do
 not establish its cause or integrated acceptance.
+
+## ADR-228: Resolve the terminal dependency-audit findings
+
+**Status:** implemented in the dependency locks on 2026-09-30; focused Python
+and dashboard checks pass; exact-source native validation, independent review,
+and the changed-head hosted run remain pending.
+
+The hosted Python audit identified ten advisories on `pyjwt 2.13.0`, a
+transitive dependency of the locked `mcp 2.0.0`. PyJWT 2.14.0 is the first
+upstream fixed release; the targeted pinned-uv lock update selected PyJWT
+2.15.1, still within the existing MCP/PyJWT 2.x compatibility range. The
+dashboard audit identified `@vitest/mocker` through Vitest 4.1.10 and Undici
+7.29.0. The lock now selects Vitest and its matching package family at 4.1.11
+and Undici 7.29.1, the first fixed 7.x release. Existing `pyproject.toml` and
+`apps/dashboard/package.json` ranges already admit these resolutions, so neither
+manifest nor the audit gate changed.
+
+No product source, tests, workflow, security setting, or committed dashboard
+asset changed. The Python audit gate passed from a hash-installed run-owned
+Python 3.12.10 environment; 12 lock regression tests passed. Dashboard `npm ci`,
+type check, 74 tests, build, high-severity audit, full audit JSON, and four-file
+asset parity passed locally. This decision does not claim exact-source native,
+new hosted CI, release, or merge acceptance. The earlier database, crash, and
+hang causes remain unproven.

@@ -5272,3 +5272,24 @@ boundary, and earlier cutover regressions. This does not establish why the
 later `a5223966` full suite hung at 92%; that cause remains unknown. The earlier
 `7df844c4` full-suite WinError 5 and five provenance failures remain preserved
 as historical failures. Exact-candidate full native validation is pending.
+
+## 2026-09-30 — dependency-audit lock correction
+
+The terminal hosted result for PR 117 found ten Python advisories on the locked
+`pyjwt 2.13.0` package pulled by `mcp`, plus a high-severity Undici advisory and
+a moderate Vitest mocker advisory in the dashboard lock. The Python lock now
+selects PyJWT 2.15.1; PyJWT 2.14.0 is the first published release fixing the
+reported advisories. The dashboard lock advances the Vitest family from 4.1.10
+to 4.1.11 and Undici from 7.29.0 to 7.29.1. Project dependency ranges and audit
+settings are unchanged.
+
+The run-owned Python 3.12.10 environment passed 12 focused lock regression
+tests and the unchanged `scripts/dependency_audit.py --ecosystem python` gate
+with pip-audit 2.10.1. Under the available Node 26.7.0/npm 11.19.0, dashboard
+`npm ci`, type check, all 74 tests, production build, and high-severity audit
+passed; the complete audit JSON reported zero vulnerabilities. The production
+asset parity check matched all four committed files, so no bundled assets were
+regenerated. These are local candidate results; exact-source native validation,
+independent reviews, and new hosted PR checks remain pending. Release acceptance
+is not claimed. Historical scheduler/database and full-suite crash/hang
+uncertainty remains unchanged.
