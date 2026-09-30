@@ -1,5 +1,16 @@
 # Project status
 
+## 2026-09-26 — focused retrieval test-speed candidate
+
+On branch `codex/test-speed-20260926`, based on `26e29be186148479d891a4b87fd72cef740b05c4`,
+the seven tests in `tests/unit/test_retrieval_m3_current_candidate.py` keep two
+independent fresh scorecard runs for the determinism assertion and reuse that
+pair for the content-free contract and quality-gate assertions. All seven tests
+passed with zero skips. On the same checkout and interpreter, wrapper wall time
+was 39.661s before and 20.830s after; pytest time was 38.87s and 19.94s. This is
+one focused local before/after measurement, not a suite-wide or hosted-CI claim.
+Full integration acceptance remains separate.
+
 ## Current milestone
 
 **2026-09-06 — PR #114 combined integration candidate**
@@ -5223,3 +5234,62 @@ The required six-module pinned pytest command reached the managed host's
 fixture/basetemp boundary but errored with WinError 5; pinned Ruff, format, and
 targeted mypy checks passed. Full, package, hosted, and publication gates remain
 outside this correction.
+
+## 2026-09-27 high-cardinality retrieval test setup reuse
+
+The two database-backed checks in `tests/unit/test_retrieval_high_cardinality.py`
+now build their identical synthetic seed database once per module and copy it
+into each test's own temporary directory. Their assertions and database
+isolation remain unchanged. The same two pinned test IDs passed before and
+after: pytest time fell from 6.80s to 4.87s, and command wall time fell from
+7.656s to 5.705s. Focused Ruff passed; full-suite and hosted runs were outside
+this task.
+
+## 2026-09-27 Memory current-source attribution correction
+
+Content-changing CoreStore updates carry source ID, source reference, and source
+metadata from the observation that supplies the replacement content. An
+explicit correction that omits provenance retains the current attribution; a
+replacement that supplies only part of its provenance replaces the tuple without
+mixing in fields from the old source. Earlier observations and version snapshots
+retain their original attribution. Focused synthetic ingestion, retrieval,
+duplicate, scope, source-deletion, and correction-compatibility coverage is
+recorded in the integration repair receipt. This focused result does not
+establish integrated acceptance.
+
+## 2026-09-28 Windows updater atomic-replace integration
+
+The memory/test candidate now includes the already-reviewed Windows updater
+atomic-replace correction from beta commits `19d605eb` and `b5cba6e`. Only a
+Windows `PermissionError` with WinError 5 receives up to three 50 ms retries;
+each retry revalidates the existing plain-directory and file boundaries.
+Other replace errors remain visible, and persistent denial leaves the old
+target intact and removes the temporary file. Existing reparse and parent
+identity checks remain in place.
+
+The pinned Python 3.12.10 selection passed all five focused contention,
+boundary, and earlier cutover regressions. This does not establish why the
+later `a5223966` full suite hung at 92%; that cause remains unknown. The earlier
+`7df844c4` full-suite WinError 5 and five provenance failures remain preserved
+as historical failures. Exact-candidate full native validation is pending.
+
+## 2026-09-30 — dependency-audit lock correction
+
+The terminal hosted result for PR 117 found ten Python advisories on the locked
+`pyjwt 2.13.0` package pulled by `mcp`, plus a high-severity Undici advisory and
+a moderate Vitest mocker advisory in the dashboard lock. The Python lock now
+selects PyJWT 2.15.1; PyJWT 2.14.0 is the first published release fixing the
+reported advisories. The dashboard lock advances the Vitest family from 4.1.10
+to 4.1.11 and Undici from 7.29.0 to 7.29.1. Project dependency ranges and audit
+settings are unchanged.
+
+The run-owned Python 3.12.10 environment passed 12 focused lock regression
+tests and the unchanged `scripts/dependency_audit.py --ecosystem python` gate
+with pip-audit 2.10.1. Under the available Node 26.7.0/npm 11.19.0, dashboard
+`npm ci`, type check, all 74 tests, production build, and high-severity audit
+passed; the complete audit JSON reported zero vulnerabilities. The production
+asset parity check matched all four committed files, so no bundled assets were
+regenerated. These are local candidate results; exact-source native validation,
+independent reviews, and new hosted PR checks remain pending. Release acceptance
+is not claimed. Historical scheduler/database and full-suite crash/hang
+uncertainty remains unchanged.

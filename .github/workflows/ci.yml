@@ -105,12 +105,16 @@ jobs:
       - name: Install from reviewed lock constraints
         run: python scripts/install_locked_python.py --extra dev
       - name: Ruff formatting
+        if: matrix.shard == 0
         run: python -m ruff format --check .
       - name: Ruff lint
+        if: matrix.shard == 0
         run: python -m ruff check .
       - name: Mypy
+        if: matrix.shard == 0
         run: python -m mypy packages/allthecontext/src
       - name: Documentation checks
+        if: matrix.shard == 0
         run: python scripts/check_docs.py
       - name: Verify complete and sharded pytest collection
         env:

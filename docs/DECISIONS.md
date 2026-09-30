@@ -54,6 +54,26 @@ the existing success receipt. Failed test evidence is retained and uploaded by
 the Windows pytest shard, while the hosted `35622074776` cause remains
 unresolved rather than being inferred from absence alone.
 
+## ADR-226: Reuse independent retrieval scorecards across related test assertions
+
+**Status:** locally measured test candidate based on
+`26e29be186148479d891a4b87fd72cef740b05c4`; full integration acceptance remains
+separate.
+
+The synthetic current-candidate test module retains all seven test functions and
+their assertions. A module-scoped fixture runs the benchmark in two separate,
+unique directories under the repository's ignored `tmp/` directory. The
+determinism test still compares those two fresh results; the content-free
+contract and quality-gate tests inspect the same read-only pair, avoiding two
+additional full benchmark executions. Keeping these benchmark paths inside the
+repository also satisfies the evaluator's path-containment check under the
+default CI pytest temporary-directory configuration.
+
+On the same Windows checkout and pinned interpreter, the selected file passed
+7 tests with no skips before and after. Wrapper wall time was 39.661s before and
+20.830s after (pytest time 38.87s and 19.94s). This single focused measurement
+does not establish a whole-suite or hosted-CI improvement.
+
 ## ADR-211: Combined integration preserves bounded evidence and fail-closed gates
 
 **Status:** accepted locally on 2026-09-06 for source checkpoint
@@ -7020,3 +7040,74 @@ boundaries as closed subphases. This explains the observed
 without guessing a process cause, retaining raw output, or conflating it with
 the expected injected registration-uninstall report. The frozen observer
 parser and generic workflow runtime remain untouched.
+
+## ADR-226: Correct current-source attribution and reuse retrieval test setup
+
+**Status:** implemented locally on 2026-09-27; independent source review is
+accepted, and exact-candidate integration gates remain separate.
+
+When a CoreStore observation changes a record's content, the record's current
+source ID, reference, service, type, and evidence now come from that observation.
+Observation links and record-version snapshots retain prior content and
+provenance. An explicit correction that omits the full provenance tuple retains
+the target's current attribution. When a correction supplies any provenance,
+the tuple is replaced together so a new source cannot inherit stale fields from
+the prior source. A disjoint ACL transfer still takes attribution from the
+replacement observation. Corrections continue to preserve the target record's
+scope and existing access behavior. Focused synthetic coverage exercises real
+archive ingestion, retrieval, duplicate reinforcement, scope filtering, and
+source deletion.
+
+The bounded-pool and bootstrap regressions seed the same 100 synthetic records.
+A module-scoped fixture now builds and closes that seed once; each test copies it
+to its own temporary SQLite path before opening it. This removes one repeated
+set of inserts and approvals while preserving separate mutable databases and
+all existing policy, bounded-pool, and pack assertions. The exact two-test
+selection passed in 6.80s before and 4.87s after (pytest-reported time); the
+measured command wall times were 7.656s and 5.705s. Production behavior and CI
+workflow are unchanged.
+
+## ADR-227: Bound Windows atomic JSON replacement retries
+
+**Status:** existing reviewed beta fix projected into the memory/test
+candidate on 2026-09-28; five focused pinned regressions pass; exact-candidate
+full native validation remains pending.
+
+For `_atomic_json`, retry only a Windows `PermissionError` whose `winerror` is
+5, with at most three retries and a 50 ms delay. Revalidate the same plain
+parent directory and temporary/target files after each denial and before the
+next replace. Keep the existing reparse and parent-identity guards, propagate
+other errors immediately, and preserve the old target if denial persists;
+temporary files are still cleaned up. The source behavior is projected from
+accepted beta commit `19d605ebc8c1a2a2ff5a87831d3d8591c1483e87`, and its
+contention proof from `b5cba6e719d2fa57607b89f25dc26a05a8c6162e`.
+
+The three contention regressions, the deterministic parent-replacement
+boundary regression, and the previously failing cutover case passed under the
+pinned Python 3.12.10 environment with imports bound to this checkout. The
+historical later full-suite hang remains unexplained; these focused passes do
+not establish its cause or integrated acceptance.
+
+## ADR-228: Resolve the terminal dependency-audit findings
+
+**Status:** implemented in the dependency locks on 2026-09-30; focused Python
+and dashboard checks pass; exact-source native validation, independent review,
+and the changed-head hosted run remain pending.
+
+The hosted Python audit identified ten advisories on `pyjwt 2.13.0`, a
+transitive dependency of the locked `mcp 2.0.0`. PyJWT 2.14.0 is the first
+upstream fixed release; the targeted pinned-uv lock update selected PyJWT
+2.15.1, still within the existing MCP/PyJWT 2.x compatibility range. The
+dashboard audit identified `@vitest/mocker` through Vitest 4.1.10 and Undici
+7.29.0. The lock now selects Vitest and its matching package family at 4.1.11
+and Undici 7.29.1, the first fixed 7.x release. Existing `pyproject.toml` and
+`apps/dashboard/package.json` ranges already admit these resolutions, so neither
+manifest nor the audit gate changed.
+
+No product source, tests, workflow, security setting, or committed dashboard
+asset changed. The Python audit gate passed from a hash-installed run-owned
+Python 3.12.10 environment; 12 lock regression tests passed. Dashboard `npm ci`,
+type check, 74 tests, build, high-severity audit, full audit JSON, and four-file
+asset parity passed locally. This decision does not claim exact-source native,
+new hosted CI, release, or merge acceptance. The earlier database, crash, and
+hang causes remain unproven.

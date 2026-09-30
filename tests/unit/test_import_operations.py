@@ -1509,8 +1509,10 @@ def test_upload_heartbeat_without_false_committed_bytes(
     from allthecontext import import_boundary as boundary
     from allthecontext import import_operations as ops_module
 
-    monkeypatch.setattr(boundary, "PROGRESS_HEARTBEAT_SECONDS", 0.05)
-    monkeypatch.setattr(ops_module, "PROGRESS_HEARTBEAT_SECONDS", 0.05)
+    # Keep the liveness writer accelerated for the test, without driving it at
+    # 100x its production cadence while the poller opens short-lived readers.
+    monkeypatch.setattr(boundary, "PROGRESS_HEARTBEAT_SECONDS", 0.5)
+    monkeypatch.setattr(ops_module, "PROGRESS_HEARTBEAT_SECONDS", 0.5)
 
     _core, ops = _ops(tmp_path)
     # Well under one 8 MiB commit chunk so only heartbeats can refresh updated_at.
@@ -1546,7 +1548,7 @@ def test_upload_heartbeat_without_false_committed_bytes(
     def slow_chunks() -> Iterator[bytes]:
         for index in range(0, size, 4096):
             yield payload[index : index + 4096]
-            time.sleep(0.03)
+            time.sleep(0.1)
 
     thread = threading.Thread(target=poller, daemon=True)
     thread.start()

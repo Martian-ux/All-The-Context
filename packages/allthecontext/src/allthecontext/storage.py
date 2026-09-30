@@ -6617,6 +6617,25 @@ class CoreStore:
             and current_allowed.isdisjoint(observed_allowed)
         )
 
+        provenance_columns = (
+            "source_id",
+            "source_reference",
+            "source_service",
+            "source_type",
+            "evidence",
+        )
+        preserve_current_provenance = bool(
+            is_correction
+            and not disjoint_acl_transfer
+            and all(observation[column] is None for column in provenance_columns)
+        )
+
+        def provenance_or_observed(column: str) -> Any:
+            # An explicit correction with no provenance fields keeps existing
+            # attribution. Any supplied provenance replaces the tuple as a unit
+            # so fields from different sources cannot be combined.
+            return record[column] if preserve_current_provenance else observation[column]
+
         def observed_or_existing(column: str) -> Any:
             return record[column] if is_correction else observation[column]
 
@@ -6647,8 +6666,10 @@ class CoreStore:
             availability,
             content_replaced=True,
         )
-        source_id = cast(str | None, projection_or_existing("source_id"))
-        source_reference = cast(str | None, projection_or_existing("source_reference"))
+        # Current source attribution follows replacement content. The linked
+        # observation and record-version snapshots preserve the prior evidence.
+        source_id = cast(str | None, provenance_or_observed("source_id"))
+        source_reference = cast(str | None, provenance_or_observed("source_reference"))
         kind = str(observed_or_existing("kind"))
         entity_key = cast(str | None, observed_or_existing("entity_key"))
         attribute_key = cast(str | None, observed_or_existing("attribute_key"))
@@ -6685,9 +6706,9 @@ class CoreStore:
                 observed_or_existing("attribute_key"),
                 projection_or_existing("scopes_json"),
                 projection_or_existing("tags_json"),
-                projection_or_existing("source_service"),
-                projection_or_existing("source_type"),
-                projection_or_existing("evidence"),
+                provenance_or_observed("source_service"),
+                provenance_or_observed("source_type"),
+                provenance_or_observed("evidence"),
                 confidence,
                 effective_sensitivity.value,
                 effective_availability.value,
