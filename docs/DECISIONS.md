@@ -7221,3 +7221,19 @@ no merge evidence for this combined candidate.
 
 The Windows post-commit startup-guard unit test checks authenticated helper
 dispatch at its process boundary without executing the fixture binary on-host.
+
+## 2026-09-30 shared memory acceptance before engine integration
+
+Freeze a bounded natural-language acceptance slice before deciding between
+repairing ATC and adopting another engine. Reuse existing Memory Lab attribution
+and reader-usage conventions; do not build another model orchestration framework.
+Adapters receive ordinary events and questions but no evaluator labels. Require
+current supported evidence and distinguish capture, retrieval and delivery.
+
+Development failures remain failures; passing grader regression tests cannot be
+reported as memory acceptance. Keep held-out execution separate and require an
+explicit frozen candidate identity before its use. A default run opens only
+synthetic disposable vaults, with no routine approval inbox or manual curation.
+Automatic lifecycle is the goal, not preserving the existing engine. Larger
+engine integration, installed-client acceptance and release action remain outside
+this slice. See the [contract guide](../bench/memory_acceptance_v1/README.md).

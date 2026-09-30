@@ -5393,3 +5393,20 @@ combined source acceptance, the maintained exact-source native gate, hosted
 checks, or merge; each remains pending its matching receipt. The post-commit
 startup-guard regression verifies recovery dispatch without executing a fixture
 helper.
+
+## 2026-09-30 frozen natural-language memory acceptance v1
+
+An isolated fixture/test slice is based on merged main
+`1ceec65f0b356bf3f7b2be9cfce6e990dbbde637` (PR118). It adds six development
+scenarios with fourteen checkpoints, a separately frozen unexecuted holdout,
+a small adapter contract, and an in-process current-ATC baseline. Expectations
+cover ordinary mixed inputs, decisions, corrections, partial/unknown recall,
+current citations, project isolation, restart, integrity rebuild, forgetting,
+retry and actual hook formatting. Capture, retrieval and delivery are separate.
+
+The development baseline captures all inputs and completes lifecycle operations,
+but passes 2/14 checkpoints. Stored evidence and successful deletion are not
+equated with useful delivered memory. Installed apps, answer readers, Hindsight,
+physical purge and full archive reimport remain unrun. No production engine or
+release behavior changes. See the [frozen acceptance guide](../bench/memory_acceptance_v1/README.md)
+and its baseline receipt for exact expectations and evidence limits.

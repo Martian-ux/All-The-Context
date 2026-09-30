@@ -1,0 +1,52 @@
+{
+  "schema": "atc.memory-acceptance.fixture.v1",
+  "partition": "holdout",
+  "synthetic": true,
+  "scenarios": [
+    {
+      "scenario_id": "H01-personal-plan-correction",
+      "audience": "personal",
+      "capabilities": ["mixed_statements", "correction", "supersession", "restart", "current_provenance"],
+      "steps": [
+        {"event": {"event_id": "H01-E1", "at": "2026-10-01T09:00:00Z", "app": "claude_code", "role": "user", "text": "I like short checklists. The pottery workshop is on Saturday at 10 in the morning."}},
+        {"event": {"event_id": "H01-E2", "at": "2026-10-01T09:05:00Z", "app": "codex", "role": "user", "text": "The pottery workshop moved to Sunday at 2 in the afternoon; Saturday's booking was cancelled."}},
+        {"control": "restart"},
+        {"request": {"checkpoint_id": "H01-resume", "question": "Remind me when the pottery workshop is happening now", "surface": "claude_code_hook"}, "expect": {"facts": [{"fact_id": "current-workshop", "pattern": "(?is)Sunday.*2.*afternoon", "sources": ["H01-E2"]}], "forbidden_patterns": ["(?i)workshop is on Saturday"]}}
+      ]
+    },
+    {
+      "scenario_id": "H02-engineering-failed-approach",
+      "audience": "engineering",
+      "capabilities": ["missed_decision", "observed_outcome", "partial_recall", "unknown", "project_isolation"],
+      "steps": [
+        {"event": {"event_id": "H02-E1", "at": "2026-10-02T09:00:00Z", "app": "claude_code", "project": "Juniper", "role": "tool", "text": "Juniper's full-image backup failed because disk space ran out. Incremental backup completed and its checksum matched."}},
+        {"event": {"event_id": "H02-E2", "at": "2026-10-02T09:01:00Z", "app": "codex", "project": "Juniper", "role": "user", "text": "Keep incremental backups for Juniper and avoid full images until storage is expanded."}},
+        {"request": {"checkpoint_id": "H02-continue", "question": "Continue Juniper backups: what worked, what should we avoid, and has restore been tested?", "project": "Juniper", "surface": "codex_hook"}, "expect": {"facts": [{"fact_id": "verified-incremental-backup", "pattern": "(?is)Incremental backup completed.*checksum matched", "sources": ["H02-E1"]}, {"fact_id": "avoid-failed-approach", "pattern": "(?i)avoid full images until storage is expanded", "sources": ["H02-E2"]}], "unknowns": ["restore_test_result"], "forbidden_patterns": ["(?i)restore (passed|succeeded)"]}}
+      ]
+    },
+    {
+      "scenario_id": "H03-household-context-isolation",
+      "audience": "personal",
+      "capabilities": ["mixed_statements", "project_isolation", "provenance", "cross_app_delivery"],
+      "steps": [
+        {"event": {"event_id": "H03-E1", "at": "2026-10-03T09:00:00Z", "app": "codex", "project": "Garden", "role": "user", "text": "For Garden, choose drip irrigation and skip overhead sprinklers to reduce water use."}},
+        {"event": {"event_id": "H03-E2", "at": "2026-10-03T09:01:00Z", "app": "claude_code", "project": "Patio", "role": "user", "text": "For Patio, choose blue chairs and warm white lights."}},
+        {"request": {"checkpoint_id": "H03-garden", "question": "What did we decide for Garden watering?", "project": "Garden", "surface": "claude_code_hook"}, "expect": {"facts": [{"fact_id": "water-saving-choice", "pattern": "(?is)drip irrigation.*reduce water use", "sources": ["H03-E1"]}], "forbidden_patterns": ["(?i)blue chairs|warm white lights|Patio"]}}
+      ]
+    },
+    {
+      "scenario_id": "H04-personal-deletion-after-delivery",
+      "audience": "personal",
+      "capabilities": ["deletion", "restart", "rebuild", "replay", "cross_app_delivery"],
+      "steps": [
+        {"event": {"event_id": "H04-E1", "at": "2026-10-04T09:00:00Z", "app": "claude_code", "role": "user", "text": "I prefer metric measurements."}},
+        {"request": {"checkpoint_id": "H04-before", "question": "Which measurement units do I prefer?", "surface": "codex_hook"}, "expect": {"facts": [{"fact_id": "measurement-preference", "pattern": "(?i)metric", "sources": ["H04-E1"]}]}},
+        {"control": "forget_event", "event_id": "H04-E1"},
+        {"control": "restart"},
+        {"control": "rebuild"},
+        {"control": "replay_event", "event_id": "H04-E1"},
+        {"request": {"checkpoint_id": "H04-after", "question": "Which measurement units do I prefer?", "surface": "claude_code_hook"}, "expect": {"unknowns": ["measurement_units"], "forbidden_patterns": ["(?i)metric"]}}
+      ]
+    }
+  ]
+}
