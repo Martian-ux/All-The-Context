@@ -16,6 +16,8 @@ from allthecontext.retrieval import RetrievalEngine, _admissibility_inputs, pars
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
+from bench.synthetic_principal import register_synthetic_principal
+
 READER = ClientPrincipal("reader", "Synthetic reader", frozenset({"context:read"}))
 
 
@@ -79,6 +81,7 @@ def test_generic_write_plan_keeps_the_request_subject_boundary() -> None:
 def test_explicit_kind_mismatch_overrides_kind_token_overlap(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "kind-mismatch.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     record_id = _approve(
         store,
         key="workflow-kind",
@@ -113,6 +116,7 @@ def test_output_request_verbs_do_not_create_required_handoff_anchors(
 ) -> None:
     store = CoreStore(tmp_path / "request-verb.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     region = _approve(store, key="region", content="Aurora deployment region is west.")
     blocker = _approve(
         store, key="blocker", content="Aurora production is blocked pending approval."
@@ -134,6 +138,7 @@ def test_output_request_verbs_do_not_create_required_handoff_anchors(
 def test_positive_preference_bootstrap_keeps_current_preference(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "preference.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     preference = _approve(
         store,
         key="preference",
@@ -170,6 +175,7 @@ def test_project_handoff_composes_facts_only_when_eligible_union_fits(
 ) -> None:
     store = CoreStore(tmp_path / "handoff.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     common = {"scopes": ["project:aurora"], "explicit_user_statement": True}
     region = _approve(store, key="region", content="Aurora deployment region is west.", **common)
     blocker = _approve(
@@ -263,6 +269,7 @@ def test_preference_exclusion_does_not_block_project_facts(
 ) -> None:
     store = CoreStore(tmp_path / "exclusion.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     fact = _approve(
         store,
         key="region",
@@ -312,6 +319,7 @@ def test_meaningful_state_and_handoff_terms_require_content(
 ) -> None:
     store = CoreStore(tmp_path / "meaningful.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     _approve(store, key="near-miss", content=content, explicit_user_statement=True)
     try:
         assert (
@@ -341,9 +349,11 @@ def _approve(store: CoreStore, *, key: str, content: str, **kwargs: Any) -> str:
 def test_direct_exact_positive_and_two_of_three_near_miss_abstention(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "direct-precision.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     strong = _approve(store, key="strong", content="alpha beta gamma")
     near_store = CoreStore(tmp_path / "near-miss.sqlite3")
     near_store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(near_store, READER)
     near = _approve(near_store, key="near", content="alpha beta")
     try:
         engine = RetrievalEngine(store)
@@ -365,6 +375,7 @@ def test_bootstrap_assembles_distinct_one_anchor_facets_when_union_is_complete(
 ) -> None:
     store = CoreStore(tmp_path / "bootstrap-union.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     first = _approve(store, key="first-facet", content="cobalt")
     second = _approve(store, key="second-facet", content="orbit")
     try:
@@ -393,6 +404,7 @@ def test_bootstrap_assembles_distinct_one_anchor_facets_when_union_is_complete(
 def test_bootstrap_abstains_when_authorized_content_union_is_insufficient(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "bootstrap-insufficient.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     first = _approve(store, key="first-facet", content="cobalt")
     second = _approve(store, key="second-facet", content="orbit")
     try:
@@ -421,6 +433,7 @@ def test_bootstrap_abstains_when_authorized_content_union_is_insufficient(tmp_pa
 def test_alias_only_content_is_one_mapped_anchor_not_full_coverage(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "alias-coverage.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     alias_only = _approve(store, key="alias-only", content="cache")
     try:
         evidence = project_content_evidence(
@@ -442,6 +455,7 @@ def test_alias_only_content_is_one_mapped_anchor_not_full_coverage(tmp_path: Pat
 def test_metadata_noise_cannot_change_bootstrap_content_selection(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "metadata-noise.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     first = _approve(store, key="first-facet", content="cobalt")
     second = _approve(store, key="second-facet", content="orbit")
     engine = RetrievalEngine(store)
@@ -474,6 +488,7 @@ def test_bootstrap_coverage_aware_pool_keeps_missing_anchor_beyond_100_candidate
 ) -> None:
     store = CoreStore(tmp_path / "bootstrap-coverage-aware-pool.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     shared = [
         _approve(store, key=f"shared-cobalt-{index}", content=f"cobalt filler{index}")
         for index in range(120)
@@ -504,6 +519,7 @@ def test_bootstrap_coverage_aware_pool_keeps_missing_anchor_beyond_100_candidate
 def test_bootstrap_union_keeps_authorization_and_lifecycle_filters(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "bootstrap-boundaries.sqlite3")
     store.initialize_vault("synthetic", "UTC")
+    register_synthetic_principal(store, READER)
     allowed = _approve(store, key="allowed", content="alpha beta")
     denied = _approve(
         store,

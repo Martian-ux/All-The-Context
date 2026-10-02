@@ -381,6 +381,8 @@ def test_machine_local_security_state_is_not_exported_or_restored(
 def test_export_table_policy_keeps_machine_local_security_tables_excluded() -> None:
     assert NON_PORTABLE_SECURITY_TABLES <= portable_export.EXCLUDED_TABLES
     assert {
+        "canonical_projects",
+        "principal_project_bindings",
         "client_registrations",
         "permission_grants",
         "remote_edge_clients",
@@ -988,7 +990,7 @@ def test_restore_rejects_extra_package_vault_with_split_barrier_binding(
         ("schema_version", 19.0),
         ("schema_version", "19"),
         ("schema_version", -1),
-        ("schema_version", 21),
+        ("schema_version", 22),
     ],
 )
 def test_restore_rejects_noncanonical_manifest_versions_before_destination_mutation(

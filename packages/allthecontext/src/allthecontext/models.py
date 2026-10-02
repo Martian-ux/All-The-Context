@@ -488,6 +488,15 @@ class ClientCreate(StrictModel):
     auto_approve: bool = False
 
 
+class CanonicalProjectRegistration(StrictModel):
+    anchor_record_id: StrictStr = Field(min_length=36, max_length=36)
+
+
+class PrincipalProjectBindingRegistration(StrictModel):
+    client_id: StrictStr = Field(min_length=1, max_length=200)
+    canonical_project_id: StrictStr = Field(min_length=36, max_length=36)
+
+
 _CLAUDE_CODE_MEMORY_KINDS = frozenset(
     {
         "constraint",

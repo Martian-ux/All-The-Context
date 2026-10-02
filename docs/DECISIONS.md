@@ -1,5 +1,19 @@
 # Architecture decisions
 
+## Derive project routing from immutable registered principal bindings (2026-10-02)
+
+Core issues stable keys from verified current project anchors and stores a
+one-way binding for narrow registered principals. Capture records transaction
+context before staging and reads its receipt from the committed event. Partition
+existing user slots by that key; require exact project membership for relevant
+and mandatory records and capsules. Preserve existing ACLs, formation grammar
+and completeness behavior. Keep unclassified/global legacy memory outside strict
+bound packs and label legacy routing explicitly. Schema 21 metadata is local
+security state, excluded from portable exports. Read `context:status` aggregates
+remain a separately granted vault-wide capability. This provides a routing
+primitive for later application setup, without activating live bindings or
+claiming best-in-class memory. See [scope](PROJECT_PRINCIPAL_BINDINGS.md).
+
 ## Record-delivery limits use fixed hook notices (2026-10-02)
 
 Preserve evidence selection and existing Core/API authority. Add one fixed,

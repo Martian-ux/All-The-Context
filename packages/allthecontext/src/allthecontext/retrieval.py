@@ -266,6 +266,31 @@ class CandidateRanker(Protocol):
 class EligibleRecordSelector:
     """Select the complete policy-safe set before any relevance operation."""
 
+    def __init__(self, store: CoreStore | None = None) -> None:
+        self.store = store
+
+    def _apply_project_binding(
+        self,
+        connection: sqlite3.Connection,
+        principal: ClientPrincipal | None,
+        conditions: list[str],
+        parameters: list[Any],
+    ) -> None:
+        if self.store is None:
+            return
+        from .project_binding import ProjectBindings
+
+        context = ProjectBindings(self.store).resolve_tx(connection, principal)
+        if context is not None:
+            conditions.extend(
+                [
+                    "EXISTS (SELECT 1 FROM json_each(r.scopes_json) p WHERE p.value=?)",
+                    "(SELECT COUNT(*) FROM json_each(r.scopes_json) p "
+                    "WHERE lower(substr(p.value,1,8))='project:')=1",
+                ]
+            )
+            parameters.append(context.project_scope)
+
     def select(
         self,
         connection: sqlite3.Connection,
@@ -285,6 +310,7 @@ class EligibleRecordSelector:
         ]
         parameters: list[Any] = [vault_id, now, now]
         self._apply_request_filters(request, conditions, parameters)
+        self._apply_project_binding(connection, principal, conditions, parameters)
         if request.scopes:
             placeholders = ",".join("?" for _ in request.scopes)
             conditions.append(
@@ -329,6 +355,7 @@ class EligibleRecordSelector:
         conditions = ["r.vault_id=?", "r.approval_status='approved'"]
         parameters: list[Any] = [vault_id]
         self._apply_request_filters(request, conditions, parameters)
+        self._apply_project_binding(connection, principal, conditions, parameters)
         if request.scopes:
             placeholders = ",".join("?" for _ in request.scopes)
             conditions.append(
@@ -1843,7 +1870,8 @@ class RetrievalEngine:
     ) -> None:
         self.store = store
         self.ranker = ranker or LexicalV3CandidateRanker()
-        self.selector = selector or EligibleRecordSelector()
+        self.selector = selector or EligibleRecordSelector(store)
+        self.selector.store = store
         self.compiler = compiler or ContextCompiler()
         self.temporal_sidecar = temporal_sidecar or TemporalSidecar(
             _temporal_sidecar_path(store.database_path)
@@ -2103,6 +2131,9 @@ class RetrievalEngine:
     def get(
         self, record_id: str, principal: ClientPrincipal | None = None
     ) -> ContextRecordOut | None:
+        from .project_binding import ProjectBindings
+
+        context = ProjectBindings(self.store).resolve(principal)
         try:
             record = self.store.get_record(record_id)
         except Exception as error:
@@ -2111,7 +2142,7 @@ class RetrievalEngine:
             if isinstance(error, NotFoundError):
                 return None
             raise
-        allowed = record_is_allowed(
+        allowed = (context is None or context.matches(record.scopes)) and record_is_allowed(
             principal,
             set(record.scopes),
             set(record.allowed_clients),

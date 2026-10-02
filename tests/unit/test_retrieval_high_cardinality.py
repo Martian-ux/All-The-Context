@@ -17,6 +17,8 @@ from allthecontext.security import ClientPrincipal
 from allthecontext.set_selection import DeterministicSetSelector
 from allthecontext.storage import CoreStore
 
+from bench.synthetic_principal import register_synthetic_principal
+
 _BUDGET = 4_000
 _PREFERENCE_COUNT = 77
 _RELEVANT_COUNT = 20
@@ -780,6 +782,7 @@ def test_bounded_search_only_materializes_complete_candidate_pool_ids(
     shutil.copyfile(high_cardinality_seed_database, database_path)
     store = CoreStore(database_path)
     principal = ClientPrincipal("reader", "Synthetic reader", frozenset({"context:read"}))
+    register_synthetic_principal(store, principal)
     engine = RetrievalEngine(store)
     request = SearchRequest(
         query="generic topic 00",
@@ -821,6 +824,7 @@ def test_high_cardinality_bootstrap_regression_has_no_policy_or_pack_violations(
         "Synthetic reader",
         frozenset({"context:read"}),
     )
+    register_synthetic_principal(store, principal)
     engine = RetrievalEngine(store)
     try:
         for query_index in range(_QUERY_COUNT):

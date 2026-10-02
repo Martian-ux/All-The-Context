@@ -1,5 +1,17 @@
 # Project status
 
+## 2026-10-02 - isolated principal project-binding candidate
+
+Opt-in Core-issued canonical identities and immutable principal bindings route
+capture, replay, record retrieval and capsules through the same exact project
+membership. Missing/revoked/stale/foreign required bindings fail closed. Schema
+21 retains explicit legacy behavior and excludes local binding authority from
+portable exports. Formation and completeness repairs remain separate. See
+[scope and validation](PROJECT_PRINCIPAL_BINDINGS.md). Independent scoped review
+found no remaining concrete runtime blocker; it did not execute tests. Static
+checks pass; final compatibility, broader and development receipts are pending.
+No installed-client bindings, release, merge or rollout has been performed.
+
 ## 2026-10-02 - bounded record-delivery status candidate
 
 New isolated branch from provenance-only `cc49f62d` adds fixed, record-scoped

@@ -222,6 +222,9 @@ class CoreCaptureService:
     def capture(self, request: CaptureEventRequest, principal: ClientPrincipal) -> dict[str, Any]:
         if not isinstance(principal, ClientPrincipal):
             raise CaptureError("capture_contract_invalid")
+        from .project_binding import ProjectBindings
+
+        ProjectBindings(self.store).resolve(principal)
         if contains_secret_like_value(request.content):
             receipt = self.store.refuse_direct_value(
                 request.content,
@@ -289,12 +292,18 @@ class CoreCaptureService:
             principal=principal,
             formed_candidate=formed_candidate,
         )
-        return {
+        capture_receipt: dict[str, Any] = {
             "ok": True,
             "status": "replayed" if replayed else "captured",
             "capture_event_id": durable_event_id,
             "observation_id": created.id,
         }
+        committed_binding = ProjectBindings(self.store).captured_receipt(
+            durable_event_id, principal.id
+        )
+        if committed_binding is not None:
+            capture_receipt["project_binding"] = committed_binding
+        return capture_receipt
 
 
 __all__ = ["CAPTURE_ROUTE", "CoreCaptureService"]

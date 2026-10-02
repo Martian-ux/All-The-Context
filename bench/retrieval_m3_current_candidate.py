@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 _LOCAL_SOURCE = _REPO_ROOT / "packages" / "allthecontext" / "src"
 if not (_LOCAL_SOURCE / "allthecontext" / "__init__.py").is_file():
     raise RuntimeError("current-candidate retrieval evaluation requires the repository source tree")
@@ -38,6 +40,7 @@ from allthecontext.models import BootstrapRequest, CandidateInput, SearchRequest
 from allthecontext.retrieval import RetrievalEngine
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
+from bench.synthetic_principal import register_synthetic_principal
 
 FIXTURES = Path(__file__).with_name("retrieval_m3_current_candidate_fixture.json")
 FIXTURE_SCHEMA = "atc.retrieval-m3-current-candidate.fixture.v1"
@@ -343,6 +346,7 @@ def _noise_specs(
 def _apply_case(
     store: CoreStore, fixture: Mapping[str, Any], case: Mapping[str, Any]
 ) -> dict[str, str]:
+    register_synthetic_principal(store, READER)
     records = _record_map(fixture)
     record_ids: dict[str, str] = {}
     specs: list[tuple[str, Mapping[str, Any]]] = [

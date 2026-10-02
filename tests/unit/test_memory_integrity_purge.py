@@ -116,7 +116,7 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             ),
         )
     store = CoreStore(database)
-    assert store.migrate() == 20
+    assert store.migrate() == 21
     with store.connect() as connection:
         primary_key = [
             str(row["name"])
@@ -229,7 +229,7 @@ def test_legacy_purge_tombstone_table_is_repaired_without_losing_rows(
             ("legacy-stable-id", vault_id, "record", "2026-09-04T00:00:00Z"),
         )
 
-    assert store.migrate() == 20
+    assert store.migrate() == 21
     with store.connect() as connection:
         row = connection.execute(
             "SELECT stable_id,vault_id,target_type FROM purge_tombstones"

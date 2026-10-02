@@ -15,6 +15,8 @@ from allthecontext.retrieval import RetrievalEngine
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
+from bench.synthetic_principal import register_synthetic_principal
+
 
 def _ingest_event(
     store: CoreStore,
@@ -64,6 +66,9 @@ def _ingest_event(
 
 
 def _search(store: CoreStore, scope: str) -> list[ContextRecordOut]:
+    register_synthetic_principal(
+        store, ClientPrincipal("synthetic-reader", "Synthetic reader", frozenset({"context:read"}))
+    )
     return (
         RetrievalEngine(store)
         .search(

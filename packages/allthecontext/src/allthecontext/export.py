@@ -34,9 +34,9 @@ from .storage import (
 
 MAGIC = b"ATCEXP1\x00"
 EXPORT_FORMAT_VERSION = 1
-# Version 0 is the pre-Core/minimal export shape.  Versions 1 through 20 are
+# Version 0 is the pre-Core/minimal export shape.  Versions 1 through 21 are
 # the current and retained legacy Core schemas represented by this checkout.
-SUPPORTED_SCHEMA_VERSIONS = frozenset(range(21))
+SUPPORTED_SCHEMA_VERSIONS = frozenset(range(22))
 SALT_SIZE = 16
 NONCE_SIZE = 12
 TAG_SIZE = 16
@@ -48,6 +48,8 @@ MAX_RESTORE_ENTRY_BYTES = 512 * 1024 * 1024
 # the ordinary data export policy.
 NON_PORTABLE_SECURITY_TABLES = frozenset(
     {
+        "canonical_projects",
+        "principal_project_bindings",
         "client_registrations",
         "permission_grants",
         "remote_edge_clients",
@@ -86,6 +88,8 @@ CAPTURE_RUNTIME_TABLES = frozenset(
 # below before it can silently introduce a destination-backed edge.
 PORTABLE_TABLE_INVENTORY = frozenset(
     {
+        "canonical_projects",
+        "principal_project_bindings",
         "archive_purge_barriers",
         "archive_source_less_purge_barriers",
         "audit_events",
@@ -121,6 +125,10 @@ PORTABLE_TABLE_INVENTORY = frozenset(
 # the target or because old schemas predate the column.
 PORTABLE_RELATIONAL_REFERENCE_INVENTORY = frozenset(
     {
+        ("canonical_projects", "vault_id", "vaults"),
+        ("principal_project_bindings", "vault_id", "vaults"),
+        ("principal_project_bindings", "client_id", "client_registrations"),
+        ("principal_project_bindings", "canonical_project_id", "canonical_projects"),
         ("archive_purge_barriers", "vault_id", "vaults"),
         ("archive_purge_barriers", "source_id", "source_records"),
         ("archive_source_less_purge_barriers", "vault_id", "vaults"),
@@ -807,7 +815,7 @@ def _manifest_schema_version(manifest: dict[str, Any]) -> int:
 
     raw_version = manifest.get("schema_version", 0)
     if type(raw_version) is not int or raw_version not in SUPPORTED_SCHEMA_VERSIONS:
-        raise ValueError("export schema version must be an integer from 0 through 20")
+        raise ValueError("export schema version must be an integer from 0 through 21")
     return raw_version
 
 

@@ -13,7 +13,7 @@ import threading
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, cast
@@ -4158,6 +4158,15 @@ class CoreStore:
                 )
             ):
                 raise InvalidStateError("capture principal is not registered for capture")
+            from .project_binding import ProjectBindings
+
+            project_context = ProjectBindings(self).resolve_tx(connection, registered)
+            core_payload = {
+                key: value for key, value in event.payload.items() if key != "project_binding"
+            }
+            if project_context is not None:
+                core_payload["project_binding"] = project_context.receipt()
+            event = replace(event, payload=core_payload)
             source_id = self.client_capture_source_id(registered.id)
             source = connection.execute(
                 "SELECT client_principal_id,provider,local_only,"
@@ -4248,7 +4257,9 @@ class CoreStore:
                     "source_service": "allthecontext-core",
                     "source_type": "client_capture",
                     "evidence": "Core-owned lifecycle capture observation",
-                    "scopes": [],
+                    "scopes": [project_context.project_scope]
+                    if project_context is not None
+                    else [],
                     "tags": [],
                     "confidence": 1.0,
                     "sensitivity": sensitivity,
@@ -4317,7 +4328,16 @@ class CoreStore:
                         "source_service": "allthecontext-core",
                         "source_type": "client_capture_formation",
                         "evidence": "Core-formed live user evidence from a direct user turn",
-                        "scopes": [],
+                        # Bound capture origin partitions the existing slot;
+                        # it does not classify a personal claim as project truth.
+                        "entity_key": (
+                            "user@project:" + project_context.canonical_project_id
+                            if project_context is not None
+                            else "user"
+                        ),
+                        "scopes": [project_context.project_scope]
+                        if project_context is not None
+                        else [],
                         "tags": [],
                         "confidence": 1.0,
                         "sensitivity": formed_sensitivity,
