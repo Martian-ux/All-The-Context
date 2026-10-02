@@ -4,8 +4,8 @@
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| Describe delivered evidence limits without claiming absent capsule/global memory or named unknown facets | `hook_context.py::bounded_reference_context`; fixed record-items notice; `test_hook_delivery_status.py` | Empty, forged/capsule, malformed, strict metadata, budget and request-error checks added. Final validation pending; no Core/API schema or authority changes |
-| Preserve complete provenance and actual cold response boundaries | `test_hook_delivery_status_core.py`; existing cold provenance/deletion regressions | Actual capsule-plus-empty, upstream budget and permission scenarios added; exact development and broad checks pending. Tiny-budget silence disclosed; installed clients/model unrun; holdout sealed |
+| Describe delivered evidence limits without claiming absent capsule/global memory or named unknown facets | `hook_context.py::bounded_reference_context`; fixed record-items notice; `test_hook_delivery_status.py`; runtime `2affdc7bd7711f1af471021c101c386700946e3c` | 171 focused checks pass; scoped review and static checks pass. Empty, forged/capsule, malformed, strict metadata, budget and staged client/request error coverage. No Core/API schema or authority changes; tiny-budget silence disclosed |
+| Preserve complete provenance and actual cold response boundaries | `test_hook_delivery_status_core.py`; existing cold provenance/deletion and stdio regressions | 3,541 broader passed/21 skipped/3 warnings, excluding sealed-holdout integrity and two native registry tests failing unchanged base with error 6801. Frozen development 4/14, zero operation failures, all outcomes and existing evidence unchanged; seven new uncited notices are not named-unknown credit. Installed clients/model unrun; holdout sealed; native/release gates unresolved |
 
 "Implemented" means exercised by repository tests. Protected-main CI and
 CodeQL evidence is credited only when bound to an exact SHA; exact artifact,

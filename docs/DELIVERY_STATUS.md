@@ -17,7 +17,7 @@ No query, source path, capsule content, denied IDs or exception text is copied.
 | `records_empty` | A successful record response returned no items. This does not assess any separate project capsule or establish absent global memory. |
 | `budget_omitted` | The renderer omitted a whole record for its output budget, or existing validated Core pack metadata explicitly reports budget omission. Retained record blocks remain complete. |
 | `malformed_response` | The returned record shape, optional pack metadata or JSON encoding is invalid or contradictory. No record text from that response is delivered. |
-| `retrieval_unavailable` | The hook could not obtain a usable response because connection, request, authorization or transport failed. It does not establish empty memory. |
+| `retrieval_unavailable` | The hook could not obtain a usable response because client setup, connection, request, authorization or transport failed. It does not establish empty memory. |
 
 Optional Core pack metadata is validated against the existing strict
 `ContextPackMetadata` model and actual returned item count. A budget reason must
@@ -42,3 +42,28 @@ Core/capsule/permission behavior. Existing provenance and deletion/replay
 assertions continue to check record evidence, with the fixed notice assessed
 separately. Frozen acceptance files/runner/grader/manifests remain unchanged;
 holdouts stay sealed. Installed clients and a reader model remain unrun.
+
+## Local validation and scope
+
+Reviewed runtime `2affdc7bd7711f1af471021c101c386700946e3c`: 171 focused
+tests pass, including actual cold Core/permission and synthetic stdio checks.
+The broader Python 3.14.3 run passes 3,541 tests with 21 skips and three warnings.
+It explicitly excludes the sealed-holdout integrity reader and the two native
+registry transaction tests that already reproduce Windows error 6801 on
+unchanged base. Ruff check/format, production and strict new-test mypy,
+documentation and whitespace checks pass. Scoped independent review found
+no remaining issue; it did not execute tests.
+
+The frozen development diagnostic remains 4/14 checkpoints passing, ten
+failing, with zero operation failures and deliberate CLI exit 1. All fourteen
+outcomes, failure details, retrieved evidence and existing delivered evidence
+match provenance-only `cc49f62d`. The unchanged adapter exposes seven additional
+generic notices as uncited delivered chunks; they do not become named unknown
+facets or acceptance credit. No post-score tuning or grader change was made.
+
+Initial synthetic cold tests exposed fixture trailing whitespace that existing
+Core normalization strips; the fixture input was normalized, not production
+behavior or evidence assertions. The first broader run exposed the existing
+stdio expectation for blank unavailable output; that test now asserts the
+fixed notice and retains the protocol/privacy checks. Historical failures and
+exact-revision receipts are preserved in the external delivery folder.

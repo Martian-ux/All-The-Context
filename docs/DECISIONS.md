@@ -6,12 +6,19 @@ Preserve evidence selection and existing Core/API authority. Add one fixed,
 record-items-only status block to the existing free-text hook output rather
 than inventing semantic unknown facets or expanding Core schemas. Successful
 empty results do not assess the separately returned project capsule; request
-errors are unavailable retrieval, not absence evidence. Existing strict pack
+errors are unavailable retrieval, not absence evidence. Client setup decoder
+failures remain unavailable; only returned-response decoding is malformed.
+Existing strict pack
 metadata can establish upstream budget omission only when consistent with
 returned counts and flags. Whole JSON record and notice blocks must fit;
 tiny budgets stay silent. Retain cold provenance and deletion/replay checks,
 and measure unchanged development diagnostics without post-score tuning.
-See `docs/DELIVERY_STATUS.md`.
+Reviewed runtime `2affdc7bd7711f1af471021c101c386700946e3c` passes 171
+focused and 3,541 broader tests with 21 skips and three explicit exclusions.
+Frozen development remains 4/14 with unchanged outcomes and existing evidence;
+generic uncited notices receive no named-unknown credit. This does not establish
+partial-context recovery, project isolation or reader-model behavior.
+See `docs/DELIVERY_STATUS.md` for receipts and limitations.
 
 ## 2026-10-02 - safe delivered record provenance
 

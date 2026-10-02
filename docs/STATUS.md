@@ -9,10 +9,18 @@ request states remain distinct. Separate project capsules are not assessed or
 forwarded by the notice. MCP interpretation uses only the existing response
 contract. No formation, retrieval/selector/project/admissibility/authority,
 API model, schema or service change. See `docs/DELIVERY_STATUS.md` for exact
-meanings and tiny-budget silence. Focused, cold, independent review, frozen
-development-only comparison and full applicable checks are being recorded.
-Other candidates remain frozen and separate; installed-client/model validation
-is unrun and holdouts remain sealed.
+meanings and tiny-budget silence. Reviewed runtime
+`2affdc7bd7711f1af471021c101c386700946e3c` passes 171 focused checks and
+3,541 broader tests with 21 skips and three warnings. Ruff check/format,
+production and strict new-test mypy, docs and whitespace checks pass; scoped
+independent review found no remaining issue. The broad run explicitly excludes
+the sealed-holdout integrity reader and two native registry tests already failing
+on unchanged base with Windows error 6801. Native/release gates remain unresolved.
+Frozen development diagnostics remain 4/14 passing, zero operation failures,
+with all checkpoint outcomes and existing evidence unchanged from provenance
+base. Seven added generic notices are uncited text, not named unknown-facet
+credit. Other candidates remain frozen and separate; installed-client/model
+validation is unrun and holdouts remain sealed.
 
 ## 2026-10-02 - delivered hook record references
 
