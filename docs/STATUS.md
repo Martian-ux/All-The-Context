@@ -1,5 +1,19 @@
 # Project status
 
+## 2026-10-02 - isolated project and preference composition
+
+Compose preserved project-binding `42f067d` with preference repair `e05904d6`.
+Preference guards now use transaction-resolved canonical partition and exact
+scope, retaining CAS, legacy, tombstone and access safeguards. No new schema or
+export authority change. All 146 focused checks pass, including 25 combined cases
+and synthetic transport through both actual hook helpers. Scoped independent
+review found no runtime blocker; strict mypy (120 files), Ruff, docs and whitespace
+checks pass. Broad validation and exact-source development comparison are pending
+at source freeze. See [contract and limits](PROJECT_PREFERENCE_COMPOSITION.md).
+Frozen evaluation objects remain unchanged; holdouts are sealed. Installed
+clients/model, restore-to-new-binding reconciliation and rollout remain unrun.
+The entries below record each standalone lane's historical evidence.
+
 ## 2026-10-02 - isolated principal project-binding candidate
 
 Opt-in Core-issued canonical identities and immutable principal bindings route
@@ -42,6 +56,57 @@ with all checkpoint outcomes and existing evidence unchanged from provenance
 base. Seven added generic notices are uncited text, not named unknown-facet
 credit. Other candidates remain frozen and separate; installed-client/model
 validation is unrun and holdouts remain sealed.
+## 2026-10-02 - preference collision and legacy compatibility repair
+
+Isolated implementation from personal-facets delivery `531217af`. Unknown
+response modifiers no longer inherit the style facet merely from a response
+noun. Bounded explicit style modifiers retain the existing desired contract;
+paragraph layout and explicit reply languages occupy separate facets. Unknown,
+negated, qualified and cross-facet correction meanings stay raw.
+
+For empty typed facets, classify each current or deleted generic legacy record
+from its own complete direct statement and matching structured value. Known
+unrelated legacy subjects no longer block formation. Matching subjects and
+unknown, inconsistent or non-personal legacy records keep the conservative
+guard. No legacy row, evidence, history or tombstone is migrated or rewritten.
+Expected-old comparison and capture remain inside the original transaction.
+New regressions include actual old-runtime public capture, upgrade/restart,
+deleted legacy replay and separate-store competing stale corrections.
+Validation and independent review receipts accompany this isolated candidate;
+frozen v1 and four holdouts remain unchanged and holdouts unopened. Project
+binding, installed-client validation and shipping are outside this repair.
+
+## 2026-10-02 - bounded personal preference facets candidate
+
+New isolated candidate from provenance-only `cc49f62d`; rejected composition
+and evidence-only `988ff07d` are preserved. Complete personal response style,
+layout, indentation, theme and beverage preferences use distinct facets and
+open values within bounded subject grammar. Natural same-facet old-to-new
+corrections bind current ID/version and compare the complete old value inside
+capture's existing transaction. They retain ordinary live authority, timestamps,
+source history and API permissions. Deleted, ambiguous, denied, scoped or
+cross-kind targets remain unmodified; refusal codes are fixed and content-free.
+At reviewed runtime commit `75df02580d595eaa33200f81c91cdc17f2cbe306`, all 61
+independent personal contract cases pass, including the original 16 unchanged
+desired assertions. The scoped run with existing cross-client checks passes
+63 tests with one absent-manager-input skip. Full applicable validation passes
+3,545 tests with 21 skips and three warnings, excluding the sealed-holdout
+integrity reader and the same two unchanged-base native registry error-6801
+tests as the separate provenance baseline. Ruff/format, production and strict
+test/bench mypy, documentation and diff checks pass. Independent review found no
+remaining concrete issue in this scope. The initial 3,541-pass/one-failure run
+is preserved: its cross-client duplicate regression was repaired by limiting
+predecessor binding metadata to explicit corrections, without changing the
+existing test. The unchanged frozen development diagnostic scores 3/14 with
+zero operation failures (base 2/14; provenance-only 4/14). Abstaining on a mixed
+personal/project turn loses a prior whole-turn preference pass; mixed claims,
+project decisions, unknowns and handoff remain gaps. No code was tuned after
+this measurement. This is bounded personal improvement, not broader product
+or release acceptance. See `docs/PERSONAL_PREFERENCE_FACETS.md` for exact scope
+and the legacy boundary: generic records/tombstones can block new typed facets,
+requiring separately authorized reformation. No schema/live migration, project
+formation, service change or deployment. Frozen cases are unchanged, holdouts
+sealed and installed-client/model validation unrun.
 
 ## 2026-10-02 - delivered hook record references
 

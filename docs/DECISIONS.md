@@ -1,5 +1,17 @@
 # Architecture decisions
 
+## Compose facets within registered project authority (2026-10-02)
+
+Use the project context resolved inside capture's existing transaction for
+personal preference guard lookup and exact-scope validation. Apply the same
+partition to typed current/tombstoned slots and generic legacy subject guards.
+Preserve expected-old CAS, ordinary reinforcement fingerprints, ACL/source/kind
+boundaries and legacy compatibility without granting broader authority or
+migrating memory. Schema 21 and non-portable local identity ownership stay with
+the project-binding lane. Both standalone candidates remain unchanged. See
+[composition](PROJECT_PREFERENCE_COMPOSITION.md); installed-client and
+restore identity reconciliation gates remain separate.
+
 ## Derive project routing from immutable registered principal bindings (2026-10-02)
 
 Core issues stable keys from verified current project anchors and stores a
@@ -39,6 +51,51 @@ Frozen development remains 4/14 with unchanged outcomes and existing evidence;
 generic uncited notices receive no named-unknown credit. This does not establish
 partial-context recovery, project isolation or reader-model behavior.
 See `docs/DELIVERY_STATUS.md` for receipts and limitations.
+## Bound response facets and legacy exclusion by subject (2026-10-02)
+
+The single-modifier response-noun fallback conflated independent layout and
+language preferences with style. Replace that fallback with bounded explicit
+modifier semantics, keeping the original desired-contract cases. Recognize
+paragraph layout and a bounded set of explicit reply languages separately.
+Unknown modifiers abstain; they do not authorize replacement of known style.
+
+A generic legacy row reserves an empty typed subject only when its original
+full statement and structured value identify that same subject. A safely
+identifiable unrelated subject may coexist with a new typed record. Unknown,
+qualified, inconsistent, inaccessible or non-personal legacy rows retain the
+conservative empty-slot guard. Include tombstones regardless of approval,
+but exclude superseded active legacy rows from current-truth checks. This is
+read-only compatibility classification, not migration or reformation. Matching
+legacy subjects remain guarded even when deleted, and old-event replay returns
+its original observation. Ordinary reconciliation, expected-old binding under
+the capture transaction, timestamps, evidence and permission boundaries remain
+unchanged. See `docs/PERSONAL_PREFERENCE_FACETS.md` for the current scope.
+
+## Personal facets and ordinary atomic corrections (2026-10-02)
+
+Separate bounded personal subjects instead of sharing generic `user/preference`
+or whitelisting style values. Core re-derives a formed preference from the bound
+user turn, then validates one allowed current kind/entity/facet/personal record
+and its exact predecessor under the existing capture write lock. Persist Core's
+ID/version binding only for explicit predecessor corrections; ordinary equivalent
+captures retain their fingerprint and can reinforce from another app even when
+delayed. Use ordinary live-evidence reconciliation; no privileged
+correction kind, explicitness or timestamp bypass. Refuse stale, ambiguous,
+deleted, scoped, denied and cross-kind targets with closed diagnostic codes.
+Legacy generic records are not automatically migrated or inferred from the next
+turn; affected users may need separately authorized reformation. This bounded
+candidate covers identifiable personal response/beverage/indent/theme grammar,
+not general English extraction or project authority. Independent source-selected
+desired-contract tests and transaction/lifecycle regressions, rather than tuning
+frozen acceptance phrases, define its behavior. See `docs/PERSONAL_PREFERENCE_FACETS.md`.
+
+Reviewed runtime `75df0258` passes all 61 independent personal cases and the
+3,545-test applicable suite with the existing sealed-holdout/native exclusions.
+Frozen development remains 3/14, versus 4/14 for provenance-only: rejection of
+mixed whole-turn preference evidence removes a prior project-content pass, and
+broader formation/unknown/handoff gaps remain. Preserve that measurement; do not
+tune or promote this bounded candidate as end-to-end acceptance. Delivery's
+subsequent documentation receipt leaves runtime/test blobs identical.
 
 ## 2026-10-02 - safe delivered record provenance
 

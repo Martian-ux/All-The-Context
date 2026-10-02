@@ -1,5 +1,13 @@
 # Requirements traceability
 
+### 2026-10-02 isolated project and preference composition
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Preserve project authority while personal facets coexist and correct | `storage.py::_personal_preference_binding_tx`; `record_client_capture`; `test_project_preference_composition.py` | Transaction-derived canonical partition and exact singleton scopes; no caller-selected authority. All 146 focused tests pass, including 25 new combined cases; broad checks pending at source freeze |
+| Preserve CAS, legacy subject guards, tombstones and boundaries per partition | Same combined test module plus unchanged personal and binding suites | A/B independent facets, competing same-predecessor corrections, legacy history, scope/source/ACL/kind, replay/restart/revocation and actual old bound runtime upgrade are synthetic regression targets |
+| Preserve schema/export and truthful acceptance boundaries | `docs/PROJECT_PREFERENCE_COMPOSITION.md`; unchanged migration/export and frozen artifacts | No additional migration; local bindings remain non-portable. Holdouts sealed, installed clients/model and restore-to-new-binding correction unrun. Development comparison pending, no rollout claim |
+
 ### 2026-10-02 immutable principal project routing
 
 | Requirement | Implementation/evidence | Status |
@@ -14,6 +22,23 @@
 |---|---|---|
 | Describe delivered evidence limits without claiming absent capsule/global memory or named unknown facets | `hook_context.py::bounded_reference_context`; fixed record-items notice; `test_hook_delivery_status.py`; runtime `2affdc7bd7711f1af471021c101c386700946e3c` | 171 focused checks pass; scoped review and static checks pass. Empty, forged/capsule, malformed, strict metadata, budget and staged client/request error coverage. No Core/API schema or authority changes; tiny-budget silence disclosed |
 | Preserve complete provenance and actual cold response boundaries | `test_hook_delivery_status_core.py`; existing cold provenance/deletion and stdio regressions | 3,541 broader passed/21 skipped/3 warnings, excluding sealed-holdout integrity and two native registry tests failing unchanged base with error 6801. Frozen development 4/14, zero operation failures, all outcomes and existing evidence unchanged; seven new uncited notices are not named-unknown credit. Installed clients/model unrun; holdout sealed; native/release gates unresolved |
+### 2026-10-02 preference collision and legacy compatibility repair
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Independent paragraph layout and reply language preserve style | `memory_policy.py::_preference_attribute`; `test_preference_collision_recovery.py` | Bounded positive facet semantics replace unknown-modifier fallback; negation, qualification and cross-facet corrections abstain. Original 16 desired assertions preserved |
+| Legacy compatibility without guessing meanings or reviving tombstones | `storage.py::_personal_preference_binding_tx`; actual `cc49f62d` runtime public-capture upgrade tests | Known unrelated legacy subjects permit empty typed facets; matching, unknown and inconsistent subjects remain guarded. Legacy records/history/tombstones unchanged across capture, replay and cold restart |
+| Expected-old transaction atomicity and unrelated-facet preservation | Existing personal contract plus new separate-Core/store race | One competing correction applies and one stays stale; replay adds no version; independent layout/language records remain at version 1 |
+| Preserve evaluation boundaries | Unchanged frozen v1 objects and development-only comparison receipts | Four holdouts unopened; no live app bindings, credentials, memory, installed services, permissions, publishing or project-binding edits |
+
+### 2026-10-02 personal facet candidate
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Useful complete personal preferences coexist without an adjective value whitelist | `memory_policy.py::_preference_attribute`; `test_personal_preference_contract.py` | All 61 independent personal cases pass at reviewed runtime `75df0258`, including 16 unchanged desired assertions; open response/beverage values in bounded subject grammar. Review-driven layout/encoding abstention and coexistence regressions pass |
+| Natural corrections respect current predecessor, concurrency, normal authority and lifecycle | `storage.py::_personal_preference_binding_tx`; capture transaction; same test module | Exact old-value and Core-owned ID/version binding only on explicit corrections; ordinary equivalent cross-client captures retain their fingerprint. Delayed/concurrent/replay/deletion/boundary and unchanged cross-client regressions pass; full applicable 3,545 passed/21 skipped with sealed-holdout and known native exclusions |
+| Preserve ownership and disclose legacy compatibility rather than silently migrating | `docs/PERSONAL_PREFERENCE_FACETS.md`; legacy active/tombstone and existing typed-slot tests | No new API permission or schema/live migration. Legacy generic records can block new typed facets. Frozen/held-out and installed-client validation boundaries unchanged |
+| Preserve diagnostic failures rather than tune frozen acceptance | Unchanged `bench/memory_acceptance.py` and v1 development fixtures | 3/14, zero operation failures; preserved base 2/14 and provenance-only 4/14. Mixed claims, decisions, unknowns and handoff remain gaps. No post-measurement code or fixture tuning; holdout sealed |
 
 "Implemented" means exercised by repository tests. Protected-main CI and
 CodeQL evidence is credited only when bound to an exact SHA; exact artifact,

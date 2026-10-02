@@ -16,10 +16,14 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .config import MAX_IMPORT_BYTES
 from .ids import new_id, utc_now
+
+if TYPE_CHECKING:
+    from .project_binding import ResolvedProjectContext
+
 from .memory_policy import (
     AUTOMATIC_POLICY_VERSION,
     REGISTERED_SOURCE_TYPE,
@@ -31,6 +35,7 @@ from .memory_policy import (
     archive_import_identity,
     archive_lineage_key,
     classify_sensitivity,
+    extract_live_user_claim,
     normalize_imported_text,
     normalized_import_candidate_key,
     normalized_import_identity_reference,
@@ -288,6 +293,18 @@ def _canonical_reason(reason: str | None, default: str = "record_state_changed")
         "source_deleted": "source_deleted",
         "source_restored": "source_restored",
         "record_corrected": "record_corrected",
+        "personal preference slot is deleted or ambiguous": "personal_preference_slot_blocked",
+        "personal preference predecessor is not current": "personal_preference_no_predecessor",
+        "personal preference predecessor does not match current value": "personal_preference_stale",
+        "personal preference target is not allowed personal context": (
+            "personal_preference_boundary"
+        ),
+        "legacy generic preference prevents safe facet assignment": "personal_preference_legacy",
+        "personal_preference_slot_blocked": "personal_preference_slot_blocked",
+        "personal_preference_no_predecessor": "personal_preference_no_predecessor",
+        "personal_preference_stale": "personal_preference_stale",
+        "personal_preference_boundary": "personal_preference_boundary",
+        "personal_preference_legacy": "personal_preference_legacy",
         "explicit user forget request": "record_deleted",
         (
             "matching archive evidence was blocked by an explicit deletion; "
@@ -889,7 +906,10 @@ class CoreStore:
             "decision_reason=CASE WHEN decision_reason IS NULL THEN NULL "
             "WHEN lower(decision_reason) IN "
             "('explicit_user_statement_witness_required','observation_reinforced',"
-            "'observation_corroborated','candidate_approved','candidate_rejected') "
+            "'observation_corroborated','candidate_approved','candidate_rejected',"
+            "'personal_preference_slot_blocked','personal_preference_no_predecessor',"
+            "'personal_preference_stale','personal_preference_boundary',"
+            "'personal_preference_legacy') "
             "THEN lower(decision_reason) ELSE 'observation_decision' END"
         )
         audit_rows = connection.execute(
@@ -4128,6 +4148,102 @@ class CoreStore:
             idempotency_key=request.idempotency_key + ":formed",
         )
 
+    def _personal_preference_binding_tx(
+        self,
+        connection: sqlite3.Connection,
+        claim: LiveUserClaim,
+        principal: ClientPrincipal,
+        *,
+        project_context: ResolvedProjectContext | None,
+    ) -> tuple[str | None, dict[str, str]]:
+        """Bind one preference to current personal truth under the capture write lock.
+
+        This is a precondition, not authority. Ordinary reconciliation still
+        checks timestamps/explicitness. No legacy record or tombstone is migrated.
+        The partition and exact scope come only from transaction-resolved Core
+        authority; global and other-project rows cannot become predecessors.
+        """
+
+        entity_key = (
+            "user@project:" + project_context.canonical_project_id
+            if project_context is not None
+            else "user"
+        )
+        expected_scopes = [project_context.project_scope] if project_context is not None else []
+        rows = connection.execute(
+            "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+            "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM context_records newer "
+            "WHERE newer.supersedes=context_records.id "
+            "AND newer.approval_status='approved' AND newer.deleted_at IS NULL) LIMIT 2",
+            (self.vault_id(), entity_key, claim.attribute_key),
+        ).fetchall()
+        deleted = connection.execute(
+            "SELECT 1 FROM context_records WHERE vault_id=? AND entity_key=? "
+            "AND attribute_key=? AND deleted_at IS NOT NULL LIMIT 1",
+            (self.vault_id(), entity_key, claim.attribute_key),
+        ).fetchone()
+        if deleted is not None or len(rows) > 1:
+            return "personal preference slot is deleted or ambiguous", {}
+        expected_old = claim.structured_value.get("expected_old_value")
+        if not rows:
+            if expected_old is not None:
+                return "personal preference predecessor is not current", {}
+            legacy_rows = connection.execute(
+                "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+                "AND attribute_key='preference' "
+                "AND (deleted_at IS NOT NULL OR (approval_status='approved' "
+                "AND NOT EXISTS (SELECT 1 FROM context_records newer "
+                "WHERE newer.supersedes=context_records.id "
+                "AND newer.approval_status='approved' AND newer.deleted_at IS NULL)))",
+                (self.vault_id(), entity_key),
+            ).fetchall()
+            for legacy in legacy_rows:
+                # Classify the old statement itself, never the incoming turn.
+                # Unknown/qualified/inconsistent legacy meanings remain blocked.
+                # Known unrelated subjects, including their tombstones, do not
+                # reserve every personal facet. No old row is modified or copied.
+                legacy_claim = extract_live_user_claim(str(legacy["content"]))
+                structured = _loads(legacy["structured_value_json"], {})
+                value = structured.get("value") if isinstance(structured, dict) else None
+                if (
+                    str(legacy["kind"]).casefold() != "interaction_preference"
+                    or legacy["source_id"] is not None
+                    or _loads(legacy["scopes_json"], []) != expected_scopes
+                    or not self._record_is_allowed(legacy, principal)
+                    or legacy_claim is None
+                    or legacy_claim.kind != "interaction_preference"
+                    or "expected_old_value" in legacy_claim.structured_value
+                    or not isinstance(value, str)
+                    or normalized_observation_text(value)
+                    != normalized_observation_text(legacy_claim.value)
+                    or legacy_claim.attribute_key == claim.attribute_key
+                ):
+                    return "legacy generic preference prevents safe facet assignment", {}
+            return None, {}
+        target = rows[0]
+        if (
+            str(target["kind"]).casefold() != "interaction_preference"
+            or target["source_id"] is not None
+            or _loads(target["scopes_json"], []) != expected_scopes
+            or not self._record_is_allowed(target, principal)
+        ):
+            return "personal preference target is not allowed personal context", {}
+        if expected_old is None:
+            # Keep ordinary equivalent turns semantically identical so another
+            # capture client can reinforce them, including delayed evidence.
+            return None, {}
+        structured = _loads(target["structured_value_json"], {})
+        value = structured.get("value") if isinstance(structured, dict) else None
+        if not isinstance(value, str) or normalized_observation_text(
+            value
+        ) != normalized_observation_text(expected_old):
+            return "personal preference predecessor does not match current value", {}
+        return None, {
+            "expected_record_id": str(target["id"]),
+            "expected_record_version": str(target["version"]),
+        }
+
     def record_client_capture(
         self,
         *,
@@ -4357,6 +4473,31 @@ class CoreStore:
                         ),
                     }
                 )
+                preference_rejection = None
+                if core_formed_candidate.kind == "interaction_preference":
+                    # Re-derive inside the transaction from the actual bound
+                    # turn. Caller-provided metadata cannot forge a predecessor.
+                    claim = extract_live_user_claim(content)
+                    if (
+                        claim is None
+                        or claim.kind != "interaction_preference"
+                        or claim.attribute_key != core_formed_candidate.attribute_key
+                        or claim.content != core_formed_candidate.content
+                    ):
+                        raise InvalidStateError("formed personal preference does not match capture")
+                    preference_rejection, binding = self._personal_preference_binding_tx(
+                        connection, claim, registered, project_context=project_context
+                    )
+                    core_formed_candidate = core_formed_candidate.model_copy(
+                        update={
+                            "structured_value": {
+                                "capture_role": "user",
+                                "formation": "live-user-evidence-v1",
+                                **claim.structured_value,
+                                **binding,
+                            }
+                        }
+                    )
                 formed_id = self._insert_candidate(
                     connection,
                     core_formed_candidate,
@@ -4366,13 +4507,31 @@ class CoreStore:
                     capture_event_id=event_id,
                     capture_binding_hash=binding_hash,
                 )
-                created = self._evaluate_observation_tx(
-                    connection,
-                    formed_id,
-                    origin=ObservationOrigin.LIVE_USER_EVIDENCE,
-                    actor=registered.id,
-                    principal=registered,
-                )
+                if preference_rejection is None:
+                    created = self._evaluate_observation_tx(
+                        connection,
+                        formed_id,
+                        origin=ObservationOrigin.LIVE_USER_EVIDENCE,
+                        actor=registered.id,
+                        principal=registered,
+                    )
+                else:
+                    self._set_observation_decision_tx(
+                        connection,
+                        formed_id,
+                        disposition=ObservationDisposition.TENTATIVE,
+                        reason=preference_rejection,
+                        policy_version=AUTOMATIC_POLICY_VERSION,
+                        origin=ObservationOrigin.LIVE_USER_EVIDENCE,
+                        actor=registered.id,
+                    )
+                    self._audit(connection, registered.id, "observation_tentative", [])
+                    self._recompute_integrity(connection)
+                    formed_row = connection.execute(
+                        "SELECT * FROM context_candidates WHERE id=?", (formed_id,)
+                    ).fetchone()
+                    assert formed_row is not None
+                    created = self._candidate_out(formed_row)
             receipt = "capture-observation-" + _hash_text(f"{source_id}\0{event_id}")
             connection.execute(
                 "UPDATE capture_events SET status='applied',application_receipt=?,"
@@ -5134,7 +5293,8 @@ class CoreStore:
             else:
                 cursor = connection.execute(
                     "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
-                    "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+                    "AND attribute_key=? AND (?=0 OR lower(kind)=?) "
+                    "AND approval_status='approved' AND deleted_at IS NULL "
                     "AND NOT EXISTS (SELECT 1 FROM context_records newer "
                     "WHERE newer.supersedes=context_records.id "
                     "AND newer.approval_status='approved' AND newer.deleted_at IS NULL) "
@@ -5143,6 +5303,11 @@ class CoreStore:
                         observation["vault_id"],
                         entity_key,
                         attribute_key,
+                        int(
+                            origin == ObservationOrigin.LIVE_USER_EVIDENCE
+                            and str(observation["kind"]).casefold() == "interaction_preference"
+                        ),
+                        str(observation["kind"]).casefold(),
                         _MAX_OBSERVATION_CANDIDATES + 1,
                     ),
                 )
