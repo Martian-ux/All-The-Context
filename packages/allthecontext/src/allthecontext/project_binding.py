@@ -184,7 +184,18 @@ class ProjectBindings:
             "SELECT * FROM client_registrations WHERE id=? AND vault_id=?",
             (principal.id, self.store.vault_id()),
         ).fetchone()
-        if client is None or client["revoked_at"] is not None:
+        if client is None:
+            # Existing Core-approved remote identities have a separate local
+            # registry. They remain explicitly legacy, never project-bound.
+            # A claimed Edge prefix, name or scopes alone is no authority.
+            remote = connection.execute(
+                "SELECT 1 FROM remote_edge_clients WHERE id=? AND revoked_at IS NULL",
+                (principal.id,),
+            ).fetchone()
+            if principal.id.startswith("edge:") and remote is not None:
+                return None
+            raise ProjectBindingError()
+        if client["revoked_at"] is not None:
             raise ProjectBindingError()
         binding = connection.execute(
             "SELECT * FROM principal_project_bindings WHERE client_id=?", (principal.id,)

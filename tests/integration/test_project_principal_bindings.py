@@ -593,3 +593,24 @@ def test_schema_twenty_migration_preserves_explicit_legacy_clients(
             ).fetchone()[0]
             == 0
         )
+
+
+def test_only_current_core_approved_remote_identity_retains_legacy_behavior(
+    fixture: Fixture, tmp_path: Path
+) -> None:
+    bindings = ProjectBindings(fixture.core.store)
+    principal = fixture.core.store.approve_remote_edge_client(
+        "edge:synthetic-remote", name="Synthetic remote", scopes=["context:read"]
+    )
+    assert bindings.resolve(principal) is None
+    with pytest.raises(ProjectBindingError):
+        bindings.register_client(principal.id, fixture.projects["borealis"])
+    with pytest.raises(ProjectBindingError):
+        bindings.resolve(ClientPrincipal("edge:unapproved", "Forged", frozenset({"*"})))
+    foreign = CoreStore(tmp_path / "foreign-remote.sqlite3")
+    foreign.initialize_vault()
+    with pytest.raises(ProjectBindingError):
+        ProjectBindings(foreign).resolve(principal)
+    fixture.core.store.revoke_remote_edge_client(principal.id)
+    with pytest.raises(ProjectBindingError):
+        bindings.resolve(principal)

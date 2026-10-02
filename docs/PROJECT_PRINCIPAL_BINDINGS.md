@@ -58,6 +58,9 @@ Legacy clients report `state: legacy_unbound` and retain their previous behavior
 legacy capture keeps its previous response shape. Internal Core/importer calls
 without a principal retain their existing authority. Unregistered principal
 objects do not create a legacy exception.
+Existing remote Edge identities use their separate Core approval registry and
+remain explicitly legacy. They cannot use the new local-principal binding API;
+unapproved, foreign or revoked remote identities fail closed.
 
 ## Migration, portability and limits
 
@@ -74,6 +77,10 @@ revocation guarantee. There is no binding repair/refresh, anchor reassignment,
 project merge, import-to-identity mapping, application registration wizard or
 global-personal-memory policy in this slice. Existing source rebuild semantics
 are retained; a missing anchor fails closed rather than authorizing a substitute.
+Recreating bindings after restore also needs explicit identity/slot reconciliation:
+formed records retain their prior canonical-key partition, while a fresh local
+registration issues a new key. Restore-to-new-binding correction is unsupported
+and unrun; the portability test proves data retention without access authority.
 
 ## Validation
 
