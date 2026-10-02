@@ -294,14 +294,25 @@ def test_immutability_is_enforced_by_database(fixture: Fixture) -> None:
         )
 
 
-def test_existing_completeness_gate_remains_and_empty_records_do_not_mean_empty_capsule(
+def test_bound_partial_records_preserve_unbound_completeness_and_capsule(
     fixture: Fixture,
 ) -> None:
     reader, _ = fixture.principal("borealis", ["context:read"])
     result = fixture.bootstrap(reader, "borealis storage rollback")
-    assert result["items"] == []
+    assert result["items"]
+    assert all(item["scopes"] == ["project:borealis"] for item in result["items"])
+    assert any(item["content"] == "borealis storage uses SQLite" for item in result["items"])
     assert result["project_context"]["outcome"] == "activated"
     assert "SQLite" in json.dumps(result["project_context"])
+    unbound, _ = fixture.principal(None, ["context:read"])
+    assert fixture.bootstrap(unbound, "borealis storage rollback")["items"] == []
+    # Empty record selection still does not erase separately activated capsule context.
+    disjoint = fixture.bootstrap(
+        reader, "borealis storage rollback", requested_scopes=["project:cedar"]
+    )
+    assert disjoint["items"] == []
+    assert disjoint["project_context"]["outcome"] == "activated"
+    assert "SQLite" in json.dumps(disjoint["project_context"])
 
 
 @pytest.mark.parametrize("app", ["codex", "claude"])

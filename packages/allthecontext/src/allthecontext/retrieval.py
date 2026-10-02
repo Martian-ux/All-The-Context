@@ -2187,8 +2187,26 @@ class RetrievalEngine:
         )
         mandatory_ids = {item.id for item in mandatory_search.items}
         relevant_items = [item for item in relevant_search.items if item.id not in mandatory_ids]
-        if bootstrap_anchors and not bootstrap_anchors <= _content_anchor_union(
-            relevant_items, bootstrap_anchors
+        # Only the standard bounded, admitted pipeline with the Core selector
+        # proves project isolation. Hints/requested scopes never authorize a
+        # partial pack, and frozen/alternate retrieval keeps its old contract.
+        allow_partial = False
+        if (
+            not self._frozen_pipeline
+            and type(self.selector) is EligibleRecordSelector
+            and self.selector.store is self.store
+            and type(self.ranker) is LexicalV3CandidateRanker
+        ):
+            from .project_binding import ProjectBindings
+
+            context = ProjectBindings(self.store).resolve(principal)
+            allow_partial = context is not None and all(
+                context.matches(item.scopes) for item in (*mandatory_search.items, *relevant_items)
+            )
+        if (
+            bootstrap_anchors
+            and not allow_partial
+            and not bootstrap_anchors <= _content_anchor_union(relevant_items, bootstrap_anchors)
         ):
             # A broad pack is useful only when its independently useful records
             # jointly cover every topical anchor. Mandatory preferences remain
@@ -2223,7 +2241,7 @@ class RetrievalEngine:
                 )
             ),
         )
-        if bootstrap_anchors and relevant_ids:
+        if bootstrap_anchors and relevant_ids and not allow_partial:
             selected_relevant = [item for item in selected if item.id in relevant_ids]
             if not bootstrap_anchors <= _content_anchor_union(selected_relevant, bootstrap_anchors):
                 # Never return a partial task pack when budget, duplicate, or
