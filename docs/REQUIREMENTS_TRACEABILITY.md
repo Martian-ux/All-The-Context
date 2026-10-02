@@ -4,9 +4,9 @@
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| Preserve project authority while personal facets coexist and correct | `storage.py::_personal_preference_binding_tx`; `record_client_capture`; `test_project_preference_composition.py` | Transaction-derived canonical partition and exact singleton scopes; no caller-selected authority. All 146 focused tests pass, including 25 new combined cases; broad checks pending at source freeze |
+| Preserve project authority while personal facets coexist and correct | `storage.py::_personal_preference_binding_tx`; `record_client_capture`; `test_project_preference_composition.py` | Transaction-derived canonical partition and exact singleton scopes; no caller-selected authority. All 146 focused tests pass, including 25 new combined cases. Strict mypy120/Ruff/docs/whitespace pass; scoped review has no runtime blocker |
 | Preserve CAS, legacy subject guards, tombstones and boundaries per partition | Same combined test module plus unchanged personal and binding suites | A/B independent facets, competing same-predecessor corrections, legacy history, scope/source/ACL/kind, replay/restart/revocation and actual old bound runtime upgrade are synthetic regression targets |
-| Preserve schema/export and truthful acceptance boundaries | `docs/PROJECT_PREFERENCE_COMPOSITION.md`; unchanged migration/export and frozen artifacts | No additional migration; local bindings remain non-portable. Holdouts sealed, installed clients/model and restore-to-new-binding correction unrun. Development comparison pending, no rollout claim |
+| Preserve schema/export and truthful acceptance boundaries | `docs/PROJECT_PREFERENCE_COMPOSITION.md`; unchanged migration/export and frozen artifacts | No additional migration; local bindings remain non-portable. Complete broad selected-ID coverage: 3,685 passed/2 failed/21 skipped. Two inherited compound-formation fixture failures keep broad gate FAILING. Development3/14 matches preference, regresses binding4/14; holdouts sealed, installed clients/model and restore-to-new-binding correction unrun; no rollout |
 
 ### 2026-10-02 immutable principal project routing
 

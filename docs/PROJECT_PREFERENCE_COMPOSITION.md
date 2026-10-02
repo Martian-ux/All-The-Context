@@ -48,9 +48,32 @@ The final focused run passes 146 tests, including all 25 combined adversarial
 cases and both actual hook helpers over synthetic transport. Strict mypy passes
 production, the shared helper and all four relevant test modules (120 files).
 Ruff check/format, docs and whitespace checks pass. Scoped independent review
-found no runtime blocker and did not run tests. Broad validation and exact-source
-development comparison are pending at initial source freeze; final receipts
-record outcomes.
+found no runtime blocker and did not run tests. Tested runtime source is
+`27a855f8ae3321c602ab8390bdfeb78677a5c15f`; the final validation commit changes
+documentation only. Packages, tests and benchmarks retain that exact source.
+
+The broader applicable run covers all 3,708 selected test IDs exactly once:
+39 specification checks run serially, followed by 3,669 parallel tests. Total
+result is **3,685 passed, 2 failed, 21 skipped**, with three warnings. The two
+failures are Codex/Claude variants of
+`test_core_budget_omission_and_complete_provenance_survive_cold_new_reader` in
+`tests/integration/test_hook_delivery_status_core.py`. Its fixture assumes a
+long mixed preference/deployment turn forms automatically. The bounded preference
+grammar leaves that compound turn raw, so `record_id` is absent before budget
+or provenance checks can run. Both tests pass on unchanged binding `42f067d`
+and fail on unchanged preference `e05904d6` with the byte-identical fixture
+(SHA-256 `38637adff1eb9376cf9d380fe59ab77d467cc671a8e93312ec8dc7c96238b8ac`).
+This compatibility gate remains **FAILING**. No existing assertion, fixture or
+formation authority is changed to manufacture a passing composition.
+
+Frozen development is **3/14**, zero operation failures and expected exit 1.
+All checkpoint outcomes, failure details and retrieved observations match
+preference `e05904d6`. Compared with the binding lane's 4/14, D01-project changes
+from passing to missing the offline database decision at retrieve and compile.
+D01-personal remains failing, with missing response style replacing forbidden
+project influence. Other categories are unchanged. The composed delivery layer
+adds seven existing generic notices; they receive no named unknown-facet credit.
+The category table and exact report comparisons accompany the local receipts.
 The frozen runner, adapter, grader and fixtures are unchanged. Only development
 cases may run. The adapter does not activate opt-in bindings, so its categories
 are regression diagnostics rather than a combined project-isolation acceptance
@@ -78,3 +101,11 @@ claims and decisions, partial/unknown recall with provenance, and installed
 cross-app delivery without a routine approval inbox or manual curation. This
 composition addresses preference coexistence/correction and project isolation;
 it does not establish that complete everyday memory loop.
+
+Before a combined broad gate can close, reconcile delivery-only fixture setup
+with the approved compound-turn abstention contract while retaining a separate
+negative capture check and the frozen mixed-claim failures. That is a pending
+test-contract decision, not permission to relax formation. Natural multi-claim
+capture needs its own memory-engine work and acceptance evidence. Both original
+candidates, the broad failure receipts and the unresolved compatibility gate
+remain preserved; local composition does not authorize rollout.

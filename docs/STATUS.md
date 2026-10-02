@@ -8,8 +8,16 @@ scope, retaining CAS, legacy, tombstone and access safeguards. No new schema or
 export authority change. All 146 focused checks pass, including 25 combined cases
 and synthetic transport through both actual hook helpers. Scoped independent
 review found no runtime blocker; strict mypy (120 files), Ruff, docs and whitespace
-checks pass. Broad validation and exact-source development comparison are pending
-at source freeze. See [contract and limits](PROJECT_PREFERENCE_COMPOSITION.md).
+checks pass. Runtime `27a855f8ae3321c602ab8390bdfeb78677a5c15f` has complete
+3,708 selected-test coverage: **3,685 passed, 2 failed, 21 skipped**. Both failures
+are inherited delivery-budget fixtures that expect automatic formation of a long
+compound preference/deployment turn; byte-identical attribution passes binding
+`42f067d` and fails preference `e05904d6`. The combined broad gate is **FAILING**;
+assertions and formation authority are preserved. Frozen development is **3/14**,
+zero operation failures, matching preference outcomes and retrieved observations.
+The binding lane's mixed-project checkpoint loses credit (4/14 to 3/14).
+Final validation documentation preserves the exact runtime/tests/bench source.
+See [contract, category evidence and limits](PROJECT_PREFERENCE_COMPOSITION.md).
 Frozen evaluation objects remain unchanged; holdouts are sealed. Installed
 clients/model, restore-to-new-binding reconciliation and rollout remain unrun.
 The entries below record each standalone lane's historical evidence.

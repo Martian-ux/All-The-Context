@@ -12,6 +12,15 @@ the project-binding lane. Both standalone candidates remain unchanged. See
 [composition](PROJECT_PREFERENCE_COMPOSITION.md); installed-client and
 restore identity reconciliation gates remain separate.
 
+Preserve the bounded preference lane's compound-turn abstention when it conflicts
+with delivery-budget fixture setup. Exact runtime `27a855f` passes all 146 focused
+tests but its broader gate has two failures on that old formation assumption;
+standalone candidate attribution confirms the conflict. Do not relax formation
+or weaken the fixture assertion within this composition. Retain development
+3/14 and the mixed-decision regression from the binding lane's 4/14. A separate
+test-contract decision can give delivery checks legitimately formed fixture state
+while retaining compound-capture negative coverage and frozen quality failures.
+
 ## Derive project routing from immutable registered principal bindings (2026-10-02)
 
 Core issues stable keys from verified current project anchors and stores a
