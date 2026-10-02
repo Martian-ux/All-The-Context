@@ -17,6 +17,17 @@ unrun and holdouts sealed. See
 [contract proof and coverage](DELIVERY_FIXTURE_COMPATIBILITY.md). The earlier
 composition failure and standalone lane results below remain historical evidence.
 
+## 2026-10-02 - bounded project decision policy lane
+
+Added a pure Core-only planner for complete affirmative current-project technical
+choices and a same-scope source/predecessor guard. Whole-turn abstention preserves
+uncertainty, negation, attribution, mixed turns, history and outcomes as evidence.
+Corrections require exact old values and newer capture chronology, including ABA
+protection. Existing binding authority, personal facets and storage admission are
+unchanged. See [design and parent integration contract](PROJECT_DECISION_FORMATION.md).
+Storage/capture integration and final runtime acceptance are pending parent gates;
+the known two mixed-turn delivery-budget failures remain explicit.
+
 ## 2026-10-02 - isolated project and preference composition
 
 Compose preserved project-binding `42f067d` with preference repair `e05904d6`.
