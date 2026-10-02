@@ -85,7 +85,7 @@ and unrun; the portability test proves data retention without access authority.
 ## Validation
 
 Validation uses disposable synthetic vaults and in-process authenticated HTTP.
-The new integration tests cover equal labels/distinct identities, immutable
+The 36 new integration cases cover equal labels/distinct identities, immutable
 receipts, mandatory preferences, capsule and direct-route isolation, caller
 metadata rejection, capture transaction races, revoked/missing/stale/foreign
 authority, same-slot captures in two projects, replay, cold Core deletion,
@@ -97,5 +97,21 @@ Existing synthetic retrieval fixtures now register their preexisting reader
 IDs so new fail-closed registration checks do not create a test-only authority
 exception. Fixture texts, ACL identities, expected results and the frozen v1
 acceptance adapter/runner/grader remain unchanged. Holdout execution and its
-integrity-only reader are excluded. Exact validation receipts will accompany
-the local delivery; broader and frozen-development results are pending.
+integrity-only reader are excluded. Corrected runtime
+`01e1f5cfe514b314fd302992a2b9efd73a11ac1c` passes 78 targeted checks,
+including all 36 new cases, and 3,577 broader tests with 21 skips and three
+warnings. The broad run explicitly excludes the sealed-holdout integrity reader
+and two native registry tests previously reproduced failing unchanged base with
+Windows error 6801. The first broad run found an approved-Edge compatibility gap
+and an unregistered experimental viewer, both corrected in this runtime. Scoped
+independent review is closed without a concrete blocker and did not run tests.
+Ruff check/format, production plus strict new-test/helper mypy (117 files),
+documentation and whitespace checks pass on the tested source.
+
+The exact-runtime frozen development diagnostic remains 4/14 with zero operation
+failures and expected exit 1. All checkpoint outcomes, failure details and
+observations match delivery-status runtime `2affdc7b`. Its unchanged adapter
+does not activate these opt-in bindings; this is regression evidence, not a
+project-isolation score. No post-score tuning occurred. Native/release gates,
+installed clients/model and restore-to-new-binding correction remain unrun or
+unresolved as disclosed above. Exact receipts accompany the local delivery.

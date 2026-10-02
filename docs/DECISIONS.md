@@ -13,6 +13,12 @@ security state, excluded from portable exports. Read `context:status` aggregates
 remain a separately granted vault-wide capability. This provides a routing
 primitive for later application setup, without activating live bindings or
 claiming best-in-class memory. See [scope](PROJECT_PRINCIPAL_BINDINGS.md).
+Corrected runtime `01e1f5cfe514b314fd302992a2b9efd73a11ac1c` passes
+78 targeted and 3,577 broader tests (21 skips, three explicit exclusions),
+with scoped review/static checks closed. Approved remote Edge identities retain
+their separate legacy registry; synthetic viewers use durable registration.
+Frozen development remains 4/14 with unchanged observations and no operation
+failures. Restore-to-new-binding identity/slot reconciliation remains unsupported.
 
 ## Record-delivery limits use fixed hook notices (2026-10-02)
 

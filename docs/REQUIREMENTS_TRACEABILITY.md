@@ -4,9 +4,9 @@
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| Stable Core identities, immutable narrow-principal binding and fail-closed authority | `project_binding.py`, migration 021, authenticated admin APIs; `test_project_principal_bindings.py` | Synthetic current/stale/revoked/missing/foreign, immutability and migration checks; final receipts pending. No live bindings |
-| Capture-to-delivery context stability and exact project isolation | `record_client_capture`, committed capture receipt, `EligibleRecordSelector`, project runtime and direct get; two-project slot/race/cold replay/deletion tests | Initial 14 binding checks pass; final compatibility/broader run pending. Formation/completeness unchanged; installed clients/model UNRUN |
-| Frozen comparison integrity and local access-state portability | Frozen v1 suite unchanged; schema-21 export excludes identities/bindings; synthetic reader registrations preserve prior corpus/ACL cases | Holdout remains sealed, including integrity reader exclusion; development diagnostic pending. `context:status` aggregates remain vault-wide |
+| Stable Core identities, immutable narrow-principal binding and fail-closed authority | `project_binding.py`, migration 021, authenticated admin APIs; `test_project_principal_bindings.py`; runtime `01e1f5cfe514b314fd302992a2b9efd73a11ac1c` | All 36 synthetic binding cases pass within 78 targeted checks; review/static checks pass. Approved remote Edge identities retain explicit legacy behavior; unknown/revoked/foreign remain blocked. No live bindings |
+| Capture-to-delivery context stability and exact project isolation | `record_client_capture`, committed capture receipt, `EligibleRecordSelector`, project runtime and direct get; two-project slot/race/cold replay/deletion tests | 3,577 broader tests pass, 21 skips, three warnings. Explicit sealed-holdout reader/two unchanged native registry exclusions. Formation/completeness unchanged; installed clients/model UNRUN |
+| Frozen comparison integrity and local access-state portability | Frozen v1 suite unchanged; schema-21 export excludes identities/bindings; synthetic reader registrations preserve prior corpus/ACL cases | Development stays 4/14, zero operation failures, all observations/outcomes/failures unchanged. Holdout sealed. `context:status` aggregates vault-wide; restore-to-new-binding reconciliation unsupported/unrun |
 
 ### 2026-10-02 bounded record-delivery status
 

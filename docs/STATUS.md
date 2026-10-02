@@ -9,7 +9,16 @@ membership. Missing/revoked/stale/foreign required bindings fail closed. Schema
 portable exports. Formation and completeness repairs remain separate. See
 [scope and validation](PROJECT_PRINCIPAL_BINDINGS.md). Independent scoped review
 found no remaining concrete runtime blocker; it did not execute tests. Static
-checks pass; final compatibility, broader and development receipts are pending.
+checks pass. Corrected runtime `01e1f5cfe514b314fd302992a2b9efd73a11ac1c`
+passes 78 targeted checks including all 36 new binding cases, and 3,577 broader
+tests with 21 skips and three warnings. The broad run explicitly excludes the
+sealed-holdout integrity reader and two unchanged native registry blockers.
+The initial broad run exposed approved Edge compatibility and an unregistered
+experimental viewer; both are corrected and preserved in the receipts.
+Frozen development remains 4/14, zero operation failures, with all observations
+and checkpoint outcomes/failures identical to delivery-status base. Installed
+clients/model and restore-to-new-binding correction remain unrun; local identity
+reconciliation after restore is unsupported. Holdout remains sealed.
 No installed-client bindings, release, merge or rollout has been performed.
 
 ## 2026-10-02 - bounded record-delivery status candidate
