@@ -7382,7 +7382,8 @@ synthetic disposable vaults, with no routine approval inbox or manual curation.
 Automatic lifecycle is the goal, not preserving the existing engine. Larger
 engine integration, installed-client acceptance and release action remain outside
 this slice. See the [contract guide](../bench/memory_acceptance_v1/README.md).
-# 2026-10-02 bounded project decision formation lane
+
+## 2026-10-02 bounded project decision formation lane
 
 Use the verified canonical binding solely to identify capture scope. A complete,
 affirmative direct user choice supplies decision meaning; it does not establish

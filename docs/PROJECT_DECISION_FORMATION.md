@@ -1,6 +1,9 @@
 # Bounded project decision formation
 
 This lane is based on runtime `27a855f8ae3321c602ab8390bdfeb78677a5c15f`.
+Its branch includes reviewed doc-only delivery
+`c218ba2a4c96973f1e70eb01da89ff126b9e2087`; the runtime delta between those
+base commits is empty.
 It owns a pure formation policy and its direct regressions. Shared storage and
 capture integration remain the parent's responsibility. This is not an enabled
 runtime path or final integrated acceptance.
@@ -35,6 +38,8 @@ discard a qualification, or promote a substring. Raw capture remains evidence.
 
 1. Resolve the existing binding inside `record_client_capture`'s write
    transaction. Re-derive the decision from the exact committed user content;
+   import the planner locally, matching the existing binding import pattern
+   (`project_binding` currently imports storage).
    caller-authored kind, scopes, slots and structured fields are not authority.
    Invoke this policy before any broad legacy live-user fallback for project
    decision-like text; otherwise a rejected historical/tooling turn could still
@@ -78,8 +83,24 @@ historical/deleted/conflicted states, replay and exact-old-value corrections.
 They exercise the pure policy, not an integrated capture/correction lifecycle.
 Authenticated project/personal regressions and broad checks protect the
 unchanged runtime. Frozen v1 fixtures, scores and sealed holdouts are unchanged.
-Storage integration, exact reviewed base integration and final independent
-runtime acceptance remain explicit parent gates. The reviewed runtime's broad
+Storage integration and final independent runtime acceptance remain explicit
+parent gates. Exact reviewed base integration is complete. The base's broad
 result is 3,685 passes, two inherited mixed-turn delivery-budget failures and
 21 skips. Both failures are preserved; this pure policy does not alter those
 fixtures or the long-turn extractor.
+
+## Verified lane results
+
+The exact policy/test source in candidate `00e7bc07c2068f15db23d966d7f934869f616eb2`
+passes 174 focused tests, including all 113 new cases. Independent read-only
+review found and repaired a delayed ABA correction risk; re-review found no
+remaining blocker in this pure policy scope. Repository Ruff/format, production
+mypy (116 files), strict targeted mypy, docs and whitespace checks pass.
+
+The same broad selected-ID policy as the reviewed base passes 3,759 tests in
+parallel and 39 specification tests separately, totaling 3,798 passed, two failed
+and 21 skipped. Both failures are the unchanged Codex/Claude variants of
+`test_core_budget_omission_and_complete_provenance_survive_cold_new_reader`.
+The holdout integrity reader and two known native registry blockers retain the
+base's exact exclusions. Broad acceptance remains failing. Final delivery adds
+documentation only; policy/test source hashes are preserved in the lane packet.

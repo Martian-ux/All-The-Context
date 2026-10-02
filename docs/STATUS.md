@@ -27,6 +27,11 @@ protection. Existing binding authority, personal facets and storage admission ar
 unchanged. See [design and parent integration contract](PROJECT_DECISION_FORMATION.md).
 Storage/capture integration and final runtime acceptance are pending parent gates;
 the known two mixed-turn delivery-budget failures remain explicit.
+Exact policy source passes 174 focused tests. Independent review repaired an
+ABA chronology gap and found no remaining pure-policy blocker on re-review.
+Broad selected coverage is 3,798 passed, two inherited delivery-budget failures
+and 21 skips; the base's three exclusions are retained. Ruff/format, mypy, docs
+and whitespace pass. This is policy evidence, not enabled runtime acceptance.
 
 ## 2026-10-02 - isolated project and preference composition
 
