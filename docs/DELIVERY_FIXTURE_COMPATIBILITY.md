@@ -46,14 +46,30 @@ long records. It does not introduce a product approval inbox or satisfy the
 setup-once automatic memory goal. Frozen mixed-claim and other quality failures
 remain independent product evidence.
 
-## Initial source-freeze validation
+## Exact source-freeze validation
 
 All ten cases in `tests/integration/test_hook_delivery_status_core.py` pass.
 The old two budget IDs are retained and four new IDs are added. Independent
 review inspected the contracts and final test split without running tests or
-opening holdouts; it found no weakening or authority expansion. Broad selected-ID
-coverage and exact frozen-source comparison are pending at initial freeze.
-Final local receipts record their outcome. Holdouts and their integrity-only
+opening holdouts; it found no weakening or authority expansion. Tested source
+`ec62f3a0dc5ab2a49f9376660ba55ed235bab571` has complete 3,712 selected-ID
+coverage: **3,691 passed, 21 skipped**, no failures/errors and three warnings.
+The 39 specification cases run separately and the remaining 3,673 cases run
+in parallel; their final executed union exactly matches collection, without
+missing, extra or duplicate IDs. All 3,708 parent-selected IDs are retained;
+four new cases account for the increase. Ruff/format, strict mypy (116 source
+files), docs and whitespace checks pass. Final delivery adds documentation only.
+
+An initial specification run passed 38 cases and failed one path-fingerprint
+check when an ancestor changed during read under the volatile shared Windows
+temporary root. That receipt is preserved. With a fresh task-owned temporary
+root, the identical frozen source passes all 39 cases; no assertion is changed.
+The final coverage union uses this stable-root run, not the failed attempt.
+
+Frozen development remains **3/14**, zero operation failures: every checkpoint,
+failure detail and complete observation equals the parent `27a855f8` report.
+Production, frozen fixture tree, adapter and grader are unchanged. Local
+receipts record all comparisons. Holdouts and their integrity-only
 reader remain sealed/excluded; the two unchanged native Windows registry blockers
 remain explicit exclusions. Installed clients/model remain **UNRUN**.
 

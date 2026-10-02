@@ -6,7 +6,7 @@
 |---|---|---|
 | Preserve whole-record budget omission and complete cold-reader/source provenance | Existing budget test IDs in `test_hook_delivery_status_core.py` | Synthetic owner-authorized long source record; capture-only proposal/approval denied; original full-content/version/notice/truth assertions retained and persisted source bytes checked |
 | Preserve automatic atomic preference provenance and mixed-turn abstention | Four additional cases in the same module | Atomic live-user origin/current facet and cold evidence; exact original mixed turn stays raw, recordless and replay-stable with no hook record output |
-| Resolve fixture conflict without claiming product progress or changing authority | `docs/DELIVERY_FIXTURE_COMPATIBILITY.md`; independent validity review | Ten focused tests pass; broad selected coverage pending at source freeze. Production/frozen v1 unchanged; original c218ba2 and failures preserved; holdouts sealed; installed clients/model unrun |
+| Resolve fixture conflict without claiming product progress or changing authority | `docs/DELIVERY_FIXTURE_COMPATIBILITY.md`; independent validity review; exact `ec62f3a0` receipts | Ten focused tests and 3,691 broader tests pass, 21 skipped; all 3,712 selected IDs execute exactly once with three explicit exclusions. Static checks pass. Initial path-fingerprint race preserved; identical 39 specification cases pass in stable temporary root. Development stays 3/14 with identical observations. Production/frozen v1 unchanged; original c218ba2 and failures preserved; holdouts sealed; installed clients/model unrun |
 
 ### 2026-10-02 isolated project and preference composition
 

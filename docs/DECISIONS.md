@@ -11,6 +11,10 @@ delivery assertions, including full source evidence and negation. Do not make
 the parser extract the first sentence, weaken assertions or tune frozen v1.
 See [fixture proof](DELIVERY_FIXTURE_COMPATIBILITY.md). This test-only follow-up
 does not claim an automatic everyday-memory or installed-client acceptance gain.
+Frozen source `ec62f3a0` has exact selected-ID coverage: 3,691 passed and 21
+skipped. The initial volatile temporary-root fingerprint failure remains in
+receipts; the identical 39 specification cases pass in a fresh stable root.
+Frozen development and complete observations remain identical at 3/14.
 
 ## Compose facets within registered project authority (2026-10-02)
 

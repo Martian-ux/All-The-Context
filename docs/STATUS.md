@@ -7,8 +7,13 @@ budget fixtures into authorized long-source delivery, supported atomic live-user
 provenance and exact mixed-turn negative replay/cold-reader coverage. Retain both
 old test IDs and all delivery assertions; add four cases. All ten module cases
 pass, with independent validity review finding no weakening or authority expansion.
-Production and frozen v1 remain unchanged. Broad coverage is pending at source
-freeze; installed clients/model remain unrun and holdouts sealed. See
+Production and frozen v1 remain unchanged. Tested `ec62f3a0` passes 3,691 broader
+checks with 21 skips; all 3,712 selected IDs execute exactly once. Three known
+exclusions remain explicit. Static checks pass; frozen development remains 3/14
+with identical parent observations and zero operation failures. One initial
+temporary-path fingerprint race is preserved; all 39 identical specification
+cases pass under a fresh stable task-owned root. Installed clients/model remain
+unrun and holdouts sealed. See
 [contract proof and coverage](DELIVERY_FIXTURE_COMPATIBILITY.md). The earlier
 composition failure and standalone lane results below remain historical evidence.
 
