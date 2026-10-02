@@ -1,5 +1,15 @@
 # Architecture decisions
 
+## Keep name-mismatch evidence separate from named source acceptance (2026-10-02)
+
+Preserve the prior source harness byte-for-byte, including the historical strict
+xfail reason. Its placeholder name is not a declared Harbor anchor. A separately
+named test provisions actual structured Harbor/Cedar names and canonical bindings
+through public synthetic APIs; no name inferred from scope, content or query can
+replace binding authority. Check source reader references against authenticated
+truth and history, while leaving installed-app/model citation use unclaimed.
+See [the test-only journey](NAMED_DECISION_CLIENT_JOURNEY.md).
+
 ## Named decision applicability within already-bound authority (2026-10-02)
 
 Read only the existing current explicit canonical anchor's structured

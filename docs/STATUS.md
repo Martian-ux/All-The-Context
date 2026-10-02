@@ -1,5 +1,18 @@
 # Project status
 
+## 2026-10-02 - separately registered named source-client journey
+
+Test-only composition of exact runtime `659d7379` and source harness `614c9a74`.
+The original placeholder-name strict xfails are preserved unchanged as negative
+evidence. A separate public/source-subprocess journey explicitly registers Harbor
+and Cedar anchors, binds synthetic principals and checks decision correction,
+fresh reader references/truth, foreign partition rejection, cold restart, replay,
+forget and independent database preservation in both provider directions.
+Production code, frozen v1 and sealed holdouts are unchanged. See
+[the journey and limits](NAMED_DECISION_CLIENT_JOURNEY.md); coherent results are
+recorded in the isolated local delivery packet. Installed clients and reader-model
+acceptance remain UNRUN; existing native account diagnosis is not retried.
+
 ## 2026-10-02 - named decision follow-up within canonical binding
 
 Ordinary named affirmative technical decisions now require an exact match to the

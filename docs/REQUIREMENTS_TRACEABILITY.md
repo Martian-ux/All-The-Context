@@ -1,5 +1,14 @@
 # Requirements traceability
 
+### 2026-10-02 registered named source-client journey
+
+| Requirement | Evidence | Boundary |
+|---|---|---|
+| Preserve original mismatched-name negative | Exact copied `test_synthetic_client_acceptance.py` strict xfails and helper from614c9a74 | Historical reason string is retained; current interpretation is name mismatch, not absent formation |
+| Realistic registered Harbor/Cedar capture/read journey | `test_named_project_decision_client_journey.py`, real public APIs and provider subprocesses | Explicit names independently of opaque scope/entity keys; source transport only |
+| Correct, cite, isolate, restart, replay and forget | Same new module: ID/version/content/subject/value/scopes/truth/evidence/history, foreign rejection, cold fresh bound readers, tombstone and independent database assertions | No installed dispatch, MCP/model use or real grants; Claude stable-native-turn replay unavailable |
+| Preserve selected runtime and private acceptance artifacts | Exact659d7379 production package tree; base bench/tests unchanged except copied harness and new module | Frozen v1/holdouts unchanged and unopened; base broad receipts reused explicitly, new checks separately recorded |
+
 ### 2026-10-02 named decision follow-up
 
 | Requirement | Implementation/evidence | Boundary |
