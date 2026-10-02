@@ -210,8 +210,11 @@ def _retrieve_hook_context(prompt: str) -> str:
 
     try:
         client = _hook_client()
-        if client is None:
-            return delivery_status_context("retrieval_unavailable", budget=HOOK_CONTEXT_BUDGET)
+    except Exception:
+        return delivery_status_context("retrieval_unavailable", budget=HOOK_CONTEXT_BUDGET)
+    if client is None:
+        return delivery_status_context("retrieval_unavailable", budget=HOOK_CONTEXT_BUDGET)
+    try:
         response = client.bootstrap_context_core_only(
             {
                 "query": prompt,

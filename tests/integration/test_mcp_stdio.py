@@ -183,10 +183,21 @@ async def _exercise_unavailable_codex_read_hook(parameters: StdioServerParameter
         assert result.is_error is not True
         assert result.structured_content is None
         output = json.loads(result.content[0].text)
+        additional_context = output["hookSpecificOutput"]["additionalContext"]
+        assert additional_context.startswith(codex_hook.REFERENCE_FRAME)
+        notice = json.loads(additional_context.removeprefix(codex_hook.REFERENCE_FRAME))[
+            "atc_delivery"
+        ]
+        assert notice["scope"] == "record_items"
+        assert notice["state"] == "retrieval_unavailable"
+        assert "atc_record" not in additional_context
+        assert "synthetic unavailable-core task" not in additional_context
+        assert "synthetic-session" not in additional_context
+        assert "synthetic-turn" not in additional_context
         assert output == {
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
-                "additionalContext": "",
+                "additionalContext": additional_context,
             }
         }
 

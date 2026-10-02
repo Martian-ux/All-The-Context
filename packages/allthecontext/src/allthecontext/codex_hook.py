@@ -139,8 +139,11 @@ def _retrieve_hook_context(task_description: str, character_budget: int) -> str:
     try:
         budget = min(character_budget, CODEX_HOOK_CONTEXT_BUDGET)
         client = _hook_client()
-        if client is None:
-            return delivery_status_context("retrieval_unavailable", budget=budget)
+    except Exception:
+        return delivery_status_context("retrieval_unavailable", budget=budget)
+    if client is None:
+        return delivery_status_context("retrieval_unavailable", budget=budget)
+    try:
         response = client.bootstrap_context_core_only(
             {
                 "query": task_description,

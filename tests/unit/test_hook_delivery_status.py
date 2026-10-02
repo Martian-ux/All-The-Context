@@ -181,3 +181,24 @@ def test_mcp_interpretation_matches_existing_record_and_project_contract() -> No
     assert instructions is not None
     assert "An empty items list describes only the returned records" in instructions
     assert "Details without support remain unknown" in instructions
+
+
+@pytest.mark.parametrize("app", ["codex", "claude"])
+@pytest.mark.parametrize(
+    "error",
+    [json.JSONDecodeError(PRIVATE, PRIVATE, 0), UnicodeDecodeError("utf8", b"x", 0, 1, PRIVATE)],
+)
+def test_client_setup_decoder_failure_is_unavailable_not_a_malformed_record_response(
+    monkeypatch: pytest.MonkeyPatch, app: str, error: Exception
+) -> None:
+    def unavailable_client() -> None:
+        raise error
+
+    module = codex_hook if app == "codex" else claude_code_hook
+    monkeypatch.setattr(module, "_hook_client", unavailable_client)
+    text = (
+        codex_hook._retrieve_hook_context(PRIVATE, 8000)
+        if app == "codex"
+        else claude_code_hook._retrieve_hook_context(PRIVATE)
+    )
+    assert status(text)["state"] == "retrieval_unavailable"
