@@ -1,5 +1,14 @@
 # Requirements traceability
 
+### 2026-10-02 bounded decision and partial runtime integration
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Capture complete decisions under existing canonical authority | `storage.py::record_client_capture`; `project_decision_policy.py`; `test_decision_partial_runtime.py` | Exact committed user content and transaction-resolved binding; raw evidence preserved; unsupported decision-like turns cannot fall through workflow. Focused runtime acceptance pending |
+| Correct/reinforce without crossing lineage, reviving deletion or losing history | `storage.py::_project_decision_binding_tx`; existing write transaction and observation links; same runtime tests | Unique authorized current slot, exact committed source/hash/receipt, exact old value and chronology/CAS; ABA, replay, cold, deletion, concurrency and rollback regressions; validation pending |
+| Deliver useful admitted same-project partial facts without completeness claims | Exact inherited `86a9df1a` retrieval/partial tests plus actual hook runtime regressions | Existing binding/selector/ranker and singleton-scope gates retained; no hints as authority or unknown facts invented; synthetic only |
+| Preserve authority and frozen acceptance boundaries | `docs/DECISION_PARTIAL_INTEGRATION.md` | No grant/binding security/schema/migration changes. Frozen v1 unchanged; holdouts sealed; installed clients/model and restore-new-identity reconciliation unrun; original candidates preserved |
+
 ### 2026-10-02 delivery fixture compatibility
 
 | Requirement | Implementation/evidence | Status |

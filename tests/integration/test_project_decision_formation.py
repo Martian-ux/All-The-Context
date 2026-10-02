@@ -1,4 +1,4 @@
-"""Authentic synthetic capture receipts feeding a pure, not runtime-wired policy."""
+"""Authentic synthetic capture receipts and the integrated bounded policy."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def captured_plan(
         )
 
 
-def test_authenticated_same_words_route_to_distinct_canonical_plans_without_runtime_admission(
+def test_authenticated_same_words_route_to_distinct_canonical_plans_and_admission(
     fixture: Fixture,
 ) -> None:
     content = "For this project, use SQLite for storage."
@@ -66,15 +66,22 @@ def test_authenticated_same_words_route_to_distinct_canonical_plans_without_runt
         assert decision.claim.content == content
         assert decision.scopes == ("project:" + project,)
         plans.append(decision)
-        # The lane owns policy only; source capture is retained as tentative evidence.
         observation = fixture.core.store.get_observation(receipt["observation_id"])
-        assert observation.kind == "captured_user_turn"
+        assert observation.kind == "project_decision"
         assert observation.content == content
-        assert observation.disposition is ObservationDisposition.TENTATIVE
-        assert observation.record_id is None
-        assert not any(
-            item["kind"] == "project_decision" for item in fixture.bootstrap(reader)["items"]
+        assert observation.disposition is ObservationDisposition.APPLIED
+        assert observation.record_id is not None
+        assert any(
+            item["id"] == observation.record_id and item["kind"] == "project_decision"
+            for item in fixture.bootstrap(reader, "storage")["items"]
         )
+        with fixture.core.store.connect() as connection:
+            raw = connection.execute(
+                "SELECT content,disposition,record_id FROM context_candidates "
+                "WHERE capture_event_id=? AND source_type='client_capture'",
+                (receipt["capture_event_id"],),
+            ).fetchone()
+        assert tuple(raw) == (content, "tentative", None)
         replay = fixture.client.post("/v1/lifecycle/events", headers=writer, json=payload)
         assert replay.status_code == 200, replay.text
         assert replay.json()["status"] == "replayed"

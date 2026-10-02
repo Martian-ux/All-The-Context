@@ -23,6 +23,7 @@ from .ids import new_id, utc_now
 
 if TYPE_CHECKING:
     from .project_binding import ResolvedProjectContext
+    from .project_decision_policy import ProjectDecisionPlan
 
 from .memory_policy import (
     AUTOMATIC_POLICY_VERSION,
@@ -305,6 +306,11 @@ def _canonical_reason(reason: str | None, default: str = "record_state_changed")
         "personal_preference_stale": "personal_preference_stale",
         "personal_preference_boundary": "personal_preference_boundary",
         "personal_preference_legacy": "personal_preference_legacy",
+        "project_decision_predecessor_unavailable": "project_decision_predecessor_unavailable",
+        "project_decision_lineage_mismatch": "project_decision_lineage_mismatch",
+        "project_decision_old_value_mismatch": "project_decision_old_value_mismatch",
+        "project_decision_stale_correction": "project_decision_stale_correction",
+        "project_decision_automatic_disabled": "project_decision_automatic_disabled",
         "explicit user forget request": "record_deleted",
         (
             "matching archive evidence was blocked by an explicit deletion; "
@@ -4244,6 +4250,143 @@ class CoreStore:
             "expected_record_version": str(target["version"]),
         }
 
+    def _project_decision_binding_tx(
+        self,
+        connection: sqlite3.Connection,
+        plan: ProjectDecisionPlan,
+        principal: ClientPrincipal,
+        *,
+        observed_at: str,
+        as_of: str,
+    ) -> tuple[str | None, dict[str, str]]:
+        """Check unique current decision and its exact committed capture lineage.
+
+        The write transaction resolves both partition and predecessor. Neither
+        keyed/admin records nor an unrelated receipt supplies correction authority.
+        Deleted typed slots remain barriers; no source or schema is migrated.
+        """
+        from datetime import datetime
+
+        from .capture import CaptureEvent
+        from .project_decision_policy import (
+            ProjectDecisionAbstention,
+            check_project_decision_predecessor,
+        )
+
+        if self._memory_policy_tx(connection).mode != "automatic":
+            return "project_decision_automatic_disabled", {}
+        if datetime.fromisoformat(observed_at) > datetime.fromisoformat(as_of):
+            return ProjectDecisionAbstention.STALE_CORRECTION.value, {}
+        parameters = (self.vault_id(), plan.entity_key, plan.claim.attribute_key)
+        deleted = connection.execute(
+            "SELECT 1 FROM context_records WHERE vault_id=? AND entity_key=? "
+            "AND attribute_key=? AND deleted_at IS NOT NULL LIMIT 1",
+            parameters,
+        ).fetchone()
+        rows = connection.execute(
+            "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+            "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM context_records newer "
+            "WHERE newer.supersedes=context_records.id "
+            "AND newer.approval_status='approved' AND newer.deleted_at IS NULL) LIMIT 2",
+            parameters,
+        ).fetchall()
+        if deleted is not None or len(rows) > 1:
+            return ProjectDecisionAbstention.PREDECESSOR.value, {}
+        if not rows:
+            if "expected_old_value" in plan.claim.structured_value:
+                return ProjectDecisionAbstention.PREDECESSOR.value, {}
+            return None, {}
+        target = rows[0]
+        # Current attribution may differ from candidate_id after a correction.
+        # Resolve by its current source tuple AND record observation link.
+        evidence = connection.execute(
+            "SELECT c.*,e.normalized_payload_json,e.payload_hash,e.provider_event_id,"
+            "e.provider_item_id,e.order_key,e.operation,e.generation,"
+            "e.idempotency_key AS event_idempotency_key,e.application_receipt,"
+            "e.status AS event_status,s.client_principal_id,s.lifecycle_state,"
+            "s.provider,s.local_only,s.local_only_acknowledged "
+            "FROM context_observation_links l JOIN context_candidates c "
+            "ON c.id=l.observation_id JOIN capture_events e ON e.id=c.capture_event_id "
+            "AND e.source_id=c.capture_source_id JOIN capture_sources s ON s.id=e.source_id "
+            "WHERE l.record_id=? AND c.record_id=? AND c.vault_id=? AND s.vault_id=? "
+            "AND c.source_reference=? AND c.content=? "
+            "AND c.disposition='applied' AND c.observation_origin='live_user_evidence' "
+            "AND c.kind='project_decision' AND c.source_id IS NULL "
+            "AND c.source_service='allthecontext-core' "
+            "AND c.source_type='client_capture_formation' LIMIT 2",
+            (
+                target["id"],
+                target["id"],
+                self.vault_id(),
+                self.vault_id(),
+                target["source_reference"],
+                target["content"],
+            ),
+        ).fetchall()
+        if len(evidence) != 1:
+            return ProjectDecisionAbstention.LINEAGE.value, {}
+        source = evidence[0]
+        payload = _json_object(source["normalized_payload_json"])
+        expected_reference = "client-capture-formation-" + _hash_text(
+            f"{source['capture_source_id']}\0{source['provider_event_id']}"
+        )
+        binding_hash = _hash_text(
+            _json(
+                [
+                    "client-capture-binding-v1",
+                    source["capture_source_id"],
+                    source["capture_event_id"],
+                    source["event_idempotency_key"],
+                    source["payload_hash"],
+                ]
+            )
+        )
+        if (
+            payload is None
+            or payload.get("role") != "user"
+            or payload.get("content") != target["content"]
+            or source["event_status"] != "applied"
+            or source["operation"] != "upsert"
+            or source["application_receipt"]
+            != "capture-observation-"
+            + _hash_text(f"{source['capture_source_id']}\0{source['capture_event_id']}")
+            or source["source_reference"] != expected_reference
+            or source["capture_binding_hash"] != binding_hash
+            or source["idempotency_key"] != source["event_idempotency_key"] + ":formed"
+            or source["capture_source_id"]
+            != self.client_capture_source_id(str(source["client_principal_id"]))
+            or source["provider"] != "client-runtime"
+            or source["lifecycle_state"] != "enabled"
+            or not source["local_only"]
+            or not source["local_only_acknowledged"]
+            or source["entity_key"] != plan.entity_key
+            or source["attribute_key"] != plan.claim.attribute_key
+            or _loads(source["scopes_json"], []) != list(plan.scopes)
+        ):
+            return ProjectDecisionAbstention.LINEAGE.value, {}
+        committed_event = CaptureEvent(
+            provider_event_id=str(source["provider_event_id"]),
+            provider_item_id=str(source["provider_item_id"]),
+            order_key=str(source["order_key"]),
+            payload=payload,
+            generation=int(source["generation"]),
+        )
+        if committed_event.normalized()[1] != source["payload_hash"]:
+            return ProjectDecisionAbstention.LINEAGE.value, {}
+        receipt = payload.get("project_binding")
+        guard = check_project_decision_predecessor(
+            plan,
+            truth=self._truth_record_tx(connection, target),
+            captured_binding=receipt if isinstance(receipt, dict) else None,
+            authorized=self._record_is_allowed(target, principal),
+            as_of=datetime.fromisoformat(as_of),
+            observed_at=datetime.fromisoformat(observed_at),
+        )
+        if isinstance(guard, ProjectDecisionAbstention):
+            return guard.value, {}
+        return None, guard
+
     def record_client_capture(
         self,
         *,
@@ -4416,9 +4559,56 @@ class CoreStore:
                 principal=registered,
             )
             created = raw_created
+            # Plan only from this exact committed user turn and the binding
+            # resolved under the same lock. This ignores caller-formed metadata.
+            from .project_decision_policy import (
+                ProjectDecisionPlan,
+                is_project_decision_attempt,
+                plan_project_decision,
+            )
+
+            decision_plan = plan_project_decision(
+                content, role=str(role), project_context=project_context
+            )
+            decision_rejection = None
+            decision_binding: dict[str, str] = {}
+            if isinstance(decision_plan, ProjectDecisionPlan):
+                decision_rejection, decision_binding = self._project_decision_binding_tx(
+                    connection,
+                    decision_plan,
+                    registered,
+                    observed_at=str(core_candidate.observed_at),
+                    as_of=now,
+                )
+                formed_candidate = core_candidate.model_copy(
+                    update={
+                        "kind": decision_plan.claim.kind,
+                        "content": content,
+                        "entity_key": "user",
+                        "attribute_key": decision_plan.claim.attribute_key,
+                        "structured_value": {
+                            "capture_role": "user",
+                            "formation": "live-user-evidence-v1",
+                            **decision_plan.claim.structured_value,
+                            **decision_binding,
+                        },
+                    }
+                )
+            elif (
+                formed_candidate is not None
+                and formed_candidate.kind == "workflow"
+                and is_project_decision_attempt(content)
+            ):
+                # An abstained decision/history turn cannot enter via a broad
+                # older workflow extractor. The exact raw observation survives.
+                formed_candidate = None
             if formed_candidate is not None:
                 if event.payload.get("role") != "user":
                     raise InvalidStateError("only user turns may form live user evidence")
+                if formed_candidate.kind == "project_decision" and not isinstance(
+                    decision_plan, ProjectDecisionPlan
+                ):
+                    raise InvalidStateError("formed project decision does not match capture")
                 if (
                     formed_candidate.entity_key != "user"
                     or formed_candidate.kind
@@ -4429,6 +4619,7 @@ class CoreStore:
                         "project",
                         "goal",
                         "workflow",
+                        "project_decision",
                     }
                     or not formed_candidate.attribute_key
                 ):
@@ -4447,9 +4638,13 @@ class CoreStore:
                         # Bound capture origin partitions the existing slot;
                         # it does not classify a personal claim as project truth.
                         "entity_key": (
-                            "user@project:" + project_context.canonical_project_id
-                            if project_context is not None
-                            else "user"
+                            decision_plan.entity_key
+                            if isinstance(decision_plan, ProjectDecisionPlan)
+                            else (
+                                "user@project:" + project_context.canonical_project_id
+                                if project_context is not None
+                                else "user"
+                            )
                         ),
                         "scopes": [project_context.project_scope]
                         if project_context is not None
@@ -4473,7 +4668,7 @@ class CoreStore:
                         ),
                     }
                 )
-                preference_rejection = None
+                preference_rejection = decision_rejection
                 if core_formed_candidate.kind == "interaction_preference":
                     # Re-derive inside the transaction from the actual bound
                     # turn. Caller-provided metadata cannot forge a predecessor.
@@ -5155,9 +5350,20 @@ class CoreStore:
             raise _ObservationLookupOverflow("slot candidate set exceeds safety bound")
         fingerprint = _value_fingerprint(observation)
         for record in rows:
-            if _value_fingerprint(record) == fingerprint and self._record_is_allowed(
-                record, principal
+            same = _value_fingerprint(record) == fingerprint
+            if (
+                origin == ObservationOrigin.LIVE_USER_EVIDENCE
+                and str(observation["kind"]) == "project_decision"
             ):
+                proposed = _loads(observation["structured_value_json"], {})
+                current = _loads(record["structured_value_json"], {})
+                # Correction bookkeeping is provenance, not a new decision
+                # value. Ordinary equivalent turns reinforce after correction.
+                same = "expected_old_value" not in proposed and all(
+                    proposed.get(key) == current.get(key)
+                    for key in ("claim_type", "decision_schema", "decision_subject", "value")
+                )
+            if same and self._record_is_allowed(record, principal):
                 return cast(sqlite3.Row, record)
         return None
 
@@ -5305,7 +5511,8 @@ class CoreStore:
                         attribute_key,
                         int(
                             origin == ObservationOrigin.LIVE_USER_EVIDENCE
-                            and str(observation["kind"]).casefold() == "interaction_preference"
+                            and str(observation["kind"]).casefold()
+                            in {"interaction_preference", "project_decision"}
                         ),
                         str(observation["kind"]).casefold(),
                         _MAX_OBSERVATION_CANDIDATES + 1,

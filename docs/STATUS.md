@@ -1,5 +1,20 @@
 # Project status
 
+## 2026-10-02 - bounded decision and partial-recall runtime integration
+
+New isolated branch from compatibility `0d7ebb84` composes decision policy
+`6b7f4573` and scoped partial recall `86a9df1a`. Storage now plans exact bound
+user decisions inside capture's transaction and checks unique current committed
+predecessor lineage, old value, chronology and typed deletion barriers. Raw
+capture, source history, replay and existing bindings/grants remain intact.
+Unsupported decision-like turns cannot use legacy workflow fallback; personal
+facets remain separate. Partial recall retains admitted same-project facts only
+under the inherited exact binding/pipeline gates. No completeness claim is added.
+See [integration and validation limits](DECISION_PARTIAL_INTEGRATION.md).
+Focused runtime, exact broad/development comparisons and independent review are
+pending; frozen v1 unchanged, holdouts sealed, installed clients/model unrun.
+Earlier entries below preserve their exact standalone historical evidence.
+
 ## 2026-10-02 - delivery fixture compatibility follow-up
 
 Isolated from preserved composition `c218ba2a`. Split the two inherited delivery

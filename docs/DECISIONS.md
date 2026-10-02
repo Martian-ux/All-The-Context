@@ -1,5 +1,18 @@
 # Architecture decisions
 
+## Integrate bounded decisions without expanding project authority (2026-10-02)
+
+Use existing transaction-resolved canonical bindings and exact committed capture
+lineage to admit the bounded project decision policy. Re-derive content in the
+write transaction, preserve raw evidence and source/version history, fail closed
+on ambiguous/deleted/unavailable predecessors and reject stale ABA corrections.
+Ordinary equivalent decisions ignore correction bookkeeping for reinforcement.
+Reject unsupported decision attempts before legacy workflow fallback; preserve
+personal facets. Retain partial facts only under the inherited exact admitted
+project pipeline. No new authority/schema or completeness fabrication. See
+[integrated contract](DECISION_PARTIAL_INTEGRATION.md); installed-client/model
+and restore-identity reconciliation remain separate gates.
+
 ## Separate delivery fixture state from unsupported formation (2026-10-02)
 
 Delivery promises complete authorized record blocks and truthful budget notices;

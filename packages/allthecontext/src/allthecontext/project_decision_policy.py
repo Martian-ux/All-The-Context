@@ -75,6 +75,24 @@ _SOURCE_REFERENCE = re.compile(r"client-capture-formation-[0-9a-f]{64}")
 _CORRECTION = re.compile(r"correction: (?P<statement>.+) instead of (?P<old>[a-z]+)")
 
 
+def is_project_decision_attempt(content: str) -> bool:
+    """Identify technical/project wording solely to block legacy fallback.
+
+    This never forms a claim or assigns a project. Unsupported role/value,
+    historical or mixed wording must not gain authority through workflow parsing.
+    Personal facets are handled separately by the caller.
+    """
+
+    text = " ".join(unicodedata.normalize("NFKC", content).casefold().split())
+    return bool(
+        re.search(r"\b(?:use|choose|choice|decided|decision)\b", text)
+        and (
+            re.search(rf"\b{_ROLE}\b", text)
+            or re.search(r"\b(?:this|our|other|the other) project\b", text)
+        )
+    )
+
+
 class ProjectDecisionAbstention(StrEnum):
     UNBOUND = "project_decision_unbound"
     NON_USER = "project_decision_non_user"
