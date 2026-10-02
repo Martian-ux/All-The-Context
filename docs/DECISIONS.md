@@ -1,5 +1,17 @@
 # Architecture decisions
 
+## Separate delivery fixture state from unsupported formation (2026-10-02)
+
+Delivery promises complete authorized record blocks and truthful budget notices;
+bounded personal formation deliberately abstains on mixed turns. Preserve both
+contracts by using owner-authorized source-backed state for long-record budget
+checks, atomic live capture for preference provenance and the exact original
+mixed turn as a negative replay/restart regression. Retain original test IDs and
+delivery assertions, including full source evidence and negation. Do not make
+the parser extract the first sentence, weaken assertions or tune frozen v1.
+See [fixture proof](DELIVERY_FIXTURE_COMPATIBILITY.md). This test-only follow-up
+does not claim an automatic everyday-memory or installed-client acceptance gain.
+
 ## Compose facets within registered project authority (2026-10-02)
 
 Use the project context resolved inside capture's existing transaction for

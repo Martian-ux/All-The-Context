@@ -1,5 +1,17 @@
 # Project status
 
+## 2026-10-02 - delivery fixture compatibility follow-up
+
+Isolated from preserved composition `c218ba2a`. Split the two inherited delivery
+budget fixtures into authorized long-source delivery, supported atomic live-user
+provenance and exact mixed-turn negative replay/cold-reader coverage. Retain both
+old test IDs and all delivery assertions; add four cases. All ten module cases
+pass, with independent validity review finding no weakening or authority expansion.
+Production and frozen v1 remain unchanged. Broad coverage is pending at source
+freeze; installed clients/model remain unrun and holdouts sealed. See
+[contract proof and coverage](DELIVERY_FIXTURE_COMPATIBILITY.md). The earlier
+composition failure and standalone lane results below remain historical evidence.
+
 ## 2026-10-02 - isolated project and preference composition
 
 Compose preserved project-binding `42f067d` with preference repair `e05904d6`.
