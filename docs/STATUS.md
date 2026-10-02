@@ -1,5 +1,20 @@
 # Project status
 
+## 2026-10-02 - named decision follow-up within canonical binding
+
+Ordinary named affirmative technical decisions now require an exact match to the
+already-bound current explicit anchor's existing `project_name`. Identity/scope
+still come only from Core's existing binding; no grant/security/schema change.
+DuckDB database and separate SQLite/DuckDB offline-cache choices are supported.
+Foreign/unknown names and negated/quoted/mixed/uncertain turns abstain in full.
+The separate Harbor harness is authenticated and bound but declares a different
+placeholder name, so its named decision still abstains. See
+[diagnosis and contract](BOUND_NAMED_PROJECT_DECISIONS.md).
+Independent scoped review found no blocker and requested rename/replay coverage;
+the public regression preserves original receipts and refuses alias inference.
+Initial focus passes 187 cases; final named public suite passes 29. Full exact
+candidate checks are pending source freeze.
+
 ## 2026-10-02 - bounded decision and partial-recall runtime integration
 
 New isolated branch from compatibility `0d7ebb84` composes decision policy

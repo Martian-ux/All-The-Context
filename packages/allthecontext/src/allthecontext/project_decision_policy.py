@@ -28,6 +28,7 @@ _ROLE_ALIASES = MappingProxyType(
     {
         "database": "database",
         "storage": "database",
+        "offline cache": "offline_cache",
         "implementation language": "implementation_language",
         "programming language": "implementation_language",
         "frontend framework": "frontend_framework",
@@ -39,7 +40,13 @@ _ROLE_ALIASES = MappingProxyType(
 )
 _VALUES = MappingProxyType(
     {
-        "database": {"sqlite": "SQLite", "postgresql": "PostgreSQL", "postgres": "PostgreSQL"},
+        "database": {
+            "sqlite": "SQLite",
+            "postgresql": "PostgreSQL",
+            "postgres": "PostgreSQL",
+            "duckdb": "DuckDB",
+        },
+        "offline_cache": {"sqlite": "SQLite", "duckdb": "DuckDB"},
         "implementation_language": {
             "python": "Python",
             "typescript": "TypeScript",
@@ -73,6 +80,54 @@ _PATTERNS = (
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SOURCE_REFERENCE = re.compile(r"client-capture-formation-[0-9a-f]{64}")
 _CORRECTION = re.compile(r"correction: (?P<statement>.+) instead of (?P<old>[a-z]+)")
+
+
+def normalized_bound_project_name(value: object) -> str | None:
+    """A bounded exact display-name condition, never project identity or authority."""
+    if not isinstance(value, str) or _CONTROL.search(value) or len(value) > 80:
+        return None
+    normalized = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+    if not re.fullmatch(r"[a-z][a-z0-9]*(?:[ -][a-z][a-z0-9]*){0,3}", normalized):
+        return None
+    if set(re.split(r"[ -]", normalized)) & {
+        "and",
+        "or",
+        "not",
+        "no",
+        "never",
+        "maybe",
+        "perhaps",
+        "might",
+        "if",
+        "unless",
+        "this",
+        "that",
+        "other",
+        "its",
+        "their",
+        "should",
+        "use",
+    }:
+        return None
+    return normalized
+
+
+def _named_patterns(name: str) -> tuple[re.Pattern[str], ...]:
+    mention = re.escape(name)
+    return (
+        re.compile(
+            rf"(?:i decided|i have decided|i've decided) {mention} should use "
+            rf"(?P<value>{_ATOM}) for (?:its|the) (?P<role>{_ROLE})"
+        ),
+        re.compile(
+            rf"for {mention},? {_CHOICE} (?P<value>{_ATOM}) "
+            rf"(?:for|as) (?:the )?(?P<role>{_ROLE})"
+        ),
+        re.compile(
+            rf"(?:i choose|i have decided to use|i've decided to use) "
+            rf"(?P<value>{_ATOM}) (?:for|as) {mention}'s (?P<role>{_ROLE})"
+        ),
+    )
 
 
 def is_project_decision_attempt(content: str) -> bool:
@@ -110,6 +165,7 @@ class ProjectDecisionPlan:
 
     claim: LiveUserClaim
     project_context: ResolvedProjectContext
+    bound_project_name: str | None = None
 
     @property
     def entity_key(self) -> str:
@@ -125,6 +181,7 @@ def plan_project_decision(
     *,
     role: str,
     project_context: ResolvedProjectContext | None,
+    bound_project_name: object = None,
 ) -> ProjectDecisionPlan | ProjectDecisionAbstention:
     """Recognize a complete affirmative current-project decision or abstain.
 
@@ -152,7 +209,9 @@ def plan_project_decision(
     if correction is not None:
         text = correction.group("statement")
         old = correction.group("old")
-    match = next((matched for pattern in _PATTERNS if (matched := pattern.fullmatch(text))), None)
+    name = normalized_bound_project_name(bound_project_name)
+    patterns = _PATTERNS + (_named_patterns(name) if name is not None else ())
+    match = next((matched for pattern in patterns if (matched := pattern.fullmatch(text))), None)
     if match is None:
         return ProjectDecisionAbstention.UNSUPPORTED
     attribute = _ROLE_ALIASES[match.group("role")]
@@ -177,6 +236,7 @@ def plan_project_decision(
             structured_value=structured,
         ),
         project_context=project_context,
+        bound_project_name=name,
     )
 
 
@@ -239,7 +299,10 @@ def check_project_decision_predecessor(
     ):
         return ProjectDecisionAbstention.LINEAGE
     previous = plan_project_decision(
-        record.content, role="user", project_context=plan.project_context
+        record.content,
+        role="user",
+        project_context=plan.project_context,
+        bound_project_name=plan.bound_project_name,
     )
     if not isinstance(previous, ProjectDecisionPlan):
         return ProjectDecisionAbstention.LINEAGE

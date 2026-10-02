@@ -1,5 +1,18 @@
 # Architecture decisions
 
+## Named decision applicability within already-bound authority (2026-10-02)
+
+Read only the existing current explicit canonical anchor's structured
+`project_name` inside the capture transaction. Exact bounded name matching
+conditions ordinary affirmative decision wording; it cannot choose project
+identity, infer deployment or mint broader grants. Duplicate display names stay
+in their own bound canonical partitions. Do not infer names from scope suffixes,
+anchor content, fixtures, query or cwd. No new alias/authority schema is added.
+After rename, old named predecessors fail re-parse rather than acquiring alias
+authority; original-event replay retains its exact receipt. Preserve personal
+facets, source evidence and existing correction/ABA/CAS rules. See
+[the named decision contract](BOUND_NAMED_PROJECT_DECISIONS.md).
+
 ## Integrate bounded decisions without expanding project authority (2026-10-02)
 
 Use existing transaction-resolved canonical bindings and exact committed capture

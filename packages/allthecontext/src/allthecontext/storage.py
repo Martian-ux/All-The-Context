@@ -4567,8 +4567,26 @@ class CoreStore:
                 plan_project_decision,
             )
 
+            # The already-resolved binding selects its one current explicit
+            # anchor. Its project_name is only a condition on decision wording;
+            # neither mentions, scopes nor labels choose identity or grants.
+            bound_project_name = None
+            if project_context is not None:
+                anchor = connection.execute(
+                    "SELECT r.structured_value_json FROM canonical_projects p "
+                    "JOIN context_records r ON r.id=p.anchor_record_id AND r.vault_id=p.vault_id "
+                    "WHERE p.id=? AND p.vault_id=? AND p.revoked_at IS NULL",
+                    (project_context.canonical_project_id, self.vault_id()),
+                ).fetchone()
+                if anchor is not None:
+                    structured_anchor = _loads(anchor["structured_value_json"], {})
+                    if isinstance(structured_anchor, dict):
+                        bound_project_name = structured_anchor.get("project_name")
             decision_plan = plan_project_decision(
-                content, role=str(role), project_context=project_context
+                content,
+                role=str(role),
+                project_context=project_context,
+                bound_project_name=bound_project_name,
             )
             decision_rejection = None
             decision_binding: dict[str, str] = {}
