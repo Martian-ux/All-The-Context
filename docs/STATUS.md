@@ -1,5 +1,19 @@
 # Project status
 
+## 2026-10-02 - bounded record-delivery status candidate
+
+New isolated branch from provenance-only `cc49f62d` adds fixed, record-scoped
+delivery notices to Codex/Claude read-hook reference output. Successful empty,
+local or validated Core budget omission, malformed response and unavailable
+request states remain distinct. Separate project capsules are not assessed or
+forwarded by the notice. MCP interpretation uses only the existing response
+contract. No formation, retrieval/selector/project/admissibility/authority,
+API model, schema or service change. See `docs/DELIVERY_STATUS.md` for exact
+meanings and tiny-budget silence. Focused, cold, independent review, frozen
+development-only comparison and full applicable checks are being recorded.
+Other candidates remain frozen and separate; installed-client/model validation
+is unrun and holdouts remain sealed.
+
 ## 2026-10-02 - delivered hook record references
 
 Local branch `codex/hook-record-provenance-20261002` starts at frozen acceptance

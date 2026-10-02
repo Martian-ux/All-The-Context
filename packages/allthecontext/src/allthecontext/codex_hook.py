@@ -21,7 +21,7 @@ from pydantic import Field, StrictInt, StrictStr
 
 from .claude_code_hook import _is_managed_loopback_core
 from .credentials import KeyringCredentialStore
-from .hook_context import REFERENCE_FRAME, bounded_reference_context
+from .hook_context import REFERENCE_FRAME, bounded_reference_context, delivery_status_context
 from .http_client import ContextHttpClient
 from .lifecycle_contract import MAX_LIFECYCLE_BODY_BYTES, MAX_LIFECYCLE_CONTENT_CHARS
 from .lifecycle_runtime import (
@@ -135,11 +135,12 @@ def _bounded_reference_context(response: object, *, budget: int) -> str:
 def _retrieve_hook_context(task_description: str, character_budget: int) -> str:
     """Query only the authenticated Core read route; all failures are content-free."""
 
+    budget = 0
     try:
+        budget = min(character_budget, CODEX_HOOK_CONTEXT_BUDGET)
         client = _hook_client()
         if client is None:
-            return ""
-        budget = min(character_budget, CODEX_HOOK_CONTEXT_BUDGET)
+            return delivery_status_context("retrieval_unavailable", budget=budget)
         response = client.bootstrap_context_core_only(
             {
                 "query": task_description,
@@ -147,8 +148,10 @@ def _retrieve_hook_context(task_description: str, character_budget: int) -> str:
             }
         )
         return _bounded_reference_context(response, budget=budget)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return delivery_status_context("malformed_response", budget=budget)
     except Exception:
-        return ""
+        return delivery_status_context("retrieval_unavailable", budget=budget)
 
 
 def handle_codex_event(

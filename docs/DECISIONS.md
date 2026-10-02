@@ -1,5 +1,18 @@
 # Architecture decisions
 
+## Record-delivery limits use fixed hook notices (2026-10-02)
+
+Preserve evidence selection and existing Core/API authority. Add one fixed,
+record-items-only status block to the existing free-text hook output rather
+than inventing semantic unknown facets or expanding Core schemas. Successful
+empty results do not assess the separately returned project capsule; request
+errors are unavailable retrieval, not absence evidence. Existing strict pack
+metadata can establish upstream budget omission only when consistent with
+returned counts and flags. Whole JSON record and notice blocks must fit;
+tiny budgets stay silent. Retain cold provenance and deletion/replay checks,
+and measure unchanged development diagnostics without post-score tuning.
+See `docs/DELIVERY_STATUS.md`.
+
 ## 2026-10-02 - safe delivered record provenance
 
 Render read-hook context as framed, complete JSON blocks containing only record

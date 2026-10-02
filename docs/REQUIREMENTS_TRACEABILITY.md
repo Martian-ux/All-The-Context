@@ -1,5 +1,12 @@
 # Requirements traceability
 
+### 2026-10-02 bounded record-delivery status
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Describe delivered evidence limits without claiming absent capsule/global memory or named unknown facets | `hook_context.py::bounded_reference_context`; fixed record-items notice; `test_hook_delivery_status.py` | Empty, forged/capsule, malformed, strict metadata, budget and request-error checks added. Final validation pending; no Core/API schema or authority changes |
+| Preserve complete provenance and actual cold response boundaries | `test_hook_delivery_status_core.py`; existing cold provenance/deletion regressions | Actual capsule-plus-empty, upstream budget and permission scenarios added; exact development and broad checks pending. Tiny-budget silence disclosed; installed clients/model unrun; holdout sealed |
+
 "Implemented" means exercised by repository tests. Protected-main CI and
 CodeQL evidence is credited only when bound to an exact SHA; exact artifact,
 live/private client/provider, and release acceptance remain separate gates.

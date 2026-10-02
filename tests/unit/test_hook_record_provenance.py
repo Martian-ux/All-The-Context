@@ -20,7 +20,8 @@ def render(request: pytest.FixtureRequest) -> Callable[[object], str]:
 
 def _blocks(text: str) -> list[dict]:
     assert text.startswith(REFERENCE_FRAME)
-    return [json.loads(block) for block in text.removeprefix(REFERENCE_FRAME).split("\n\n")]
+    blocks = [json.loads(block) for block in text.removeprefix(REFERENCE_FRAME).split("\n\n")]
+    return [block for block in blocks if "content" in block]
 
 
 def test_reference_is_closed_and_content_cannot_forge_a_second_reference(render) -> None:
@@ -93,11 +94,15 @@ def test_no_budget_prefix_can_remove_the_negation_from_a_cited_statement() -> No
     for budget in [0, 1, len(REFERENCE_FRAME), len(complete) - 1, len(complete)]:
         text = bounded_reference_context(response, budget=budget)
         assert len(text) <= budget
-        assert not text or _blocks(text)[0]["content"] == content
-    assert bounded_reference_context(response, budget=len(complete) - 1) == ""
+        if text:
+            assert all(block["content"] == content for block in _blocks(text))
+    assert _blocks(bounded_reference_context(response, budget=len(complete) - 1)) == []
     assert bounded_reference_context(response, budget=len(complete)) == complete
 
 
 @pytest.mark.parametrize("response", [None, [], {"items": None}, {"items": ()}, {"items": [None]}])
 def test_malformed_response_is_content_free(render, response) -> None:
-    assert render(response) == ""
+    text = render(response)
+    assert _blocks(text) == []
+    notice = json.loads(text.removeprefix(REFERENCE_FRAME))["atc_delivery"]
+    assert notice["state"] == "malformed_response"

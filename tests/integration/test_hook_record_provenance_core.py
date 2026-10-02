@@ -49,7 +49,8 @@ def _render(payload: dict, app: str) -> list[dict]:
         else claude_code_hook._bounded_reference_context(payload)
     )
     assert text.startswith(REFERENCE_FRAME)
-    return [json.loads(block) for block in text.removeprefix(REFERENCE_FRAME).split("\n\n")]
+    blocks = [json.loads(block) for block in text.removeprefix(REFERENCE_FRAME).split("\n\n")]
+    return [block for block in blocks if "content" in block]
 
 
 @pytest.mark.parametrize("app", ["codex", "claude"])
@@ -140,7 +141,10 @@ def test_deleted_reference_stays_unreadable_after_cold_restart_and_original_repl
                 if app == "codex"
                 else claude_code_hook._bounded_reference_context(payload)
             )
-            assert text == ""
+            notice = json.loads(text.removeprefix(REFERENCE_FRAME))["atc_delivery"]
+            assert notice["scope"] == "record_items"
+            assert notice["state"] == "records_empty"
+            assert "atc_record" not in text
 
 
 def test_adapter_does_not_invent_current_citations_for_stale_or_deleted_references(

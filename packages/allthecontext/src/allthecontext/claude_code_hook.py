@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import threading
 import time
@@ -20,7 +21,11 @@ from mcp.server.mcpserver.tools import Tool
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
 from allthecontext.credentials import KeyringCredentialStore
-from allthecontext.hook_context import REFERENCE_FRAME, bounded_reference_context
+from allthecontext.hook_context import (
+    REFERENCE_FRAME,
+    bounded_reference_context,
+    delivery_status_context,
+)
 from allthecontext.http_client import ContextApiError, ContextHttpClient
 from allthecontext.lifecycle_runtime import (
     MAX_LIFECYCLE_CONTENT_CHARS,
@@ -206,7 +211,7 @@ def _retrieve_hook_context(prompt: str) -> str:
     try:
         client = _hook_client()
         if client is None:
-            return ""
+            return delivery_status_context("retrieval_unavailable", budget=HOOK_CONTEXT_BUDGET)
         response = client.bootstrap_context_core_only(
             {
                 "query": prompt,
@@ -214,8 +219,10 @@ def _retrieve_hook_context(prompt: str) -> str:
             }
         )
         return _bounded_reference_context(response)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return delivery_status_context("malformed_response", budget=HOOK_CONTEXT_BUDGET)
     except Exception:
-        return ""
+        return delivery_status_context("retrieval_unavailable", budget=HOOK_CONTEXT_BUDGET)
 
 
 def claude_code_user_prompt_submit_read(
