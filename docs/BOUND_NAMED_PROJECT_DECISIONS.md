@@ -73,3 +73,13 @@ whole-turn abstention, corrections, replay, ABA and current-source history.
 Existing decision/personal/binding tests remain regression checks. Frozen v1
 objects and sealed holdouts are unchanged. These are public API/source-runtime
 tests, not installed-app, live-vault, model-outcome or release acceptance.
+
+Reviewed/tested source `4f9e0c7e05ea873ce425349a63a709190406e1d0` passes
+all 29 final public cases. Broad native coverage is 3,909 passed and 21 skipped
+with no failures/errors, across exactly 3,930 selected IDs. The 39 reliability
+specification cases run serially; JUnit union matches the selected collection
+with no missing, extra or duplicate IDs. Three inherited exclusions remain
+explicit: frozen v1 coverage and two raw-HKEY Windows lifecycle tests. Ruff,
+format, strict mypy119, documentation and whitespace checks pass. Independent
+read-only re-review reports no scoped blocker on that source. Final delivery
+adds validation documentation only.

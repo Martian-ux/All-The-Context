@@ -12,8 +12,14 @@ placeholder name, so its named decision still abstains. See
 [diagnosis and contract](BOUND_NAMED_PROJECT_DECISIONS.md).
 Independent scoped review found no blocker and requested rename/replay coverage;
 the public regression preserves original receipts and refuses alias inference.
-Initial focus passes 187 cases; final named public suite passes 29. Full exact
-candidate checks are pending source freeze.
+Reviewed/tested source `4f9e0c7e` passes all 29 final named public cases. Broad
+coverage is 3,909 passed and 21 skipped with no failures/errors; all 3,930
+selected IDs execute exactly once, including 39 serial specification cases.
+Three inherited exclusions remain explicit. Initial focused checks pass 187;
+Ruff/format, strict mypy119, docs and whitespace pass. Independent re-review
+confirms that exact source. Final delivery changes only documentation. Frozen v1,
+sealed holdouts and binding/security/schema remain unchanged; installed-app/model
+acceptance and a global unique-name/stable-alias contract remain separate gates.
 
 ## 2026-10-02 - bounded decision and partial-recall runtime integration
 

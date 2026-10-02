@@ -7,7 +7,7 @@
 | Ordinary affirmative name-bearing user decision | `project_decision_policy.py`; bound-name read inside `record_client_capture`; public named capture/cold fresh reader tests | Name only conditions meaning within the existing resolved canonical binding; no grant/security/schema change |
 | Reject unsupported/foreign/mixed uncertainty and preserve personal/source history | `test_bound_named_project_decisions.py` name mismatch, unsafe/unbound/negative/quoted/mixed turns, source-history/correction/ABA tests | Exact full turn; no names from scope/content/query/cwd or fixture keys |
 | Preserve rename/replay and project isolation | Same public module: renamed anchor re-parse rejection, exact receipt replay, duplicate display labels and foreign corrections | No global name/alias contract; original Harbor placeholder-name case stays tentative |
-| Exact candidate checks | Initial focused187 pass and final named public29 pass; independent review no blocker | Full checks pending source freeze; frozen v1 and sealed holdouts unchanged |
+| Exact candidate checks | Frozen source4f9e0c7e: public29 pass; broad3,909 pass/21 skip with all3,930 selected IDs exactly once; initial focused187 pass; Ruff/format, strict mypy119, docs/whitespace pass; independent re-review no blocker | Three inherited exclusions explicit; post-source delivery docs only; frozen v1, sealed holdouts and binding/security/schema unchanged; installed apps/model unrun |
 
 ### 2026-10-02 bounded decision and partial runtime integration
 
