@@ -59,8 +59,34 @@ both actual hook helpers, deletion, replay, unavailable/mismatched predecessor
 lineage, separate-store concurrent corrections and rollback fault injection.
 These use synthetic in-process transport; installed-client/model acceptance is
 **UNRUN**. Frozen v1 adapter/fixtures/grader are unchanged, holdouts sealed.
-Exact focused, static, broad selected-ID and development comparisons are pending
-source freeze; final receipts will distinguish them from pure-lane evidence.
+Exact reviewed/tested runtime `f04917e12777195a1052988c3f237063a8eeedd4`
+passes **3,880 tests with 21 skips**, no failures/errors and three warnings.
+The final 39 serial specification cases plus 3,862 parallel cases execute all
+3,901 selected IDs exactly once. All 260 focused cases, including all 46 new
+runtime cases, pass as a subset of that exact-source run. The three inherited
+exclusions remain explicit: sealed-holdout integrity reader and two known
+native Windows registry blockers. Ruff/format (404 files), strict mypy (120
+files), docs and whitespace checks pass. Final delivery adds documentation only.
+
+Independent review identified a fallback regression that suppressed unrelated
+project/goal claims on role words. The repair limits suppression to workflow
+fallback with decision/action framing; four public-Core cases prove legitimate
+claims remain and unsupported technical workflow stays raw. Re-review found no
+remaining scoped issue and confirmed the exact frozen source/test blobs.
+Initial focused failure receipts remain preserved separately: two cold tests
+assumed mismatched scoring hints must return records, contrary to the inherited
+partial contract, and one stale reason lacked a closed-code mapping. Split
+normal delivery from hostile-hint isolation, retain all assertions, and map
+the fixed reason. A subsequent 254-case run passes; two disabled-policy cases
+and four review cases also pass. All 260 re-execute on final frozen broad source.
+
+Frozen development remains **3/14**, zero operation failures. Every checkpoint,
+failure detail, complete observation and operation equals compatibility parent
+`ec62f3a0`. The fixture hash and frozen tree are unchanged. That adapter remains
+unbound; canonical-bound runtime gains do not receive frozen acceptance credit.
+No post-score tuning or holdout execution occurs. A source-hook subprocess
+harness runs separately on a fresh check branch; its evidence is not folded
+into these in-process/broad claims or installed-client/model acceptance.
 
 No new grant, binding security, project schema, migration, portable authority,
 account configuration, live vault, installed service, dependency installation,

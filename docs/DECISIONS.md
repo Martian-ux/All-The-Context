@@ -12,6 +12,11 @@ personal facets. Retain partial facts only under the inherited exact admitted
 project pipeline. No new authority/schema or completeness fabrication. See
 [integrated contract](DECISION_PARTIAL_INTEGRATION.md); installed-client/model
 and restore-identity reconciliation remain separate gates.
+Independent review repaired fallback suppression of unrelated project/goal
+claims, then confirmed frozen runtime `f04917e1`. Exact selected-ID coverage is
+3,880 passed and 21 skipped; all 260 focused cases pass on that source. Frozen
+development and complete observations remain unchanged at 3/14, as its adapter
+is unbound. Source-hook client validation is kept in a separate check branch.
 
 ## Separate delivery fixture state from unsupported formation (2026-10-02)
 

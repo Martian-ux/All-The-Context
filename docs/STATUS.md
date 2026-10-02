@@ -11,8 +11,14 @@ Unsupported decision-like turns cannot use legacy workflow fallback; personal
 facets remain separate. Partial recall retains admitted same-project facts only
 under the inherited exact binding/pipeline gates. No completeness claim is added.
 See [integration and validation limits](DECISION_PARTIAL_INTEGRATION.md).
-Focused runtime, exact broad/development comparisons and independent review are
-pending; frozen v1 unchanged, holdouts sealed, installed clients/model unrun.
+Reviewed/tested runtime `f04917e1` passes 3,880 broad checks with 21 skips and no
+failures/errors; all 3,901 selected IDs execute exactly once, including 260
+focused cases. Three known exclusions remain explicit. Ruff/format, strict
+mypy120, docs/whitespace pass. Independent review repaired an overbroad fallback
+regression, then confirmed frozen source with no remaining scoped issue. Frozen
+development remains 3/14 with identical complete parent observations and zero
+operation failures; adapter remains unbound. Frozen v1 unchanged, holdouts
+sealed, installed clients/model unrun. Source-hook harness is a separate check.
 Earlier entries below preserve their exact standalone historical evidence.
 
 ## 2026-10-02 - delivery fixture compatibility follow-up
