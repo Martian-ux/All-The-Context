@@ -1,5 +1,35 @@
 # Project status
 
+## 2026-10-02 - delivered hook record references
+
+Local branch `codex/hook-record-provenance-20261002` starts at frozen acceptance
+commit `49a3c05091f8e312478665e0398a1d18a9eb929d`. Codex and Claude Code share
+a bounded formatter that delivers record text with a validated opaque record ID
+and version. Separate JSON blocks keep quoted content out of reference metadata;
+oversized blocks are omitted intact rather than cutting a statement or citation.
+Source references, source IDs, paths, ACLs and arbitrary project metadata remain
+excluded. The existing authenticated context-truth route resolves a delivered
+reference; its version exposes a subsequent replacement.
+
+Supplemental tests exercise malicious metadata and quoted references, Unicode
+budgets, negated statements, persisted current evidence after a cold Core restart,
+and deleted-reference exclusion after cold restart and original-event replay.
+The ATC evaluation adapter decodes actual delivered blocks and resolves matching
+record versions through the authenticated truth route. Its existing cached
+synthetic source-quote mapping remains a diagnostic limitation.
+
+Frozen v1 fixtures, grader, manifest, baseline and holdouts are unchanged.
+Independent review is closed after fixing deleted-reference handling in the
+adapter. Focused checks pass 100 tests with the holdout-reading integrity test
+deselected. Python 3.14.3 broader checks pass 3,484 tests with 21 skips after
+excluding that integrity test and two native registry transaction tests. Both
+native tests reproduce error 6801 on unchanged base source; their Windows gate
+remains unresolved. The setup module passes all eight tests after removing a
+forbidden-word substring from the checkout directory name. Ruff check/format,
+production and strict benchmark mypy, documentation and whitespace checks pass.
+Installed client conversations, immutable source quotations, physical purge,
+formation repairs and broader memory acceptance remain unvalidated by this slice.
+
 ## 2026-09-30 — urllib3 correction for the PR118 combined candidate
 
 The prior exact-source review, native gates, and final review accept source

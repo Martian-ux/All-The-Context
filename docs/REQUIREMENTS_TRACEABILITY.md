@@ -6,6 +6,12 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-10-02 delivered hook record provenance
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| MEM-DELIVERY-PROV - delivered context retains safe resolvable current-record provenance without promoting quoted text or metadata into authority | `hook_context.py`; Codex/Claude `_bounded_reference_context`; `test_hook_record_provenance.py`; `test_hook_record_provenance_core.py` | Reviewed local candidate: 100 focused tests pass; broader run 3,484 passed/21 skipped, excluding one sealed-holdout integrity test and two native registry transaction tests reproduced failing on unchanged base with error 6801. Cold persisted-evidence resolution and deletion/replay exercised. Native gate unresolved; installed clients, immutable source quotes and physical purge unrun. Frozen acceptance artifacts unchanged |
+
 ### 2026-09-22 ZF010 loaded-worker observation correction
 
 | Requirement | Implementation/evidence | Status |

@@ -6,6 +6,7 @@ No candidates are manually approved and no facts are seeded from the oracle.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -195,14 +196,51 @@ class AtcAdapter:
                 text = codex_hook._bounded_reference_context(payload, budget=request.budget_chars)
             else:
                 text = claude_code_hook._bounded_reference_context(payload)
-            # Hook text contains no opaque record/source refs: do not invent
-            # delivered citations by carrying metadata over from retrieval.
-            delivered = (Chunk(text=text),) if text else ()
+            delivered = self._delivered_chunks(text, headers=self.read_clients[app])
         return Observation(
             retrieved=retrieved,
             delivered=delivered,
             detail="Unknown facets are not emitted by current bootstrap/hook contracts",
         )
+
+    def _delivered_chunks(self, text: str, *, headers: dict[str, str]) -> tuple[Chunk, ...]:
+        # Decode only what the hook actually supplied. Opaque IDs are resolved
+        # through the authenticated read route, never copied from retrieval or
+        # matched against the fixture's expected facts. Missing/stale references
+        # remain uncited. This also keeps comparisons independent of random IDs.
+        frame = codex_hook._REFERENCE_FRAME
+        if not text:
+            return ()
+        if not text.startswith(frame):
+            return (Chunk(text=text),)
+        chunks: list[Chunk] = []
+        for block in text.removeprefix(frame).split("\n\n"):
+            try:
+                payload = json.loads(block)
+            except ValueError:
+                chunks.append(Chunk(text=block))
+                continue
+            if not isinstance(payload, dict) or type(payload.get("content")) is not str:
+                chunks.append(Chunk(text=block))
+                continue
+            content = payload["content"]
+            reference = payload.get("atc_record")
+            if isinstance(reference, dict) and isinstance(reference.get("id"), str):
+                assert self.client is not None
+                route = "/v1/context/truth/" + reference["id"]
+                response = self.client.get(route, headers=headers)
+                if response.status_code == 200:
+                    record = response.json()["record"]
+                    if (
+                        record["version"] == reference.get("version")
+                        and record["content"] == content
+                    ):
+                        chunks.append(self._chunk(record))
+                        continue
+                elif response.status_code != 404:
+                    raise RuntimeError(f"{route}: HTTP {response.status_code}: {response.text}")
+            chunks.append(Chunk(text=content))
+        return tuple(chunks)
 
     def usage(self) -> ReaderUsage:
         return ReaderUsage.from_mapping({"model_calls": 0, "provider_calls": 0, "network_calls": 0})

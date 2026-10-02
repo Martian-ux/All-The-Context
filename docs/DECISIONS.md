@@ -1,5 +1,28 @@
 # Architecture decisions
 
+## 2026-10-02 - safe delivered record provenance
+
+Render read-hook context as framed, complete JSON blocks containing only record
+text and, when valid, a canonical opaque UUID and positive record version.
+Unreferenced content uses the same closed JSON shape. This prevents quoted
+content from creating a separate reference block, excludes arbitrary metadata
+and keeps both harnesses on the same complete-output budget rule. Oversized
+blocks are omitted; they are never shortened into potentially different claims.
+
+Record references resolve through the existing authenticated
+`/v1/context/truth/{record_id}` route. A versioned record pointer can detect a
+later replacement; it is not an immutable source quote or authority for text
+inside the untrusted content field. No source path, arbitrary source reference
+or ACL is delivered. Formation, authorization and retrieval selection remain
+owned by Core.
+
+Adapt only the ATC evaluation transport to decode references actually delivered
+and check their current content/version before attaching existing synthetic
+source mappings. Preserve frozen v1 cases, expectations, grader and historical
+baseline. Independent cold-Core API regressions supply evidence beyond the
+adapter's retained caches. Keep the holdout sealed, including excluding the
+preexisting integrity-only test that would open it during a full suite.
+
 ## Dependency lock decision — urllib3 audit remediation (2026-09-30)
 
 The PR118 combined candidate's hosted frozen dependency audit found three
