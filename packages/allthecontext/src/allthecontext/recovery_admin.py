@@ -24,6 +24,8 @@ from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
 from . import __version__
+from .capture_purge_barriers import TABLE as CAPTURE_PURGE_BARRIER_TABLE
+from .capture_purge_barriers import validate_row as validate_capture_purge_barrier
 from .config import CoreConfig
 from .export import (
     _rebuild_context_fts,
@@ -278,6 +280,7 @@ def carry_forward_purge_tombstones(
             "carried_purge_tombstones": 0,
             "carried_archive_purge_barriers": 0,
             "carried_archive_source_less_purge_barriers": 0,
+            "carried_client_capture_purge_barriers": 0,
             "carried_user_mutations": 0,
             "active_present": False,
             "vault_id": None,
@@ -323,6 +326,23 @@ def carry_forward_purge_tombstones(
             if vault is not None and _table_exists(active, _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE)
             else []
         )
+        capture_barriers = (
+            active.execute(
+                f"SELECT * FROM {CAPTURE_PURGE_BARRIER_TABLE} WHERE vault_id=?",
+                (str(vault["id"]),),
+            ).fetchall()
+            if vault is not None and _table_exists(active, CAPTURE_PURGE_BARRIER_TABLE)
+            else []
+        )
+        for barrier in capture_barriers:
+            validate_capture_purge_barrier(barrier)
+            if not any(
+                tomb["target_type"] == "record"
+                and tomb["stable_id"] == barrier["record_id"]
+                and tomb["purged_at"] == barrier["purged_at"]
+                for tomb in tombs
+            ):
+                raise ValueError("active capture purge barrier lacks its purge fact")
         mutations = []
         if _table_exists(active, "context_user_mutations"):
             mutation_columns = {
@@ -356,11 +376,18 @@ def carry_forward_purge_tombstones(
     finally:
         active.close()
     vault_id = str(vault["id"]) if vault is not None else None
-    if not tombs and not archive_barriers and not source_less_archive_barriers and not mutations:
+    if (
+        not tombs
+        and not archive_barriers
+        and not source_less_archive_barriers
+        and not mutations
+        and not capture_barriers
+    ):
         return {
             "carried_purge_tombstones": 0,
             "carried_archive_purge_barriers": 0,
             "carried_archive_source_less_purge_barriers": 0,
+            "carried_client_capture_purge_barriers": 0,
             "carried_user_mutations": 0,
             "active_present": True,
             "vault_id": vault_id,
@@ -430,6 +457,17 @@ def carry_forward_purge_tombstones(
             )
             if inserted.rowcount == 1:
                 carried_source_less_archive_barriers += 1
+        carried_capture_barriers = 0
+        for barrier in capture_barriers:
+            inserted = isolated.execute(
+                f"INSERT OR IGNORE INTO {CAPTURE_PURGE_BARRIER_TABLE}"
+                "(vault_id,partition_id,facet_id,record_id,purged_at) VALUES(?,?,?,?,?)",
+                tuple(
+                    barrier[field]
+                    for field in ("vault_id", "partition_id", "facet_id", "record_id", "purged_at")
+                ),
+            )
+            carried_capture_barriers += int(inserted.rowcount == 1)
         carried_mutations = 0
         allowed_kinds = {
             "restore",
@@ -494,6 +532,7 @@ def carry_forward_purge_tombstones(
         "carried_purge_tombstones": carried,
         "carried_archive_purge_barriers": carried_archive_barriers,
         "carried_archive_source_less_purge_barriers": carried_source_less_archive_barriers,
+        "carried_client_capture_purge_barriers": carried_capture_barriers,
         "carried_user_mutations": carried_mutations,
         "active_present": True,
         "vault_id": vault_id,

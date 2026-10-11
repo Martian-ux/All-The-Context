@@ -1,5 +1,17 @@
 # Architecture decisions
 
+## Preserve erasure association and chronology without deleted values (2026-10-11)
+
+Use a portable ID-only raw-observation/record association for erasure closure;
+do not reuse it as formation or routing authority. Keep a code-owned opaque field
+ID, stable project anchor ID (or unbound partition), erased record ID and purge
+time as the historical fence. Withhold pre-purge or future evidence before body
+persistence; preserve an opaque ignored receipt. Permit ordinary post-purge live
+choices. Validate package references and exact purge facts before destination
+mutation, and carry fences through recovery. Do not reconstruct missing legacy
+relationships by matching content or retaining value hashes. See
+[contract and limits](CAPTURE_PURGE_HISTORY.md).
+
 ## Erase raw capture siblings through durable event lineage (2026-10-11)
 
 Purge must follow the formed observation's exact capture event/source within the

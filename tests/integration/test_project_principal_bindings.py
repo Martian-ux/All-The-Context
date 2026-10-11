@@ -544,13 +544,13 @@ def test_cold_core_preserves_binding_replay_and_deletion(fixture: Fixture) -> No
         assert all("concise" not in item["content"] for item in result["items"])
 
 
-def test_schema_twenty_one_export_restores_memory_without_binding_authority(
+def test_current_schema_export_restores_memory_without_binding_authority(
     fixture: Fixture, tmp_path: Path
 ) -> None:
     fixture.principal("borealis", ["context:read"])
     package = tmp_path / "synthetic.atcexp"
     manifest = create_export(fixture.core.store.database_path, package, "synthetic passphrase")
-    assert manifest["schema_version"] == 21
+    assert manifest["schema_version"] == 22
     assert NON_PORTABLE_SECURITY_TABLES.isdisjoint(manifest["tables"])
     destination = CoreStore(tmp_path / "restored.sqlite3")
     destination.initialize_vault()
@@ -586,8 +586,8 @@ def test_schema_twenty_migration_preserves_explicit_legacy_clients(
             )
         connection.execute("DELETE FROM schema_migrations WHERE version=21")
         connection.execute("UPDATE vaults SET schema_version=20")
-    assert fixture.core.store.migrate() == 21
-    assert fixture.core.store.migrate() == 21
+    assert fixture.core.store.migrate() == 22
+    assert fixture.core.store.migrate() == 22
     principal = ClientPrincipal(receipt["client_id"], "Forged scope", frozenset({"*"}))
     assert ProjectBindings(fixture.core.store).resolve(principal) is None
     with fixture.core.store.connect() as connection:

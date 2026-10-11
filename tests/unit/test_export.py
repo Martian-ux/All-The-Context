@@ -990,7 +990,7 @@ def test_restore_rejects_extra_package_vault_with_split_barrier_binding(
         ("schema_version", 19.0),
         ("schema_version", "19"),
         ("schema_version", -1),
-        ("schema_version", 22),
+        ("schema_version", 23),
     ],
 )
 def test_restore_rejects_noncanonical_manifest_versions_before_destination_mutation(

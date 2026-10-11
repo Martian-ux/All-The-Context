@@ -1,5 +1,9 @@
 # Linked lifecycle capture erasure
 
+This document records the `ec17f6e2` event-erasure slice and its then-current
+boundaries. The current schema-22 follow-up handles scoped historical capture
+and portable raw associations; see [the current contract](CAPTURE_PURGE_HISTORY.md).
+
 This bounded repair follows the independent audit's confirmed plaintext leak.
 Record purge removed the formed observation, versions and canonical record, and
 scrubbed capture event payloads, but retained the raw `captured_user_turn` sibling.

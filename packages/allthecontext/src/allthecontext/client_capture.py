@@ -300,6 +300,8 @@ class CoreCaptureService:
         }
         if committed.content_purged:
             capture_receipt["reason"] = "capture_content_purged"
+        elif committed.history_purged:
+            capture_receipt["reason"] = "capture_history_purged"
         committed_binding = ProjectBindings(self.store).captured_receipt(
             committed.event_id, principal.id
         )

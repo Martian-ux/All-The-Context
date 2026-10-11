@@ -1,5 +1,17 @@
 # Project status
 
+## 2026-10-11 - scoped purge chronology and portable raw erasure
+
+The separate follow-up to `ec17f6e2` adds schema-22 content-free capture erasure
+links and field/anchor chronology fences. New historical user events are withheld
+before body persistence, while honest later live choices remain eligible.
+Portable associations close the independently reproduced export/restore raw-sibling
+gap for new packages and intact captures backfilled before export. Frozen surface
+and portability cases pass in focused validation; final compatibility/broad
+receipts accompany the local handoff. Legacy packages without these associations
+and old completed-job orphans remain outside this slice. See
+[semantics, evidence and limits](CAPTURE_PURGE_HISTORY.md).
+
 ## 2026-10-11 - linked lifecycle purge erasure
 
 Separate follow-up to correction checkpoint `5b6d6e2`. The independent audit's

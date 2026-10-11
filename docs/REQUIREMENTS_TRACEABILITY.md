@@ -1,5 +1,14 @@
 # Requirements traceability
 
+### 2026-10-11 historical capture and portable raw erasure
+
+| Requirement | Implementation/evidence | Boundary |
+|---|---|---|
+| Historical fresh-ID capture cannot revive an erased closed field | `capture_purge_barriers.py`; pre-persistence gate in `record_client_capture`; synthetic cold/offset/new-client regressions and frozen surface matrix | Scoped field/anchor chronology; honest later choices allowed; stronger timestamp attestation absent |
+| Raw sibling erasure survives portable restore and stale-package merge | Portable `client_capture_erasure_links`, purge traversal and restore filtering; unchanged four-case independent portability audit | New packages and intact local backfill; missing legacy association not inferred from text |
+| Fence survives new local project IDs, rebuild and recovery | Schema 22; portable graph validation and recovery carry-forward; encrypted export/rebind tests | Opaque stable anchor/facet IDs, closed timestamps and exact purge facts; no credentials or raw content retained |
+| Preserve evaluator integrity | Byte-verified frozen audit inputs; existing assertions advance only migration count/unsupported schema boundary | No sealed-answer access or weakened expectations |
+
 ### 2026-10-11 linked lifecycle purge erasure
 
 | Requirement | Implementation/evidence | Boundary |

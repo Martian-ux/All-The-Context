@@ -149,6 +149,7 @@ class ClientCaptureReceipt:
     event_id: str
     replayed: bool
     content_purged: bool = False
+    history_purged: bool = False
 
 
 def _purged_client_capture_observation_id(
@@ -344,6 +345,7 @@ def _canonical_reason(reason: str | None, default: str = "record_state_changed")
         "personal_preference_slot_blocked": "personal_preference_slot_blocked",
         "personal_preference_no_predecessor": "personal_preference_no_predecessor",
         "personal_preference_stale": "personal_preference_stale",
+        "capture_history_purged": "capture_history_purged",
         "personal_preference_boundary": "personal_preference_boundary",
         "personal_preference_legacy": "personal_preference_legacy",
         "project_decision_predecessor_unavailable": "project_decision_predecessor_unavailable",
@@ -954,7 +956,7 @@ class CoreStore:
             "('explicit_user_statement_witness_required','observation_reinforced',"
             "'observation_corroborated','candidate_approved','candidate_rejected',"
             "'personal_preference_slot_blocked','personal_preference_no_predecessor',"
-            "'personal_preference_stale','personal_preference_boundary',"
+            "'personal_preference_stale','personal_preference_boundary','capture_history_purged',"
             "'personal_preference_legacy') "
             "THEN lower(decision_reason) ELSE 'observation_decision' END"
         )
@@ -1237,6 +1239,14 @@ class CoreStore:
                 self._ensure_archive_purge_barriers_tx(connection)
                 self._ensure_archive_source_less_purge_barriers_tx(connection)
                 self._recompute_record_keys_tx(connection)
+                from .capture_purge_barriers import ensure_schema, record_erasure_links
+
+                ensure_schema(connection)
+                vault = connection.execute(
+                    "SELECT id FROM vaults ORDER BY created_at LIMIT 1"
+                ).fetchone()
+                if vault is not None:
+                    record_erasure_links(connection, str(vault["id"]))
             except BaseException:
                 connection.rollback()
                 raise
@@ -4536,6 +4546,76 @@ class CoreStore:
             ):
                 raise InvalidStateError("client capture source is not enabled")
 
+            # A field fence is checked before a new body reaches the ledger.
+            # Exact existing receipts still use the ordinary replay path.
+            from .capture_purge_barriers import blocks_history, partition_for_project
+            from .project_decision_policy import ProjectDecisionPlan, plan_project_decision
+
+            role = event.payload.get("role")
+            content = event.payload.get("content")
+            if role not in {"user", "assistant", "tool", "imported"}:
+                raise InvalidStateError("capture event role is invalid")
+            if not isinstance(content, str) or content != candidate.content:
+                raise ConflictError("capture event content does not match the observation")
+            bound_project_name = None
+            if project_context is not None:
+                anchor = connection.execute(
+                    "SELECT r.structured_value_json FROM canonical_projects p "
+                    "JOIN context_records r ON r.id=p.anchor_record_id AND r.vault_id=p.vault_id "
+                    "WHERE p.id=? AND p.vault_id=? AND p.revoked_at IS NULL",
+                    (project_context.canonical_project_id, self.vault_id()),
+                ).fetchone()
+                if anchor is not None:
+                    structured_anchor = _loads(anchor["structured_value_json"], {})
+                    if isinstance(structured_anchor, dict):
+                        bound_project_name = structured_anchor.get("project_name")
+            decision_plan = plan_project_decision(
+                content,
+                role=str(role),
+                project_context=project_context,
+                bound_project_name=bound_project_name,
+            )
+            live_claim = extract_live_user_claim(content) if role == "user" else None
+            fence_claim = (
+                decision_plan.claim
+                if isinstance(decision_plan, ProjectDecisionPlan)
+                else live_claim
+            )
+            known_event = connection.execute(
+                "SELECT 1 FROM capture_events WHERE source_id=? "
+                "AND (provider_event_id=? OR idempotency_key=?) LIMIT 1",
+                (source_id, event.provider_event_id, candidate.idempotency_key),
+            ).fetchone()
+            history_purged = bool(
+                known_event is None
+                and fence_claim is not None
+                and blocks_history(
+                    connection,
+                    vault_id=self.vault_id(),
+                    partition_id=partition_for_project(
+                        connection,
+                        self.vault_id(),
+                        project_context.canonical_project_id
+                        if project_context is not None
+                        else None,
+                    ),
+                    kind=fence_claim.kind,
+                    attribute=fence_claim.attribute_key,
+                    observed_at=str(candidate.observed_at),
+                    as_of=now,
+                )
+            )
+            if history_purged:
+                opaque_payload: dict[str, Any] = {
+                    "purged_capture_receipt": {
+                        "schema": PURGED_CAPTURE_RECEIPT_SCHEMA,
+                        "observation_id": new_id(),
+                    }
+                }
+                if project_context is not None:
+                    opaque_payload["project_binding"] = project_context.receipt()
+                event = replace(event, payload=opaque_payload)
+
             payload_json, payload_hash = event.normalized()
             del payload_json
             event_id, replayed, _attempts = CaptureLedger._stage_event_tx(
@@ -4565,7 +4645,67 @@ class CoreStore:
                         if opaque_id is not None:
                             return ClientCaptureReceipt(opaque_id, event_id, True, True)
                     raise ConflictError("capture event has no bound observation")
-                return ClientCaptureReceipt(str(row["id"]), event_id, True)
+                return ClientCaptureReceipt(
+                    str(row["id"]),
+                    event_id,
+                    True,
+                    history_purged=row["decision_reason"] == "capture_history_purged",
+                )
+
+            if history_purged:
+                opaque_candidate = candidate.model_copy(
+                    update={
+                        "kind": "purged_capture_receipt",
+                        "content": "Historical capture was withheld.",
+                        "source_id": None,
+                        "source_reference": "client-capture-receipt-" + event_id,
+                        "source_service": "allthecontext-core",
+                        "source_type": "client_capture",
+                        "evidence": "Opaque historical capture refusal",
+                        "entity_key": None,
+                        "attribute_key": None,
+                        "structured_value": None,
+                        "scopes": [],
+                        "tags": [],
+                        "allowed_clients": [registered.id],
+                        "denied_clients": [],
+                        "supersedes": None,
+                        "explicit_user_statement": False,
+                        "sensitivity": Sensitivity.NORMAL,
+                    }
+                )
+                opaque_id = self._insert_candidate(
+                    connection,
+                    opaque_candidate,
+                    None,
+                    registered,
+                    capture_source_id=source_id,
+                    capture_event_id=event_id,
+                )
+                self._set_observation_decision_tx(
+                    connection,
+                    opaque_id,
+                    disposition=ObservationDisposition.IGNORED,
+                    reason="capture_history_purged",
+                    policy_version=AUTOMATIC_POLICY_VERSION,
+                    origin=ObservationOrigin.CLIENT_CAPTURE,
+                    actor=registered.id,
+                )
+                opaque_payload["purged_capture_receipt"]["observation_id"] = opaque_id
+                connection.execute(
+                    "UPDATE capture_events SET status='applied',application_receipt=?,"
+                    "normalized_payload_json=?,payload_hash=?,error_code=NULL,applied_at=? "
+                    "WHERE id=? AND source_id=?",
+                    (
+                        "capture-observation-" + _hash_text(f"{source_id}\0{event_id}"),
+                        _json(opaque_payload),
+                        ERASED_CAPTURE_PAYLOAD_HASH,
+                        now,
+                        event_id,
+                        source_id,
+                    ),
+                )
+                return ClientCaptureReceipt(opaque_id, event_id, False, history_purged=True)
 
             role = event.payload.get("role")
             if role not in {"user", "assistant", "tool", "imported"}:
@@ -4633,35 +4773,8 @@ class CoreStore:
                 principal=registered,
             )
             created = raw_created
-            # Plan only from this exact committed user turn and the binding
-            # resolved under the same lock. This ignores caller-formed metadata.
-            from .project_decision_policy import (
-                ProjectDecisionPlan,
-                is_project_decision_attempt,
-                plan_project_decision,
-            )
+            from .project_decision_policy import is_project_decision_attempt
 
-            # The already-resolved binding selects its one current explicit
-            # anchor. Its project_name is only a condition on decision wording;
-            # neither mentions, scopes nor labels choose identity or grants.
-            bound_project_name = None
-            if project_context is not None:
-                anchor = connection.execute(
-                    "SELECT r.structured_value_json FROM canonical_projects p "
-                    "JOIN context_records r ON r.id=p.anchor_record_id AND r.vault_id=p.vault_id "
-                    "WHERE p.id=? AND p.vault_id=? AND p.revoked_at IS NULL",
-                    (project_context.canonical_project_id, self.vault_id()),
-                ).fetchone()
-                if anchor is not None:
-                    structured_anchor = _loads(anchor["structured_value_json"], {})
-                    if isinstance(structured_anchor, dict):
-                        bound_project_name = structured_anchor.get("project_name")
-            decision_plan = plan_project_decision(
-                content,
-                role=str(role),
-                project_context=project_context,
-                bound_project_name=bound_project_name,
-            )
             decision_rejection = None
             decision_binding: dict[str, str] = {}
             if isinstance(decision_plan, ProjectDecisionPlan):
@@ -4830,6 +4943,9 @@ class CoreStore:
                 "error_code=NULL,applied_at=? WHERE id=? AND source_id=?",
                 (receipt, now, event_id, source_id),
             )
+            from .capture_purge_barriers import record_erasure_links
+
+            record_erasure_links(connection, self.vault_id(), {created.id})
             return ClientCaptureReceipt(created.id, event_id, False)
 
     def _add_candidate_tx(
@@ -8773,6 +8889,23 @@ class CoreStore:
         )
         if candidate_id is not None:
             observation_ids.add(candidate_id)
+        observation_ids.update(
+            str(row["observation_id"])
+            for row in connection.execute(
+                "SELECT observation_id FROM client_capture_erasure_links "
+                "WHERE vault_id=? AND record_id=?",
+                (vault_id, record_id),
+            ).fetchall()
+        )
+        from .capture_purge_barriers import record_barriers
+
+        record_barriers(
+            connection,
+            vault_id=vault_id,
+            record_id=record_id,
+            observation_ids=observation_ids,
+            purged_at=purged_at,
+        )
         capture_event_ids = {
             str(row["capture_event_id"])
             for row in connection.execute(
@@ -8880,8 +9013,10 @@ class CoreStore:
         for observation_id in sorted(observation_ids):
             linked_elsewhere = connection.execute(
                 "SELECT 1 FROM context_observation_links WHERE observation_id=? "
-                "UNION ALL SELECT 1 FROM context_records WHERE candidate_id=? LIMIT 1",
-                (observation_id, observation_id),
+                "UNION ALL SELECT 1 FROM context_records WHERE candidate_id=? "
+                "UNION ALL SELECT 1 FROM client_capture_erasure_links "
+                "WHERE observation_id=? LIMIT 1",
+                (observation_id, observation_id, observation_id),
             ).fetchone()
             if linked_elsewhere is None:
                 self._detach_candidate_from_batches(connection, observation_id)
