@@ -357,6 +357,15 @@ _LIVE_WORKFLOW = re.compile(
     r"^(?:my|our)\s+(?:workflow|stack)\s+is\s+(?P<value_alt>.+)$",
     flags=re.IGNORECASE,
 )
+# A qualifier can name a project without declaring a technical decision role.
+# Match the whole workflow value; never extract or resolve the mentioned target.
+_QUALIFIED_WORKFLOW_VALUE = re.compile(
+    r"(?P<tooling>.+?)\s+(?:for|in|on|within|across)\s+(?P<context>.+)",
+    flags=re.IGNORECASE,
+)
+_GLOBAL_WORKFLOW_CONTEXT = re.compile(
+    r"(?:all projects|every project|each project)", flags=re.IGNORECASE
+)
 _PREFERENCE_FORMAT_VALUES = frozenset({"tabs", "spaces"})
 _PREFERENCE_STYLE_VALUES = frozenset(
     {"brief", "concise", "detailed", "verbose", "thorough", "quick", "simple", "complex"}
@@ -1063,6 +1072,14 @@ def _extract_live_user_claim(content: str) -> LiveUserClaim | None:
     match = _LIVE_WORKFLOW.fullmatch(normalized)
     if match is not None:
         value = _claim_value(match.group("value") or match.group("value_alt") or "")
+        qualification = _QUALIFIED_WORKFLOW_VALUE.fullmatch(value)
+        if qualification is not None and (
+            _GLOBAL_WORKFLOW_CONTEXT.fullmatch(qualification.group("context")) is None
+        ):
+            # A purpose and a named scope can have identical wording. Preserve
+            # raw evidence rather than put either into the global tooling slot.
+            # Explicit whole-project global wording must be the sole qualifier.
+            return None
         if value:
             return LiveUserClaim(
                 kind="workflow",

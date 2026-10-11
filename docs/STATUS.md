@@ -52,6 +52,22 @@ verification is recorded in the local delivery receipts when completed.
 include unfixed historical recapture under new identifiers and old purge-job
 cleanup. No live memory or release work is involved.
 
+## 2026-10-11 - qualified workflow fallback checkpoint
+
+Isolated from unmerged personal correction candidate `5b6d6e24`. Complete
+project/purpose-qualified workflow values now abstain before automatic formation;
+unqualified workflows, explicit whole-project global wording, personal facets and
+supported canonically bound decisions retain their paths. Raw evidence and replay
+remain intact; no storage/schema or separate purge repair changes. See
+[bounded contract and residual limits](WORKFLOW_SCOPE_FALLBACK.md). All 49 new cases,
+269 existing focused cases on the identical production tree, and three unchanged
+auditor safety cases pass. The full diagnostic patch retains nine unrelated red
+capability probes (16 pass). Static checks pass; unchanged development stays 5/14,
+zero operation failures, identical checkpoint failures and fixture digest. Original
+authored control/setup failures are preserved in the external packet. The delivery
+delta after tested `fcae6b50` is documentation only. Independent exact-source Astra
+review and broader validation remain downstream.
+
 ## 2026-10-11 - bounded personal correction checkpoint
 
 Isolated from named source-client successor `46b3c552`. Reproduced unchanged

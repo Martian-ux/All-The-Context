@@ -25,6 +25,14 @@
 | Durable erasure through cold reopen and rebuild | All-table scans, physical SQLite/WAL checks, interrupted compaction and fresh bound readers | Synthetic owned vaults; external backups and old purge jobs outside this repair |
 | Exact retry keeps opaque identity without recreating erased observations or retaining fingerprints | `record_client_capture`; `client_capture.py`; `CaptureLedger._stage_event_tx`; stable ID/binding, no-influence altered-body and missing-observation controls | New event historical recapture remains unresolved for original and new bound principals |
 
+### 2026-10-11 qualified workflow fallback boundary
+
+| Requirement | Implementation/evidence | Boundary |
+|---|---|---|
+| Project-qualified text cannot overwrite or reach readers through the global tooling fallback | `memory_policy.py::extract_live_user_claim`; synthetic workflow scope policy/public tests | Whole-value qualification refusal; no project-name inference or grants |
+| Preserve legitimate global workflows, personal preferences and supported bound decisions | Same tests: explicit global, raw provenance/replay, cold/rebuild/fresh-reader and named/current-project decision controls | Existing authority/schema/storage and purge lane unchanged |
+| Preserve independent diagnostic evidence | Unchanged auditor safety tests, grader/adapter/development inputs and process-local holdout read barrier | 49 new and 269 existing focused cases plus three safety cases pass on identical production; diagnostic16/25 retains nine unrelated red probes; development5/14 has identical failures/digest and zero operation failures; broader gates and independent Astra review downstream |
+
 ### 2026-10-11 bounded personal correction checkpoint
 
 | Requirement | Implementation/evidence | Status |

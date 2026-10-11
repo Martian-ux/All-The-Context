@@ -43,6 +43,16 @@ Cross-principal historical recapture and cleanup of old purge jobs require
 separate review; neither is implied by this repair. See
 [contract and limits](CAPTURE_PURGE_ERASURE.md).
 
+## Refuse ambiguous workflow qualifications without inventing project authority (2026-10-11)
+
+A named/purpose qualification in a whole-turn workflow can describe project scope
+without an explicit decision role. Refuse automatic workflow extraction for the
+bounded qualification grammar rather than guess identity from text. Preserve
+unqualified and explicit whole-project global workflows, independent personal
+facets, exact raw evidence and existing canonical decision bindings. No storage,
+schema or historical memory migration; the unmerged personal correction candidate
+is an explicit dependency. See [contract and evidence limits](WORKFLOW_SCOPE_FALLBACK.md).
+
 ## Keep personal correction framing separate from value and chronology (2026-10-11)
 
 Strip terminal `now` only inside an already complete explicit personal contrast;
