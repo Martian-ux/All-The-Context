@@ -12,6 +12,14 @@ receipts accompany the local handoff. Legacy packages without these associations
 and old completed-job orphans remain outside this slice. See
 [semantics, evidence and limits](CAPTURE_PURGE_HISTORY.md).
 
+The first selected broad run exposed a portable-table naming collision with the
+capture-runtime exclusion contract, plus a source-client availability failure
+consistent with the earlier baseline timeout. The schema names were corrected to
+`memory_erasure_links` and `memory_purge_barriers`, preserving the unchanged
+privacy assertion. Final
+follow-up receipts and any residual failures accompany the handoff; the red
+broad receipt is retained.
+
 ## 2026-10-11 - linked lifecycle purge erasure
 
 Separate follow-up to correction checkpoint `5b6d6e2`. The independent audit's

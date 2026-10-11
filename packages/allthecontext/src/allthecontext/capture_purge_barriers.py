@@ -10,8 +10,8 @@ from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-TABLE = "client_capture_purge_barriers"
-LINK_TABLE = "client_capture_erasure_links"
+TABLE = "memory_purge_barriers"
+LINK_TABLE = "memory_erasure_links"
 _NAMESPACE = uuid.UUID("bb3a6117-dd25-437b-ae45-532e0ed2be83")
 PERSONAL_PARTITION = str(uuid.uuid5(_NAMESPACE, "unbound-personal-partition"))
 # These identifiers describe code-owned field definitions, never deleted values.
@@ -57,8 +57,7 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         "PRIMARY KEY(vault_id,record_id,observation_id))"
     )
     connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_capture_erasure_observation "
-        f"ON {LINK_TABLE}(observation_id)"
+        f"CREATE INDEX IF NOT EXISTS idx_memory_erasure_observation ON {LINK_TABLE}(observation_id)"
     )
 
 

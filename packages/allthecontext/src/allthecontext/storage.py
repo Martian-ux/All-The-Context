@@ -8892,8 +8892,7 @@ class CoreStore:
         observation_ids.update(
             str(row["observation_id"])
             for row in connection.execute(
-                "SELECT observation_id FROM client_capture_erasure_links "
-                "WHERE vault_id=? AND record_id=?",
+                "SELECT observation_id FROM memory_erasure_links WHERE vault_id=? AND record_id=?",
                 (vault_id, record_id),
             ).fetchall()
         )
@@ -9014,7 +9013,7 @@ class CoreStore:
             linked_elsewhere = connection.execute(
                 "SELECT 1 FROM context_observation_links WHERE observation_id=? "
                 "UNION ALL SELECT 1 FROM context_records WHERE candidate_id=? "
-                "UNION ALL SELECT 1 FROM client_capture_erasure_links "
+                "UNION ALL SELECT 1 FROM memory_erasure_links "
                 "WHERE observation_id=? LIMIT 1",
                 (observation_id, observation_id, observation_id),
             ).fetchone()

@@ -12,6 +12,11 @@ mutation, and carry fences through recovery. Do not reconstruct missing legacy
 relationships by matching content or retaining value hashes. See
 [contract and limits](CAPTURE_PURGE_HISTORY.md).
 
+Name the portable relationships as memory ledger data, `memory_erasure_links`
+and `memory_purge_barriers`. Keep capture-runtime tables and machine-local
+authorization outside portable packages. Preserve the existing export privacy
+assertion when correcting the unreleased schema's naming collision.
+
 ## Erase raw capture siblings through durable event lineage (2026-10-11)
 
 Purge must follow the formed observation's exact capture event/source within the

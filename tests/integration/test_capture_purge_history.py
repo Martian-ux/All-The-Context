@@ -200,7 +200,7 @@ def test_export_restore_rebinds_fence_by_anchor_and_carries_it_into_recovery(
     isolated = CoreStore(tmp_path / "isolated.sqlite3")
     isolated.migrate()
     evidence = carry_forward_purge_tombstones(config.database_path, isolated.database_path)
-    assert evidence["carried_client_capture_purge_barriers"] == 1
+    assert evidence["carried_memory_purge_barriers"] == 1
     with isolated.connect() as connection:
         assert connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0] == 1
 
@@ -305,23 +305,45 @@ def test_forged_portable_fence_fails_before_destination_mutation(
     assert destination.database_path.read_bytes() == before
 
 
+@pytest.mark.parametrize("upgrade", [False, True])
 def test_repeated_migration_repairs_missing_additive_tables_and_backfills_intact_capture(
     fixture: Fixture,
+    upgrade: bool,
 ) -> None:
     f = fixture
     writer, _ = f.principal("borealis", ["context:capture"])
-    receipt = capture(f.client, writer, turn("I prefer quick responses."))
+    statement = "I prefer quick responses."
+    observed = datetime.now(UTC) - timedelta(hours=1)
+    receipt = capture(f.client, writer, turn(statement, observed_at=observed))
     record_id = f.core.store.get_observation(receipt["observation_id"]).record_id
     assert record_id is not None
     with f.core.store.transaction() as connection:
-        connection.execute("DROP TABLE client_capture_erasure_links")
+        connection.execute("DROP TABLE memory_erasure_links")
         connection.execute(f"DROP TABLE {TABLE}")
+        if upgrade:
+            # Schema 22 is additive. Remove only its tables/version to reconstruct
+            # the predecessor layout around intact, preexisting capture tuples.
+            connection.execute("DELETE FROM schema_migrations WHERE version=22")
+            connection.execute("UPDATE vaults SET schema_version=21")
     assert f.core.store.migrate() == 22
     assert f.core.store.migrate() == 22
     with f.core.store.connect() as connection:
         assert (
             connection.execute(
-                "SELECT COUNT(*) FROM client_capture_erasure_links WHERE record_id=?", (record_id,)
+                "SELECT COUNT(*) FROM memory_erasure_links WHERE record_id=?", (record_id,)
             ).fetchone()[0]
             == 1
         )
+    f.core.store.purge(
+        "record",
+        record_id,
+        confirmation=f.core.store.purge_confirmation_phrase("record", record_id),
+    )
+    assert_no_plaintext(f.core.store, [statement])
+    f.core.store.migrate()
+    f.core.store.rebuild_integrity_groups()
+    with f.core.store.connect() as connection:
+        assert connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0] == 1
+    delayed = capture(f.client, writer, turn(statement, observed_at=observed))
+    assert delayed["reason"] == "capture_history_purged"
+    assert_no_plaintext(f.core.store, [statement])

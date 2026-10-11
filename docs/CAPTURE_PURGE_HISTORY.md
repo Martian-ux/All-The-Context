@@ -6,13 +6,20 @@ recapture a purged field's historical evidence, and portable export detached the
 event relationship needed to erase its raw sibling after restore. Canonical
 tombstones alone did not protect raw observations.
 
-Schema 22 adds two content-free relationships. `client_capture_erasure_links`
+Schema 22 adds two content-free relationships. `memory_erasure_links`
 associates a raw observation ID with the canonical record ID, an opaque project
 anchor ID (or fixed unbound-personal partition), and a code-owned opaque field ID.
-`client_capture_purge_barriers` retains the partition, field, erased record ID and
+`memory_purge_barriers` retains the partition, field, erased record ID and
 purge time. Neither table contains names, deleted values, quotations, embeddings
 or content fingerprints. The field IDs describe the closed Core-supported claim
 families; they are derived from schema definitions, never deleted content.
+The portable memory ledger uses `memory_` table names. Capture-runtime tables,
+authorization sidecars, machine paths, credentials and local event pointers
+remain excluded by the existing export contract. The selected broad run caught
+the earlier unreleased `capture_` naming collision; its privacy assertion is
+preserved unchanged. Schema 22 has not shipped. Earlier local schema-22 snapshots
+and packages are diagnostic artifacts, not supported upgrade inputs; use the
+schema-21 predecessor for upgrade verification.
 
 Core creates erasure links only from intact formed/user event lineage, validating
 the original event fingerprint, application receipt, source/principal/vault,
