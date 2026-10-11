@@ -113,6 +113,8 @@ class _ObservationLookupOverflow(InvalidStateError):
 
 
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
+ERASED_CAPTURE_PAYLOAD_HASH = "0" * 64
+PURGED_CAPTURE_RECEIPT_SCHEMA = "atc.purged-client-capture-receipt.v1"
 SOURCE_BLOB_CHUNK_BYTES = 8 * 1024 * 1024
 SOURCE_REBUILD_REASON = "replaced by source rebuild"
 _ARCHIVE_SOURCE_TYPES = frozenset({"archive", "provider_archive", "provider_memory"})
@@ -139,6 +141,44 @@ MAX_ACTIVITY_SNAPSHOT_ITEMS = 500
 _MAX_OBSERVATION_CANDIDATES = 256
 _ARCHIVE_PURGE_BARRIER_TABLE = "archive_purge_barriers"
 _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE = "archive_source_less_purge_barriers"
+
+
+@dataclass(frozen=True)
+class ClientCaptureReceipt:
+    observation_id: str
+    event_id: str
+    replayed: bool
+    content_purged: bool = False
+
+
+def _purged_client_capture_observation_id(
+    row: Mapping[str, Any] | sqlite3.Row, source_id: str
+) -> str | None:
+    """Validate the content-free receipt written by a lifecycle record purge."""
+    if (
+        row["status"] != "applied"
+        or row["payload_hash"] != ERASED_CAPTURE_PAYLOAD_HASH
+        or row["application_receipt"]
+        != "capture-observation-" + _hash_text(f"{source_id}\0{row['id']}")
+    ):
+        return None
+    payload = _loads(row["normalized_payload_json"], None)
+    if not isinstance(payload, dict) or set(payload) not in (
+        {"purged_capture_receipt"},
+        {"purged_capture_receipt", "project_binding"},
+    ):
+        return None
+    marker = payload["purged_capture_receipt"]
+    if (
+        not isinstance(marker, dict)
+        or set(marker) != {"schema", "observation_id"}
+        or marker["schema"] != PURGED_CAPTURE_RECEIPT_SCHEMA
+        or not isinstance(marker["observation_id"], str)
+        or re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", marker["observation_id"])
+        is None
+    ):
+        return None
+    return str(marker["observation_id"])
 
 
 @dataclass(frozen=True)
@@ -4417,8 +4457,8 @@ class CoreStore:
         candidate: CandidateInput,
         principal: ClientPrincipal,
         formed_candidate: CandidateInput | None = None,
-    ) -> tuple[CandidateOut, bool, str]:
-        """Atomically stage, form, and bind one client event to one observation."""
+    ) -> ClientCaptureReceipt:
+        """Atomically capture a turn or return its opaque committed replay receipt."""
 
         if (
             contains_secret_like_value(event.payload)
@@ -4513,8 +4553,19 @@ class CoreStore:
                     (event_id,),
                 ).fetchone()
                 if row is None:
+                    # Purge removes both projections of the bound user turn.
+                    # The exact applied event remains an opaque retry barrier;
+                    # no replacement observation or content is recreated.
+                    erased = connection.execute(
+                        "SELECT * FROM capture_events WHERE id=? AND source_id=?",
+                        (event_id, source_id),
+                    ).fetchone()
+                    if erased is not None:
+                        opaque_id = _purged_client_capture_observation_id(erased, source_id)
+                        if opaque_id is not None:
+                            return ClientCaptureReceipt(opaque_id, event_id, True, True)
                     raise ConflictError("capture event has no bound observation")
-                return self._candidate_out(row), True, event_id
+                return ClientCaptureReceipt(str(row["id"]), event_id, True)
 
             role = event.payload.get("role")
             if role not in {"user", "assistant", "tool", "imported"}:
@@ -4779,7 +4830,7 @@ class CoreStore:
                 "error_code=NULL,applied_at=? WHERE id=? AND source_id=?",
                 (receipt, now, event_id, source_id),
             )
-            return created, False, event_id
+            return ClientCaptureReceipt(created.id, event_id, False)
 
     def _add_candidate_tx(
         self,
@@ -8732,12 +8783,58 @@ class CoreStore:
             ).fetchall()
         }
         if capture_event_ids:
-            placeholders = ",".join("?" for _ in capture_event_ids)
-            connection.execute(
-                "UPDATE capture_events SET normalized_payload_json='{}' "
-                f"WHERE id IN ({placeholders})",
-                sorted(capture_event_ids),
+            # A lifecycle event owns a raw turn as well as its formed evidence.
+            # The raw sibling has no record_id/link, so record-only traversal
+            # misses its plaintext. Follow only the same durable event/source
+            # in this vault; the existing shared-record guard still applies.
+            observation_ids.update(
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT c.id FROM context_candidates c "
+                    "JOIN capture_events e ON e.id=c.capture_event_id "
+                    "WHERE c.vault_id=? AND c.capture_source_id=e.source_id "
+                    "AND e.id IN (SELECT value FROM json_each(?))",
+                    (vault_id, _json(sorted(capture_event_ids))),
+                ).fetchall()
             )
+            for captured in connection.execute(
+                "SELECT e.*,s.provider,s.client_principal_id FROM capture_events e "
+                "JOIN capture_sources s ON s.id=e.source_id "
+                "WHERE e.id IN (SELECT value FROM json_each(?))",
+                (_json(sorted(capture_event_ids)),),
+            ).fetchall():
+                opaque_payload: dict[str, Any] = {}
+                if (
+                    captured["provider"] == "client-runtime"
+                    and captured["client_principal_id"] is not None
+                    and captured["status"] == "applied"
+                    and captured["application_receipt"]
+                    == "capture-observation-"
+                    + _hash_text(f"{captured['source_id']}\0{captured['id']}")
+                ):
+                    # This is the same projection chosen at original capture
+                    # and ordinary replay; preserve only its opaque identity.
+                    original = connection.execute(
+                        "SELECT id FROM context_candidates WHERE vault_id=? "
+                        "AND capture_event_id=? AND capture_source_id=? "
+                        "ORDER BY CASE WHEN source_type='client_capture_formation' "
+                        "THEN 0 ELSE 1 END,created_at,id LIMIT 1",
+                        (vault_id, captured["id"], captured["source_id"]),
+                    ).fetchone()
+                    if original is not None:
+                        opaque_payload["purged_capture_receipt"] = {
+                            "schema": PURGED_CAPTURE_RECEIPT_SCHEMA,
+                            "observation_id": str(original["id"]),
+                        }
+                        prior_payload = _loads(captured["normalized_payload_json"], {})
+                        if isinstance(prior_payload, dict) and "project_binding" in prior_payload:
+                            opaque_payload["project_binding"] = prior_payload["project_binding"]
+                # A constant satisfies the legacy fixed-width column without
+                # retaining a guessable fingerprint of the erased turn.
+                connection.execute(
+                    "UPDATE capture_events SET normalized_payload_json=?,payload_hash=? WHERE id=?",
+                    (_json(opaque_payload), ERASED_CAPTURE_PAYLOAD_HASH, captured["id"]),
+                )
         slot = (cast(str | None, record["entity_key"]), cast(str | None, record["attribute_key"]))
         purge_payload = {
             "record_id": record_id,

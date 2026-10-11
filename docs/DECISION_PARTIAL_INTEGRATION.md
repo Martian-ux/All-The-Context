@@ -31,7 +31,12 @@ identity, completed application receipt, payload and binding hashes, formed
 idempotency and local source lifecycle. An arbitrary keyed/admin/archive record
 or unrelated receipt cannot become a decision predecessor. Corrections require
 exact old value, newer actual observation chronology and transaction-selected
-record ID/version. Tombstones block recreation, including fresh evidence.
+record ID/version. Reversible deletion tombstones block recreation, including
+fresh evidence. Purge barriers currently protect stable record identities and
+exact event retries; historical client evidence captured under new event IDs
+can still form a new record after purge. That unresolved distinction and the
+bounded raw-evidence/opaque-receipt repair are documented in
+[the erasure contract](CAPTURE_PURGE_ERASURE.md).
 Ordinary equivalent decisions reinforce even after correction; CAS/provenance
 bookkeeping does not change their semantic value. Current attribution follows
 replacement content; linked evidence and version snapshots retain earlier turns.

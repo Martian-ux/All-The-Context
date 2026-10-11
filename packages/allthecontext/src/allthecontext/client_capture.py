@@ -286,7 +286,7 @@ class CoreCaptureService:
                     source_id=source_id,
                     observed_at=observed_at.isoformat(),
                 )
-        created, replayed, durable_event_id = self.store.record_client_capture(
+        committed = self.store.record_client_capture(
             event=event,
             candidate=candidate,
             principal=principal,
@@ -294,12 +294,14 @@ class CoreCaptureService:
         )
         capture_receipt: dict[str, Any] = {
             "ok": True,
-            "status": "replayed" if replayed else "captured",
-            "capture_event_id": durable_event_id,
-            "observation_id": created.id,
+            "status": "replayed" if committed.replayed else "captured",
+            "capture_event_id": committed.event_id,
+            "observation_id": committed.observation_id,
         }
+        if committed.content_purged:
+            capture_receipt["reason"] = "capture_content_purged"
         committed_binding = ProjectBindings(self.store).captured_receipt(
-            durable_event_id, principal.id
+            committed.event_id, principal.id
         )
         if committed_binding is not None:
             capture_receipt["project_binding"] = committed_binding

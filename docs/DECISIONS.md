@@ -1,5 +1,19 @@
 # Architecture decisions
 
+## Erase raw capture siblings through durable event lineage (2026-10-11)
+
+Purge must follow the formed observation's exact capture event/source within the
+vault to remove its raw turn as well. Preserve existing shared-record guards;
+never erase another project by matching text. Keep only the existing opaque
+applied event receipt, original opaque observation ID and binding for authenticated
+identity replay. Erase payload fingerprints too; altered bodies on the same
+identity consume no influence after erasure, while changed identity fields
+conflict. The observation itself remains absent, and absence without a valid
+erased receipt remains a conflict.
+Cross-principal historical recapture and cleanup of old purge jobs require
+separate review; neither is implied by this repair. See
+[contract and limits](CAPTURE_PURGE_ERASURE.md).
+
 ## Keep personal correction framing separate from value and chronology (2026-10-11)
 
 Strip terminal `now` only inside an already complete explicit personal contrast;

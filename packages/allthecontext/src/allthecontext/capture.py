@@ -26,6 +26,7 @@ from .activity import CoreActivityGate
 from .ids import new_id, utc_now
 from .secret_boundary import contains_secret_like_text
 from .storage import (
+    ERASED_CAPTURE_PAYLOAD_HASH,
     MAX_ACTIVITY_SNAPSHOT_ITEMS,
     ConflictError,
     CoreStore,
@@ -33,6 +34,7 @@ from .storage import (
     StorageError,
     _added_column,
     _migration_statements,
+    _purged_client_capture_observation_id,
 )
 
 CaptureLifecycleState = Literal[
@@ -1450,14 +1452,19 @@ class CaptureLedger:
             raise CaptureError("capture_event_payload_conflict")
         existing = connection.execute(
             "SELECT id,status,payload_hash,provider_item_id,operation,generation,order_key,attempts,"
-            "idempotency_key "
+            "idempotency_key,normalized_payload_json,application_receipt "
             "FROM capture_events "
             "WHERE source_id=? AND provider_event_id=?",
             (source_id, event.provider_event_id),
         ).fetchone()
         if existing is not None:
+            erased = _purged_client_capture_observation_id(existing, source_id) is not None or (
+                existing["status"] == "applied"
+                and existing["payload_hash"] == ERASED_CAPTURE_PAYLOAD_HASH
+                and existing["normalized_payload_json"] == "{}"
+            )
             if (
-                str(existing["payload_hash"]) != payload_hash
+                (str(existing["payload_hash"]) != payload_hash and not erased)
                 or str(existing["provider_item_id"]) != event.provider_item_id
                 or str(existing["operation"]) != event.operation
                 or int(existing["generation"]) != event.generation

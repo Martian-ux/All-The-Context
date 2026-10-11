@@ -186,7 +186,15 @@ as no-influence. A capture item delete, or a later upsert that deterministically
 produces no fact for the same exact source/item, withdraws only the exact
 untouched registered-source record without minting an ordinary tombstone; a
 first-ever no-fact is harmless, and a later valid upsert may revive that same
-ID. Record purge scrubs linked capture payload JSON and blocks later influence.
+ID. Record purge scrubs linked capture payload JSON and blocks later influence
+for that registered source/item identity. Lifecycle client capture purge also
+erases linked raw/formed observations. Exact erased lifecycle retries return an
+opaque replay receipt with the original observation ID and project binding, and
+`reason: "capture_content_purged"`. Payload fingerprints are erased too;
+same-identity retries consume no influence even if their body differs.
+Historical client evidence recaptured under
+new principal/event identities remains an unresolved separate defect; see
+[the bounded erasure repair](../CAPTURE_PURGE_ERASURE.md).
 This is a local PR1 contract only: Packet H, ZF-010, provider/product support,
 production wiring, and release acceptance remain outside scope.
 

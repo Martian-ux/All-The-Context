@@ -30,6 +30,12 @@ Successful responses are bounded receipts of the form
 `{ "ok": true, "status": "captured" | "replayed", ... }`. A repeated
 idempotency key replays the existing receipt without duplicating the event or
 formed memory. Refusals are content-free and do not echo the submitted value.
+After linked record purge, an exact event retry returns `status: "replayed"`,
+the original opaque `observation_id`, original `project_binding` when bound, and
+`reason: "capture_content_purged"`; its raw/formed observations remain erased.
+The erased payload fingerprint is also removed. Same-identity retries consume no
+influence even if their body differs; changed identity fields still conflict.
+See [erasure scope and remaining defects](../CAPTURE_PURGE_ERASURE.md).
 
 ## Event, formation, and reconciliation
 

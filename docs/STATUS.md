@@ -1,5 +1,23 @@
 # Project status
 
+## 2026-10-11 - linked lifecycle purge erasure
+
+Separate follow-up to correction checkpoint `5b6d6e2`. The independent audit's
+residual plaintext defect was reproduced unchanged. Record purge now traverses
+the exact event/source/vault to include raw siblings of formed observations;
+existing shared-record guards and unrelated project evidence are preserved.
+Exact erased event retries retain the original opaque observation ID and binding,
+without recreating observations or retaining content fingerprints. Expanded
+admin/export/receipt and capture-ledger checks passed 135 cases; the two frozen
+historical-recapture variants still fail. All six new fingerprint/erasure/replay
+cases pass. The unchanged first-pass audit remains 16 passed/10 failed: one
+historical recapture defect, six capability gaps and three invalid NULL-record
+expectations, whose separate chronology controls pass. Full selected-suite
+verification is recorded in the local delivery receipts when completed.
+[Scope and remaining defects](CAPTURE_PURGE_ERASURE.md) explicitly
+include unfixed historical recapture under new identifiers and old purge-job
+cleanup. No live memory or release work is involved.
+
 ## 2026-10-11 - bounded personal correction checkpoint
 
 Isolated from named source-client successor `46b3c552`. Reproduced unchanged

@@ -1,5 +1,13 @@
 # Requirements traceability
 
+### 2026-10-11 linked lifecycle purge erasure
+
+| Requirement | Implementation/evidence | Boundary |
+|---|---|---|
+| Erase attributable original/corrected/reinforced capture plaintext | `storage.py::_purge_record_tx`; `test_capture_purge_erasure.py`; unchanged independent plaintext audit | Exact event/source/vault traversal and existing shared-record protection; newly executed purges |
+| Durable erasure through cold reopen and rebuild | All-table scans, physical SQLite/WAL checks, interrupted compaction and fresh bound readers | Synthetic owned vaults; external backups and old purge jobs outside this repair |
+| Exact retry keeps opaque identity without recreating erased observations or retaining fingerprints | `record_client_capture`; `client_capture.py`; `CaptureLedger._stage_event_tx`; stable ID/binding, no-influence altered-body and missing-observation controls | New event historical recapture remains unresolved for original and new bound principals |
+
 ### 2026-10-11 bounded personal correction checkpoint
 
 | Requirement | Implementation/evidence | Status |
