@@ -833,7 +833,7 @@ def _manifest_schema_version(manifest: dict[str, Any]) -> int:
 
     raw_version = manifest.get("schema_version", 0)
     if type(raw_version) is not int or raw_version not in SUPPORTED_SCHEMA_VERSIONS:
-        raise ValueError("export schema version must be an integer from 0 through 21")
+        raise ValueError("export schema version must be an integer from 0 through 22")
     return raw_version
 
 
