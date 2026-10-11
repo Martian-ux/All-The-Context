@@ -445,6 +445,30 @@ class LiveUserClaim:
     structured_value: dict[str, str]
 
 
+LIVE_USER_FIELDS = frozenset(
+    (kind, attribute)
+    for kind, attributes in (
+        (
+            "interaction_preference",
+            (
+                "response_format",
+                "response_style",
+                "interface_theme",
+                "response_layout",
+                "response_language",
+                "beverage",
+            ),
+        ),
+        ("name", ("name",)),
+        ("personal_context", ("location", "ssn", "health")),
+        ("project", ("current_project",)),
+        ("goal", ("current_goal",)),
+        ("workflow", ("tooling",)),
+    )
+    for attribute in attributes
+)
+
+
 def normalize_imported_text(value: str) -> str:
     """Normalize archive wrapper artifacts while retaining the inner wording."""
 
@@ -914,6 +938,18 @@ def _preference_attribute(value: str) -> str | None:
 
 
 def extract_live_user_claim(content: str) -> LiveUserClaim | None:
+    """Form only declared live fields, shared with retention policy.
+
+    A new extractor field must be declared here before it can form memory; the
+    purge ledger derives its field identifiers from this same closed registry.
+    """
+    claim = _extract_live_user_claim(content)
+    if claim is not None and (claim.kind, claim.attribute_key) not in LIVE_USER_FIELDS:
+        return None
+    return claim
+
+
+def _extract_live_user_claim(content: str) -> LiveUserClaim | None:
     """Extract only high-confidence first-person durable claims.
 
     This is deliberately narrower than a general prompt parser.  It reuses the

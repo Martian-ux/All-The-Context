@@ -6,6 +6,19 @@ recapture a purged field's historical evidence, and portable export detached the
 event relationship needed to erase its raw sibling after restore. Canonical
 tombstones alone did not protect raw observations.
 
+Expanded exact-source review of `a66f5cff` found missing coverage for five existing
+decision fields and raw/formed mismatch after supported canonical normalization.
+The successor closes those gaps. Purge field IDs now derive from the formation
+definitions: all seven decision subjects in the existing decision vocabulary,
+and all declared live/personal fields. An undeclared personal extractor field
+cannot form memory. Existing field IDs retain their original namespace/labels.
+For personal claims, lineage validation re-runs the same deterministic extractor
+on the original fingerprinted turn and verifies canonical kind, attribute,
+content and structured claim fields. It retains all existing event, principal,
+receipt, source and committed-binding checks. Decision content remains exact,
+matching its existing formation contract. Neither fuzzy text similarity nor
+imported metadata supplies provenance.
+
 Schema 22 adds two content-free relationships. `memory_erasure_links`
 associates a raw observation ID with the canonical record ID, an opaque project
 anchor ID (or fixed unbound-personal partition), and a code-owned opaque field ID.

@@ -1,5 +1,13 @@
 # Requirements traceability
 
+### 2026-10-11 expanded field and normalization closure
+
+| Requirement | Evidence | Boundary |
+|---|---|---|
+| Every supported formed field has the same retention coverage | `LIVE_USER_FIELDS`, `PROJECT_DECISION_FIELDS`, derived `FACETS`; unchanged 27-case independent matrix | New live fields must be declared before formation; no new language support |
+| Canonical normalization preserves exact raw erasure lineage | Original fingerprint/receipt/binding plus re-derived live claim; seven other live-field kinds and original normalization counterexamples | Exact canonical derivation; no fuzzy association or imported-metadata authority |
+| Historical field IDs remain stable | Existing UUID namespace and definition-derived identifiers; old-to-successor mapping verification in handoff | No deleted values/fingerprints added; schema shape unchanged |
+
 ### 2026-10-11 historical capture and portable raw erasure
 
 | Requirement | Implementation/evidence | Boundary |

@@ -61,6 +61,7 @@ _VALUES = MappingProxyType(
     }
 )
 _ROLE = "(?:" + "|".join(re.escape(value) for value in _ROLE_ALIASES) + ")"
+PROJECT_DECISION_FIELDS = frozenset(_VALUES)
 _ATOM = r"[a-z]+"
 _CHOICE = r"(?:use|i choose|i have decided to use|i've decided to use)"
 _PATTERNS = (

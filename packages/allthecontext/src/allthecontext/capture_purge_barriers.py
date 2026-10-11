@@ -10,6 +10,9 @@ from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from .memory_policy import LIVE_USER_FIELDS, extract_live_user_claim
+from .project_decision_policy import PROJECT_DECISION_FIELDS
+
 TABLE = "memory_purge_barriers"
 LINK_TABLE = "memory_erasure_links"
 _NAMESPACE = uuid.UUID("bb3a6117-dd25-437b-ae45-532e0ed2be83")
@@ -17,26 +20,8 @@ PERSONAL_PARTITION = str(uuid.uuid5(_NAMESPACE, "unbound-personal-partition"))
 # These identifiers describe code-owned field definitions, never deleted values.
 FACETS = {
     (kind, attribute): str(uuid.uuid5(_NAMESPACE, f"{kind}:{attribute}"))
-    for kind, attributes in (
-        (
-            "interaction_preference",
-            (
-                "response_format",
-                "response_style",
-                "interface_theme",
-                "response_layout",
-                "response_language",
-                "beverage",
-            ),
-        ),
-        ("name", ("name",)),
-        ("personal_context", ("location", "ssn", "health")),
-        ("project", ("current_project",)),
-        ("goal", ("current_goal",)),
-        ("workflow", ("tooling",)),
-        ("project_decision", ("database", "offline_cache")),
-    )
-    for attribute in attributes
+    for kind, attribute in LIVE_USER_FIELDS
+    | {("project_decision", field) for field in PROJECT_DECISION_FIELDS}
 }
 
 
@@ -259,7 +244,7 @@ def _qualified_captures(
         )
         if (
             payload.get("role") != "user"
-            or payload.get("content") != row["content"]
+            or not isinstance(payload.get("content"), str)
             or row["event_status"] != "applied"
             or row["operation"] != "upsert"
             or row["provider"] != "client-runtime"
@@ -289,6 +274,25 @@ def _qualified_captures(
         )
         if event.normalized()[1] != row["payload_hash"]:
             continue
+        if row["kind"] == "project_decision":
+            # Decision formation intentionally retains the exact raw turn.
+            if payload["content"] != row["content"]:
+                continue
+        else:
+            # Re-derive with the very same canonical formation policy. NFKC and
+            # whitespace may change content; identity/receipt/fingerprint checks
+            # above still bind this to its original Core event, not a text match.
+            claim = extract_live_user_claim(payload["content"])
+            if (
+                claim is None
+                or claim.kind != row["kind"]
+                or claim.attribute_key != row["attribute_key"]
+                or claim.content != row["content"]
+                or any(
+                    structured.get(key) != value for key, value in claim.structured_value.items()
+                )
+            ):
+                continue
         receipt = payload.get("project_binding")
         partition = PERSONAL_PARTITION
         entity = "user"

@@ -1,5 +1,17 @@
 # Architecture decisions
 
+## Derive erasure coverage from formation and its canonical claims (2026-10-11)
+
+The purge ledger must cover every declared formed field, rather than maintain a
+second partial field list. Derive decision fields from their existing value
+vocabulary; share the personal/live field declarations with formation, which
+abstains for undeclared extractor output. Keep the existing namespace/field-ID
+derivation so previously exported fences retain their identities. For personal
+lineage, re-derive the exact canonical claim from the original fingerprinted
+turn and verify its kind, attribute, content and structured claim fields. Keep
+decision raw wording exact as its formation policy does. Never substitute fuzzy
+similarity or imported metadata for the committed event/receipt/binding tuple.
+
 ## Preserve erasure association and chronology without deleted values (2026-10-11)
 
 Use a portable ID-only raw-observation/record association for erasure closure;

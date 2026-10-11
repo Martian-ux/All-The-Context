@@ -1,5 +1,19 @@
 # Project status
 
+## 2026-10-11 - complete declared-field erasure coverage
+
+The exact `a66f5cff` selected broad suite passed 3,950 cases with 21 skips and two
+inherited strict xfails. Independent expanded privacy probes nevertheless found
+21 failures: five already-supported decision fields lacked fences/links, and
+canonical personal normalization detached raw siblings. This successor derives
+purge fields from the declared live formation registry and decision vocabulary,
+preserving existing field IDs. Undeclared personal fields cannot form memory.
+Lineage checks re-derive the same canonical live claim while retaining exact
+event fingerprint, source, principal, receipt, binding and partition checks.
+All 74 expanded/original/owned privacy checks and eight other-field/undeclared
+controls passed in working-source validation; final receipts are in the handoff.
+No scope repair, live memory, holdout or evaluation change is combined here.
+
 ## 2026-10-11 - scoped purge chronology and portable raw erasure
 
 The separate follow-up to `ec17f6e2` adds schema-22 content-free capture erasure
