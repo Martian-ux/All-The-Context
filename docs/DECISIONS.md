@@ -1,5 +1,16 @@
 # Architecture decisions
 
+## Keep personal correction framing separate from value and chronology (2026-10-11)
+
+Strip terminal `now` only inside an already complete explicit personal contrast;
+retain full source wording and bounded same-facet meaning. An old-value match
+does not grant chronology authority: require the incoming correction to be
+strictly newer than the current record and no later than transaction capture
+time. Preserve ordinary reinforcement, exact partition/CAS and durable replay/
+tombstone rules. Equal/future chronology stays tentative with the existing closed
+stale reason; older corrections retain the ordinary ignored-evidence path. See
+[contract and checkpoint limits](PERSONAL_CORRECTION_CHRONOLOGY.md).
+
 ## Keep name-mismatch evidence separate from named source acceptance (2026-10-02)
 
 Preserve the prior source harness byte-for-byte, including the historical strict

@@ -930,6 +930,10 @@ def extract_live_user_claim(content: str) -> LiveUserClaim | None:
     correction = _PERSONAL_CORRECTION.fullmatch(normalized)
     if correction is not None:
         preference_text = correction.group("statement").strip().rstrip(",").strip()
+        # A terminal "now" before an explicit contrast frames the correction;
+        # it is not part of the new facet value. Keep the complete turn as
+        # evidence and let the ordinary bounded subject checks reject qualifiers.
+        preference_text = re.sub(r"\s+now$", "", preference_text, flags=re.IGNORECASE)
         old_value = _claim_value(correction.group("old"))
     match = _LIVE_PREFERENCE.fullmatch(preference_text)
     if match is not None and not normalized.endswith("?") and "..." not in normalized:

@@ -1,5 +1,14 @@
 # Requirements traceability
 
+### 2026-10-11 bounded personal correction checkpoint
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Complete natural correction preserves current same-facet truth and full provenance | `memory_policy.py::extract_live_user_claim`; independent correction framing/negative regressions | Terminal `now` before explicit contrast is framing; ordinary qualifications and mixed/cross-facet statements retain abstention |
+| Corrections cannot poison chronology or reuse a delayed ABA predecessor | `storage.py::_personal_preference_binding_tx`; equal/older/future and ABA public captures | Strictly newer, nonfuture aware chronology under the existing transaction/CAS; ordinary equivalent reinforcement unchanged |
+| Durable correction and forgetting across fresh readers | `test_personal_correction_chronology.py`; both actual hook formatters, cold reopen/rebuild/history/replay/deletion | Synthetic checkpoint only; full selected-suite and independent review pending; no live memory or installed-client/model claim |
+| Preserve diagnostic evaluation integrity | Unchanged frozen evaluator, adapter and sealed holdouts | Exact successor development baseline reproduced at 3/14, zero operation failures; candidate comparison pending |
+
 ### 2026-10-02 registered named source-client journey
 
 | Requirement | Evidence | Boundary |

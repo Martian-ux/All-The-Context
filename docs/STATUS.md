@@ -1,5 +1,22 @@
 # Project status
 
+## 2026-10-11 - bounded personal correction checkpoint
+
+Isolated from named source-client successor `46b3c552`. Reproduced unchanged
+development baseline: 3/14 passing, zero operation failures. Complete explicit
+personal corrections now treat terminal `now` before a contrast as framing,
+while preserving full evidence and existing same-facet rejection. Under the
+capture transaction, exact-old-value corrections require strictly newer,
+nonfuture chronology; equal-time/future replacements are refused. Synthetic
+regressions cover cold reopen, integrity rebuild, two clients, fresh reader
+references/history, replay and forgetting. See
+[contract and evidence limits](PERSONAL_CORRECTION_CHRONOLOGY.md).
+This is a resumable local checkpoint. Broad checks, candidate development
+comparison and independent exact-source review remain pending. All 34 new cases
+and two existing delayed/reinforcement checks pass; Ruff, format, production/new-
+test mypy, docs and whitespace checks pass. Frozen evaluation
+is unchanged, holdouts unopened, and installed-client/model acceptance unrun.
+
 ## 2026-10-02 - separately registered named source-client journey
 
 Test-only composition of exact runtime `659d7379` and source harness `614c9a74`.

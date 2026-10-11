@@ -4161,6 +4161,8 @@ class CoreStore:
         principal: ClientPrincipal,
         *,
         project_context: ResolvedProjectContext | None,
+        observed_at: str,
+        as_of: str,
     ) -> tuple[str | None, dict[str, str]]:
         """Bind one preference to current personal truth under the capture write lock.
 
@@ -4245,6 +4247,27 @@ class CoreStore:
             value
         ) != normalized_observation_text(expected_old):
             return "personal preference predecessor does not match current value", {}
+        # Explicit contrast identifies a predecessor, not chronology authority.
+        # Equal-time and future turns cannot replace current truth. Older turns
+        # retain the ordinary ignored-evidence path, including delayed ABA.
+        # Equivalent evidence keeps its existing reinforcement rules.
+        from datetime import datetime
+
+        try:
+            proposed_at = datetime.fromisoformat(observed_at)
+            current_at = datetime.fromisoformat(str(target["observed_at"] or target["created_at"]))
+            capture_at = datetime.fromisoformat(as_of)
+            timely = (
+                proposed_at.utcoffset() is not None
+                and current_at.utcoffset() is not None
+                and capture_at.utcoffset() is not None
+                and proposed_at != current_at
+                and proposed_at <= capture_at
+            )
+        except ValueError:
+            timely = False
+        if not timely:
+            return "personal_preference_stale", {}
         return None, {
             "expected_record_id": str(target["id"]),
             "expected_record_version": str(target["version"]),
@@ -4699,7 +4722,12 @@ class CoreStore:
                     ):
                         raise InvalidStateError("formed personal preference does not match capture")
                     preference_rejection, binding = self._personal_preference_binding_tx(
-                        connection, claim, registered, project_context=project_context
+                        connection,
+                        claim,
+                        registered,
+                        project_context=project_context,
+                        observed_at=str(core_formed_candidate.observed_at),
+                        as_of=now,
                     )
                     core_formed_candidate = core_formed_candidate.model_copy(
                         update={
