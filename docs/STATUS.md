@@ -1,5 +1,26 @@
 # Project status
 
+## 2026-10-18 - bounded project capsule delivery to read hooks
+
+The shared Codex/Claude formatter now delivers complete facts from Core's
+activated, resolved project capsule alongside retrieved records. A cold Core
+regression first reproduced the capsule-only omission in both adapters. Derived
+project blocks carry only an opaque project ID and section; private projection
+metadata is excluded and no canonical record version is invented. Core retains
+project selection, authorization and canonical-memory authority.
+Derived facts use `project_content`; existing `content` blocks remain canonical
+records with their existing reference semantics and consumers.
+
+Both surfaces share the unchanged hook character budget. Records retain priority;
+whole JSON blocks are kept or omitted, and upstream truncated project statements
+are withheld. Separate fixed project and record delivery notices describe their
+own omissions. If both notices cannot fit, the existing record-only path and
+its scoped status remain available; no project facts are emitted. Absent or
+invalid capsules preserve that same existing record-only path.
+This isolated change starts at local combined candidate `432099ba`; it does not
+accept that candidate's inherited release state. Exact validation receipts and
+independent Astra review remain required before merge or release claims.
+
 ## 2026-10-11 - complete declared-field erasure coverage
 
 The exact `a66f5cff` selected broad suite passed 3,950 cases with 21 skips and two

@@ -1,5 +1,13 @@
 # Requirements traceability
 
+### 2026-10-18 project capsule delivery
+
+| Requirement | Evidence | Boundary |
+|---|---|---|
+| Deliver authorized capsule-only project facts to both read hooks | `hook_context.py`; cold Core regression in `test_hook_delivery_status_core.py` | Shape checks consume authenticated Core output; Core still owns ACL and project selection |
+| Preserve privacy and derived authority | `test_hook_project_context.py`; bound-project and denied-reader cases in `test_project_principal_bindings.py` | Separate `project_content` from canonical `content`; only text, opaque project ID, section and derived marker are forwarded; no source paths or fabricated canonical citation |
+| Bound the complete host payload without partial assertions | Every-budget, mixed delivery, oversized later-fit and upstream truncation regressions in `test_hook_project_context.py` | Existing total character budget and record priority; separate scoped notices; existing record-only path when both notices cannot fit |
+
 ### 2026-10-11 expanded field and normalization closure
 
 | Requirement | Evidence | Boundary |

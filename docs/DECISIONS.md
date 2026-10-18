@@ -7488,6 +7488,29 @@ Automatic lifecycle is the goal, not preserving the existing engine. Larger
 engine integration, installed-client acceptance and release action remain outside
 this slice. See the [contract guide](../bench/memory_acceptance_v1/README.md).
 
+## ADR-230: Deliver complete derived project facts through the shared read hooks
+
+Date: 2026-10-18
+
+Bootstrap already spends part of its budget on an authorized project capsule,
+but the shared Codex/Claude formatter discarded that capsule. Deliver its complete
+facts as separately marked, untrusted derived references. Accept only the known
+activated/resolved wire shape and opaque matching project identity; omit private
+projection metadata. A project projection supplies no canonical record version,
+so it must not masquerade as a versioned `atc_record` citation.
+Use a distinct `project_content` field for derived facts: existing canonical
+consumers treat `content` blocks as records requiring versioned citations.
+
+Keep record priority and the existing total hook character budget. Never inject
+an upstream truncated capsule item or locally cut JSON/text. Project and record
+delivery notices remain separately scoped, including when no records matched.
+When both notices cannot fit, preserve the existing record-only path without
+project facts; that record status cannot establish global context absence.
+Abstained or malformed capsules cannot supply project facts; malformed record
+responses retain the existing content-free failure path. Core authorization,
+capture, admission, persistence and capsule compilation are unchanged. This
+change requires independent review and exact-candidate verification before merge.
+
 ## 2026-10-02 bounded project decision formation lane
 
 Use the verified canonical binding solely to identify capture scope. A complete,

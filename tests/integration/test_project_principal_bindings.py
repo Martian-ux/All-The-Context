@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,14 @@ def test_exact_filter_applies_to_records_preferences_capsule_and_get(
     assert "cedar" not in json.dumps(result)
     assert all(item["scopes"] == ["project:borealis"] for item in result["items"])
     assert ambiguous not in {item["id"] for item in result["items"]}
+    for render in (
+        partial(codex_hook._bounded_reference_context, budget=8000),
+        claude_code_hook._bounded_reference_context,
+    ):
+        delivered = render(result)
+        assert "borealis storage uses SQLite" in delivered
+        assert "atc_project" in delivered
+        assert "cedar" not in delivered and "Ambiguous storage" not in delivered
     search = fixture.client.post("/v1/context/search", headers=reader, json={"query": ""})
     assert search.status_code == 200, search.text
     assert "cedar" not in search.text
@@ -193,6 +202,24 @@ def test_exact_filter_applies_to_records_preferences_capsule_and_get(
         for route in ("/v1/context/", "/v1/context/truth/"):
             response = fixture.client.get(route + record_id, headers=reader)
             assert response.status_code == 404
+
+
+def test_capture_only_principal_cannot_bootstrap_project_context(fixture: Fixture) -> None:
+    capture, _ = fixture.principal("borealis", ["context:capture"])
+    denied = fixture.client.post(
+        "/v1/context/bootstrap",
+        headers=capture,
+        json={"query": "storage", "budget_chars": 8000},
+    )
+    assert denied.status_code == 403
+    for render in (
+        partial(codex_hook._bounded_reference_context, budget=8000),
+        claude_code_hook._bounded_reference_context,
+    ):
+        delivered = render({"error": denied.json()})
+        assert "atc_project" not in delivered
+        assert "borealis" not in delivered and "cedar" not in delivered
+        assert "malformed_response" in delivered
 
 
 def test_capture_partitions_existing_slots_and_persists_replay_context(fixture: Fixture) -> None:

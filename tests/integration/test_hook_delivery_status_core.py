@@ -97,11 +97,19 @@ def test_cold_reader_capsule_with_empty_records_is_not_reported_as_absent_contex
             "Capsule-only synthetic goal remains known."
         )
         rendered = _render(payload, app)
-        assert len(rendered) == 1
-        notice = rendered[0]["atc_delivery"]
+        project_items = [part for part in rendered if "atc_project" in part]
+        assert any(
+            part["project_content"] == "Capsule-only synthetic goal remains known."
+            for part in project_items
+        )
+        assert all("atc_record" not in part for part in project_items)
+        notice = rendered[-1]["atc_delivery"]
         assert notice["scope"] == "record_items"
         assert notice["state"] == "records_empty"
-        assert "Capsule-only" not in json.dumps(rendered)
+        assert any(
+            part.get("atc_project_delivery", {}).get("state") == "items_returned"
+            for part in rendered
+        )
         assert "Bounded synthetic project" not in json.dumps(rendered)
 
 
