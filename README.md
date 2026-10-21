@@ -1,5 +1,9 @@
 # All The Context
 
+**Development snapshot, October 21, 2026:** this branch preserves local October
+work for draft review. See [source identities, validation and remaining acceptance
+gates](docs/DEVELOPMENT_SYNC_20261021.md) before treating it as an accepted build.
+
 All The Context is a user-owned memory layer for AI tools. A single local
 **Core** is authoritative for complete source material, current context,
 provenance, history, policy decisions, permissions, and search. AI clients

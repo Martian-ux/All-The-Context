@@ -1,5 +1,16 @@
 # Project status
 
+## 2026-10-21 - development source synchronization
+
+This branch preserves 28 local development commits after merged main
+`1ceec65f0b356bf3f7b2be9cfce6e990dbbde637`, through capsule-delivery source
+`3f21d09b504882cf2c26fcd4f5542da38789907f`. The synchronization adds documentation
+only. Independent publication review found no blocker to a clearly labeled draft;
+it does not accept the inherited combined candidate or its release gates.
+See [the development snapshot](DEVELOPMENT_SYNC_20261021.md) for exact source
+identities, evidence, exclusions and remaining work. Dated entries below retain
+their original evidence boundaries; the September 6 milestone is historical.
+
 ## 2026-10-18 - bounded project capsule delivery to read hooks
 
 The shared Codex/Claude formatter now delivers complete facts from Core's
@@ -365,7 +376,7 @@ was 39.661s before and 20.830s after; pytest time was 38.87s and 19.94s. This is
 one focused local before/after measurement, not a suite-wide or hosted-CI claim.
 Full integration acceptance remains separate.
 
-## Current milestone
+## Current milestone (historical September 6 snapshot)
 
 **2026-09-06 — PR #114 combined integration candidate**
 
