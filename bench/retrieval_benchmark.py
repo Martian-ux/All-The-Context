@@ -21,6 +21,8 @@ from allthecontext.retrieval import RetrievalEngine
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
+from bench.synthetic_principal import register_synthetic_principal
+
 FIXTURES = Path(__file__).with_name("retrieval_fixtures.json")
 DEFAULT_BASELINE = Path(__file__).parent / "baselines" / "v1.json"
 NORMAL_PROFILES = (1_000, 10_000)
@@ -103,6 +105,12 @@ def build_database(path: Path, size: int, fixture: dict[str, Any]) -> tuple[Core
     store = CoreStore(path)
     store.migrate()
     vault_id = store.initialize_vault("Synthetic retrieval benchmark", "UTC")
+    register_synthetic_principal(
+        store,
+        ClientPrincipal(
+            "benchmark-reader", "Synthetic benchmark reader", frozenset({"context:read"})
+        ),
+    )
     insert_sql = (
         "INSERT INTO context_records("
         "id,vault_id,kind,content,scopes_json,tags_json,allowed_clients_json,"

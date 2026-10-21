@@ -112,6 +112,7 @@ from ..models import (
     BeginIngestionRequest,
     BootstrapRequest,
     CandidateInput,
+    CanonicalProjectRegistration,
     CaptureEventRequest,
     ClaudeCodeCorrectionRequest,
     ClaudeCodeForgetRequest,
@@ -123,6 +124,7 @@ from ..models import (
     ForgetContextRequest,
     MemoryTruthStatus,
     ObservationDisposition,
+    PrincipalProjectBindingRegistration,
     PurgeRequest,
     RejectRequest,
     RestoreRequest,
@@ -130,11 +132,13 @@ from ..models import (
     SearchRequest,
     SubmitBatchRequest,
 )
+from ..project_binding import ProjectBindingError, ProjectBindings, binding_receipt
 from ..project_runtime import (
     RUNTIME_MAX_CAPSULE_CHARS,
     RUNTIME_MAX_CAPSULE_ITEMS,
     AmbientProjectActivation,
     ProjectRuntimeError,
+    activate_bound_project_context,
     activate_project_context,
     build_project_runtime,
     capsule_for_project,
@@ -522,7 +526,9 @@ def create_app(
     async def handle_storage_error(_request: Request, error: StorageError) -> JSONResponse:
         status = 500
         code = "storage_error"
-        if isinstance(error, CaptureError):
+        if isinstance(error, ProjectBindingError):
+            status, code = 403, "project_binding_unavailable"
+        elif isinstance(error, CaptureError):
             status, code = 422, error.code
         elif isinstance(error, NotFoundError):
             status, code = 404, "not_found"
@@ -866,6 +872,7 @@ def create_app(
     @app.post("/v1/context/bootstrap")
     def bootstrap_context(request: BootstrapRequest, principal: Principal) -> dict[str, Any]:
         require(principal, "context:read")
+        project_context = ProjectBindings(core.store).resolve(principal)
         project_budget = min(
             RUNTIME_MAX_CAPSULE_CHARS,
             max(1, request.budget_chars // 2),
@@ -877,11 +884,15 @@ def create_app(
                 item_budget=min(32, RUNTIME_MAX_CAPSULE_ITEMS),
                 principal=principal,
             )
-            project_activation = activate_project_context(
-                project_snapshot,
-                task_description=request.query,
-                current_project=request.current_project,
-                host_project_hint=request.host_project_hint,
+            project_activation = (
+                activate_bound_project_context(project_snapshot, project_context)
+                if project_context is not None
+                else activate_project_context(
+                    project_snapshot,
+                    task_description=request.query,
+                    current_project=request.current_project,
+                    host_project_hint=request.host_project_hint,
+                )
             )
         except ProjectRuntimeError:
             # Project continuity is an optional derived projection. A bounded
@@ -901,6 +912,7 @@ def create_app(
         response = core.retrieval.bootstrap(retrieval_request, principal)
         result = response.model_dump(mode="json")
         result["project_context"] = project_activation.to_dict()
+        result["project_binding"] = binding_receipt(project_context)
         result["total_used_chars"] = response.used_chars + project_used_chars
         if project_activation.capsule is not None:
             core.store.audit_access(
@@ -1041,6 +1053,11 @@ def create_app(
             include_deleted=False,
             principal=principal,
         ).model_dump(mode="json")
+
+    @app.get("/v1/context/project-binding")
+    def read_project_binding(principal: Principal) -> dict[str, object]:
+        require(principal, "context:read")
+        return binding_receipt(ProjectBindings(core.store).resolve(principal))
 
     @app.get("/v1/context/{record_id}")
     def get_context_item(record_id: str, principal: Principal) -> dict[str, Any]:
@@ -1410,6 +1427,31 @@ def create_app(
             limit=limit,
             offset=offset,
         ).model_dump(mode="json")
+
+    @app.post("/v1/admin/project-identities")
+    def register_project_identity(
+        request: CanonicalProjectRegistration,
+        principal: Principal,
+    ) -> dict[str, object]:
+        require(principal, "admin")
+        return ProjectBindings(core.store).register_project(request.anchor_record_id)
+
+    @app.post("/v1/admin/project-bindings")
+    def register_project_binding(
+        request: PrincipalProjectBindingRegistration,
+        principal: Principal,
+    ) -> dict[str, object]:
+        require(principal, "admin")
+        return ProjectBindings(core.store).register_client(
+            request.client_id,
+            request.canonical_project_id,
+        )
+
+    @app.post("/v1/admin/project-bindings/{binding_id}/revoke")
+    def revoke_project_binding(binding_id: str, principal: Principal) -> dict[str, bool]:
+        require(principal, "admin")
+        ProjectBindings(core.store).revoke(binding_id)
+        return {"ok": True}
 
     @app.get("/v1/admin/projects")
     def list_projects(principal: Principal) -> dict[str, Any]:

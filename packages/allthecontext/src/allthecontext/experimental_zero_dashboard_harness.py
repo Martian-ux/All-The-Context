@@ -820,8 +820,10 @@ def run_zero_dashboard_journey(
         private_record_id = recovery_sink.record_id_for_item("item-private")
         delete_record_id = recovery_sink.record_id_for_item("item-delete-target")
 
-        viewer = ClientPrincipal(
-            "synthetic-viewer", "Synthetic viewer", frozenset({"context:read"})
+        from .models import ClientCreate
+
+        viewer, _viewer_token = restarted_store.create_client(
+            ClientCreate(name="Synthetic viewer", scopes=["context:read"])
         )
         viewer_request = BootstrapRequest(
             task_description="Atlas",

@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 from allthecontext.admissibility import ConflictState, DeterministicAdmissibilityGate
@@ -16,6 +18,7 @@ from allthecontext.retrieval import (
     _admissibility_inputs,
     parse_query_intent,
 )
+from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
 from bench.retrieval_usefulness import (
@@ -38,6 +41,7 @@ from bench.retrieval_usefulness import (
     render_markdown,
     run,
 )
+from bench.synthetic_principal import register_synthetic_principal
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "bench" / "baselines" / "retrieval_usefulness_v1.json"
@@ -46,6 +50,12 @@ FIXTURE_SHA256 = "910e85defe71305f5554f4730b02e4261d0cf806da96bed8f1bfc8185c0310
 
 def _fixture() -> dict[str, object]:
     return load_fixture(FIXTURES)
+
+
+def _registered_principal(store: CoreStore, spec: Mapping[str, Any]) -> ClientPrincipal:
+    principal = _principal(spec)
+    register_synthetic_principal(store, principal)
+    return principal
 
 
 def test_fixture_is_sanitized_and_covers_provider_usefulness_dimensions() -> None:
@@ -292,8 +302,8 @@ def test_admissibility_rejects_stopword_and_provider_tag_noise(tmp_path: Path) -
             assert records[0].id not in admitted
             assert records[1].id not in admitted
 
-            principal = _principal(
-                {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+            principal = _registered_principal(
+                store, {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
             )
             engine = RetrievalEngine(store)
             stopword_search = engine.search(
@@ -355,7 +365,9 @@ def test_multi_term_coverage_boundary_keeps_strong_content_match(tmp_path: Path)
         store.approve_candidate(item.id, ApprovalRequest(), actor="test")
         for item in (metadata_only, two_of_three, three_of_four, strong)
     ]
-    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    principal = _registered_principal(
+        store, {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+    )
     try:
         engine = RetrievalEngine(store)
         three_term_ids = [
@@ -423,7 +435,9 @@ def test_broad_compositional_and_paraphrastic_search_keeps_content_subset_only(
         store.approve_candidate(item.id, ApprovalRequest(), actor="test")
         for item in (relevant, partial, one_token, metadata_only)
     ]
-    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    principal = _registered_principal(
+        store, {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+    )
     try:
         engine = RetrievalEngine(store)
         paraphrase = engine.search(
@@ -469,7 +483,9 @@ def test_bootstrap_retains_multi_record_context_assembly(tmp_path: Path) -> None
         store.approve_candidate(item.id, ApprovalRequest(), actor="test")
         for item in (platform, architecture)
     ]
-    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    principal = _registered_principal(
+        store, {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+    )
     try:
         response = RetrievalEngine(store).bootstrap(
             BootstrapRequest(
@@ -501,7 +517,9 @@ def test_admissibility_scans_full_bounded_content_after_first_query_window(
         )
     )
     record = store.approve_candidate(late.id, ApprovalRequest(), actor="test")
-    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    principal = _registered_principal(
+        store, {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+    )
     try:
         response = RetrievalEngine(store).search(
             SearchRequest(query="needle anchor", limit=10), principal
@@ -534,7 +552,9 @@ def test_retrieval_preserves_explicit_filters_and_single_term_usefulness(tmp_pat
         store.approve_candidate(item.id, ApprovalRequest(), actor="test")
         for item in (relevant, other)
     ]
-    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    principal = _registered_principal(
+        store, {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+    )
     try:
         engine = RetrievalEngine(store)
         filtered = engine.search(
@@ -588,7 +608,9 @@ def test_empty_query_bootstrap_reports_omitted_bounded_pool(tmp_path: Path) -> N
             )
         )
         store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
-    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    principal = _registered_principal(
+        store, {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+    )
     try:
         response = RetrievalEngine(store).bootstrap(
             BootstrapRequest(query="", requested_scopes=[], budget_chars=50_000), principal
@@ -613,7 +635,7 @@ def test_bootstrap_pack_metadata_is_truthful_for_budget_truncation(tmp_path: Pat
     store = CoreStore(tmp_path / "pack.sqlite3")
     store.initialize_vault(str(fixture["vault"]["name"]), str(fixture["vault"]["display_timezone"]))
     _apply_corpus(store, fixture)
-    principal = _principal(fixture["principals"]["reader"])
+    principal = _registered_principal(store, fixture["principals"]["reader"])
     request = _bootstrap_request(fixture["cases"][12]["request"])
 
     response = RetrievalEngine(store).bootstrap(request, principal)

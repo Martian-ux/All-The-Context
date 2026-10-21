@@ -28,6 +28,8 @@ from typing import Any, Literal, cast
 # installed into the interpreter.  The benchmark must never silently measure
 # a different source tree than the fixture and report being green.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 _LOCAL_SOURCE = _REPO_ROOT / "packages" / "allthecontext" / "src"
 if not (_LOCAL_SOURCE / "allthecontext" / "__init__.py").is_file():
     raise RuntimeError("retrieval usefulness benchmark requires the repository source tree")
@@ -49,6 +51,7 @@ from allthecontext.models import (
 from allthecontext.retrieval import RetrievalEngine
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
+from bench.synthetic_principal import register_synthetic_principal
 from platformdirs import user_data_path
 
 try:
@@ -762,6 +765,8 @@ def run(
             for name, spec in fixture["principals"].items()
             if isinstance(spec, dict)
         }
+        for principal in principals.values():
+            register_synthetic_principal(store, principal)
         outcomes = [
             _evaluate_case(
                 case,

@@ -17,6 +17,7 @@ from typing import Final, Literal
 
 from .ids import utc_now
 from .models import MemoryTruthRecordOut, MemoryTruthStatus, TruthConflictState
+from .project_binding import ProjectBindings, ResolvedProjectContext
 from .project_continuity import (
     AssignmentOutcome,
     AuthorizedSourceBinding,
@@ -80,6 +81,7 @@ AmbientProjectReason = Literal[
     "ambiguous_task_match",
     "multiple_projects_without_match",
     "project_projection_unavailable",
+    "registered_project_binding",
 ]
 
 
@@ -289,6 +291,7 @@ def _read_truth(
     *,
     principal: ClientPrincipal | None = None,
 ) -> tuple[MemoryTruthRecordOut, ...]:
+    context = ProjectBindings(store).resolve(principal)
     records: list[MemoryTruthRecordOut] = []
     offset = 0
     scanned = 0
@@ -305,7 +308,12 @@ def _read_truth(
         if response.total != expected_total:
             raise ProjectRuntimeError("truth_projection_changed_during_read")
         page_items = tuple(response.items)
-        records.extend(item for item in page_items if _principal_allows_truth(item, principal))
+        records.extend(
+            item
+            for item in page_items
+            if _principal_allows_truth(item, principal)
+            and (context is None or context.matches(item.record.scopes))
+        )
         scanned += len(page_items)
         if len(records) > RUNTIME_MAX_TRUTH_RECORDS:
             raise ProjectRuntimeError("truth_projection_bound_exceeded")
@@ -509,6 +517,27 @@ def _task_mentions_label(task: str, label: str) -> bool:
             normalized_task,
         )
         is not None
+    )
+
+
+def activate_bound_project_context(
+    snapshot: ProjectContinuitySnapshot,
+    context: ResolvedProjectContext,
+) -> AmbientProjectActivation:
+    """Exact registered membership; no labels, task text or host hints."""
+    project_ref = _opaque_ref("project-ref", f"project-scope-v1\0{context.project_scope}")
+    matches = [capsule for capsule in snapshot.capsules if capsule.project_ref == project_ref]
+    if len(matches) == 1:
+        return AmbientProjectActivation(
+            outcome="activated",
+            reason="registered_project_binding",
+            snapshot_revision=snapshot.revision,
+            capsule=matches[0],
+        )
+    return AmbientProjectActivation(
+        outcome="abstained",
+        reason="no_authorized_project_context",
+        snapshot_revision=snapshot.revision,
     )
 
 

@@ -1,10 +1,141 @@
 # Requirements traceability
 
+### 2026-10-18 project capsule delivery
+
+| Requirement | Evidence | Boundary |
+|---|---|---|
+| Deliver authorized capsule-only project facts to both read hooks | `hook_context.py`; cold Core regression in `test_hook_delivery_status_core.py` | Shape checks consume authenticated Core output; Core still owns ACL and project selection |
+| Preserve privacy and derived authority | `test_hook_project_context.py`; bound-project and denied-reader cases in `test_project_principal_bindings.py` | Separate `project_content` from canonical `content`; only text, opaque project ID, section and derived marker are forwarded; no source paths or fabricated canonical citation |
+| Bound the complete host payload without partial assertions | Every-budget, mixed delivery, oversized later-fit and upstream truncation regressions in `test_hook_project_context.py` | Existing total character budget and record priority; separate scoped notices; existing record-only path when both notices cannot fit |
+
+### 2026-10-11 expanded field and normalization closure
+
+| Requirement | Evidence | Boundary |
+|---|---|---|
+| Every supported formed field has the same retention coverage | `LIVE_USER_FIELDS`, `PROJECT_DECISION_FIELDS`, derived `FACETS`; unchanged 27-case independent matrix | New live fields must be declared before formation; no new language support |
+| Canonical normalization preserves exact raw erasure lineage | Original fingerprint/receipt/binding plus re-derived live claim; seven other live-field kinds and original normalization counterexamples | Exact canonical derivation; no fuzzy association or imported-metadata authority |
+| Historical field IDs remain stable | Existing UUID namespace and definition-derived identifiers; old-to-successor mapping verification in handoff | No deleted values/fingerprints added; schema shape unchanged |
+
+### 2026-10-11 historical capture and portable raw erasure
+
+| Requirement | Implementation/evidence | Boundary |
+|---|---|---|
+| Historical fresh-ID capture cannot revive an erased closed field | `capture_purge_barriers.py`; pre-persistence gate in `record_client_capture`; synthetic cold/offset/new-client regressions and frozen surface matrix | Scoped field/anchor chronology; honest later choices allowed; stronger timestamp attestation absent |
+| Raw sibling erasure survives portable restore and stale-package merge | Portable `memory_erasure_links`, purge traversal and restore filtering; unchanged four-case independent portability audit | New packages and intact local backfill; missing legacy association not inferred from text |
+| Fence survives new local project IDs, rebuild and recovery | Schema 22; portable graph validation and recovery carry-forward; encrypted export/rebind tests | Opaque stable anchor/facet IDs, closed timestamps and exact purge facts; no credentials or raw content retained |
+| Preserve evaluator integrity | Byte-verified frozen audit inputs; existing assertions advance only migration count/unsupported schema boundary | No sealed-answer access or weakened expectations |
+
+### 2026-10-11 linked lifecycle purge erasure
+
+| Requirement | Implementation/evidence | Boundary |
+|---|---|---|
+| Erase attributable original/corrected/reinforced capture plaintext | `storage.py::_purge_record_tx`; `test_capture_purge_erasure.py`; unchanged independent plaintext audit | Exact event/source/vault traversal and existing shared-record protection; newly executed purges |
+| Durable erasure through cold reopen and rebuild | All-table scans, physical SQLite/WAL checks, interrupted compaction and fresh bound readers | Synthetic owned vaults; external backups and old purge jobs outside this repair |
+| Exact retry keeps opaque identity without recreating erased observations or retaining fingerprints | `record_client_capture`; `client_capture.py`; `CaptureLedger._stage_event_tx`; stable ID/binding, no-influence altered-body and missing-observation controls | New event historical recapture remains unresolved for original and new bound principals |
+
+### 2026-10-11 qualified workflow fallback boundary
+
+| Requirement | Implementation/evidence | Boundary |
+|---|---|---|
+| Project-qualified text cannot overwrite or reach readers through the global tooling fallback | `memory_policy.py::extract_live_user_claim`; synthetic workflow scope policy/public tests | Whole-value qualification refusal; no project-name inference or grants |
+| Preserve legitimate global workflows, personal preferences and supported bound decisions | Same tests: explicit global, raw provenance/replay, cold/rebuild/fresh-reader and named/current-project decision controls | Existing authority/schema/storage and purge lane unchanged |
+| Preserve independent diagnostic evidence | Unchanged auditor safety tests, grader/adapter/development inputs and process-local holdout read barrier | 49 new and 269 existing focused cases plus three safety cases pass on identical production; diagnostic16/25 retains nine unrelated red probes; development5/14 has identical failures/digest and zero operation failures; broader gates and independent Astra review downstream |
+
+### 2026-10-11 bounded personal correction checkpoint
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Complete natural correction preserves current same-facet truth and full provenance | `memory_policy.py::extract_live_user_claim`; independent correction framing/negative regressions | Terminal `now` before explicit contrast is framing; ordinary qualifications and mixed/cross-facet statements retain abstention |
+| Corrections cannot poison chronology or reuse a delayed ABA predecessor | `storage.py::_personal_preference_binding_tx`; equal/older/future and ABA public captures | Strictly newer, nonfuture aware chronology under the existing transaction/CAS; ordinary equivalent reinforcement unchanged |
+| Durable correction and forgetting across fresh readers | `test_personal_correction_chronology.py`; both actual hook formatters, cold reopen/rebuild/history/replay/deletion | Synthetic checkpoint only; full selected-suite and independent review pending; no live memory or installed-client/model claim |
+| Preserve diagnostic evaluation integrity | Unchanged frozen evaluator, adapter and sealed holdouts | Exact successor development baseline reproduced at 3/14, zero operation failures; candidate comparison pending |
+
+### 2026-10-02 registered named source-client journey
+
+| Requirement | Evidence | Boundary |
+|---|---|---|
+| Preserve original mismatched-name negative | Exact copied `test_synthetic_client_acceptance.py` strict xfails and helper from614c9a74 | Historical reason string is retained; current interpretation is name mismatch, not absent formation |
+| Realistic registered Harbor/Cedar capture/read journey | `test_named_project_decision_client_journey.py`, real public APIs and provider subprocesses | Explicit names independently of opaque scope/entity keys; source transport only |
+| Correct, cite, isolate, restart, replay and forget | Same new module: ID/version/content/subject/value/scopes/truth/evidence/history, foreign rejection, cold fresh bound readers, tombstone and independent database assertions | No installed dispatch, MCP/model use or real grants; Claude stable-native-turn replay unavailable |
+| Preserve selected runtime and private acceptance artifacts | Exact659d7379 production package tree; base bench/tests unchanged except copied harness and new module | Frozen v1/holdouts unchanged and unopened; base broad receipts reused explicitly, new checks separately recorded |
+
+### 2026-10-02 named decision follow-up
+
+| Requirement | Implementation/evidence | Boundary |
+|---|---|---|
+| Ordinary affirmative name-bearing user decision | `project_decision_policy.py`; bound-name read inside `record_client_capture`; public named capture/cold fresh reader tests | Name only conditions meaning within the existing resolved canonical binding; no grant/security/schema change |
+| Reject unsupported/foreign/mixed uncertainty and preserve personal/source history | `test_bound_named_project_decisions.py` name mismatch, unsafe/unbound/negative/quoted/mixed turns, source-history/correction/ABA tests | Exact full turn; no names from scope/content/query/cwd or fixture keys |
+| Preserve rename/replay and project isolation | Same public module: renamed anchor re-parse rejection, exact receipt replay, duplicate display labels and foreign corrections | No global name/alias contract; original Harbor placeholder-name case stays tentative |
+| Exact candidate checks | Frozen source4f9e0c7e: public29 pass; broad3,909 pass/21 skip with all3,930 selected IDs exactly once; initial focused187 pass; Ruff/format, strict mypy119, docs/whitespace pass; independent re-review no blocker | Three inherited exclusions explicit; post-source delivery docs only; frozen v1, sealed holdouts and binding/security/schema unchanged; installed apps/model unrun |
+
+### 2026-10-02 bounded decision and partial runtime integration
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Capture complete decisions under existing canonical authority | `storage.py::record_client_capture`; `project_decision_policy.py`; `test_decision_partial_runtime.py` | Exact committed user content and transaction-resolved binding; raw evidence preserved; unsupported decision-like turns cannot fall through workflow. Frozen f04917e1 broad subset passes all 260 focused cases, including 46 new runtime cases |
+| Correct/reinforce without crossing lineage, reviving deletion or losing history | `storage.py::_project_decision_binding_tx`; existing write transaction and observation links; same runtime tests | Unique authorized current slot, exact committed source/hash/receipt, exact old value and chronology/CAS; ABA, replay, cold, deletion, concurrency, disabled policy and rollback pass. Scoped review repaired fallback compatibility and confirmed exact frozen source |
+| Deliver useful admitted same-project partial facts without completeness claims | Exact inherited `86a9df1a` retrieval/partial tests plus actual hook runtime regressions | Existing binding/selector/ranker and singleton-scope gates retained; no hints as authority or unknown facts invented; synthetic only |
+| Preserve authority and frozen acceptance boundaries | `docs/DECISION_PARTIAL_INTEGRATION.md`; local exact-source receipts | No grant/binding security/schema/migration changes. All 3,901 selected IDs execute exactly once: 3,880 pass/21 skip, three explicit exclusions. Static checks pass. Development3/14 and complete parent observations/operations unchanged; frozen v1 unchanged, holdouts sealed. Installed clients/model and restore-new-identity reconciliation unrun; separate source-hook check, original candidates preserved |
+
+### 2026-10-02 delivery fixture compatibility
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Preserve whole-record budget omission and complete cold-reader/source provenance | Existing budget test IDs in `test_hook_delivery_status_core.py` | Synthetic owner-authorized long source record; capture-only proposal/approval denied; original full-content/version/notice/truth assertions retained and persisted source bytes checked |
+| Preserve automatic atomic preference provenance and mixed-turn abstention | Four additional cases in the same module | Atomic live-user origin/current facet and cold evidence; exact original mixed turn stays raw, recordless and replay-stable with no hook record output |
+| Resolve fixture conflict without claiming product progress or changing authority | `docs/DELIVERY_FIXTURE_COMPATIBILITY.md`; independent validity review; exact `ec62f3a0` receipts | Ten focused tests and 3,691 broader tests pass, 21 skipped; all 3,712 selected IDs execute exactly once with three explicit exclusions. Static checks pass. Initial path-fingerprint race preserved; identical 39 specification cases pass in stable temporary root. Development stays 3/14 with identical observations. Production/frozen v1 unchanged; original c218ba2 and failures preserved; holdouts sealed; installed clients/model unrun |
+
+### 2026-10-02 isolated project and preference composition
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Preserve project authority while personal facets coexist and correct | `storage.py::_personal_preference_binding_tx`; `record_client_capture`; `test_project_preference_composition.py` | Transaction-derived canonical partition and exact singleton scopes; no caller-selected authority. All 146 focused tests pass, including 25 new combined cases. Strict mypy120/Ruff/docs/whitespace pass; scoped review has no runtime blocker |
+| Preserve CAS, legacy subject guards, tombstones and boundaries per partition | Same combined test module plus unchanged personal and binding suites | A/B independent facets, competing same-predecessor corrections, legacy history, scope/source/ACL/kind, replay/restart/revocation and actual old bound runtime upgrade are synthetic regression targets |
+| Preserve schema/export and truthful acceptance boundaries | `docs/PROJECT_PREFERENCE_COMPOSITION.md`; unchanged migration/export and frozen artifacts | No additional migration; local bindings remain non-portable. Complete broad selected-ID coverage: 3,685 passed/2 failed/21 skipped. Two inherited compound-formation fixture failures keep broad gate FAILING. Development3/14 matches preference, regresses binding4/14; holdouts sealed, installed clients/model and restore-to-new-binding correction unrun; no rollout |
+
+### 2026-10-02 immutable principal project routing
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Stable Core identities, immutable narrow-principal binding and fail-closed authority | `project_binding.py`, migration 021, authenticated admin APIs; `test_project_principal_bindings.py`; runtime `01e1f5cfe514b314fd302992a2b9efd73a11ac1c` | All 36 synthetic binding cases pass within 78 targeted checks; review/static checks pass. Approved remote Edge identities retain explicit legacy behavior; unknown/revoked/foreign remain blocked. No live bindings |
+| Capture-to-delivery context stability and exact project isolation | `record_client_capture`, committed capture receipt, `EligibleRecordSelector`, project runtime and direct get; two-project slot/race/cold replay/deletion tests | 3,577 broader tests pass, 21 skips, three warnings. Explicit sealed-holdout reader/two unchanged native registry exclusions. Formation/completeness unchanged; installed clients/model UNRUN |
+| Frozen comparison integrity and local access-state portability | Frozen v1 suite unchanged; schema-21 export excludes identities/bindings; synthetic reader registrations preserve prior corpus/ACL cases | Development stays 4/14, zero operation failures, all observations/outcomes/failures unchanged. Holdout sealed. `context:status` aggregates vault-wide; restore-to-new-binding reconciliation unsupported/unrun |
+
+### 2026-10-02 bounded record-delivery status
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Describe delivered evidence limits without claiming absent capsule/global memory or named unknown facets | `hook_context.py::bounded_reference_context`; fixed record-items notice; `test_hook_delivery_status.py`; runtime `2affdc7bd7711f1af471021c101c386700946e3c` | 171 focused checks pass; scoped review and static checks pass. Empty, forged/capsule, malformed, strict metadata, budget and staged client/request error coverage. No Core/API schema or authority changes; tiny-budget silence disclosed |
+| Preserve complete provenance and actual cold response boundaries | `test_hook_delivery_status_core.py`; existing cold provenance/deletion and stdio regressions | 3,541 broader passed/21 skipped/3 warnings, excluding sealed-holdout integrity and two native registry tests failing unchanged base with error 6801. Frozen development 4/14, zero operation failures, all outcomes and existing evidence unchanged; seven new uncited notices are not named-unknown credit. Installed clients/model unrun; holdout sealed; native/release gates unresolved |
+### 2026-10-02 preference collision and legacy compatibility repair
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Independent paragraph layout and reply language preserve style | `memory_policy.py::_preference_attribute`; `test_preference_collision_recovery.py` | Bounded positive facet semantics replace unknown-modifier fallback; negation, qualification and cross-facet corrections abstain. Original 16 desired assertions preserved |
+| Legacy compatibility without guessing meanings or reviving tombstones | `storage.py::_personal_preference_binding_tx`; actual `cc49f62d` runtime public-capture upgrade tests | Known unrelated legacy subjects permit empty typed facets; matching, unknown and inconsistent subjects remain guarded. Legacy records/history/tombstones unchanged across capture, replay and cold restart |
+| Expected-old transaction atomicity and unrelated-facet preservation | Existing personal contract plus new separate-Core/store race | One competing correction applies and one stays stale; replay adds no version; independent layout/language records remain at version 1 |
+| Preserve evaluation boundaries | Unchanged frozen v1 objects and development-only comparison receipts | Four holdouts unopened; no live app bindings, credentials, memory, installed services, permissions, publishing or project-binding edits |
+
+### 2026-10-02 personal facet candidate
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Useful complete personal preferences coexist without an adjective value whitelist | `memory_policy.py::_preference_attribute`; `test_personal_preference_contract.py` | All 61 independent personal cases pass at reviewed runtime `75df0258`, including 16 unchanged desired assertions; open response/beverage values in bounded subject grammar. Review-driven layout/encoding abstention and coexistence regressions pass |
+| Natural corrections respect current predecessor, concurrency, normal authority and lifecycle | `storage.py::_personal_preference_binding_tx`; capture transaction; same test module | Exact old-value and Core-owned ID/version binding only on explicit corrections; ordinary equivalent cross-client captures retain their fingerprint. Delayed/concurrent/replay/deletion/boundary and unchanged cross-client regressions pass; full applicable 3,545 passed/21 skipped with sealed-holdout and known native exclusions |
+| Preserve ownership and disclose legacy compatibility rather than silently migrating | `docs/PERSONAL_PREFERENCE_FACETS.md`; legacy active/tombstone and existing typed-slot tests | No new API permission or schema/live migration. Legacy generic records can block new typed facets. Frozen/held-out and installed-client validation boundaries unchanged |
+| Preserve diagnostic failures rather than tune frozen acceptance | Unchanged `bench/memory_acceptance.py` and v1 development fixtures | 3/14, zero operation failures; preserved base 2/14 and provenance-only 4/14. Mixed claims, decisions, unknowns and handoff remain gaps. No post-measurement code or fixture tuning; holdout sealed |
+
 "Implemented" means exercised by repository tests. Protected-main CI and
 CodeQL evidence is credited only when bound to an exact SHA; exact artifact,
 live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
+
+### 2026-10-02 delivered hook record provenance
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| MEM-DELIVERY-PROV - delivered context retains safe resolvable current-record provenance without promoting quoted text or metadata into authority | `hook_context.py`; Codex/Claude `_bounded_reference_context`; `test_hook_record_provenance.py`; `test_hook_record_provenance_core.py` | Reviewed local candidate: 100 focused tests pass; broader run 3,484 passed/21 skipped, excluding one sealed-holdout integrity test and two native registry transaction tests reproduced failing on unchanged base with error 6801. Cold persisted-evidence resolution and deletion/replay exercised. Native gate unresolved; installed clients, immutable source quotes and physical purge unrun. Frozen acceptance artifacts unchanged |
 
 ### 2026-09-22 ZF010 loaded-worker observation correction
 
@@ -1782,6 +1913,17 @@ validation remains required.
 | Requirement area | Implementation | Status |
 |---|---|---|
 | Current memory source and capture continuity | `storage.py`; `capture_scheduler.py`; `tests/unit/test_current_source_provenance.py`; `tests/unit/test_capture_scheduler_productization.py`; `tests/unit/test_packet_g_worker_acceptance.py` | Preserves current attribution as one tuple and waits for durable projection before reporting successful capture; worker failure after commit does not count as success. |
+| Frozen ordinary-language memory reliability acceptance | `bench/memory_acceptance.py`; `bench/memory_acceptance_atc.py`; `bench/memory_acceptance_v1/manifest.json`; `tests/unit/test_memory_acceptance.py` | Six development scenarios and fourteen checkpoints with independent hash pins; separate holdout remains unexecuted. Main `1ceec65f` baseline passes 2/14, with successful capture/lifecycle receipts. Tests cover stale/invented citations, missing delivery, foreign scope, forbidden influence and unknowns. Synthetic API/hook formatting is not installed-client or reader validation. |
 | Windows updater recovery | `windows_update_helper.py::_replace_with_bounded_windows_contention`; `tests/unit/test_windows_update_helper.py` | Retries only the measured Windows `PermissionError` WinError 5 boundary, with atomic replace, fsync, path checks, cleanup, and surfaced persistent failure intact. The post-commit startup-guard regression asserts recovery dispatch without starting its fixture executable. |
 | Packaged artifact identity and Darwin helper placement | `scripts/packaged_artifact_contract.py`; `scripts/native_build_provenance.py`; `scripts/smoke_desktop_artifact.py`; packaged smoke and macOS layout contract tests | Requires explicit root and provenance for the Windows desktop launch, packaged recovery, and first-run smokes; source identity and all four component hashes are checked before launch. Darwin helper placement is checked at the pinned builder output. |
 | Validation and dependency integrity | `uv.lock`; dashboard lock; existing CI/native gates | Retains PR117 lock corrections and all required gates. The combined candidate's focused Windows, memory, package, and CI-contract selection passed 348 tests with one symlink-capability skip; its separate `scripts/check_docs.py` check passed (exit 0). Historical PR118 review/native/hosted receipts bind `8d199bc7f05894fc0f9359655e68412ad0d77442` / tree `5f859844614a437a8242749abfd2180db67a731b`, not combined candidate `9178e8a6de74fffa7f8a80ae2adb03fe9ec45fa0` / tree `d57ebcc918c113d4c652d505682e8ba351fc88eb`. Combined source acceptance, maintained exact-source native, hosted, and merge gates remain pending matching receipts; no combined-candidate merge evidence exists. |
+
+### 2026-10-02 bounded project decision policy lane
+
+| Requirement | Implementation and regression evidence | Boundary |
+|---|---|---|
+| Affirmative direct user decisions within verified capture scope | `project_decision_policy.py`; `test_project_decision_policy.py` paraphrase, alias, role/value and whole-turn abstention cases | Pure Core-only planning; no new authority or runtime admission |
+| Same-project current-source predecessor and safe corrections | `check_project_decision_predecessor`; source receipt/scope/kind/origin guards; exact old-value, history and ABA chronology cases | Caller must resolve exact server-side source evidence, unique current truth, ACLs and tombstones in the storage transaction |
+| Retain personal facets, raw source evidence and replay identity | `test_project_decision_formation.py`; unchanged project binding/personal composition suites | Synthetic authenticated captures feeding the pure policy; integrated decision lifecycle remains pending |
+| Preserve evaluation and base failures | No frozen fixture, grader, holdout or delivery-budget test edits | Base has two inherited long mixed-turn delivery-budget failures; no score tuning |
+| Exact pure-policy validation and independent review | 174 focused passes; broad 3,759 passes plus 39 serial specification passes; re-review after ABA repair | Total 3,798 passed/two inherited failures/21 skipped, with identical base exclusions; static/docs/whitespace pass. Runtime wiring remains pending |

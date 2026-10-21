@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,6 +11,7 @@ from allthecontext.models import (
     Availability,
     BeginIngestionRequest,
     CandidateInput,
+    ClientCreate,
     ContextRecordOut,
     CoverageReport,
     FinishIngestionRequest,
@@ -25,7 +27,7 @@ from allthecontext.project_runtime import (
     activate_project_context,
     build_project_runtime,
 )
-from allthecontext.security import ClientPrincipal
+from allthecontext.storage import CoreStore
 from fastapi.testclient import TestClient
 
 AS_OF = "2026-08-25T00:00:00+00:00"
@@ -415,12 +417,9 @@ def test_runtime_excludes_lifecycle_unsafe_and_instruction_like_records() -> Non
     assert capsule.stable_json() == second.capsules[0].stable_json()
 
 
-def test_ambient_activation_uses_only_authorized_truth_and_opens_the_sole_project() -> None:
-    reader = ClientPrincipal(
-        id="reader-client",
-        name="Reader",
-        scopes=frozenset({"context:read"}),
-    )
+def test_ambient_activation_uses_only_authorized_truth_and_opens_the_sole_project(
+    tmp_path: Path,
+) -> None:
     records = (
         _truth_record("visible-anchor", kind="project", content="Atlas"),
         _truth_record("visible-goal", kind="goal", content="Ship Atlas automatically."),
@@ -438,14 +437,14 @@ def test_ambient_activation_uses_only_authorized_truth_and_opens_the_sole_projec
         ),
     )
 
-    class FakeStore:
-        def vault_id(self) -> str:
-            return "vault-fixture"
-
+    class FakeStore(CoreStore):
         def list_memory_truth(self, *, limit: int, offset: int) -> Any:
             return SimpleNamespace(items=list(records[offset : offset + limit]), total=len(records))
 
-    snapshot = build_project_runtime(FakeStore(), as_of=AS_OF, principal=reader)
+    store = FakeStore(tmp_path / "synthetic.sqlite3")
+    store.initialize_vault()
+    reader, _ = store.create_client(ClientCreate(name="Reader", scopes=["context:read"]))
+    snapshot = build_project_runtime(store, as_of=AS_OF, principal=reader)
     activation = activate_project_context(snapshot)
 
     assert activation.outcome == "activated"

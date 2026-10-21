@@ -1,5 +1,356 @@
 # Project status
 
+## 2026-10-21 - development source synchronization
+
+This branch preserves 28 local development commits after merged main
+`1ceec65f0b356bf3f7b2be9cfce6e990dbbde637`, through capsule-delivery source
+`3f21d09b504882cf2c26fcd4f5542da38789907f`. The synchronization adds documentation
+only. Independent publication review found no blocker to a clearly labeled draft;
+it does not accept the inherited combined candidate or its release gates.
+See [the development snapshot](DEVELOPMENT_SYNC_20261021.md) for exact source
+identities, evidence, exclusions and remaining work. Dated entries below retain
+their original evidence boundaries; the September 6 milestone is historical.
+
+## 2026-10-18 - bounded project capsule delivery to read hooks
+
+The shared Codex/Claude formatter now delivers complete facts from Core's
+activated, resolved project capsule alongside retrieved records. A cold Core
+regression first reproduced the capsule-only omission in both adapters. Derived
+project blocks carry only an opaque project ID and section; private projection
+metadata is excluded and no canonical record version is invented. Core retains
+project selection, authorization and canonical-memory authority.
+Derived facts use `project_content`; existing `content` blocks remain canonical
+records with their existing reference semantics and consumers.
+
+Both surfaces share the unchanged hook character budget. Records retain priority;
+whole JSON blocks are kept or omitted, and upstream truncated project statements
+are withheld. Separate fixed project and record delivery notices describe their
+own omissions. If both notices cannot fit, the existing record-only path and
+its scoped status remain available; no project facts are emitted. Absent or
+invalid capsules preserve that same existing record-only path.
+This isolated change starts at local combined candidate `432099ba`; it does not
+accept that candidate's inherited release state. Exact validation receipts and
+independent Astra review remain required before merge or release claims.
+
+## 2026-10-11 - complete declared-field erasure coverage
+
+The exact `a66f5cff` selected broad suite passed 3,950 cases with 21 skips and two
+inherited strict xfails. Independent expanded privacy probes nevertheless found
+21 failures: five already-supported decision fields lacked fences/links, and
+canonical personal normalization detached raw siblings. This successor derives
+purge fields from the declared live formation registry and decision vocabulary,
+preserving existing field IDs. Undeclared personal fields cannot form memory.
+Lineage checks re-derive the same canonical live claim while retaining exact
+event fingerprint, source, principal, receipt, binding and partition checks.
+All 74 expanded/original/owned privacy checks and eight other-field/undeclared
+controls passed in working-source validation; final receipts are in the handoff.
+No scope repair, live memory, holdout or evaluation change is combined here.
+
+## 2026-10-11 - scoped purge chronology and portable raw erasure
+
+The separate follow-up to `ec17f6e2` adds schema-22 content-free capture erasure
+links and field/anchor chronology fences. New historical user events are withheld
+before body persistence, while honest later live choices remain eligible.
+Portable associations close the independently reproduced export/restore raw-sibling
+gap for new packages and intact captures backfilled before export. Frozen surface
+and portability cases pass in focused validation; final compatibility/broad
+receipts accompany the local handoff. Legacy packages without these associations
+and old completed-job orphans remain outside this slice. See
+[semantics, evidence and limits](CAPTURE_PURGE_HISTORY.md).
+
+The first selected broad run exposed a portable-table naming collision with the
+capture-runtime exclusion contract, plus a source-client availability failure
+consistent with the earlier baseline timeout. The schema names were corrected to
+`memory_erasure_links` and `memory_purge_barriers`, preserving the unchanged
+privacy assertion. Final
+follow-up receipts and any residual failures accompany the handoff; the red
+broad receipt is retained.
+
+## 2026-10-11 - linked lifecycle purge erasure
+
+Separate follow-up to correction checkpoint `5b6d6e2`. The independent audit's
+residual plaintext defect was reproduced unchanged. Record purge now traverses
+the exact event/source/vault to include raw siblings of formed observations;
+existing shared-record guards and unrelated project evidence are preserved.
+Exact erased event retries retain the original opaque observation ID and binding,
+without recreating observations or retaining content fingerprints. Expanded
+admin/export/receipt and capture-ledger checks passed 135 cases; the two frozen
+historical-recapture variants still fail. All six new fingerprint/erasure/replay
+cases pass. The unchanged first-pass audit remains 16 passed/10 failed: one
+historical recapture defect, six capability gaps and three invalid NULL-record
+expectations, whose separate chronology controls pass. Full selected-suite
+verification is recorded in the local delivery receipts when completed.
+[Scope and remaining defects](CAPTURE_PURGE_ERASURE.md) explicitly
+include unfixed historical recapture under new identifiers and old purge-job
+cleanup. No live memory or release work is involved.
+
+## 2026-10-11 - qualified workflow fallback checkpoint
+
+Isolated from unmerged personal correction candidate `5b6d6e24`. Complete
+project/purpose-qualified workflow values now abstain before automatic formation;
+unqualified workflows, explicit whole-project global wording, personal facets and
+supported canonically bound decisions retain their paths. Raw evidence and replay
+remain intact; no storage/schema or separate purge repair changes. See
+[bounded contract and residual limits](WORKFLOW_SCOPE_FALLBACK.md). All 49 new cases,
+269 existing focused cases on the identical production tree, and three unchanged
+auditor safety cases pass. The full diagnostic patch retains nine unrelated red
+capability probes (16 pass). Static checks pass; unchanged development stays 5/14,
+zero operation failures, identical checkpoint failures and fixture digest. Original
+authored control/setup failures are preserved in the external packet. The delivery
+delta after tested `fcae6b50` is documentation only. Independent exact-source Astra
+review and broader validation remain downstream.
+
+## 2026-10-11 - bounded personal correction checkpoint
+
+Isolated from named source-client successor `46b3c552`. Reproduced unchanged
+development baseline: 3/14 passing, zero operation failures. Complete explicit
+personal corrections now treat terminal `now` before a contrast as framing,
+while preserving full evidence and existing same-facet rejection. Under the
+capture transaction, exact-old-value corrections require strictly newer,
+nonfuture chronology; equal-time/future replacements are refused. Synthetic
+regressions cover cold reopen, integrity rebuild, two clients, fresh reader
+references/history, replay and forgetting. See
+[contract and evidence limits](PERSONAL_CORRECTION_CHRONOLOGY.md).
+This is a resumable local checkpoint. Broad checks, candidate development
+comparison and independent exact-source review remain pending. All 34 new cases
+and two existing delayed/reinforcement checks pass; Ruff, format, production/new-
+test mypy, docs and whitespace checks pass. Frozen evaluation
+is unchanged, holdouts unopened, and installed-client/model acceptance unrun.
+
+## 2026-10-02 - separately registered named source-client journey
+
+Test-only composition of exact runtime `659d7379` and source harness `614c9a74`.
+The original placeholder-name strict xfails are preserved unchanged as negative
+evidence. A separate public/source-subprocess journey explicitly registers Harbor
+and Cedar anchors, binds synthetic principals and checks decision correction,
+fresh reader references/truth, foreign partition rejection, cold restart, replay,
+forget and independent database preservation in both provider directions.
+Production code, frozen v1 and sealed holdouts are unchanged. See
+[the journey and limits](NAMED_DECISION_CLIENT_JOURNEY.md); coherent results are
+recorded in the isolated local delivery packet. Installed clients and reader-model
+acceptance remain UNRUN; existing native account diagnosis is not retried.
+
+## 2026-10-02 - named decision follow-up within canonical binding
+
+Ordinary named affirmative technical decisions now require an exact match to the
+already-bound current explicit anchor's existing `project_name`. Identity/scope
+still come only from Core's existing binding; no grant/security/schema change.
+DuckDB database and separate SQLite/DuckDB offline-cache choices are supported.
+Foreign/unknown names and negated/quoted/mixed/uncertain turns abstain in full.
+The separate Harbor harness is authenticated and bound but declares a different
+placeholder name, so its named decision still abstains. See
+[diagnosis and contract](BOUND_NAMED_PROJECT_DECISIONS.md).
+Independent scoped review found no blocker and requested rename/replay coverage;
+the public regression preserves original receipts and refuses alias inference.
+Reviewed/tested source `4f9e0c7e` passes all 29 final named public cases. Broad
+coverage is 3,909 passed and 21 skipped with no failures/errors; all 3,930
+selected IDs execute exactly once, including 39 serial specification cases.
+Three inherited exclusions remain explicit. Initial focused checks pass 187;
+Ruff/format, strict mypy119, docs and whitespace pass. Independent re-review
+confirms that exact source. Final delivery changes only documentation. Frozen v1,
+sealed holdouts and binding/security/schema remain unchanged; installed-app/model
+acceptance and a global unique-name/stable-alias contract remain separate gates.
+
+## 2026-10-02 - bounded decision and partial-recall runtime integration
+
+New isolated branch from compatibility `0d7ebb84` composes decision policy
+`6b7f4573` and scoped partial recall `86a9df1a`. Storage now plans exact bound
+user decisions inside capture's transaction and checks unique current committed
+predecessor lineage, old value, chronology and typed deletion barriers. Raw
+capture, source history, replay and existing bindings/grants remain intact.
+Unsupported decision-like turns cannot use legacy workflow fallback; personal
+facets remain separate. Partial recall retains admitted same-project facts only
+under the inherited exact binding/pipeline gates. No completeness claim is added.
+See [integration and validation limits](DECISION_PARTIAL_INTEGRATION.md).
+Reviewed/tested runtime `f04917e1` passes 3,880 broad checks with 21 skips and no
+failures/errors; all 3,901 selected IDs execute exactly once, including 260
+focused cases. Three known exclusions remain explicit. Ruff/format, strict
+mypy120, docs/whitespace pass. Independent review repaired an overbroad fallback
+regression, then confirmed frozen source with no remaining scoped issue. Frozen
+development remains 3/14 with identical complete parent observations and zero
+operation failures; adapter remains unbound. Frozen v1 unchanged, holdouts
+sealed, installed clients/model unrun. Source-hook harness is a separate check.
+Earlier entries below preserve their exact standalone historical evidence.
+
+## 2026-10-02 - delivery fixture compatibility follow-up
+
+Isolated from preserved composition `c218ba2a`. Split the two inherited delivery
+budget fixtures into authorized long-source delivery, supported atomic live-user
+provenance and exact mixed-turn negative replay/cold-reader coverage. Retain both
+old test IDs and all delivery assertions; add four cases. All ten module cases
+pass, with independent validity review finding no weakening or authority expansion.
+Production and frozen v1 remain unchanged. Tested `ec62f3a0` passes 3,691 broader
+checks with 21 skips; all 3,712 selected IDs execute exactly once. Three known
+exclusions remain explicit. Static checks pass; frozen development remains 3/14
+with identical parent observations and zero operation failures. One initial
+temporary-path fingerprint race is preserved; all 39 identical specification
+cases pass under a fresh stable task-owned root. Installed clients/model remain
+unrun and holdouts sealed. See
+[contract proof and coverage](DELIVERY_FIXTURE_COMPATIBILITY.md). The earlier
+composition failure and standalone lane results below remain historical evidence.
+
+## 2026-10-02 - bounded project decision policy lane
+
+Added a pure Core-only planner for complete affirmative current-project technical
+choices and a same-scope source/predecessor guard. Whole-turn abstention preserves
+uncertainty, negation, attribution, mixed turns, history and outcomes as evidence.
+Corrections require exact old values and newer capture chronology, including ABA
+protection. Existing binding authority, personal facets and storage admission are
+unchanged. See [design and parent integration contract](PROJECT_DECISION_FORMATION.md).
+Storage/capture integration and final runtime acceptance are pending parent gates;
+the known two mixed-turn delivery-budget failures remain explicit.
+Exact policy source passes 174 focused tests. Independent review repaired an
+ABA chronology gap and found no remaining pure-policy blocker on re-review.
+Broad selected coverage is 3,798 passed, two inherited delivery-budget failures
+and 21 skips; the base's three exclusions are retained. Ruff/format, mypy, docs
+and whitespace pass. This is policy evidence, not enabled runtime acceptance.
+
+## 2026-10-02 - isolated project and preference composition
+
+Compose preserved project-binding `42f067d` with preference repair `e05904d6`.
+Preference guards now use transaction-resolved canonical partition and exact
+scope, retaining CAS, legacy, tombstone and access safeguards. No new schema or
+export authority change. All 146 focused checks pass, including 25 combined cases
+and synthetic transport through both actual hook helpers. Scoped independent
+review found no runtime blocker; strict mypy (120 files), Ruff, docs and whitespace
+checks pass. Runtime `27a855f8ae3321c602ab8390bdfeb78677a5c15f` has complete
+3,708 selected-test coverage: **3,685 passed, 2 failed, 21 skipped**. Both failures
+are inherited delivery-budget fixtures that expect automatic formation of a long
+compound preference/deployment turn; byte-identical attribution passes binding
+`42f067d` and fails preference `e05904d6`. The combined broad gate is **FAILING**;
+assertions and formation authority are preserved. Frozen development is **3/14**,
+zero operation failures, matching preference outcomes and retrieved observations.
+The binding lane's mixed-project checkpoint loses credit (4/14 to 3/14).
+Final validation documentation preserves the exact runtime/tests/bench source.
+See [contract, category evidence and limits](PROJECT_PREFERENCE_COMPOSITION.md).
+Frozen evaluation objects remain unchanged; holdouts are sealed. Installed
+clients/model, restore-to-new-binding reconciliation and rollout remain unrun.
+The entries below record each standalone lane's historical evidence.
+
+## 2026-10-02 - isolated principal project-binding candidate
+
+Opt-in Core-issued canonical identities and immutable principal bindings route
+capture, replay, record retrieval and capsules through the same exact project
+membership. Missing/revoked/stale/foreign required bindings fail closed. Schema
+21 retains explicit legacy behavior and excludes local binding authority from
+portable exports. Formation and completeness repairs remain separate. See
+[scope and validation](PROJECT_PRINCIPAL_BINDINGS.md). Independent scoped review
+found no remaining concrete runtime blocker; it did not execute tests. Static
+checks pass. Corrected runtime `01e1f5cfe514b314fd302992a2b9efd73a11ac1c`
+passes 78 targeted checks including all 36 new binding cases, and 3,577 broader
+tests with 21 skips and three warnings. The broad run explicitly excludes the
+sealed-holdout integrity reader and two unchanged native registry blockers.
+The initial broad run exposed approved Edge compatibility and an unregistered
+experimental viewer; both are corrected and preserved in the receipts.
+Frozen development remains 4/14, zero operation failures, with all observations
+and checkpoint outcomes/failures identical to delivery-status base. Installed
+clients/model and restore-to-new-binding correction remain unrun; local identity
+reconciliation after restore is unsupported. Holdout remains sealed.
+No installed-client bindings, release, merge or rollout has been performed.
+
+## 2026-10-02 - bounded record-delivery status candidate
+
+New isolated branch from provenance-only `cc49f62d` adds fixed, record-scoped
+delivery notices to Codex/Claude read-hook reference output. Successful empty,
+local or validated Core budget omission, malformed response and unavailable
+request states remain distinct. Separate project capsules are not assessed or
+forwarded by the notice. MCP interpretation uses only the existing response
+contract. No formation, retrieval/selector/project/admissibility/authority,
+API model, schema or service change. See `docs/DELIVERY_STATUS.md` for exact
+meanings and tiny-budget silence. Reviewed runtime
+`2affdc7bd7711f1af471021c101c386700946e3c` passes 171 focused checks and
+3,541 broader tests with 21 skips and three warnings. Ruff check/format,
+production and strict new-test mypy, docs and whitespace checks pass; scoped
+independent review found no remaining issue. The broad run explicitly excludes
+the sealed-holdout integrity reader and two native registry tests already failing
+on unchanged base with Windows error 6801. Native/release gates remain unresolved.
+Frozen development diagnostics remain 4/14 passing, zero operation failures,
+with all checkpoint outcomes and existing evidence unchanged from provenance
+base. Seven added generic notices are uncited text, not named unknown-facet
+credit. Other candidates remain frozen and separate; installed-client/model
+validation is unrun and holdouts remain sealed.
+## 2026-10-02 - preference collision and legacy compatibility repair
+
+Isolated implementation from personal-facets delivery `531217af`. Unknown
+response modifiers no longer inherit the style facet merely from a response
+noun. Bounded explicit style modifiers retain the existing desired contract;
+paragraph layout and explicit reply languages occupy separate facets. Unknown,
+negated, qualified and cross-facet correction meanings stay raw.
+
+For empty typed facets, classify each current or deleted generic legacy record
+from its own complete direct statement and matching structured value. Known
+unrelated legacy subjects no longer block formation. Matching subjects and
+unknown, inconsistent or non-personal legacy records keep the conservative
+guard. No legacy row, evidence, history or tombstone is migrated or rewritten.
+Expected-old comparison and capture remain inside the original transaction.
+New regressions include actual old-runtime public capture, upgrade/restart,
+deleted legacy replay and separate-store competing stale corrections.
+Validation and independent review receipts accompany this isolated candidate;
+frozen v1 and four holdouts remain unchanged and holdouts unopened. Project
+binding, installed-client validation and shipping are outside this repair.
+
+## 2026-10-02 - bounded personal preference facets candidate
+
+New isolated candidate from provenance-only `cc49f62d`; rejected composition
+and evidence-only `988ff07d` are preserved. Complete personal response style,
+layout, indentation, theme and beverage preferences use distinct facets and
+open values within bounded subject grammar. Natural same-facet old-to-new
+corrections bind current ID/version and compare the complete old value inside
+capture's existing transaction. They retain ordinary live authority, timestamps,
+source history and API permissions. Deleted, ambiguous, denied, scoped or
+cross-kind targets remain unmodified; refusal codes are fixed and content-free.
+At reviewed runtime commit `75df02580d595eaa33200f81c91cdc17f2cbe306`, all 61
+independent personal contract cases pass, including the original 16 unchanged
+desired assertions. The scoped run with existing cross-client checks passes
+63 tests with one absent-manager-input skip. Full applicable validation passes
+3,545 tests with 21 skips and three warnings, excluding the sealed-holdout
+integrity reader and the same two unchanged-base native registry error-6801
+tests as the separate provenance baseline. Ruff/format, production and strict
+test/bench mypy, documentation and diff checks pass. Independent review found no
+remaining concrete issue in this scope. The initial 3,541-pass/one-failure run
+is preserved: its cross-client duplicate regression was repaired by limiting
+predecessor binding metadata to explicit corrections, without changing the
+existing test. The unchanged frozen development diagnostic scores 3/14 with
+zero operation failures (base 2/14; provenance-only 4/14). Abstaining on a mixed
+personal/project turn loses a prior whole-turn preference pass; mixed claims,
+project decisions, unknowns and handoff remain gaps. No code was tuned after
+this measurement. This is bounded personal improvement, not broader product
+or release acceptance. See `docs/PERSONAL_PREFERENCE_FACETS.md` for exact scope
+and the legacy boundary: generic records/tombstones can block new typed facets,
+requiring separately authorized reformation. No schema/live migration, project
+formation, service change or deployment. Frozen cases are unchanged, holdouts
+sealed and installed-client/model validation unrun.
+
+## 2026-10-02 - delivered hook record references
+
+Local branch `codex/hook-record-provenance-20261002` starts at frozen acceptance
+commit `49a3c05091f8e312478665e0398a1d18a9eb929d`. Codex and Claude Code share
+a bounded formatter that delivers record text with a validated opaque record ID
+and version. Separate JSON blocks keep quoted content out of reference metadata;
+oversized blocks are omitted intact rather than cutting a statement or citation.
+Source references, source IDs, paths, ACLs and arbitrary project metadata remain
+excluded. The existing authenticated context-truth route resolves a delivered
+reference; its version exposes a subsequent replacement.
+
+Supplemental tests exercise malicious metadata and quoted references, Unicode
+budgets, negated statements, persisted current evidence after a cold Core restart,
+and deleted-reference exclusion after cold restart and original-event replay.
+The ATC evaluation adapter decodes actual delivered blocks and resolves matching
+record versions through the authenticated truth route. Its existing cached
+synthetic source-quote mapping remains a diagnostic limitation.
+
+Frozen v1 fixtures, grader, manifest, baseline and holdouts are unchanged.
+Independent review is closed after fixing deleted-reference handling in the
+adapter. Focused checks pass 100 tests with the holdout-reading integrity test
+deselected. Python 3.14.3 broader checks pass 3,484 tests with 21 skips after
+excluding that integrity test and two native registry transaction tests. Both
+native tests reproduce error 6801 on unchanged base source; their Windows gate
+remains unresolved. The setup module passes all eight tests after removing a
+forbidden-word substring from the checkout directory name. Ruff check/format,
+production and strict benchmark mypy, documentation and whitespace checks pass.
+Installed client conversations, immutable source quotations, physical purge,
+formation repairs and broader memory acceptance remain unvalidated by this slice.
+
 ## 2026-09-30 — urllib3 correction for the PR118 combined candidate
 
 The prior exact-source review, native gates, and final review accept source
@@ -25,7 +376,7 @@ was 39.661s before and 20.830s after; pytest time was 38.87s and 19.94s. This is
 one focused local before/after measurement, not a suite-wide or hosted-CI claim.
 Full integration acceptance remains separate.
 
-## Current milestone
+## Current milestone (historical September 6 snapshot)
 
 **2026-09-06 — PR #114 combined integration candidate**
 
@@ -5393,3 +5744,20 @@ combined source acceptance, the maintained exact-source native gate, hosted
 checks, or merge; each remains pending its matching receipt. The post-commit
 startup-guard regression verifies recovery dispatch without executing a fixture
 helper.
+
+## 2026-09-30 frozen natural-language memory acceptance v1
+
+An isolated fixture/test slice is based on merged main
+`1ceec65f0b356bf3f7b2be9cfce6e990dbbde637` (PR118). It adds six development
+scenarios with fourteen checkpoints, a separately frozen unexecuted holdout,
+a small adapter contract, and an in-process current-ATC baseline. Expectations
+cover ordinary mixed inputs, decisions, corrections, partial/unknown recall,
+current citations, project isolation, restart, integrity rebuild, forgetting,
+retry and actual hook formatting. Capture, retrieval and delivery are separate.
+
+The development baseline captures all inputs and completes lifecycle operations,
+but passes 2/14 checkpoints. Stored evidence and successful deletion are not
+equated with useful delivered memory. Installed apps, answer readers, Hindsight,
+physical purge and full archive reimport remain unrun. No production engine or
+release behavior changes. See the [frozen acceptance guide](../bench/memory_acceptance_v1/README.md)
+and its baseline receipt for exact expectations and evidence limits.

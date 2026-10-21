@@ -14,11 +14,11 @@ from bench.retrieval_benchmark import build_database
 from bench.retrieval_v3_foundation import load_foundation_fixture
 
 
-def _principal(*, admin: bool = False) -> ClientPrincipal:
+def _principal(store: CoreStore, *, admin: bool = False) -> ClientPrincipal:
     scopes = {"context:read"}
     if admin:
         scopes.add("admin")
-    return ClientPrincipal("benchmark-reader", "Synthetic reader", frozenset(scopes))
+    return store.create_client(ClientCreate(name="Synthetic reader", scopes=sorted(scopes)))[0]
 
 
 def _approve(store: CoreStore, value: CandidateInput) -> str:
@@ -38,7 +38,7 @@ def test_production_current_and_as_of_resolution_are_deterministic_across_restar
 ) -> None:
     fixture = load_foundation_fixture()
     store, _elapsed = build_database(tmp_path / "temporal.sqlite3", 100, fixture)
-    principal = _principal()
+    principal = _principal(store)
     current = SearchRequest(query="Sentinel archive retention", limit=5)
     as_of = SearchRequest(
         query="Sentinel archive retention",
@@ -106,7 +106,7 @@ def test_production_admissibility_uses_project_quality_kind_and_conflict_factors
             current_project="release",
             limit=10,
         ),
-        _principal(admin=True),
+        _principal(store, admin=True),
     )
 
     assert [item["id"] for item in diagnostic["items"]] == [relevant]

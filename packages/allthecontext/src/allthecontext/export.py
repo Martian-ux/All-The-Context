@@ -17,6 +17,11 @@ from typing import IO, Any
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
+from .capture_purge_barriers import FACETS, PERSONAL_PARTITION
+from .capture_purge_barriers import LINK_TABLE as CAPTURE_ERASURE_LINK_TABLE
+from .capture_purge_barriers import TABLE as CAPTURE_PURGE_BARRIER_TABLE
+from .capture_purge_barriers import validate_link_row as validate_capture_erasure_link
+from .capture_purge_barriers import validate_row as validate_capture_purge_barrier
 from .config import MAX_IMPORT_BYTES
 from .memory_policy import UNKEYED_CONFLICT_KINDS
 from .storage import (
@@ -34,9 +39,9 @@ from .storage import (
 
 MAGIC = b"ATCEXP1\x00"
 EXPORT_FORMAT_VERSION = 1
-# Version 0 is the pre-Core/minimal export shape.  Versions 1 through 20 are
+# Version 0 is the pre-Core/minimal export shape.  Versions 1 through 22 are
 # the current and retained legacy Core schemas represented by this checkout.
-SUPPORTED_SCHEMA_VERSIONS = frozenset(range(21))
+SUPPORTED_SCHEMA_VERSIONS = frozenset(range(23))
 SALT_SIZE = 16
 NONCE_SIZE = 12
 TAG_SIZE = 16
@@ -48,6 +53,8 @@ MAX_RESTORE_ENTRY_BYTES = 512 * 1024 * 1024
 # the ordinary data export policy.
 NON_PORTABLE_SECURITY_TABLES = frozenset(
     {
+        "canonical_projects",
+        "principal_project_bindings",
         "client_registrations",
         "permission_grants",
         "remote_edge_clients",
@@ -86,6 +93,10 @@ CAPTURE_RUNTIME_TABLES = frozenset(
 # below before it can silently introduce a destination-backed edge.
 PORTABLE_TABLE_INVENTORY = frozenset(
     {
+        CAPTURE_PURGE_BARRIER_TABLE,
+        CAPTURE_ERASURE_LINK_TABLE,
+        "canonical_projects",
+        "principal_project_bindings",
         "archive_purge_barriers",
         "archive_source_less_purge_barriers",
         "audit_events",
@@ -121,6 +132,15 @@ PORTABLE_TABLE_INVENTORY = frozenset(
 # the target or because old schemas predate the column.
 PORTABLE_RELATIONAL_REFERENCE_INVENTORY = frozenset(
     {
+        (CAPTURE_PURGE_BARRIER_TABLE, "vault_id", "vaults"),
+        (CAPTURE_PURGE_BARRIER_TABLE, "record_id", "purge_tombstones"),
+        (CAPTURE_ERASURE_LINK_TABLE, "vault_id", "vaults"),
+        (CAPTURE_ERASURE_LINK_TABLE, "record_id", "context_records"),
+        (CAPTURE_ERASURE_LINK_TABLE, "observation_id", "context_candidates"),
+        ("canonical_projects", "vault_id", "vaults"),
+        ("principal_project_bindings", "vault_id", "vaults"),
+        ("principal_project_bindings", "client_id", "client_registrations"),
+        ("principal_project_bindings", "canonical_project_id", "canonical_projects"),
         ("archive_purge_barriers", "vault_id", "vaults"),
         ("archive_purge_barriers", "source_id", "source_records"),
         ("archive_source_less_purge_barriers", "vault_id", "vaults"),
@@ -217,6 +237,8 @@ PORTABLE_JSON_REFERENCE_INVENTORY = frozenset(
 )
 
 _PORTABLE_ROW_KEYS: dict[str, tuple[str, ...]] = {
+    CAPTURE_PURGE_BARRIER_TABLE: ("vault_id", "partition_id", "facet_id", "record_id"),
+    CAPTURE_ERASURE_LINK_TABLE: ("vault_id", "record_id", "observation_id"),
     "archive_purge_barriers": ("vault_id", "source_id", "source_kind", "barrier_digest"),
     "archive_source_less_purge_barriers": ("vault_id", "source_kind", "barrier_digest"),
     "audit_events": ("id",),
@@ -552,6 +574,10 @@ def _database_to_zip(
                             _archive_purge_barrier_key(document)
                         elif table == _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE:
                             _archive_source_less_purge_barrier_key(document)
+                        elif table == CAPTURE_PURGE_BARRIER_TABLE:
+                            validate_capture_purge_barrier(document)
+                        elif table == CAPTURE_ERASURE_LINK_TABLE:
+                            validate_capture_erasure_link(document)
                         if not include_sources:
                             document = _without_source_reference(table, document)
                         document = _without_machine_local_references(table, document)
@@ -807,7 +833,7 @@ def _manifest_schema_version(manifest: dict[str, Any]) -> int:
 
     raw_version = manifest.get("schema_version", 0)
     if type(raw_version) is not int or raw_version not in SUPPORTED_SCHEMA_VERSIONS:
-        raise ValueError("export schema version must be an integer from 0 through 20")
+        raise ValueError("export schema version must be an integer from 0 through 22")
     return raw_version
 
 
@@ -1216,6 +1242,9 @@ def _validate_portable_graph(
     record_supersedes: dict[str, str | None] = {}
     purged_record_ids: set[str] = set()
     purged_source_ids: set[str] = set()
+    record_purge_facts: set[tuple[str, str, str]] = set()
+    package_records: dict[str, dict[str, Any]] = {}
+    package_candidates: dict[str, dict[str, Any]] = {}
 
     for table in manifest_tables:
         if table in CAPTURE_RUNTIME_TABLES or table in NON_PORTABLE_SECURITY_TABLES:
@@ -1254,6 +1283,15 @@ def _validate_portable_graph(
                 source_blob_info[content_hash] = (byte_size, storage_kind, content)
             if table == "context_records":
                 record_supersedes[key[0]] = row.get("supersedes")
+                package_records[key[0]] = {
+                    "kind": row.get("kind"),
+                    "attribute_key": row.get("attribute_key"),
+                }
+            if table == "context_candidates":
+                package_candidates[key[0]] = {
+                    field: row.get(field)
+                    for field in ("kind", "source_type", "source_service", "observation_origin")
+                }
             if table == "purge_tombstones":
                 target_type = row.get("target_type")
                 if target_type not in {"record", "source"}:
@@ -1261,6 +1299,7 @@ def _validate_portable_graph(
                 stable_id = key[0]
                 if target_type == "record":
                     purged_record_ids.add(stable_id)
+                    record_purge_facts.add((str(row["vault_id"]), stable_id, str(row["purged_at"])))
                 else:
                     purged_source_ids.add(stable_id)
         row_keys[table] = keys
@@ -1323,6 +1362,41 @@ def _validate_portable_graph(
         if table in CAPTURE_RUNTIME_TABLES or table in NON_PORTABLE_SECURITY_TABLES:
             continue
         for row in _iter_portable_table_rows(archive, table):
+            if table == CAPTURE_ERASURE_LINK_TABLE:
+                validate_capture_erasure_link(row)
+                target_record = package_records.get(str(row["record_id"]))
+                raw = package_candidates.get(str(row["observation_id"]))
+                if (
+                    target_record is None
+                    or raw is None
+                    or (
+                        raw.get("kind") != "captured_user_turn"
+                        or raw.get("source_type") != "client_capture"
+                        or raw.get("source_service") != "allthecontext-core"
+                        or raw.get("observation_origin") != "client_capture"
+                        or FACETS.get(
+                            (
+                                str(target_record.get("kind")),
+                                str(target_record.get("attribute_key")),
+                            )
+                        )
+                        != row["facet_id"]
+                        or (
+                            row["partition_id"] != PERSONAL_PARTITION
+                            and row["partition_id"] not in package_records
+                            and row["partition_id"] not in purged_record_ids
+                        )
+                    )
+                ):
+                    raise ValueError("capture erasure link lacks its typed package evidence")
+            if table == CAPTURE_PURGE_BARRIER_TABLE:
+                validate_capture_purge_barrier(row)
+                if (
+                    str(row["vault_id"]),
+                    str(row["record_id"]),
+                    str(row["purged_at"]),
+                ) not in record_purge_facts:
+                    raise ValueError("capture purge barrier lacks its exact package purge fact")
             if "vault_id" in row:
                 _require_portable_reference(
                     table=table,
@@ -1359,6 +1433,8 @@ def _validate_portable_graph(
                     if target_type not in {"record", "source"}:
                         raise ValueError("portable purge job target type is invalid")
                     allowed_target = "record_references" if target_type == "record" else "sources"
+                elif table == CAPTURE_PURGE_BARRIER_TABLE and column == "record_id":
+                    allowed_target = "record_references"
                 else:
                     allowed_target = {
                         "vaults": "vaults",
@@ -2505,6 +2581,10 @@ def restore_export(
                         for row in _iter_jsonl(stream):
                             if str(row.get("record_id")) in blocked_records:
                                 blocked_candidates.add(str(row["observation_id"]))
+                if blocked_records and CAPTURE_ERASURE_LINK_TABLE in manifest_tables:
+                    for row in _iter_portable_table_rows(archive, CAPTURE_ERASURE_LINK_TABLE):
+                        if str(row["record_id"]) in blocked_records:
+                            blocked_candidates.add(str(row["observation_id"]))
                 if blocked_records and "context_errors" in manifest_tables:
                     with archive.open("tables/context_errors.jsonl") as stream:
                         for row in _iter_jsonl(stream):
@@ -2560,6 +2640,11 @@ def restore_export(
                                 ):
                                     continue
                                 if table == "context_observation_links" and (
+                                    str(row.get("record_id")) in blocked_records
+                                    or str(row.get("observation_id")) in blocked_candidates
+                                ):
+                                    continue
+                                if table == CAPTURE_ERASURE_LINK_TABLE and (
                                     str(row.get("record_id")) in blocked_records
                                     or str(row.get("observation_id")) in blocked_candidates
                                 ):

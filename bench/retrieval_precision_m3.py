@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 _LOCAL_SOURCE = _REPO_ROOT / "packages" / "allthecontext" / "src"
 if not (_LOCAL_SOURCE / "allthecontext" / "__init__.py").is_file():
     raise RuntimeError("Milestone 3 precision benchmark requires the repository source tree")
@@ -36,6 +38,7 @@ from allthecontext.models import CandidateInput, SearchRequest
 from allthecontext.retrieval import RetrievalEngine
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
+from bench.synthetic_principal import register_synthetic_principal
 
 FIXTURES = Path(__file__).with_name("retrieval_precision_m3_fixtures.json")
 DEFAULT_BASELINE = Path(__file__).parent / "baselines" / "retrieval_precision_m3_f5e3a2b.json"
@@ -136,6 +139,7 @@ def _candidate(spec: Mapping[str, Any]) -> CandidateInput:
 
 
 def _apply_records(store: CoreStore, fixture: Mapping[str, Any]) -> dict[str, str]:
+    register_synthetic_principal(store, READER)
     record_ids: dict[str, str] = {}
     for spec in fixture["records"]:
         if not isinstance(spec, dict):

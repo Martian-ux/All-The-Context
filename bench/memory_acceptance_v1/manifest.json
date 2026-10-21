@@ -1,0 +1,17 @@
+{
+  "adapter_abi": "atc.memory-acceptance.adapter.v1",
+  "base_commit": "1ceec65f0b356bf3f7b2be9cfce6e990dbbde637",
+  "frozen_at": "2026-09-30",
+  "holdout_policy": "No development runs or tuning; explicit frozen candidate identity required. Public fixtures are not blinded.",
+  "partitions": {
+    "development": {
+      "path": "development/scenarios.json",
+      "sha256": "ae3d9b8b8a3fdb39e61d5d1571e5e617ceff28e99ab11b092e1f8da7d9d18dce"
+    },
+    "holdout": {
+      "path": "holdout/scenarios.json",
+      "sha256": "838811f7529eb53b889652a690a1227c1549b52f3b54fd9af807cc7309f7ae7b"
+    }
+  },
+  "schema": "atc.memory-acceptance.freeze.v1"
+}

@@ -13,13 +13,18 @@ import threading
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .config import MAX_IMPORT_BYTES
 from .ids import new_id, utc_now
+
+if TYPE_CHECKING:
+    from .project_binding import ResolvedProjectContext
+    from .project_decision_policy import ProjectDecisionPlan
+
 from .memory_policy import (
     AUTOMATIC_POLICY_VERSION,
     REGISTERED_SOURCE_TYPE,
@@ -31,6 +36,7 @@ from .memory_policy import (
     archive_import_identity,
     archive_lineage_key,
     classify_sensitivity,
+    extract_live_user_claim,
     normalize_imported_text,
     normalized_import_candidate_key,
     normalized_import_identity_reference,
@@ -107,6 +113,8 @@ class _ObservationLookupOverflow(InvalidStateError):
 
 
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
+ERASED_CAPTURE_PAYLOAD_HASH = "0" * 64
+PURGED_CAPTURE_RECEIPT_SCHEMA = "atc.purged-client-capture-receipt.v1"
 SOURCE_BLOB_CHUNK_BYTES = 8 * 1024 * 1024
 SOURCE_REBUILD_REASON = "replaced by source rebuild"
 _ARCHIVE_SOURCE_TYPES = frozenset({"archive", "provider_archive", "provider_memory"})
@@ -133,6 +141,45 @@ MAX_ACTIVITY_SNAPSHOT_ITEMS = 500
 _MAX_OBSERVATION_CANDIDATES = 256
 _ARCHIVE_PURGE_BARRIER_TABLE = "archive_purge_barriers"
 _ARCHIVE_SOURCE_LESS_PURGE_BARRIER_TABLE = "archive_source_less_purge_barriers"
+
+
+@dataclass(frozen=True)
+class ClientCaptureReceipt:
+    observation_id: str
+    event_id: str
+    replayed: bool
+    content_purged: bool = False
+    history_purged: bool = False
+
+
+def _purged_client_capture_observation_id(
+    row: Mapping[str, Any] | sqlite3.Row, source_id: str
+) -> str | None:
+    """Validate the content-free receipt written by a lifecycle record purge."""
+    if (
+        row["status"] != "applied"
+        or row["payload_hash"] != ERASED_CAPTURE_PAYLOAD_HASH
+        or row["application_receipt"]
+        != "capture-observation-" + _hash_text(f"{source_id}\0{row['id']}")
+    ):
+        return None
+    payload = _loads(row["normalized_payload_json"], None)
+    if not isinstance(payload, dict) or set(payload) not in (
+        {"purged_capture_receipt"},
+        {"purged_capture_receipt", "project_binding"},
+    ):
+        return None
+    marker = payload["purged_capture_receipt"]
+    if (
+        not isinstance(marker, dict)
+        or set(marker) != {"schema", "observation_id"}
+        or marker["schema"] != PURGED_CAPTURE_RECEIPT_SCHEMA
+        or not isinstance(marker["observation_id"], str)
+        or re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", marker["observation_id"])
+        is None
+    ):
+        return None
+    return str(marker["observation_id"])
 
 
 @dataclass(frozen=True)
@@ -288,6 +335,24 @@ def _canonical_reason(reason: str | None, default: str = "record_state_changed")
         "source_deleted": "source_deleted",
         "source_restored": "source_restored",
         "record_corrected": "record_corrected",
+        "personal preference slot is deleted or ambiguous": "personal_preference_slot_blocked",
+        "personal preference predecessor is not current": "personal_preference_no_predecessor",
+        "personal preference predecessor does not match current value": "personal_preference_stale",
+        "personal preference target is not allowed personal context": (
+            "personal_preference_boundary"
+        ),
+        "legacy generic preference prevents safe facet assignment": "personal_preference_legacy",
+        "personal_preference_slot_blocked": "personal_preference_slot_blocked",
+        "personal_preference_no_predecessor": "personal_preference_no_predecessor",
+        "personal_preference_stale": "personal_preference_stale",
+        "capture_history_purged": "capture_history_purged",
+        "personal_preference_boundary": "personal_preference_boundary",
+        "personal_preference_legacy": "personal_preference_legacy",
+        "project_decision_predecessor_unavailable": "project_decision_predecessor_unavailable",
+        "project_decision_lineage_mismatch": "project_decision_lineage_mismatch",
+        "project_decision_old_value_mismatch": "project_decision_old_value_mismatch",
+        "project_decision_stale_correction": "project_decision_stale_correction",
+        "project_decision_automatic_disabled": "project_decision_automatic_disabled",
         "explicit user forget request": "record_deleted",
         (
             "matching archive evidence was blocked by an explicit deletion; "
@@ -889,7 +954,10 @@ class CoreStore:
             "decision_reason=CASE WHEN decision_reason IS NULL THEN NULL "
             "WHEN lower(decision_reason) IN "
             "('explicit_user_statement_witness_required','observation_reinforced',"
-            "'observation_corroborated','candidate_approved','candidate_rejected') "
+            "'observation_corroborated','candidate_approved','candidate_rejected',"
+            "'personal_preference_slot_blocked','personal_preference_no_predecessor',"
+            "'personal_preference_stale','personal_preference_boundary','capture_history_purged',"
+            "'personal_preference_legacy') "
             "THEN lower(decision_reason) ELSE 'observation_decision' END"
         )
         audit_rows = connection.execute(
@@ -1171,6 +1239,14 @@ class CoreStore:
                 self._ensure_archive_purge_barriers_tx(connection)
                 self._ensure_archive_source_less_purge_barriers_tx(connection)
                 self._recompute_record_keys_tx(connection)
+                from .capture_purge_barriers import ensure_schema, record_erasure_links
+
+                ensure_schema(connection)
+                vault = connection.execute(
+                    "SELECT id FROM vaults ORDER BY created_at LIMIT 1"
+                ).fetchone()
+                if vault is not None:
+                    record_erasure_links(connection, str(vault["id"]))
             except BaseException:
                 connection.rollback()
                 raise
@@ -4128,6 +4204,262 @@ class CoreStore:
             idempotency_key=request.idempotency_key + ":formed",
         )
 
+    def _personal_preference_binding_tx(
+        self,
+        connection: sqlite3.Connection,
+        claim: LiveUserClaim,
+        principal: ClientPrincipal,
+        *,
+        project_context: ResolvedProjectContext | None,
+        observed_at: str,
+        as_of: str,
+    ) -> tuple[str | None, dict[str, str]]:
+        """Bind one preference to current personal truth under the capture write lock.
+
+        This is a precondition, not authority. Ordinary reconciliation still
+        checks timestamps/explicitness. No legacy record or tombstone is migrated.
+        The partition and exact scope come only from transaction-resolved Core
+        authority; global and other-project rows cannot become predecessors.
+        """
+
+        entity_key = (
+            "user@project:" + project_context.canonical_project_id
+            if project_context is not None
+            else "user"
+        )
+        expected_scopes = [project_context.project_scope] if project_context is not None else []
+        rows = connection.execute(
+            "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+            "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM context_records newer "
+            "WHERE newer.supersedes=context_records.id "
+            "AND newer.approval_status='approved' AND newer.deleted_at IS NULL) LIMIT 2",
+            (self.vault_id(), entity_key, claim.attribute_key),
+        ).fetchall()
+        deleted = connection.execute(
+            "SELECT 1 FROM context_records WHERE vault_id=? AND entity_key=? "
+            "AND attribute_key=? AND deleted_at IS NOT NULL LIMIT 1",
+            (self.vault_id(), entity_key, claim.attribute_key),
+        ).fetchone()
+        if deleted is not None or len(rows) > 1:
+            return "personal preference slot is deleted or ambiguous", {}
+        expected_old = claim.structured_value.get("expected_old_value")
+        if not rows:
+            if expected_old is not None:
+                return "personal preference predecessor is not current", {}
+            legacy_rows = connection.execute(
+                "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+                "AND attribute_key='preference' "
+                "AND (deleted_at IS NOT NULL OR (approval_status='approved' "
+                "AND NOT EXISTS (SELECT 1 FROM context_records newer "
+                "WHERE newer.supersedes=context_records.id "
+                "AND newer.approval_status='approved' AND newer.deleted_at IS NULL)))",
+                (self.vault_id(), entity_key),
+            ).fetchall()
+            for legacy in legacy_rows:
+                # Classify the old statement itself, never the incoming turn.
+                # Unknown/qualified/inconsistent legacy meanings remain blocked.
+                # Known unrelated subjects, including their tombstones, do not
+                # reserve every personal facet. No old row is modified or copied.
+                legacy_claim = extract_live_user_claim(str(legacy["content"]))
+                structured = _loads(legacy["structured_value_json"], {})
+                value = structured.get("value") if isinstance(structured, dict) else None
+                if (
+                    str(legacy["kind"]).casefold() != "interaction_preference"
+                    or legacy["source_id"] is not None
+                    or _loads(legacy["scopes_json"], []) != expected_scopes
+                    or not self._record_is_allowed(legacy, principal)
+                    or legacy_claim is None
+                    or legacy_claim.kind != "interaction_preference"
+                    or "expected_old_value" in legacy_claim.structured_value
+                    or not isinstance(value, str)
+                    or normalized_observation_text(value)
+                    != normalized_observation_text(legacy_claim.value)
+                    or legacy_claim.attribute_key == claim.attribute_key
+                ):
+                    return "legacy generic preference prevents safe facet assignment", {}
+            return None, {}
+        target = rows[0]
+        if (
+            str(target["kind"]).casefold() != "interaction_preference"
+            or target["source_id"] is not None
+            or _loads(target["scopes_json"], []) != expected_scopes
+            or not self._record_is_allowed(target, principal)
+        ):
+            return "personal preference target is not allowed personal context", {}
+        if expected_old is None:
+            # Keep ordinary equivalent turns semantically identical so another
+            # capture client can reinforce them, including delayed evidence.
+            return None, {}
+        structured = _loads(target["structured_value_json"], {})
+        value = structured.get("value") if isinstance(structured, dict) else None
+        if not isinstance(value, str) or normalized_observation_text(
+            value
+        ) != normalized_observation_text(expected_old):
+            return "personal preference predecessor does not match current value", {}
+        # Explicit contrast identifies a predecessor, not chronology authority.
+        # Equal-time and future turns cannot replace current truth. Older turns
+        # retain the ordinary ignored-evidence path, including delayed ABA.
+        # Equivalent evidence keeps its existing reinforcement rules.
+        from datetime import datetime
+
+        try:
+            proposed_at = datetime.fromisoformat(observed_at)
+            current_at = datetime.fromisoformat(str(target["observed_at"] or target["created_at"]))
+            capture_at = datetime.fromisoformat(as_of)
+            timely = (
+                proposed_at.utcoffset() is not None
+                and current_at.utcoffset() is not None
+                and capture_at.utcoffset() is not None
+                and proposed_at != current_at
+                and proposed_at <= capture_at
+            )
+        except ValueError:
+            timely = False
+        if not timely:
+            return "personal_preference_stale", {}
+        return None, {
+            "expected_record_id": str(target["id"]),
+            "expected_record_version": str(target["version"]),
+        }
+
+    def _project_decision_binding_tx(
+        self,
+        connection: sqlite3.Connection,
+        plan: ProjectDecisionPlan,
+        principal: ClientPrincipal,
+        *,
+        observed_at: str,
+        as_of: str,
+    ) -> tuple[str | None, dict[str, str]]:
+        """Check unique current decision and its exact committed capture lineage.
+
+        The write transaction resolves both partition and predecessor. Neither
+        keyed/admin records nor an unrelated receipt supplies correction authority.
+        Deleted typed slots remain barriers; no source or schema is migrated.
+        """
+        from datetime import datetime
+
+        from .capture import CaptureEvent
+        from .project_decision_policy import (
+            ProjectDecisionAbstention,
+            check_project_decision_predecessor,
+        )
+
+        if self._memory_policy_tx(connection).mode != "automatic":
+            return "project_decision_automatic_disabled", {}
+        if datetime.fromisoformat(observed_at) > datetime.fromisoformat(as_of):
+            return ProjectDecisionAbstention.STALE_CORRECTION.value, {}
+        parameters = (self.vault_id(), plan.entity_key, plan.claim.attribute_key)
+        deleted = connection.execute(
+            "SELECT 1 FROM context_records WHERE vault_id=? AND entity_key=? "
+            "AND attribute_key=? AND deleted_at IS NOT NULL LIMIT 1",
+            parameters,
+        ).fetchone()
+        rows = connection.execute(
+            "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+            "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM context_records newer "
+            "WHERE newer.supersedes=context_records.id "
+            "AND newer.approval_status='approved' AND newer.deleted_at IS NULL) LIMIT 2",
+            parameters,
+        ).fetchall()
+        if deleted is not None or len(rows) > 1:
+            return ProjectDecisionAbstention.PREDECESSOR.value, {}
+        if not rows:
+            if "expected_old_value" in plan.claim.structured_value:
+                return ProjectDecisionAbstention.PREDECESSOR.value, {}
+            return None, {}
+        target = rows[0]
+        # Current attribution may differ from candidate_id after a correction.
+        # Resolve by its current source tuple AND record observation link.
+        evidence = connection.execute(
+            "SELECT c.*,e.normalized_payload_json,e.payload_hash,e.provider_event_id,"
+            "e.provider_item_id,e.order_key,e.operation,e.generation,"
+            "e.idempotency_key AS event_idempotency_key,e.application_receipt,"
+            "e.status AS event_status,s.client_principal_id,s.lifecycle_state,"
+            "s.provider,s.local_only,s.local_only_acknowledged "
+            "FROM context_observation_links l JOIN context_candidates c "
+            "ON c.id=l.observation_id JOIN capture_events e ON e.id=c.capture_event_id "
+            "AND e.source_id=c.capture_source_id JOIN capture_sources s ON s.id=e.source_id "
+            "WHERE l.record_id=? AND c.record_id=? AND c.vault_id=? AND s.vault_id=? "
+            "AND c.source_reference=? AND c.content=? "
+            "AND c.disposition='applied' AND c.observation_origin='live_user_evidence' "
+            "AND c.kind='project_decision' AND c.source_id IS NULL "
+            "AND c.source_service='allthecontext-core' "
+            "AND c.source_type='client_capture_formation' LIMIT 2",
+            (
+                target["id"],
+                target["id"],
+                self.vault_id(),
+                self.vault_id(),
+                target["source_reference"],
+                target["content"],
+            ),
+        ).fetchall()
+        if len(evidence) != 1:
+            return ProjectDecisionAbstention.LINEAGE.value, {}
+        source = evidence[0]
+        payload = _json_object(source["normalized_payload_json"])
+        expected_reference = "client-capture-formation-" + _hash_text(
+            f"{source['capture_source_id']}\0{source['provider_event_id']}"
+        )
+        binding_hash = _hash_text(
+            _json(
+                [
+                    "client-capture-binding-v1",
+                    source["capture_source_id"],
+                    source["capture_event_id"],
+                    source["event_idempotency_key"],
+                    source["payload_hash"],
+                ]
+            )
+        )
+        if (
+            payload is None
+            or payload.get("role") != "user"
+            or payload.get("content") != target["content"]
+            or source["event_status"] != "applied"
+            or source["operation"] != "upsert"
+            or source["application_receipt"]
+            != "capture-observation-"
+            + _hash_text(f"{source['capture_source_id']}\0{source['capture_event_id']}")
+            or source["source_reference"] != expected_reference
+            or source["capture_binding_hash"] != binding_hash
+            or source["idempotency_key"] != source["event_idempotency_key"] + ":formed"
+            or source["capture_source_id"]
+            != self.client_capture_source_id(str(source["client_principal_id"]))
+            or source["provider"] != "client-runtime"
+            or source["lifecycle_state"] != "enabled"
+            or not source["local_only"]
+            or not source["local_only_acknowledged"]
+            or source["entity_key"] != plan.entity_key
+            or source["attribute_key"] != plan.claim.attribute_key
+            or _loads(source["scopes_json"], []) != list(plan.scopes)
+        ):
+            return ProjectDecisionAbstention.LINEAGE.value, {}
+        committed_event = CaptureEvent(
+            provider_event_id=str(source["provider_event_id"]),
+            provider_item_id=str(source["provider_item_id"]),
+            order_key=str(source["order_key"]),
+            payload=payload,
+            generation=int(source["generation"]),
+        )
+        if committed_event.normalized()[1] != source["payload_hash"]:
+            return ProjectDecisionAbstention.LINEAGE.value, {}
+        receipt = payload.get("project_binding")
+        guard = check_project_decision_predecessor(
+            plan,
+            truth=self._truth_record_tx(connection, target),
+            captured_binding=receipt if isinstance(receipt, dict) else None,
+            authorized=self._record_is_allowed(target, principal),
+            as_of=datetime.fromisoformat(as_of),
+            observed_at=datetime.fromisoformat(observed_at),
+        )
+        if isinstance(guard, ProjectDecisionAbstention):
+            return guard.value, {}
+        return None, guard
+
     def record_client_capture(
         self,
         *,
@@ -4135,8 +4467,8 @@ class CoreStore:
         candidate: CandidateInput,
         principal: ClientPrincipal,
         formed_candidate: CandidateInput | None = None,
-    ) -> tuple[CandidateOut, bool, str]:
-        """Atomically stage, form, and bind one client event to one observation."""
+    ) -> ClientCaptureReceipt:
+        """Atomically capture a turn or return its opaque committed replay receipt."""
 
         if (
             contains_secret_like_value(event.payload)
@@ -4158,6 +4490,15 @@ class CoreStore:
                 )
             ):
                 raise InvalidStateError("capture principal is not registered for capture")
+            from .project_binding import ProjectBindings
+
+            project_context = ProjectBindings(self).resolve_tx(connection, registered)
+            core_payload = {
+                key: value for key, value in event.payload.items() if key != "project_binding"
+            }
+            if project_context is not None:
+                core_payload["project_binding"] = project_context.receipt()
+            event = replace(event, payload=core_payload)
             source_id = self.client_capture_source_id(registered.id)
             source = connection.execute(
                 "SELECT client_principal_id,provider,local_only,"
@@ -4205,6 +4546,76 @@ class CoreStore:
             ):
                 raise InvalidStateError("client capture source is not enabled")
 
+            # A field fence is checked before a new body reaches the ledger.
+            # Exact existing receipts still use the ordinary replay path.
+            from .capture_purge_barriers import blocks_history, partition_for_project
+            from .project_decision_policy import ProjectDecisionPlan, plan_project_decision
+
+            role = event.payload.get("role")
+            content = event.payload.get("content")
+            if role not in {"user", "assistant", "tool", "imported"}:
+                raise InvalidStateError("capture event role is invalid")
+            if not isinstance(content, str) or content != candidate.content:
+                raise ConflictError("capture event content does not match the observation")
+            bound_project_name = None
+            if project_context is not None:
+                anchor = connection.execute(
+                    "SELECT r.structured_value_json FROM canonical_projects p "
+                    "JOIN context_records r ON r.id=p.anchor_record_id AND r.vault_id=p.vault_id "
+                    "WHERE p.id=? AND p.vault_id=? AND p.revoked_at IS NULL",
+                    (project_context.canonical_project_id, self.vault_id()),
+                ).fetchone()
+                if anchor is not None:
+                    structured_anchor = _loads(anchor["structured_value_json"], {})
+                    if isinstance(structured_anchor, dict):
+                        bound_project_name = structured_anchor.get("project_name")
+            decision_plan = plan_project_decision(
+                content,
+                role=str(role),
+                project_context=project_context,
+                bound_project_name=bound_project_name,
+            )
+            live_claim = extract_live_user_claim(content) if role == "user" else None
+            fence_claim = (
+                decision_plan.claim
+                if isinstance(decision_plan, ProjectDecisionPlan)
+                else live_claim
+            )
+            known_event = connection.execute(
+                "SELECT 1 FROM capture_events WHERE source_id=? "
+                "AND (provider_event_id=? OR idempotency_key=?) LIMIT 1",
+                (source_id, event.provider_event_id, candidate.idempotency_key),
+            ).fetchone()
+            history_purged = bool(
+                known_event is None
+                and fence_claim is not None
+                and blocks_history(
+                    connection,
+                    vault_id=self.vault_id(),
+                    partition_id=partition_for_project(
+                        connection,
+                        self.vault_id(),
+                        project_context.canonical_project_id
+                        if project_context is not None
+                        else None,
+                    ),
+                    kind=fence_claim.kind,
+                    attribute=fence_claim.attribute_key,
+                    observed_at=str(candidate.observed_at),
+                    as_of=now,
+                )
+            )
+            if history_purged:
+                opaque_payload: dict[str, Any] = {
+                    "purged_capture_receipt": {
+                        "schema": PURGED_CAPTURE_RECEIPT_SCHEMA,
+                        "observation_id": new_id(),
+                    }
+                }
+                if project_context is not None:
+                    opaque_payload["project_binding"] = project_context.receipt()
+                event = replace(event, payload=opaque_payload)
+
             payload_json, payload_hash = event.normalized()
             del payload_json
             event_id, replayed, _attempts = CaptureLedger._stage_event_tx(
@@ -4222,8 +4633,79 @@ class CoreStore:
                     (event_id,),
                 ).fetchone()
                 if row is None:
+                    # Purge removes both projections of the bound user turn.
+                    # The exact applied event remains an opaque retry barrier;
+                    # no replacement observation or content is recreated.
+                    erased = connection.execute(
+                        "SELECT * FROM capture_events WHERE id=? AND source_id=?",
+                        (event_id, source_id),
+                    ).fetchone()
+                    if erased is not None:
+                        opaque_id = _purged_client_capture_observation_id(erased, source_id)
+                        if opaque_id is not None:
+                            return ClientCaptureReceipt(opaque_id, event_id, True, True)
                     raise ConflictError("capture event has no bound observation")
-                return self._candidate_out(row), True, event_id
+                return ClientCaptureReceipt(
+                    str(row["id"]),
+                    event_id,
+                    True,
+                    history_purged=row["decision_reason"] == "capture_history_purged",
+                )
+
+            if history_purged:
+                opaque_candidate = candidate.model_copy(
+                    update={
+                        "kind": "purged_capture_receipt",
+                        "content": "Historical capture was withheld.",
+                        "source_id": None,
+                        "source_reference": "client-capture-receipt-" + event_id,
+                        "source_service": "allthecontext-core",
+                        "source_type": "client_capture",
+                        "evidence": "Opaque historical capture refusal",
+                        "entity_key": None,
+                        "attribute_key": None,
+                        "structured_value": None,
+                        "scopes": [],
+                        "tags": [],
+                        "allowed_clients": [registered.id],
+                        "denied_clients": [],
+                        "supersedes": None,
+                        "explicit_user_statement": False,
+                        "sensitivity": Sensitivity.NORMAL,
+                    }
+                )
+                opaque_id = self._insert_candidate(
+                    connection,
+                    opaque_candidate,
+                    None,
+                    registered,
+                    capture_source_id=source_id,
+                    capture_event_id=event_id,
+                )
+                self._set_observation_decision_tx(
+                    connection,
+                    opaque_id,
+                    disposition=ObservationDisposition.IGNORED,
+                    reason="capture_history_purged",
+                    policy_version=AUTOMATIC_POLICY_VERSION,
+                    origin=ObservationOrigin.CLIENT_CAPTURE,
+                    actor=registered.id,
+                )
+                opaque_payload["purged_capture_receipt"]["observation_id"] = opaque_id
+                connection.execute(
+                    "UPDATE capture_events SET status='applied',application_receipt=?,"
+                    "normalized_payload_json=?,payload_hash=?,error_code=NULL,applied_at=? "
+                    "WHERE id=? AND source_id=?",
+                    (
+                        "capture-observation-" + _hash_text(f"{source_id}\0{event_id}"),
+                        _json(opaque_payload),
+                        ERASED_CAPTURE_PAYLOAD_HASH,
+                        now,
+                        event_id,
+                        source_id,
+                    ),
+                )
+                return ClientCaptureReceipt(opaque_id, event_id, False, history_purged=True)
 
             role = event.payload.get("role")
             if role not in {"user", "assistant", "tool", "imported"}:
@@ -4248,7 +4730,9 @@ class CoreStore:
                     "source_service": "allthecontext-core",
                     "source_type": "client_capture",
                     "evidence": "Core-owned lifecycle capture observation",
-                    "scopes": [],
+                    "scopes": [project_context.project_scope]
+                    if project_context is not None
+                    else [],
                     "tags": [],
                     "confidence": 1.0,
                     "sensitivity": sensitivity,
@@ -4289,9 +4773,47 @@ class CoreStore:
                 principal=registered,
             )
             created = raw_created
+            from .project_decision_policy import is_project_decision_attempt
+
+            decision_rejection = None
+            decision_binding: dict[str, str] = {}
+            if isinstance(decision_plan, ProjectDecisionPlan):
+                decision_rejection, decision_binding = self._project_decision_binding_tx(
+                    connection,
+                    decision_plan,
+                    registered,
+                    observed_at=str(core_candidate.observed_at),
+                    as_of=now,
+                )
+                formed_candidate = core_candidate.model_copy(
+                    update={
+                        "kind": decision_plan.claim.kind,
+                        "content": content,
+                        "entity_key": "user",
+                        "attribute_key": decision_plan.claim.attribute_key,
+                        "structured_value": {
+                            "capture_role": "user",
+                            "formation": "live-user-evidence-v1",
+                            **decision_plan.claim.structured_value,
+                            **decision_binding,
+                        },
+                    }
+                )
+            elif (
+                formed_candidate is not None
+                and formed_candidate.kind == "workflow"
+                and is_project_decision_attempt(content)
+            ):
+                # An abstained decision/history turn cannot enter via a broad
+                # older workflow extractor. The exact raw observation survives.
+                formed_candidate = None
             if formed_candidate is not None:
                 if event.payload.get("role") != "user":
                     raise InvalidStateError("only user turns may form live user evidence")
+                if formed_candidate.kind == "project_decision" and not isinstance(
+                    decision_plan, ProjectDecisionPlan
+                ):
+                    raise InvalidStateError("formed project decision does not match capture")
                 if (
                     formed_candidate.entity_key != "user"
                     or formed_candidate.kind
@@ -4302,6 +4824,7 @@ class CoreStore:
                         "project",
                         "goal",
                         "workflow",
+                        "project_decision",
                     }
                     or not formed_candidate.attribute_key
                 ):
@@ -4317,7 +4840,20 @@ class CoreStore:
                         "source_service": "allthecontext-core",
                         "source_type": "client_capture_formation",
                         "evidence": "Core-formed live user evidence from a direct user turn",
-                        "scopes": [],
+                        # Bound capture origin partitions the existing slot;
+                        # it does not classify a personal claim as project truth.
+                        "entity_key": (
+                            decision_plan.entity_key
+                            if isinstance(decision_plan, ProjectDecisionPlan)
+                            else (
+                                "user@project:" + project_context.canonical_project_id
+                                if project_context is not None
+                                else "user"
+                            )
+                        ),
+                        "scopes": [project_context.project_scope]
+                        if project_context is not None
+                        else [],
                         "tags": [],
                         "confidence": 1.0,
                         "sensitivity": formed_sensitivity,
@@ -4337,6 +4873,36 @@ class CoreStore:
                         ),
                     }
                 )
+                preference_rejection = decision_rejection
+                if core_formed_candidate.kind == "interaction_preference":
+                    # Re-derive inside the transaction from the actual bound
+                    # turn. Caller-provided metadata cannot forge a predecessor.
+                    claim = extract_live_user_claim(content)
+                    if (
+                        claim is None
+                        or claim.kind != "interaction_preference"
+                        or claim.attribute_key != core_formed_candidate.attribute_key
+                        or claim.content != core_formed_candidate.content
+                    ):
+                        raise InvalidStateError("formed personal preference does not match capture")
+                    preference_rejection, binding = self._personal_preference_binding_tx(
+                        connection,
+                        claim,
+                        registered,
+                        project_context=project_context,
+                        observed_at=str(core_formed_candidate.observed_at),
+                        as_of=now,
+                    )
+                    core_formed_candidate = core_formed_candidate.model_copy(
+                        update={
+                            "structured_value": {
+                                "capture_role": "user",
+                                "formation": "live-user-evidence-v1",
+                                **claim.structured_value,
+                                **binding,
+                            }
+                        }
+                    )
                 formed_id = self._insert_candidate(
                     connection,
                     core_formed_candidate,
@@ -4346,20 +4912,41 @@ class CoreStore:
                     capture_event_id=event_id,
                     capture_binding_hash=binding_hash,
                 )
-                created = self._evaluate_observation_tx(
-                    connection,
-                    formed_id,
-                    origin=ObservationOrigin.LIVE_USER_EVIDENCE,
-                    actor=registered.id,
-                    principal=registered,
-                )
+                if preference_rejection is None:
+                    created = self._evaluate_observation_tx(
+                        connection,
+                        formed_id,
+                        origin=ObservationOrigin.LIVE_USER_EVIDENCE,
+                        actor=registered.id,
+                        principal=registered,
+                    )
+                else:
+                    self._set_observation_decision_tx(
+                        connection,
+                        formed_id,
+                        disposition=ObservationDisposition.TENTATIVE,
+                        reason=preference_rejection,
+                        policy_version=AUTOMATIC_POLICY_VERSION,
+                        origin=ObservationOrigin.LIVE_USER_EVIDENCE,
+                        actor=registered.id,
+                    )
+                    self._audit(connection, registered.id, "observation_tentative", [])
+                    self._recompute_integrity(connection)
+                    formed_row = connection.execute(
+                        "SELECT * FROM context_candidates WHERE id=?", (formed_id,)
+                    ).fetchone()
+                    assert formed_row is not None
+                    created = self._candidate_out(formed_row)
             receipt = "capture-observation-" + _hash_text(f"{source_id}\0{event_id}")
             connection.execute(
                 "UPDATE capture_events SET status='applied',application_receipt=?,"
                 "error_code=NULL,applied_at=? WHERE id=? AND source_id=?",
                 (receipt, now, event_id, source_id),
             )
-            return created, False, event_id
+            from .capture_purge_barriers import record_erasure_links
+
+            record_erasure_links(connection, self.vault_id(), {created.id})
+            return ClientCaptureReceipt(created.id, event_id, False)
 
     def _add_candidate_tx(
         self,
@@ -4976,9 +5563,20 @@ class CoreStore:
             raise _ObservationLookupOverflow("slot candidate set exceeds safety bound")
         fingerprint = _value_fingerprint(observation)
         for record in rows:
-            if _value_fingerprint(record) == fingerprint and self._record_is_allowed(
-                record, principal
+            same = _value_fingerprint(record) == fingerprint
+            if (
+                origin == ObservationOrigin.LIVE_USER_EVIDENCE
+                and str(observation["kind"]) == "project_decision"
             ):
+                proposed = _loads(observation["structured_value_json"], {})
+                current = _loads(record["structured_value_json"], {})
+                # Correction bookkeeping is provenance, not a new decision
+                # value. Ordinary equivalent turns reinforce after correction.
+                same = "expected_old_value" not in proposed and all(
+                    proposed.get(key) == current.get(key)
+                    for key in ("claim_type", "decision_schema", "decision_subject", "value")
+                )
+            if same and self._record_is_allowed(record, principal):
                 return cast(sqlite3.Row, record)
         return None
 
@@ -5114,7 +5712,8 @@ class CoreStore:
             else:
                 cursor = connection.execute(
                     "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
-                    "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+                    "AND attribute_key=? AND (?=0 OR lower(kind)=?) "
+                    "AND approval_status='approved' AND deleted_at IS NULL "
                     "AND NOT EXISTS (SELECT 1 FROM context_records newer "
                     "WHERE newer.supersedes=context_records.id "
                     "AND newer.approval_status='approved' AND newer.deleted_at IS NULL) "
@@ -5123,6 +5722,12 @@ class CoreStore:
                         observation["vault_id"],
                         entity_key,
                         attribute_key,
+                        int(
+                            origin == ObservationOrigin.LIVE_USER_EVIDENCE
+                            and str(observation["kind"]).casefold()
+                            in {"interaction_preference", "project_decision"}
+                        ),
+                        str(observation["kind"]).casefold(),
                         _MAX_OBSERVATION_CANDIDATES + 1,
                     ),
                 )
@@ -8284,6 +8889,22 @@ class CoreStore:
         )
         if candidate_id is not None:
             observation_ids.add(candidate_id)
+        observation_ids.update(
+            str(row["observation_id"])
+            for row in connection.execute(
+                "SELECT observation_id FROM memory_erasure_links WHERE vault_id=? AND record_id=?",
+                (vault_id, record_id),
+            ).fetchall()
+        )
+        from .capture_purge_barriers import record_barriers
+
+        record_barriers(
+            connection,
+            vault_id=vault_id,
+            record_id=record_id,
+            observation_ids=observation_ids,
+            purged_at=purged_at,
+        )
         capture_event_ids = {
             str(row["capture_event_id"])
             for row in connection.execute(
@@ -8294,12 +8915,58 @@ class CoreStore:
             ).fetchall()
         }
         if capture_event_ids:
-            placeholders = ",".join("?" for _ in capture_event_ids)
-            connection.execute(
-                "UPDATE capture_events SET normalized_payload_json='{}' "
-                f"WHERE id IN ({placeholders})",
-                sorted(capture_event_ids),
+            # A lifecycle event owns a raw turn as well as its formed evidence.
+            # The raw sibling has no record_id/link, so record-only traversal
+            # misses its plaintext. Follow only the same durable event/source
+            # in this vault; the existing shared-record guard still applies.
+            observation_ids.update(
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT c.id FROM context_candidates c "
+                    "JOIN capture_events e ON e.id=c.capture_event_id "
+                    "WHERE c.vault_id=? AND c.capture_source_id=e.source_id "
+                    "AND e.id IN (SELECT value FROM json_each(?))",
+                    (vault_id, _json(sorted(capture_event_ids))),
+                ).fetchall()
             )
+            for captured in connection.execute(
+                "SELECT e.*,s.provider,s.client_principal_id FROM capture_events e "
+                "JOIN capture_sources s ON s.id=e.source_id "
+                "WHERE e.id IN (SELECT value FROM json_each(?))",
+                (_json(sorted(capture_event_ids)),),
+            ).fetchall():
+                opaque_payload: dict[str, Any] = {}
+                if (
+                    captured["provider"] == "client-runtime"
+                    and captured["client_principal_id"] is not None
+                    and captured["status"] == "applied"
+                    and captured["application_receipt"]
+                    == "capture-observation-"
+                    + _hash_text(f"{captured['source_id']}\0{captured['id']}")
+                ):
+                    # This is the same projection chosen at original capture
+                    # and ordinary replay; preserve only its opaque identity.
+                    original = connection.execute(
+                        "SELECT id FROM context_candidates WHERE vault_id=? "
+                        "AND capture_event_id=? AND capture_source_id=? "
+                        "ORDER BY CASE WHEN source_type='client_capture_formation' "
+                        "THEN 0 ELSE 1 END,created_at,id LIMIT 1",
+                        (vault_id, captured["id"], captured["source_id"]),
+                    ).fetchone()
+                    if original is not None:
+                        opaque_payload["purged_capture_receipt"] = {
+                            "schema": PURGED_CAPTURE_RECEIPT_SCHEMA,
+                            "observation_id": str(original["id"]),
+                        }
+                        prior_payload = _loads(captured["normalized_payload_json"], {})
+                        if isinstance(prior_payload, dict) and "project_binding" in prior_payload:
+                            opaque_payload["project_binding"] = prior_payload["project_binding"]
+                # A constant satisfies the legacy fixed-width column without
+                # retaining a guessable fingerprint of the erased turn.
+                connection.execute(
+                    "UPDATE capture_events SET normalized_payload_json=?,payload_hash=? WHERE id=?",
+                    (_json(opaque_payload), ERASED_CAPTURE_PAYLOAD_HASH, captured["id"]),
+                )
         slot = (cast(str | None, record["entity_key"]), cast(str | None, record["attribute_key"]))
         purge_payload = {
             "record_id": record_id,
@@ -8345,8 +9012,10 @@ class CoreStore:
         for observation_id in sorted(observation_ids):
             linked_elsewhere = connection.execute(
                 "SELECT 1 FROM context_observation_links WHERE observation_id=? "
-                "UNION ALL SELECT 1 FROM context_records WHERE candidate_id=? LIMIT 1",
-                (observation_id, observation_id),
+                "UNION ALL SELECT 1 FROM context_records WHERE candidate_id=? "
+                "UNION ALL SELECT 1 FROM memory_erasure_links "
+                "WHERE observation_id=? LIMIT 1",
+                (observation_id, observation_id, observation_id),
             ).fetchone()
             if linked_elsewhere is None:
                 self._detach_candidate_from_batches(connection, observation_id)

@@ -1,5 +1,255 @@
 # Architecture decisions
 
+## Derive erasure coverage from formation and its canonical claims (2026-10-11)
+
+The purge ledger must cover every declared formed field, rather than maintain a
+second partial field list. Derive decision fields from their existing value
+vocabulary; share the personal/live field declarations with formation, which
+abstains for undeclared extractor output. Keep the existing namespace/field-ID
+derivation so previously exported fences retain their identities. For personal
+lineage, re-derive the exact canonical claim from the original fingerprinted
+turn and verify its kind, attribute, content and structured claim fields. Keep
+decision raw wording exact as its formation policy does. Never substitute fuzzy
+similarity or imported metadata for the committed event/receipt/binding tuple.
+
+## Preserve erasure association and chronology without deleted values (2026-10-11)
+
+Use a portable ID-only raw-observation/record association for erasure closure;
+do not reuse it as formation or routing authority. Keep a code-owned opaque field
+ID, stable project anchor ID (or unbound partition), erased record ID and purge
+time as the historical fence. Withhold pre-purge or future evidence before body
+persistence; preserve an opaque ignored receipt. Permit ordinary post-purge live
+choices. Validate package references and exact purge facts before destination
+mutation, and carry fences through recovery. Do not reconstruct missing legacy
+relationships by matching content or retaining value hashes. See
+[contract and limits](CAPTURE_PURGE_HISTORY.md).
+
+Name the portable relationships as memory ledger data, `memory_erasure_links`
+and `memory_purge_barriers`. Keep capture-runtime tables and machine-local
+authorization outside portable packages. Preserve the existing export privacy
+assertion when correcting the unreleased schema's naming collision.
+
+## Erase raw capture siblings through durable event lineage (2026-10-11)
+
+Purge must follow the formed observation's exact capture event/source within the
+vault to remove its raw turn as well. Preserve existing shared-record guards;
+never erase another project by matching text. Keep only the existing opaque
+applied event receipt, original opaque observation ID and binding for authenticated
+identity replay. Erase payload fingerprints too; altered bodies on the same
+identity consume no influence after erasure, while changed identity fields
+conflict. The observation itself remains absent, and absence without a valid
+erased receipt remains a conflict.
+Cross-principal historical recapture and cleanup of old purge jobs require
+separate review; neither is implied by this repair. See
+[contract and limits](CAPTURE_PURGE_ERASURE.md).
+
+## Refuse ambiguous workflow qualifications without inventing project authority (2026-10-11)
+
+A named/purpose qualification in a whole-turn workflow can describe project scope
+without an explicit decision role. Refuse automatic workflow extraction for the
+bounded qualification grammar rather than guess identity from text. Preserve
+unqualified and explicit whole-project global workflows, independent personal
+facets, exact raw evidence and existing canonical decision bindings. No storage,
+schema or historical memory migration; the unmerged personal correction candidate
+is an explicit dependency. See [contract and evidence limits](WORKFLOW_SCOPE_FALLBACK.md).
+
+## Keep personal correction framing separate from value and chronology (2026-10-11)
+
+Strip terminal `now` only inside an already complete explicit personal contrast;
+retain full source wording and bounded same-facet meaning. An old-value match
+does not grant chronology authority: require the incoming correction to be
+strictly newer than the current record and no later than transaction capture
+time. Preserve ordinary reinforcement, exact partition/CAS and durable replay/
+tombstone rules. Equal/future chronology stays tentative with the existing closed
+stale reason; older corrections retain the ordinary ignored-evidence path. See
+[contract and checkpoint limits](PERSONAL_CORRECTION_CHRONOLOGY.md).
+
+## Keep name-mismatch evidence separate from named source acceptance (2026-10-02)
+
+Preserve the prior source harness byte-for-byte, including the historical strict
+xfail reason. Its placeholder name is not a declared Harbor anchor. A separately
+named test provisions actual structured Harbor/Cedar names and canonical bindings
+through public synthetic APIs; no name inferred from scope, content or query can
+replace binding authority. Check source reader references against authenticated
+truth and history, while leaving installed-app/model citation use unclaimed.
+See [the test-only journey](NAMED_DECISION_CLIENT_JOURNEY.md).
+
+## Named decision applicability within already-bound authority (2026-10-02)
+
+Read only the existing current explicit canonical anchor's structured
+`project_name` inside the capture transaction. Exact bounded name matching
+conditions ordinary affirmative decision wording; it cannot choose project
+identity, infer deployment or mint broader grants. Duplicate display names stay
+in their own bound canonical partitions. Do not infer names from scope suffixes,
+anchor content, fixtures, query or cwd. No new alias/authority schema is added.
+After rename, old named predecessors fail re-parse rather than acquiring alias
+authority; original-event replay retains its exact receipt. Preserve personal
+facets, source evidence and existing correction/ABA/CAS rules. See
+[the named decision contract](BOUND_NAMED_PROJECT_DECISIONS.md).
+
+## Integrate bounded decisions without expanding project authority (2026-10-02)
+
+Use existing transaction-resolved canonical bindings and exact committed capture
+lineage to admit the bounded project decision policy. Re-derive content in the
+write transaction, preserve raw evidence and source/version history, fail closed
+on ambiguous/deleted/unavailable predecessors and reject stale ABA corrections.
+Ordinary equivalent decisions ignore correction bookkeeping for reinforcement.
+Reject unsupported decision attempts before legacy workflow fallback; preserve
+personal facets. Retain partial facts only under the inherited exact admitted
+project pipeline. No new authority/schema or completeness fabrication. See
+[integrated contract](DECISION_PARTIAL_INTEGRATION.md); installed-client/model
+and restore-identity reconciliation remain separate gates.
+Independent review repaired fallback suppression of unrelated project/goal
+claims, then confirmed frozen runtime `f04917e1`. Exact selected-ID coverage is
+3,880 passed and 21 skipped; all 260 focused cases pass on that source. Frozen
+development and complete observations remain unchanged at 3/14, as its adapter
+is unbound. Source-hook client validation is kept in a separate check branch.
+
+## Separate delivery fixture state from unsupported formation (2026-10-02)
+
+Delivery promises complete authorized record blocks and truthful budget notices;
+bounded personal formation deliberately abstains on mixed turns. Preserve both
+contracts by using owner-authorized source-backed state for long-record budget
+checks, atomic live capture for preference provenance and the exact original
+mixed turn as a negative replay/restart regression. Retain original test IDs and
+delivery assertions, including full source evidence and negation. Do not make
+the parser extract the first sentence, weaken assertions or tune frozen v1.
+See [fixture proof](DELIVERY_FIXTURE_COMPATIBILITY.md). This test-only follow-up
+does not claim an automatic everyday-memory or installed-client acceptance gain.
+Frozen source `ec62f3a0` has exact selected-ID coverage: 3,691 passed and 21
+skipped. The initial volatile temporary-root fingerprint failure remains in
+receipts; the identical 39 specification cases pass in a fresh stable root.
+Frozen development and complete observations remain identical at 3/14.
+
+## Compose facets within registered project authority (2026-10-02)
+
+Use the project context resolved inside capture's existing transaction for
+personal preference guard lookup and exact-scope validation. Apply the same
+partition to typed current/tombstoned slots and generic legacy subject guards.
+Preserve expected-old CAS, ordinary reinforcement fingerprints, ACL/source/kind
+boundaries and legacy compatibility without granting broader authority or
+migrating memory. Schema 21 and non-portable local identity ownership stay with
+the project-binding lane. Both standalone candidates remain unchanged. See
+[composition](PROJECT_PREFERENCE_COMPOSITION.md); installed-client and
+restore identity reconciliation gates remain separate.
+
+Preserve the bounded preference lane's compound-turn abstention when it conflicts
+with delivery-budget fixture setup. Exact runtime `27a855f` passes all 146 focused
+tests but its broader gate has two failures on that old formation assumption;
+standalone candidate attribution confirms the conflict. Do not relax formation
+or weaken the fixture assertion within this composition. Retain development
+3/14 and the mixed-decision regression from the binding lane's 4/14. A separate
+test-contract decision can give delivery checks legitimately formed fixture state
+while retaining compound-capture negative coverage and frozen quality failures.
+
+## Derive project routing from immutable registered principal bindings (2026-10-02)
+
+Core issues stable keys from verified current project anchors and stores a
+one-way binding for narrow registered principals. Capture records transaction
+context before staging and reads its receipt from the committed event. Partition
+existing user slots by that key; require exact project membership for relevant
+and mandatory records and capsules. Preserve existing ACLs, formation grammar
+and completeness behavior. Keep unclassified/global legacy memory outside strict
+bound packs and label legacy routing explicitly. Schema 21 metadata is local
+security state, excluded from portable exports. Read `context:status` aggregates
+remain a separately granted vault-wide capability. This provides a routing
+primitive for later application setup, without activating live bindings or
+claiming best-in-class memory. See [scope](PROJECT_PRINCIPAL_BINDINGS.md).
+Corrected runtime `01e1f5cfe514b314fd302992a2b9efd73a11ac1c` passes
+78 targeted and 3,577 broader tests (21 skips, three explicit exclusions),
+with scoped review/static checks closed. Approved remote Edge identities retain
+their separate legacy registry; synthetic viewers use durable registration.
+Frozen development remains 4/14 with unchanged observations and no operation
+failures. Restore-to-new-binding identity/slot reconciliation remains unsupported.
+
+## Record-delivery limits use fixed hook notices (2026-10-02)
+
+Preserve evidence selection and existing Core/API authority. Add one fixed,
+record-items-only status block to the existing free-text hook output rather
+than inventing semantic unknown facets or expanding Core schemas. Successful
+empty results do not assess the separately returned project capsule; request
+errors are unavailable retrieval, not absence evidence. Client setup decoder
+failures remain unavailable; only returned-response decoding is malformed.
+Existing strict pack
+metadata can establish upstream budget omission only when consistent with
+returned counts and flags. Whole JSON record and notice blocks must fit;
+tiny budgets stay silent. Retain cold provenance and deletion/replay checks,
+and measure unchanged development diagnostics without post-score tuning.
+Reviewed runtime `2affdc7bd7711f1af471021c101c386700946e3c` passes 171
+focused and 3,541 broader tests with 21 skips and three explicit exclusions.
+Frozen development remains 4/14 with unchanged outcomes and existing evidence;
+generic uncited notices receive no named-unknown credit. This does not establish
+partial-context recovery, project isolation or reader-model behavior.
+See `docs/DELIVERY_STATUS.md` for receipts and limitations.
+## Bound response facets and legacy exclusion by subject (2026-10-02)
+
+The single-modifier response-noun fallback conflated independent layout and
+language preferences with style. Replace that fallback with bounded explicit
+modifier semantics, keeping the original desired-contract cases. Recognize
+paragraph layout and a bounded set of explicit reply languages separately.
+Unknown modifiers abstain; they do not authorize replacement of known style.
+
+A generic legacy row reserves an empty typed subject only when its original
+full statement and structured value identify that same subject. A safely
+identifiable unrelated subject may coexist with a new typed record. Unknown,
+qualified, inconsistent, inaccessible or non-personal legacy rows retain the
+conservative empty-slot guard. Include tombstones regardless of approval,
+but exclude superseded active legacy rows from current-truth checks. This is
+read-only compatibility classification, not migration or reformation. Matching
+legacy subjects remain guarded even when deleted, and old-event replay returns
+its original observation. Ordinary reconciliation, expected-old binding under
+the capture transaction, timestamps, evidence and permission boundaries remain
+unchanged. See `docs/PERSONAL_PREFERENCE_FACETS.md` for the current scope.
+
+## Personal facets and ordinary atomic corrections (2026-10-02)
+
+Separate bounded personal subjects instead of sharing generic `user/preference`
+or whitelisting style values. Core re-derives a formed preference from the bound
+user turn, then validates one allowed current kind/entity/facet/personal record
+and its exact predecessor under the existing capture write lock. Persist Core's
+ID/version binding only for explicit predecessor corrections; ordinary equivalent
+captures retain their fingerprint and can reinforce from another app even when
+delayed. Use ordinary live-evidence reconciliation; no privileged
+correction kind, explicitness or timestamp bypass. Refuse stale, ambiguous,
+deleted, scoped, denied and cross-kind targets with closed diagnostic codes.
+Legacy generic records are not automatically migrated or inferred from the next
+turn; affected users may need separately authorized reformation. This bounded
+candidate covers identifiable personal response/beverage/indent/theme grammar,
+not general English extraction or project authority. Independent source-selected
+desired-contract tests and transaction/lifecycle regressions, rather than tuning
+frozen acceptance phrases, define its behavior. See `docs/PERSONAL_PREFERENCE_FACETS.md`.
+
+Reviewed runtime `75df0258` passes all 61 independent personal cases and the
+3,545-test applicable suite with the existing sealed-holdout/native exclusions.
+Frozen development remains 3/14, versus 4/14 for provenance-only: rejection of
+mixed whole-turn preference evidence removes a prior project-content pass, and
+broader formation/unknown/handoff gaps remain. Preserve that measurement; do not
+tune or promote this bounded candidate as end-to-end acceptance. Delivery's
+subsequent documentation receipt leaves runtime/test blobs identical.
+
+## 2026-10-02 - safe delivered record provenance
+
+Render read-hook context as framed, complete JSON blocks containing only record
+text and, when valid, a canonical opaque UUID and positive record version.
+Unreferenced content uses the same closed JSON shape. This prevents quoted
+content from creating a separate reference block, excludes arbitrary metadata
+and keeps both harnesses on the same complete-output budget rule. Oversized
+blocks are omitted; they are never shortened into potentially different claims.
+
+Record references resolve through the existing authenticated
+`/v1/context/truth/{record_id}` route. A versioned record pointer can detect a
+later replacement; it is not an immutable source quote or authority for text
+inside the untrusted content field. No source path, arbitrary source reference
+or ACL is delivered. Formation, authorization and retrieval selection remain
+owned by Core.
+
+Adapt only the ATC evaluation transport to decode references actually delivered
+and check their current content/version before attaching existing synthetic
+source mappings. Preserve frozen v1 cases, expectations, grader and historical
+baseline. Independent cold-Core API regressions supply evidence beyond the
+adapter's retained caches. Keep the holdout sealed, including excluding the
+preexisting integrity-only test that would open it during a full suite.
+
 ## Dependency lock decision — urllib3 audit remediation (2026-09-30)
 
 The PR118 combined candidate's hosted frozen dependency audit found three
@@ -7221,3 +7471,54 @@ no merge evidence for this combined candidate.
 
 The Windows post-commit startup-guard unit test checks authenticated helper
 dispatch at its process boundary without executing the fixture binary on-host.
+
+## 2026-09-30 shared memory acceptance before engine integration
+
+Freeze a bounded natural-language acceptance slice before deciding between
+repairing ATC and adopting another engine. Reuse existing Memory Lab attribution
+and reader-usage conventions; do not build another model orchestration framework.
+Adapters receive ordinary events and questions but no evaluator labels. Require
+current supported evidence and distinguish capture, retrieval and delivery.
+
+Development failures remain failures; passing grader regression tests cannot be
+reported as memory acceptance. Keep held-out execution separate and require an
+explicit frozen candidate identity before its use. A default run opens only
+synthetic disposable vaults, with no routine approval inbox or manual curation.
+Automatic lifecycle is the goal, not preserving the existing engine. Larger
+engine integration, installed-client acceptance and release action remain outside
+this slice. See the [contract guide](../bench/memory_acceptance_v1/README.md).
+
+## ADR-230: Deliver complete derived project facts through the shared read hooks
+
+Date: 2026-10-18
+
+Bootstrap already spends part of its budget on an authorized project capsule,
+but the shared Codex/Claude formatter discarded that capsule. Deliver its complete
+facts as separately marked, untrusted derived references. Accept only the known
+activated/resolved wire shape and opaque matching project identity; omit private
+projection metadata. A project projection supplies no canonical record version,
+so it must not masquerade as a versioned `atc_record` citation.
+Use a distinct `project_content` field for derived facts: existing canonical
+consumers treat `content` blocks as records requiring versioned citations.
+
+Keep record priority and the existing total hook character budget. Never inject
+an upstream truncated capsule item or locally cut JSON/text. Project and record
+delivery notices remain separately scoped, including when no records matched.
+When both notices cannot fit, preserve the existing record-only path without
+project facts; that record status cannot establish global context absence.
+Abstained or malformed capsules cannot supply project facts; malformed record
+responses retain the existing content-free failure path. Core authorization,
+capture, admission, persistence and capsule compilation are unchanged. This
+change requires independent review and exact-candidate verification before merge.
+
+## 2026-10-02 bounded project decision formation lane
+
+Use the verified canonical binding solely to identify capture scope. A complete,
+affirmative direct user choice supplies decision meaning; it does not establish
+deployment, collective authority or applicability outside that project. Recognize
+a bounded technical role/value grammar with whole-turn abstention. Keep project
+decision entities distinct from personal facets and preserve original evidence.
+Same-scope current-source lineage, exact-old-value comparison and newer correction
+chronology precede transaction-derived CAS. Storage integration belongs to the
+parent; no binding grants or admission security are broadened by this pure policy.
+See [the integration contract](PROJECT_DECISION_FORMATION.md).

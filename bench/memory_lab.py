@@ -39,6 +39,8 @@ from allthecontext.retrieval import RetrievalEngine
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
+from bench.synthetic_principal import register_synthetic_principal
+
 FIXTURES = Path(__file__).with_name("memory_lab_fixtures.json")
 LADDER_CONFIG = Path(__file__).with_name("memory_lab_baseline_ladder_config.json")
 LADDER_ORDER = (
@@ -235,6 +237,7 @@ class AtcRetrievalAdapter:
         store = CoreStore(self._database_path)
         store.migrate()
         vault_id = store.initialize_vault("Synthetic ATC Memory Lab", "UTC")
+        register_synthetic_principal(store, self._principal)
         insert_sql = (
             "INSERT INTO context_records("
             "id,vault_id,kind,content,scopes_json,tags_json,allowed_clients_json,"

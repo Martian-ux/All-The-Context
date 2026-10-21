@@ -321,8 +321,8 @@ _PREFERENCE_VALUE = re.compile(rf"\b(?:{_PREFERENCE_VALUE_TERMS})\b", flags=re.I
 _CHOICE_BEFORE_FOR = re.compile(r"\b[\w.+-]+(?=\s+for\b)", flags=re.IGNORECASE)
 
 _LIVE_PREFERENCE = re.compile(
-    r"^(?:(?:i|we)\s+(?:(?:now|currently|still)\s+)?"
-    r"(?:prefer|like|love|hate|dislike)|my\s+preference\s+is|prefer)\s+"
+    r"^(?:i\s+(?:(?:now|currently|still)\s+)?"
+    r"(?:prefer|like|love)|my\s+preference\s+is)\s+"
     r"(?P<value>.+)$",
     flags=re.IGNORECASE,
 )
@@ -356,6 +356,15 @@ _LIVE_WORKFLOW = re.compile(
     r"^(?:i|we)\s+use\s+(?P<value>.+)$|"
     r"^(?:my|our)\s+(?:workflow|stack)\s+is\s+(?P<value_alt>.+)$",
     flags=re.IGNORECASE,
+)
+# A qualifier can name a project without declaring a technical decision role.
+# Match the whole workflow value; never extract or resolve the mentioned target.
+_QUALIFIED_WORKFLOW_VALUE = re.compile(
+    r"(?P<tooling>.+?)\s+(?:for|in|on|within|across)\s+(?P<context>.+)",
+    flags=re.IGNORECASE,
+)
+_GLOBAL_WORKFLOW_CONTEXT = re.compile(
+    r"(?:all projects|every project|each project)", flags=re.IGNORECASE
 )
 _PREFERENCE_FORMAT_VALUES = frozenset({"tabs", "spaces"})
 _PREFERENCE_STYLE_VALUES = frozenset(
@@ -443,6 +452,30 @@ class LiveUserClaim:
     value: str
     attribute_key: str
     structured_value: dict[str, str]
+
+
+LIVE_USER_FIELDS = frozenset(
+    (kind, attribute)
+    for kind, attributes in (
+        (
+            "interaction_preference",
+            (
+                "response_format",
+                "response_style",
+                "interface_theme",
+                "response_layout",
+                "response_language",
+                "beverage",
+            ),
+        ),
+        ("name", ("name",)),
+        ("personal_context", ("location", "ssn", "health")),
+        ("project", ("current_project",)),
+        ("goal", ("current_goal",)),
+        ("workflow", ("tooling",)),
+    )
+    for attribute in attributes
+)
 
 
 def normalize_imported_text(value: str) -> str:
@@ -789,24 +822,143 @@ def _claim_value(value: str) -> str:
     return value.strip().rstrip(".!?").strip()
 
 
-def _preference_attribute(value: str) -> str:
+PERSONAL_PREFERENCE_SCHEMA = "personal-preference-v2"
+_PERSONAL_PREFERENCE_MODIFIER = r"[a-z]+(?:-[a-z]+)*"
+_PERSONAL_RESPONSE_OBJECT = r"(?:answers|responses|explanations|replies|summaries|walkthroughs)"
+_PERSONAL_MODIFIED_RESPONSE = re.compile(
+    rf"{_PERSONAL_PREFERENCE_MODIFIER} {_PERSONAL_RESPONSE_OBJECT}"
+)
+_PERSONAL_STYLE_MODIFIERS = _PREFERENCE_STYLE_VALUES | frozenset(
+    {
+        "short",
+        "long",
+        "compact",
+        "expanded",
+        "meticulous",
+        "precise",
+        "lucid",
+        "accessible",
+        "clear",
+        "source-linked",
+    }
+)
+_PERSONAL_RESPONSE_LANGUAGE = re.compile(
+    rf"(?:(?:english|spanish|french|german|japanese) {_PERSONAL_RESPONSE_OBJECT}|"
+    rf"{_PERSONAL_RESPONSE_OBJECT} in (?:english|spanish|french|german|japanese))"
+)
+_PERSONAL_RESPONSE_LAYOUT = re.compile(
+    rf"(?:{_PERSONAL_RESPONSE_OBJECT} (?:in|with) "
+    rf"{_PERSONAL_PREFERENCE_MODIFIER}(?: {_PERSONAL_PREFERENCE_MODIFIER})? "
+    r"(?:points|steps|lists)|"
+    rf"{_PERSONAL_RESPONSE_OBJECT} arranged as (?:a |an )?"
+    rf"{_PERSONAL_PREFERENCE_MODIFIER} list|"
+    rf"(?:bulleted|numbered|bullet[ -]?points?|paragraph) {_PERSONAL_RESPONSE_OBJECT}|"
+    rf"{_PERSONAL_RESPONSE_OBJECT} in paragraphs)"
+)
+_PERSONAL_BEVERAGE = re.compile(
+    rf"(?:{_PERSONAL_PREFERENCE_MODIFIER}(?: {_PERSONAL_PREFERENCE_MODIFIER})? )?"
+    r"(?:tea|coffee|water|juice)"
+)
+_PERSONAL_BLOCKED_MODIFIERS = frozenset(
+    {
+        "this",
+        "that",
+        "these",
+        "those",
+        "same",
+        "other",
+        "another",
+        "previous",
+        "prior",
+        "above",
+        "below",
+        "aforementioned",
+        "my",
+        "your",
+        "our",
+        "their",
+        "his",
+        "her",
+        "its",
+        "someone",
+        "colleague",
+        "authored",
+        "project",
+        "for",
+        "when",
+        "while",
+        "if",
+        "unless",
+        "only",
+        "and",
+        "or",
+        "but",
+        "not",
+        "no",
+        "never",
+        "maybe",
+        "probably",
+        "perhaps",
+        "possibly",
+        "might",
+        "would",
+        "could",
+        "should",
+        "used",
+    }
+)
+_PERSONAL_CORRECTION = re.compile(
+    r"^(?:(?:correction|please correct my preference|my preference has changed):\s*)?"
+    r"(?P<statement>.+?)\s*,?\s+(?:instead of|rather than)\s+(?P<old>.+)$",
+    flags=re.IGNORECASE,
+)
+
+
+def _preference_attribute(value: str) -> str | None:
+    """Identify only explicit, bounded personal subjects.
+
+    A response noun alone cannot establish its facet: an unknown modifier may
+    describe language, layout, tone or another independent preference.
+    """
+
     normalized = normalized_observation_text(value)
-    first = normalized.split(maxsplit=1)[0] if normalized else ""
-    if first in _PREFERENCE_FORMAT_VALUES:
+    if not normalized or len(normalized) > 256:
+        return None
+    if re.fullmatch(r"(?:tabs|spaces)(?: for (?:code )?indentation)?", normalized):
         return "response_format"
-    if first in _PREFERENCE_STYLE_VALUES:
+    tokens = set(re.findall(r"[a-z]+", normalized))
+    if tokens & _PERSONAL_BLOCKED_MODIFIERS:
+        return None
+    if normalized in _PREFERENCE_STYLE_VALUES:
         return "response_style"
-    if first in _PREFERENCE_THEME_VALUES:
+    if re.fullmatch(r"(?:dark|light)(?: mode| theme)?", normalized):
         return "interface_theme"
-    subject_match = re.search(r"\s+for\s+(.+)$", normalized, flags=re.IGNORECASE)
-    if subject_match is not None:
-        subject = re.sub(r"[^a-z0-9]+", "_", subject_match.group(1)).strip("_")
-        if subject:
-            return f"preference_{subject}"[:256]
-    return "preference"
+    if _PERSONAL_RESPONSE_LAYOUT.fullmatch(normalized):
+        return "response_layout"
+    if _PERSONAL_RESPONSE_LANGUAGE.fullmatch(normalized):
+        return "response_language"
+    if _PERSONAL_MODIFIED_RESPONSE.fullmatch(normalized) and (
+        normalized.split()[0] in _PERSONAL_STYLE_MODIFIERS
+    ):
+        return "response_style"
+    if _PERSONAL_BEVERAGE.fullmatch(normalized):
+        return "beverage"
+    return None
 
 
 def extract_live_user_claim(content: str) -> LiveUserClaim | None:
+    """Form only declared live fields, shared with retention policy.
+
+    A new extractor field must be declared here before it can form memory; the
+    purge ledger derives its field identifiers from this same closed registry.
+    """
+    claim = _extract_live_user_claim(content)
+    if claim is not None and (claim.kind, claim.attribute_key) not in LIVE_USER_FIELDS:
+        return None
+    return claim
+
+
+def _extract_live_user_claim(content: str) -> LiveUserClaim | None:
     """Extract only high-confidence first-person durable claims.
 
     This is deliberately narrower than a general prompt parser.  It reuses the
@@ -818,16 +970,36 @@ def extract_live_user_claim(content: str) -> LiveUserClaim | None:
     if not normalized or contains_secret_like_text(normalized):
         return None
 
-    match = _LIVE_PREFERENCE.fullmatch(normalized)
-    if match is not None:
+    preference_text = normalized
+    old_value = None
+    correction = _PERSONAL_CORRECTION.fullmatch(normalized)
+    if correction is not None:
+        preference_text = correction.group("statement").strip().rstrip(",").strip()
+        # A terminal "now" before an explicit contrast frames the correction;
+        # it is not part of the new facet value. Keep the complete turn as
+        # evidence and let the ordinary bounded subject checks reject qualifiers.
+        preference_text = re.sub(r"\s+now$", "", preference_text, flags=re.IGNORECASE)
+        old_value = _claim_value(correction.group("old"))
+    match = _LIVE_PREFERENCE.fullmatch(preference_text)
+    if match is not None and not normalized.endswith("?") and "..." not in normalized:
         value = _claim_value(match.group("value"))
-        if value:
+        attribute = _preference_attribute(value)
+        if attribute is not None and (
+            old_value is None or _preference_attribute(old_value) == attribute
+        ):
+            structured = {
+                "claim_type": "interaction_preference",
+                "preference_schema": PERSONAL_PREFERENCE_SCHEMA,
+                "value": value,
+            }
+            if old_value is not None:
+                structured["expected_old_value"] = old_value
             return LiveUserClaim(
                 kind="interaction_preference",
                 content=normalized,
                 value=value,
-                attribute_key=_preference_attribute(value),
-                structured_value={"claim_type": "interaction_preference", "value": value},
+                attribute_key=attribute,
+                structured_value=structured,
             )
 
     match = _LIVE_NAME.fullmatch(normalized)
@@ -900,6 +1072,14 @@ def extract_live_user_claim(content: str) -> LiveUserClaim | None:
     match = _LIVE_WORKFLOW.fullmatch(normalized)
     if match is not None:
         value = _claim_value(match.group("value") or match.group("value_alt") or "")
+        qualification = _QUALIFIED_WORKFLOW_VALUE.fullmatch(value)
+        if qualification is not None and (
+            _GLOBAL_WORKFLOW_CONTEXT.fullmatch(qualification.group("context")) is None
+        ):
+            # A purpose and a named scope can have identical wording. Preserve
+            # raw evidence rather than put either into the global tooling slot.
+            # Explicit whole-project global wording must be the sole qualifier.
+            return None
         if value:
             return LiveUserClaim(
                 kind="workflow",
