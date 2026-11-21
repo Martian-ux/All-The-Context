@@ -263,7 +263,16 @@ def test_ci_desktop_runner_pin_preserves_name_and_bounds_donor_pilot() -> None:
     assert desktop.index("windows_ci_pilot.py start") < desktop.index(
         "--extra packaging --installer uv"
     )
-    assert "fetch-depth: 0" in desktop
+    assert desktop.index("windows_ci_pilot.py start") < desktop.index("astral-sh/setup-uv@")
+    assert (
+        "fetch-depth: >-\n"
+        "            ${{\n"
+        "              runner.os == 'Windows' &&\n"
+        "              github.event_name == 'pull_request' &&\n"
+        "              github.event.pull_request.head.repo.full_name == github.repository &&\n"
+        "              '2' || '0'\n"
+        "            }}"
+    ) in desktop
     steps = _step_blocks(desktop)
     start = next(step for step in steps if "windows_ci_pilot.py start" in step)
     overlap = next(step for step in steps if "windows_ci_package_checks.py" in step)
