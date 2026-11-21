@@ -11,6 +11,18 @@ retained PR arms. Keep release compression and normal stock discovery unchanged.
 Both independent VMs use `C:/atc-ci-package-<run>-<attempt>` so installed console
 launcher RECORD bytes bind the same absolute interpreter path.
 
+The reviewed base is the pilot's protected-main source `e9bdaab8`, with the exact
+`main` ref and unchanged event. Require the synthetic checkout SHA and ordered
+parents `[protected main, exact event head]`; never substitute the private
+`2681c5ec` implementation parent. Bind the prior CI overlay (`e9bdaab8` to
+`2681c5ec`) separately from the witness overlay (`2681c5ec` to `bcb67566`). Pin
+the additional prior-overlay inputs to their reviewed current Git blobs, retaining
+the existing witness pins and protected-main packager profile comparison. Only
+the admission module and existing enumerated passive checked tests/docs retain
+their reviewed exemption; a self-hash would be circular. No general script,
+benchmark, workflow or graph exception is granted. Admission must work with only
+the immediate parents available in a provider-style depth-two checkout.
+
 Authorize publication only through the exact run-attempt jobs endpoint, one
 successful completed producer job, successful upload and dedicated marker steps,
 and the authenticated log for that marker's verified step number. Bind the

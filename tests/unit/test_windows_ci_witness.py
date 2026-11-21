@@ -6,6 +6,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -397,6 +398,7 @@ def ordinary_checkout(tmp_path, monkeypatch):
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(witness, "BASE", base)
+    monkeypatch.setattr(pilot, "SOURCE", base)
     monkeypatch.setattr(
         witness,
         "QUALIFIED_INPUT_BLOBS",
@@ -461,6 +463,289 @@ def test_nonordinary_context_keeps_stock_route(ordinary_checkout, monkeypatch, d
     event_file.write_text(json.dumps(event), encoding="utf-8")
     with pytest.raises(ValueError):
         witness.admit_source(root, commit)
+
+
+# Separately bound reviewed overlays. These are source evidence, not references
+# to a live scratch checkout. The provider checkout below must not need PRIOR_CI.
+PROTECTED_MAIN = "e9bdaab8afcc6265802d690834fbb7fa60cd1a0e"
+PRIOR_CI = "2681c5ec9ced8aa15de77d82fcffc0730cf85731"
+REVIEWED_WITNESS = "bcb67566232ca3e778fd39f2596522c813599da0"
+APP_FIX = "b450e9048770d66d81ab3194960febc608c56c46"
+INTEGRATION = "2021a37fba1de91343048734b3b369c695e6724e"
+PRIOR_OVERLAY_BLOBS = {
+    "bench/retrieval_m3_current_candidate.py": "c2dae5e8b9eb3914ea691b6fab079d2372e9389a",
+    "scripts/check_test_collection.py": "8841cf2e6d4947008aca2208cdab599c2becc5e2",
+    "scripts/install_locked_python.py": "04ae2b2ab8fef6b913a88f5c79a72598df39a920",
+    "scripts/pytest_shard_receipt.py": "6df45981b5c323599d5926ceb447cc33ce9722e2",
+    "scripts/run_test_shard.py": "520425b0af8f07dfa1bfb062a3608e9193777291",
+    "scripts/smoke_packaged_first_run.py": "c6f033793246921182cb0300c10afe7b1148befc",
+    "scripts/windows_ci_process_inventory.py": "fe88de2c31f1418912de42842a911f88c37d184e",
+    "tests/unit/test_exact_lock_contracts.py": "27db2600dbe7f3bd4c2fcfd32593232b41d68e27",
+    "tests/unit/test_memory_reliability_spec.py": "7ba9c78cccd36e1cf45f9ca96a1c8f0de5d2b781",
+    "tests/unit/test_packaged_first_run_diagnostics.py": "24779103a5896ca10726b845ddf8df6b0dda08b7",
+    "tests/unit/test_retrieval_m3_current_candidate.py": "07f4453ad2b43a0afafb6681da41ce04153ad11d",
+}
+WITNESS_OVERLAY_BLOBS = {
+    ".github/workflows/ci.yml": "c7e3ba2a64a3c8f02f06fd087431d1163e21a399",
+    "scripts/build_desktop.py": "233b11b625c2f75aa17609cd8f7500d7d6930acf",
+    "scripts/verify_reproducible_build.py": "91a6c93381f1245a69e8c94d1f6d8fbf98c7b8d4",
+    "scripts/windows_ci_components.py": "f98c18518c68c0505317d19981daa1611341d320",
+    "scripts/windows_ci_package_checks.py": "d2bbb50c719b19058faf4aef204a6d0a1235bf4f",
+    "scripts/windows_ci_pilot.py": "a06c6f2b46f8bae744ccc61ede367aa1a37d54aa",
+    "scripts/windows_ci_canonical.py": "5e47f71507e7ea9e36c3ee372361de08114a7d38",
+}
+
+
+def test_protected_main_admission_binds_both_reviewed_overlays():
+    def git(*args):
+        return pilot.git(ROOT, *args).decode().strip()
+
+    assert witness.BASE == pilot.SOURCE == PROTECTED_MAIN
+    assert git("rev-list", "--parents", "-n", "1", INTEGRATION).split() == [
+        INTEGRATION,
+        REVIEWED_WITNESS,
+        APP_FIX,
+    ]
+    prior_paths = set(git("diff", "--name-only", PROTECTED_MAIN, PRIOR_CI).splitlines())
+    witness_paths = set(git("diff", "--name-only", PRIOR_CI, REVIEWED_WITNESS).splitlines())
+    assert prior_paths - witness.IMPLEMENTATION_FILES == PRIOR_OVERLAY_BLOBS.keys()
+    assert witness.QUALIFIED_INPUT_BLOBS == PRIOR_OVERLAY_BLOBS | WITNESS_OVERLAY_BLOBS
+    # Only the policy module and the existing passive checked test/doc paths
+    # have no blob pin. Do not silently expand this exemption to executable inputs.
+    unpinned = (prior_paths | witness_paths) - witness.QUALIFIED_INPUT_BLOBS.keys()
+    assert unpinned == {
+        "scripts/windows_ci_witness.py",
+        "tests/unit/test_windows_ci_witness.py",
+        "tests/unit/test_windows_ci_pilot.py",
+        "tests/unit/test_native_build_provenance.py",
+        "tests/unit/test_pytest_collection_contract.py",
+        "tests/unit/test_release_workflow_contracts.py",
+        "docs/STATUS.md",
+        "docs/DECISIONS.md",
+        "docs/REQUIREMENTS_TRACEABILITY.md",
+    }
+    for revision, pins in (
+        (PRIOR_CI, PRIOR_OVERLAY_BLOBS),
+        (REVIEWED_WITNESS, WITNESS_OVERLAY_BLOBS),
+        ("HEAD", witness.QUALIFIED_INPUT_BLOBS),
+    ):
+        for name, blob in pins.items():
+            assert git("rev-parse", f"{revision}:{name}") == blob, (revision, name)
+    # The current witness must also retain every prior-overlay pin unchanged.
+    for name, blob in PRIOR_OVERLAY_BLOBS.items():
+        assert git("rev-parse", f"{REVIEWED_WITNESS}:{name}") == blob
+
+
+@pytest.fixture(scope="module")
+def protected_main_objects(tmp_path_factory):
+    """Build provider-shaped commits locally, using the actual frozen history."""
+    root = tmp_path_factory.mktemp("protected-main-objects") / "objects"
+    subprocess.run(
+        ["git", "clone", "--shared", "--no-checkout", str(ROOT), str(root)],
+        check=True,
+        capture_output=True,
+    )
+    environment = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Admission fixture",
+        "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "Admission fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+    }
+
+    def git(*args, data=None):
+        return (
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", "-C", str(root), *args],
+                input=data,
+                env=environment,
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
+
+    def branch(source, edits):
+        git("read-tree", source)
+        for name, contents in edits.items():
+            blob = git("hash-object", "-w", "--stdin", data=contents)
+            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{name}")
+        tree = git("write-tree")
+        head = git("commit-tree", tree, "-p", source, "-m", "Local admission branch")
+        # A real merge with protected main has exactly this candidate tree.
+        assert git("merge-tree", "--write-tree", PROTECTED_MAIN, head) == tree
+        return head, tree
+
+    policy = "scripts/windows_ci_witness.py"
+    assert git("rev-parse", f"{INTEGRATION}:{policy}") == git(
+        "rev-parse", f"{REVIEWED_WITNESS}:{policy}"
+    )
+    corrected = {policy: (ROOT / policy).read_bytes()}
+    head, tree = branch(INTEGRATION, corrected)
+    ci_head, ci_tree = branch(REVIEWED_WITNESS, corrected)
+    return root, git, branch, corrected, head, tree, ci_head, ci_tree
+
+
+@pytest.mark.parametrize(
+    "case,error",
+    [
+        ("original", "unreviewed ordinary base"),
+        ("corrected", None),
+        ("private-base", "unreviewed ordinary base"),
+        ("wrong-branch", "unsupported ordinary context"),
+        ("fork", "unsupported ordinary context"),
+        ("event-head", "unsupported merge parents"),
+        ("event-merge", "unsupported ordinary context"),
+        ("checkout-head", "ordinary source mismatch"),
+        ("reversed-parents", "unsupported merge parents"),
+        ("extra-parent", "unsupported merge parents"),
+        ("prior-input", "unreviewed CI/native input"),
+        ("witness-input", "unreviewed CI/native input"),
+        ("new-module", "uncovered ordinary input"),
+        ("dashboard", "uncovered ordinary input"),
+        ("history", "uncovered ordinary input"),
+        ("ci-only", "no ordinary shipped Python edit"),
+    ],
+)
+def test_actual_protected_main_depth_two_both_participants(
+    protected_main_objects, tmp_path, case, error
+):
+    objects, git, branch, corrected, head, tree, ci_head, ci_tree = protected_main_objects
+    if case == "original":
+        head, tree = INTEGRATION, git("rev-parse", f"{INTEGRATION}^{{tree}}")
+    elif case == "ci-only":
+        head, tree = ci_head, ci_tree
+    elif case in {"prior-input", "witness-input", "new-module", "dashboard", "history"}:
+        name = {
+            "prior-input": "scripts/check_test_collection.py",
+            "witness-input": "scripts/build_desktop.py",
+            "new-module": "packages/allthecontext/src/allthecontext/unreviewed.py",
+            "dashboard": "apps/dashboard/unreviewed.txt",
+            "history": "scripts/unreviewed-history.json",
+        }[case]
+        contents = (ROOT / name).read_bytes() if (ROOT / name).is_file() else b""
+        head, tree = branch(INTEGRATION, {**corrected, name: contents + b"\n# unreviewed\n"})
+    parents = [PROTECTED_MAIN, head]
+    if case == "reversed-parents":
+        parents.reverse()
+    elif case == "extra-parent":
+        parents.append(APP_FIX)
+    arguments = ["commit-tree", tree]
+    for parent in parents:
+        arguments.extend(["-p", parent])
+    merge = git(*arguments, "-m", f"Local provider merge: {case}")
+
+    # file:// forces Git's upload-pack transport to honor depth; a plain local
+    # clone would ignore --depth. This checkout has no alternates or private base.
+    root = tmp_path / "provider"
+    root.mkdir()
+
+    def provider_git(*args):
+        return (
+            subprocess.run(
+                ["git", "-c", "core.autocrlf=false", "-C", str(root), *args],
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
+
+    provider_git("init", "-q")
+    provider_git("config", "core.autocrlf", "false")
+    provider_git("fetch", "--no-tags", "--depth=2", objects.as_uri(), merge)
+    provider_git("checkout", "--detach", "FETCH_HEAD")
+    assert provider_git("rev-parse", "--is-shallow-repository") == "true"
+    assert provider_git("rev-list", "--parents", "-n", "1", "HEAD").split() == [merge, *parents]
+    assert not (root / ".git/objects/info/alternates").exists()
+    assert (
+        subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-e", f"{PRIOR_CI}^{{commit}}"],
+            capture_output=True,
+        ).returncode
+        != 0
+    )
+    repo = {"id": pilot.REPOSITORY_ID, "full_name": pilot.REPOSITORY, "fork": False}
+    event = {
+        "action": "opened",
+        "number": 133,
+        "repository": repo,
+        "pull_request": {
+            "base": {"sha": PROTECTED_MAIN, "ref": "main", "repo": repo},
+            "head": {"sha": head, "ref": "codex/ordinary-ci-test", "repo": repo},
+            "merge_commit_sha": merge,
+        },
+    }
+    pr = event["pull_request"]
+    if case == "private-base":
+        pr["base"]["sha"] = PRIOR_CI
+    elif case == "wrong-branch":
+        pr["base"]["ref"] = "unreviewed"
+    elif case == "fork":
+        pr["head"]["repo"] = {"full_name": "fork/project"}
+    elif case == "event-head":
+        pr["head"]["sha"] = "f" * 40
+    elif case == "event-merge":
+        pr["merge_commit_sha"] = "f" * 40
+    event_file = tmp_path / "event.json"
+    event_bytes = json.dumps(event).encode()
+    event_file.write_bytes(event_bytes)
+    process = """
+import json, os, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root))
+from scripts import windows_ci_witness as witness
+try:
+    result = witness.admit_source(root, sys.argv[2], producer=sys.argv[3] == 'true')
+except ValueError as exc:
+    result = {'error': str(exc)}
+print(json.dumps(result))
+"""
+    for role, producer in (("desktop-package", False), ("windows-stock-witness", True)):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-c",
+                process,
+                str(root),
+                "f" * 40 if case == "checkout-head" else merge,
+                str(producer).lower(),
+            ],
+            env={
+                **os.environ,
+                "GITHUB_EVENT_PATH": str(event_file),
+                "GITHUB_SHA": merge,
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_REF": "refs/pull/133/merge",
+                "RUNNER_OS": "Windows",
+                "GITHUB_REPOSITORY": pilot.REPOSITORY,
+                "GITHUB_JOB": role,
+                "GITHUB_RUN_ID": "42",
+                "GITHUB_RUN_ATTEMPT": "2",
+            },
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = json.loads(completed.stdout)
+        if error:
+            assert result == {"error": error}, (case, role, result)
+        else:
+            assert result == {
+                "repository": pilot.REPOSITORY,
+                "run_id": 42,
+                "run_attempt": 2,
+                "head": merge,
+                "tree": tree,
+                "pr_head": head,
+            }
+        assert event_file.read_bytes() == event_bytes
+        assert provider_git("status", "--porcelain", "--untracked-files=normal") == ""
 
 
 @pytest.fixture

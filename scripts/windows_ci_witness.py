@@ -33,7 +33,7 @@ else:
     import native_build_provenance as provenance
     import windows_ci_pilot as pilot
 
-BASE = "2681c5ec9ced8aa15de77d82fcffc0730cf85731"
+BASE = pilot.SOURCE
 PROFILE = "windows-x86_64-stock-marshal2-v1"
 JOB = "Windows independent stock witness"
 UPLOAD = "Upload bounded Windows stock witness"
@@ -45,6 +45,20 @@ API_VERSION = "2026-03-10"
 # admitted CI/native implementation inputs are fixed Git blobs, not a broad
 # permission to change the packaging recipe on an ordinary PR.
 QUALIFIED_INPUT_BLOBS = {
+    # Additional inputs from the separately reviewed protected-main -> prior CI
+    # overlay. These exact blobs remain present in the current witness overlay.
+    "bench/retrieval_m3_current_candidate.py": "c2dae5e8b9eb3914ea691b6fab079d2372e9389a",
+    "scripts/check_test_collection.py": "8841cf2e6d4947008aca2208cdab599c2becc5e2",
+    "scripts/install_locked_python.py": "04ae2b2ab8fef6b913a88f5c79a72598df39a920",
+    "scripts/pytest_shard_receipt.py": "6df45981b5c323599d5926ceb447cc33ce9722e2",
+    "scripts/run_test_shard.py": "520425b0af8f07dfa1bfb062a3608e9193777291",
+    "scripts/smoke_packaged_first_run.py": "c6f033793246921182cb0300c10afe7b1148befc",
+    "scripts/windows_ci_process_inventory.py": "fe88de2c31f1418912de42842a911f88c37d184e",
+    "tests/unit/test_exact_lock_contracts.py": "27db2600dbe7f3bd4c2fcfd32593232b41d68e27",
+    "tests/unit/test_memory_reliability_spec.py": "7ba9c78cccd36e1cf45f9ca96a1c8f0de5d2b781",
+    "tests/unit/test_packaged_first_run_diagnostics.py": "24779103a5896ca10726b845ddf8df6b0dda08b7",
+    "tests/unit/test_retrieval_m3_current_candidate.py": "07f4453ad2b43a0afafb6681da41ce04153ad11d",
+    # Current reviewed witness inputs (including its changes to prior CI files).
     ".github/workflows/ci.yml": "c7e3ba2a64a3c8f02f06fd087431d1163e21a399",
     "scripts/build_desktop.py": "233b11b625c2f75aa17609cd8f7500d7d6930acf",
     "scripts/verify_reproducible_build.py": "91a6c93381f1245a69e8c94d1f6d8fbf98c7b8d4",
@@ -129,13 +143,13 @@ def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
     environment = dict(os.environ)
     event = bounded_json(Path(environment["GITHUB_EVENT_PATH"]).read_bytes(), 1_000_000)
     context = dict(environment, GITHUB_JOB="desktop-package")
-    # Reuse the pilot's same-repository/synthetic-merge checks with this reviewed base.
+    # Check the actual event against protected main; never substitute a private
+    # implementation parent, which is not even available at provider depth two.
     pr = event.get("pull_request")
     require(isinstance(pr, dict), "not an ordinary PR")
     base = pr.get("base")
     require(isinstance(base, dict) and base.get("sha") == BASE, "unreviewed ordinary base")
-    pilot_event = {**event, "pull_request": {**pr, "base": {**base, "sha": pilot.SOURCE}}}
-    require(pilot.eligible_context(pilot_event, context), "unsupported ordinary context")
+    require(pilot.eligible_context(event, context), "unsupported ordinary context")
     require(
         environment.get("GITHUB_JOB")
         == ("windows-stock-witness" if producer else "desktop-package"),
@@ -167,7 +181,7 @@ def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
                 row.startswith("100644 blob ") and row.endswith(f"\t{name}\n"),
                 "unsupported ordinary file",
             )
-        if name in IMPLEMENTATION_FILES:
+        if name in IMPLEMENTATION_FILES or name in QUALIFIED_INPUT_BLOBS:
             continue
         product = name.startswith("packages/allthecontext/src/allthecontext/") and name.endswith(
             ".py"

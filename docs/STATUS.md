@@ -2,14 +2,24 @@
 
 ## 2026-11-21 — bounded ordinary Windows PR stock witness
 
-Same-repository synthetic PR merges against reviewed base
-`2681c5ec9ced8aa15de77d82fcffc0730cf85731` can provisionally assemble two
+Same-repository synthetic PR merges against protected `main` at
+`e9bdaab8afcc6265802d690834fbb7fa60cd1a0e` can provisionally assemble two
 isolated retained arms for edits to existing shipped Python files. Packaging
 inputs and helper blobs remain pinned. A separate Windows VM builds the full
 stock graph with the same locked absolute packaging environment and PR-only
 marshal encoding. Publication requires the completed exact producer's upload
 and marker steps, its authenticated artifact ID/digest, and all four full-file
 names, lengths and SHA-256 values matching both retained arms.
+
+Admission uses the unmodified PR event and exact ordered immediate merge parents
+`[protected main, event PR head]`. The prior CI overlay ending at
+`2681c5ec9ced8aa15de77d82fcffc0730cf85731` and the witness overlay ending at
+`bcb67566232ca3e778fd39f2596522c813599da0` are separately reviewed inputs;
+their executable inputs retain exact current Git blob pins. The private prior
+CI commit is not a runtime dependency. Focused contracts cover the original
+base rejection and corrected admission for both participants in genuine local
+depth-two checkouts; maintained native execution and independent review remain
+downstream.
 
 All existing Windows lifecycle and direct-package checks run against provisional
 bytes. A witness or provisional miss drains work and selects the original cold
