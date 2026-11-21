@@ -1,5 +1,12 @@
 # Requirements traceability
 
+### 2026-11-21 Linux CI timing follow-up
+
+| Requirement | Implementation | Verification |
+|---|---|---|
+| Run every Linux case across four shards with the same required check | CI matrix and shared producer/reducer shard counts retain the exact canonical receipt union and original test outcomes | Collection, workflow and native receipt tests. Hosted timing follows separately |
+| Keep the same initial runner capacity | Dashboard parity and security wait for the two dashboard jobs, and still run on active failed-dashboard workflows | Workflow contract and pinned Actions parser |
+
 "Implemented" means exercised by repository tests. Protected-main CI and
 CodeQL evidence is credited only when bound to an exact SHA; exact artifact,
 live/private client/provider, and release acceptance remain separate gates.

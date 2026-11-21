@@ -1,5 +1,15 @@
 # Architecture decisions
 
+## Linux CI scheduling (2026-11-21)
+
+After the first hosted trial missed 180 seconds on Linux pytest, increase
+its matrix from two to four shards. Keep the same collection and execution
+receipt contract, scopes of fixtures and workers per shard. Use Linux-only
+historical weights from the first hosted attempt for the six heaviest files
+and existing Packet A groups. Leave fewer cases on shard zero to account for
+its extra serial checks. Release the two dashboard runner slots before starting parity and security.
+All required job names and acceptance checks retain their existing scope.
+
 ## Public beta.8 source boundary (2026-11-21)
 
 Project public-eligible bytes onto the public base without private ancestry or

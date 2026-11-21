@@ -58,7 +58,9 @@ class Receipt:
             groups = test_case_groups(self.full)
             inverse = projected_ids(groups)
             shards = assign_test_cases(
-                xdist_collection(Counter(self.full)), shard_count=self.metadata["shard_count"]
+                xdist_collection(Counter(self.full)),
+                shard_count=self.metadata["shard_count"],
+                platform=self.metadata.get("platform"),
             )
             targets = shards[self.metadata["shard"]]
             for item, nodeid in zip(items, self.full, strict=True):

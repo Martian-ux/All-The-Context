@@ -11,7 +11,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from time import perf_counter
 
-from check_test_collection import RETRIEVAL_TEST_FILE, read_receipt, require, source_identity
+from check_test_collection import (
+    CI_SHARD_COUNTS,
+    RETRIEVAL_TEST_FILE,
+    read_receipt,
+    require,
+    source_identity,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -82,7 +88,7 @@ def main() -> int:
     arguments = parser.parse_args()
     try:
         platform = {"win32": "windows", "linux": "linux"}[sys.platform]
-        count = {"windows": 9, "linux": 2}[platform]
+        count = CI_SHARD_COUNTS[platform]
         shard = arguments.shard_index
         require(0 <= shard < count, "shard index is outside the frozen OS schedule")
         run_id, run_attempt = os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"]

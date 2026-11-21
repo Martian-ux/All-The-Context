@@ -1,5 +1,17 @@
 # Project status
 
+## 2026-11-21 — four Linux pytest shards
+
+PR #128 reached Windows desktop at 160 seconds and Windows Python at
+176 seconds. Both Linux pytest shards were still running at 180 seconds.
+Use four Linux shards with four workers each and retain exact full collection,
+one terminal outcome per case, and the existing protected status. Linux
+placement uses measured work from PR #128 and reserves capacity on shard zero
+for its extra serial checks. Dashboard
+parity and repository security start after the two dashboard jobs finish,
+which keeps the initial hosted job count at 20 including CodeQL. Both
+checks still run after a dashboard failure when the workflow is active.
+
 ## 2026-11-21 — beta.8 source selection and release boundary
 
 The selected source version is `0.1.0-beta.8`; beta.6 remains the current public

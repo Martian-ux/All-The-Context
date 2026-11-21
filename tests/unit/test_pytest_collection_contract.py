@@ -282,13 +282,20 @@ def test_ci_starts_frozen_shards_without_a_planner_and_keeps_required_gates() ->
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     assert "python-windows-plan" not in workflow
-    assert "shard: [0, 1]" in workflow
-    assert "shard: [0, 1, 2, 3, 4, 5, 6, 7, 8]" in workflow
     assert "--shard-index ${{ matrix.shard }}" in workflow
     jobs = workflow.split("  security:", 1)[0]
     linux, rest = jobs.split("  python-windows-shard:", 1)
     windows, aggregates = rest.split("  python-linux:", 1)
     assert "needs:" not in linux and "needs:" not in windows
+    checker = _load_collection_script()
+    assert checker.CI_SHARD_COUNTS == {"linux": 4, "windows": 9}
+    for platform, block in (("linux", linux), ("windows", windows)):
+        indices = list(range(checker.CI_SHARD_COUNTS[platform]))
+        assert f"shard: {indices}\n" in block
+    for name in ("security", "dashboard-parity"):
+        delayed = workflow.split(f"  {name}:\n", 1)[1].split("    steps:", 1)[0]
+        assert "    needs: dashboard\n" in delayed
+        assert "    if: ${{ !cancelled() }}\n" in delayed
     assert "needs: python\n" in aggregates
     assert "needs: python-windows-shard\n" in aggregates
     assert aggregates.count("--verify-receipts .test-runs/receipts") == 2

@@ -14,6 +14,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 COLLECTION_PREFIX = "tests/"
+CI_SHARD_COUNTS = {"linux": 4, "windows": 9}
 DEFAULT_TEST_FILE_SECONDS = 0.859
 
 # The twenty slowest files in the exact d18b4b7 sequential JUnit receipt. These
@@ -46,9 +47,35 @@ HISTORICAL_TEST_FILE_SECONDS = {
 # The complete 236-node proof-3db07e46 audit supports singleton groups only
 # for this exact module. Other files retain fixture affinity by default.
 RETRIEVAL_TEST_FILE = "tests/unit/test_retrieval_m3_current_candidate.py"
+PACKET_A_TEST_FILE = "tests/unit/test_memory_reliability_spec.py"
 PACKET_A_BLOCK_FUNCTION = (
     "test_packet_a_code_owned_digest_rejects_every_semantic_leaf_after_rebound"
 )
+PACKET_A_BUCKET_PREFIX = f"{PACKET_A_TEST_FILE}::{PACKET_A_BLOCK_FUNCTION}[bucket-"
+
+# Aggregate worker seconds from the two verified Linux shards of PR #128.
+LINUX_TEST_FILE_SECONDS = HISTORICAL_TEST_FILE_SECONDS | {
+    PACKET_A_TEST_FILE: 188.832224,
+    "tests/integration/test_project_first_read.py": 72.037753,
+    "tests/integration/test_agent_continuity_harness.py": 66.305963,
+    "tests/integration/test_project_memory_continuity.py": 49.546586,
+    "tests/unit/test_import_operations.py": 40.619605,
+    "tests/unit/test_windows_update_helper.py": 32.086386,
+}
+LINUX_PACKET_A_GROUP_SECONDS = {
+    PACKET_A_TEST_FILE: 14.195611,
+    f"{PACKET_A_BUCKET_PREFIX}01-of-08]": 24.841772,
+    f"{PACKET_A_BUCKET_PREFIX}02-of-08]": 24.432115,
+    f"{PACKET_A_BUCKET_PREFIX}03-of-08]": 25.203897,
+    f"{PACKET_A_BUCKET_PREFIX}04-of-08]": 24.382830,
+    f"{PACKET_A_BUCKET_PREFIX}05-of-08]": 24.938513,
+    f"{PACKET_A_BUCKET_PREFIX}06-of-08]": 17.619955,
+    f"{PACKET_A_BUCKET_PREFIX}07-of-08]": 19.316208,
+    f"{PACKET_A_BUCKET_PREFIX}08-of-08]": 13.901322,
+}
+# Shard zero handles extra serial checks. Reserve four workers times its
+# observed ~20 seconds of additional setup when assigning Linux work.
+LINUX_FIRST_SHARD_RESERVE = 80.0
 # Real four-worker proof-5abef068: 226 cases, identical terminal outcomes and
 # intentional skips. Keep parameter siblings together in these two modules.
 # Their measured aggregate work above is placement evidence, not hosted wall time.
@@ -74,7 +101,7 @@ def test_case_groups(nodeids: Sequence[str]) -> dict[str, str]:
         path, _, test = nodeid.partition("::")
         function, parameter, _ = test.partition("[")
         independent = (path == "tests/unit/test_windows_update_helper.py") or (
-            path == "tests/unit/test_memory_reliability_spec.py"
+            path == PACKET_A_TEST_FILE
             and function == PACKET_A_BLOCK_FUNCTION
             and bool(parameter)
             and test.endswith("]")
@@ -103,7 +130,9 @@ def projected_ids(canonical_to_group: dict[str, str]) -> dict[str, str]:
     return inverse
 
 
-def assign_test_cases(complete: Counter[str], *, shard_count: int) -> tuple[Counter[str], ...]:
+def assign_test_cases(
+    complete: Counter[str], *, shard_count: int, platform: str | None = None
+) -> tuple[Counter[str], ...]:
     """Partition actual canonical cases without breaking their approved groups."""
 
     require(
@@ -118,21 +147,36 @@ def assign_test_cases(complete: Counter[str], *, shard_count: int) -> tuple[Coun
     require(0 < shard_count <= len(members), "shard count exceeds collected work groups")
     # File totals are historical aggregate work, not per-case or group wall time.
     # Apportion them equally within a file; unknown files keep the median default.
-    weights = {
-        group: sum(
-            HISTORICAL_TEST_FILE_SECONDS.get(path, DEFAULT_TEST_FILE_SECONDS) / file_counts[path]
-            for path in (test_file_for_nodeid(node) for node in nodes)
+    linux = platform == "linux"
+    file_seconds = LINUX_TEST_FILE_SECONDS if linux else HISTORICAL_TEST_FILE_SECONDS
+    weights = {}
+    for group, nodes in members.items():
+        path = test_file_for_nodeid(nodes[0])
+        file_work = file_seconds.get(path, DEFAULT_TEST_FILE_SECONDS)
+        # Preserve the Windows floating-point operation order used for placement.
+        seconds = (
+            file_work * len(nodes) / file_counts[path]
+            if linux
+            else sum(file_work / file_counts[path] for _ in nodes)
         )
-        for group, nodes in members.items()
-    }
+        if linux and path == PACKET_A_TEST_FILE:
+            key = nodes[0] if nodes[0].startswith(PACKET_A_BUCKET_PREFIX) else path
+            seconds = LINUX_PACKET_A_GROUP_SECONDS.get(key, seconds)
+        weights[group] = seconds
     shards: tuple[Counter[str], ...] = tuple(Counter() for _ in range(shard_count))
     totals = [0.0] * shard_count
-    for group in sorted(members, key=lambda value: (-weights[value], value)):
-        shard = min(
-            range(shard_count), key=lambda index: (totals[index], len(shards[index]), index)
+    if linux:
+        totals[0] = LINUX_FIRST_SHARD_RESERVE
+    ordered = sorted(members, key=lambda value: (-weights[value], value))
+    unassigned = set(range(shard_count))
+    for offset, group in enumerate(ordered):
+        eligible = (
+            unassigned if linux and len(ordered) - offset == len(unassigned) else range(shard_count)
         )
+        shard = min(eligible, key=lambda index: (totals[index], len(shards[index]), index))
         shards[shard].update(members[group])
         totals[shard] += weights[group]
+        unassigned.discard(shard)
     verify_complete_disjoint_union(complete, shards)
     return shards
 
@@ -593,7 +637,9 @@ def verify_execution_receipts(
     groups = test_case_groups(list(complete))
     inverse = projected_ids(groups)
     parallel = xdist_collection(complete)
-    expected = assign_test_cases(parallel, shard_count=shard_count)
+    expected = assign_test_cases(
+        parallel, shard_count=shard_count, platform=identity.get("platform")
+    )
     require(len(receipts) == shard_count, "missing or extra shard receipts")
     by_shard = {receipt["shard"]: receipt for receipt in receipts}
     require(set(by_shard) == set(range(shard_count)), "duplicate or wrong shard receipts")
@@ -687,7 +733,7 @@ def verify_receipt_directory(
 
     require(shard_result == "success", f"pytest matrix did not succeed: {shard_result}")
     require(bool(run_id) and bool(run_attempt), "missing run identity")
-    count = {"linux": 2, "windows": 9}[platform]
+    count = CI_SHARD_COUNTS[platform]
     job = "python" if platform == "linux" else "python-windows-shard"
     expected_paths = {
         f"pytest-{run_id}-{run_attempt}-{platform}-{shard}/shard.json" for shard in range(count)

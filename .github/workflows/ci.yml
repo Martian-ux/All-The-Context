@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
@@ -202,6 +202,9 @@ jobs:
 
   security:
     name: Repository security gates
+    # The dashboard matrix releases two hosted slots for these checks.
+    needs: dashboard
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -259,6 +262,9 @@ jobs:
 
   dashboard-parity:
     name: Dashboard production asset parity
+    # The dashboard matrix releases two hosted slots for these checks.
+    needs: dashboard
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
