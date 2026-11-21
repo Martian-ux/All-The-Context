@@ -346,11 +346,22 @@ jobs:
     steps: &desktop_package_steps
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: >-
+            ${{
+              runner.os == 'Windows' &&
+              github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              '2' || '0'
+            }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
           python-version: "3.12.10"
           cache: ${{ runner.os == 'Linux' && 'pip' || '' }}
+      - name: Start frozen Windows CI donor download
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/windows_ci_pilot.py start
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.11.32"
@@ -362,11 +373,6 @@ jobs:
       - name: Install Linux Tk runtime
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes python3-tk
-      - name: Start frozen Windows CI donor download
-        if: runner.os == 'Windows' && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/windows_ci_pilot.py start
       - name: Create fresh run-owned Windows environment
         if: runner.os == 'Windows'
         shell: pwsh
@@ -432,6 +438,7 @@ jobs:
         if: runner.os == 'Windows' && github.event_name == 'pull_request'
         env:
           ATC_CI_WINDOWS_COM_INVENTORY: "1"
+          ATC_CI_PACKAGED_TIMING: "1"
         run: >-
           python scripts/windows_ci_package_checks.py
           ${{ steps.windows_native.outputs.route == 'retained' && '--overlap-first-run' || '' }}

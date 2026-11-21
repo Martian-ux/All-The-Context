@@ -92,6 +92,7 @@ AGENT_CONTINUITY_TEST_FILE = "tests/integration/test_agent_continuity_harness.py
 PROJECT_FIRST_READ_TEST_FILE = "tests/integration/test_project_first_read.py"
 PROJECT_MEMORY_TEST_FILE = "tests/integration/test_project_memory_continuity.py"
 PACKET_H_TEST_FILE = "tests/unit/test_packet_h_retrieval.py"
+MEMORY_TRUTH_TEST_FILE = "tests/unit/test_memory_truth.py"
 
 # Windows fixture audits support group boundaries at test functions in these modules.
 WINDOWS_FUNCTION_AFFINITY_FILES = frozenset(
@@ -99,6 +100,7 @@ WINDOWS_FUNCTION_AFFINITY_FILES = frozenset(
         AGENT_CONTINUITY_TEST_FILE,
         PROJECT_FIRST_READ_TEST_FILE,
         "tests/unit/test_capture_runtime.py",
+        MEMORY_TRUTH_TEST_FILE,
         "tests/unit/test_provider_ingestion.py",
     }
 )
@@ -126,9 +128,10 @@ WINDOWS_FILE_SECONDS = {
     "tests/unit/test_memory_reliability_lab_e01b.py": 86.59,
     "tests/unit/test_memory_reliability_lab_e02_wave4.py": 56.23,
     PACKET_A_TEST_FILE: 127.46,
-    "tests/unit/test_memory_truth.py": 36.53,
+    MEMORY_TRUTH_TEST_FILE: 81.27,
     PACKET_H_TEST_FILE: 195.85,
     "tests/unit/test_provider_ingestion.py": 90.35,
+    "tests/unit/test_registered_source_admission.py": 64.00,
     "tests/unit/test_retrieval_bootstrap_composition.py": 46.02,
     "tests/unit/test_updater.py": 38.50,
     "tests/unit/test_windows_update_helper.py": 55.39,

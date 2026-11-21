@@ -172,6 +172,7 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
         "tests/integration/test_agent_continuity_harness.py",
         "tests/integration/test_project_first_read.py",
         "tests/unit/test_capture_runtime.py",
+        "tests/unit/test_memory_truth.py",
         "tests/unit/test_provider_ingestion.py",
     )
     families = [
