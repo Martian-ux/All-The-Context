@@ -87,17 +87,25 @@ FUNCTION_AFFINITY_FILES = frozenset(
 )
 
 
+PROJECT_FIRST_READ_TEST_FILE = "tests/integration/test_project_first_read.py"
+PROJECT_MEMORY_TEST_FILE = "tests/integration/test_project_memory_continuity.py"
+
 # Native Windows parity covered every case and fixture in these two modules.
 WINDOWS_FUNCTION_AFFINITY_FILES = frozenset(
     {
         "tests/integration/test_agent_continuity_harness.py",
-        "tests/integration/test_project_first_read.py",
+        PROJECT_FIRST_READ_TEST_FILE,
     }
 )
-# PR #128 receipt replay places these slow intact groups on otherwise light
-# runners. Keep all other Windows shard placement on the historical schedule.
-WINDOWS_INTACT_GROUP_SHARDS = {
-    "tests/integration/test_project_memory_continuity.py": 8,
+# Those two observation-ACL journeys have independent vaults and instances.
+WINDOWS_SINGLETON_NODE_IDS = frozenset(
+    f"{PROJECT_MEMORY_TEST_FILE}::test_project_decision_correction_and_forget_survive_core_recreation[{acl}]"
+    for acl in ("allow", "deny")
+)
+# Hosted receipt replay places a few measured slow groups on lighter runners.
+WINDOWS_FILE_SHARDS = {
+    PROJECT_FIRST_READ_TEST_FILE: 2,
+    PROJECT_MEMORY_TEST_FILE: 8,
     "tests/unit/test_memory_reliability_lab_e01b.py": 4,
 }
 
@@ -128,8 +136,11 @@ def test_case_groups(nodeids: Sequence[str], *, platform: str | None = None) -> 
             keys[nodeid] = f"{path}::{function}"
         else:
             keys[nodeid] = path
-        if platform == "windows" and path in WINDOWS_FUNCTION_AFFINITY_FILES:
-            windows_splits[nodeid] = f"{path}::{function}"
+        if platform == "windows":
+            if nodeid in WINDOWS_SINGLETON_NODE_IDS:
+                windows_splits[nodeid] = nodeid
+            elif path in WINDOWS_FUNCTION_AFFINITY_FILES:
+                windows_splits[nodeid] = f"{path}::{function}"
     # Append Windows scopes so unaffected nodes retain their projected IDs.
     original = set(keys.values())
     order = sorted(original) + sorted(set(windows_splits.values()) - original)
@@ -201,7 +212,7 @@ def assign_test_cases(
         unassigned.discard(shard)
     if platform == "windows" and shard_count == CI_SHARD_COUNTS["windows"]:
         for nodes in members.values():
-            destination = WINDOWS_INTACT_GROUP_SHARDS.get(test_file_for_nodeid(nodes[0]))
+            destination = WINDOWS_FILE_SHARDS.get(test_file_for_nodeid(nodes[0]))
             if destination is None:
                 continue
             source = next(shard for shard in shards if nodes[0] in shard)
