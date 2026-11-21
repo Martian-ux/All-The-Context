@@ -19,6 +19,7 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -82,6 +83,7 @@ def _run_clean_build(
     *,
     version: str,
     source_commit: str,
+    parallel_windows: bool = False,
 ) -> native_build_provenance.BuildSnapshot:
     _fresh_directory(build_root, label="clean build root")
     _fresh_directory(dist_root, label="clean dist root")
@@ -103,6 +105,8 @@ def _run_clean_build(
         "--architecture",
         "x86_64",
     ]
+    if parallel_windows:
+        command.append("--parallel-windows")
     completed = subprocess.run(
         command,
         cwd=repository_root,
@@ -252,6 +256,7 @@ def generate_provenance(
     toolchain: Mapping[str, str] | None = None,
     locks: Mapping[str, Mapping[str, str]] | None = None,
     build_runner: Callable[[Path, Path, Path], native_build_provenance.BuildSnapshot] | None = None,
+    parallel_windows: bool = False,
 ) -> tuple[dict[str, object], dict[str, Path]]:
     """Run the two clean builds, stage matching bytes, and emit metadata."""
 
@@ -275,6 +280,7 @@ def generate_provenance(
                 dist,
                 version=version,
                 source_commit=source_commit,
+                parallel_windows=parallel_windows,
             )
 
     with tempfile.TemporaryDirectory(prefix="atc-native-repro-") as temporary_name:
@@ -283,8 +289,21 @@ def generate_provenance(
         first_dist_root = temporary / "clean-build-1" / "dist"
         second_build_root = temporary / "clean-build-2" / "build"
         second_dist_root = temporary / "clean-build-2" / "dist"
-        first = runner(repository_root, first_build_root, first_dist_root)
-        second = runner(repository_root, second_build_root, second_dist_root)
+        if parallel_windows:
+            # Each arm owns fresh roots and launches its own build process. Drain
+            # both arms before temporary cleanup, including on failure/interruption.
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                first_result = workers.submit(
+                    runner, repository_root, first_build_root, first_dist_root
+                )
+                second_result = workers.submit(
+                    runner, repository_root, second_build_root, second_dist_root
+                )
+                first = first_result.result()
+                second = second_result.result()
+        else:
+            first = runner(repository_root, first_build_root, first_dist_root)
+            second = runner(repository_root, second_build_root, second_dist_root)
         first = native_build_provenance.BuildSnapshot("clean-build-1", first.components)
         second = native_build_provenance.BuildSnapshot("clean-build-2", second.components)
         payload = native_build_provenance.build_payload(
@@ -325,6 +344,16 @@ def main() -> int:
     parser.add_argument("--build-root", type=Path, default=DEFAULT_BUILD_ROOT)
     parser.add_argument("--dist-root", type=Path, default=DEFAULT_DIST_ROOT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--windows-ci-donor-pilot",
+        action="store_true",
+        help="Try the frozen CI-only retained-dependency pilot; otherwise build cold.",
+    )
+    parser.add_argument(
+        "--parallel-windows",
+        action="store_true",
+        help="Overlap the two clean Windows builds and each arm's isolated helper builds.",
+    )
     arguments = parser.parse_args()
     try:
         repository_root = arguments.repository_root.expanduser().resolve(strict=True)
@@ -336,6 +365,15 @@ def main() -> int:
             raise ReproducibleBuildError("version does not match project metadata")
         if checked_out_commit(repository_root) != arguments.source_commit:
             raise ReproducibleBuildError("checked-out commit does not match source commit input")
+        toolchain = locks = runner = None
+        if arguments.windows_ci_donor_pilot:
+            toolchain = current_toolchain()
+            locks = lock_digests(repository_root)
+            if __package__:
+                from scripts.windows_ci_pilot import pilot_runner
+            else:
+                from windows_ci_pilot import pilot_runner
+            runner = pilot_runner(repository_root, arguments.source_commit, toolchain, locks)
         payload, _paths = generate_provenance(
             repository_root=repository_root,
             version=version,
@@ -343,7 +381,15 @@ def main() -> int:
             final_build_root=arguments.build_root,
             final_dist_root=arguments.dist_root,
             output_dir=arguments.output_dir,
+            toolchain=toolchain,
+            locks=locks,
+            build_runner=runner,
+            parallel_windows=arguments.parallel_windows,
         )
+        if arguments.windows_ci_donor_pilot and (github_output := os.environ.get("GITHUB_OUTPUT")):
+            route = "retained" if runner is not None else "cold"
+            with Path(github_output).open("a", encoding="utf-8") as stream:
+                stream.write(f"route={route}\n")
         output = arguments.output_dir.expanduser().resolve()
         print(output / native_build_provenance.PROVENANCE_FILE_NAME)
         print(output / native_build_provenance.CHECKSUM_FILE_NAME)

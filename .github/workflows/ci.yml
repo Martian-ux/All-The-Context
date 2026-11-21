@@ -13,9 +13,13 @@ permissions:
 
 jobs:
   python:
-    name: Python 3.12 - ubuntu-latest
+    name: Python 3.12 - ubuntu-latest shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
@@ -32,78 +36,72 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes python3-tk
       - name: Install from reviewed lock constraints
         run: python scripts/install_locked_python.py --extra dev
+      - name: Python dependency vulnerability gate
+        if: matrix.shard == 1
+        run: python scripts/dependency_audit.py --ecosystem python
       - name: Ruff formatting
+        if: matrix.shard == 0
         run: python -m ruff format --check .
       - name: Ruff lint
+        if: matrix.shard == 0
         run: python -m ruff check .
       - name: Mypy
+        if: matrix.shard == 0
         run: python -m mypy packages/allthecontext/src
       - name: Documentation checks
+        if: matrix.shard == 0
         run: python scripts/check_docs.py
-      - name: Verify complete pytest collection before parallel execution
-        run: python scripts/check_test_collection.py --workers 4
       - name: Tests and platform smoke coverage
-        run: python -m pytest -n 4 --dist=loadfile
+        run: python scripts/run_test_shard.py --shard-index ${{ matrix.shard }}
+      - name: Upload exact pytest execution receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}
+          path: |
+            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}/shard.json
+            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}/canonical.json
+            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}/retrieval.json
+          include-hidden-files: true
+          if-no-files-found: error
       - name: Build Python artifacts
+        if: matrix.shard == 0
         run: python -m build --outdir dist/python
       - name: Diagnose Python package resources
+        if: matrix.shard == 0
         run: python scripts/diagnose_python_packages.py --directory dist/python
-      - name: Python dependency vulnerability gate
-        run: python scripts/dependency_audit.py --ecosystem python
-
-  python-windows-plan:
-    name: Plan Windows pytest shards
-    runs-on: windows-latest
-    timeout-minutes: 10
-    outputs:
-      complete_digest: ${{ steps.plan.outputs.complete_digest }}
-      shard_0_targets: ${{ steps.plan.outputs.shard_0_targets }}
-      shard_1_targets: ${{ steps.plan.outputs.shard_1_targets }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
-        with:
-          version: "0.11.32"
-          enable-cache: false
-      - name: Install from reviewed lock constraints
-        run: python scripts/install_locked_python.py --extra dev
-      - id: plan
-        name: Create canonical Windows pytest shard plan
-        run: >-
-          python scripts/check_test_collection.py
-          --workers 4
-          --shard-count 2
-          --write-github-output "$env:GITHUB_OUTPUT"
 
   python-windows-shard:
     name: Python 3.12 - windows-latest shard ${{ matrix.shard }}
-    needs: python-windows-plan
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: pip
+          python-version: "3.12.10"
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.11.32"
           enable-cache: false
+      - name: Create fresh run-owned Windows environment
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP 'atc-pytest-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}'
+          if (Test-Path -LiteralPath $venv) {
+            throw "Refusing to reuse Windows build environment: $venv"
+          }
+          python -m venv --without-pip $venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $venv 'Scripts') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install from reviewed lock constraints
-        run: python scripts/install_locked_python.py --extra dev
+        run: python scripts/install_locked_python.py --extra dev --installer uv
       - name: Ruff formatting
         if: matrix.shard == 0
         run: python -m ruff format --check .
@@ -116,39 +114,19 @@ jobs:
       - name: Documentation checks
         if: matrix.shard == 0
         run: python scripts/check_docs.py
-      - name: Verify complete and sharded pytest collection
-        env:
-          CANONICAL_COMPLETE_DIGEST: ${{ needs.python-windows-plan.outputs.complete_digest }}
-          CANONICAL_SHARD_0_TARGETS: ${{ needs.python-windows-plan.outputs.shard_0_targets }}
-          CANONICAL_SHARD_1_TARGETS: ${{ needs.python-windows-plan.outputs.shard_1_targets }}
-        shell: pwsh
-        run: |
-          $targetsJson = if (${{ matrix.shard }} -eq 0) {
-            $env:CANONICAL_SHARD_0_TARGETS
-          } else {
-            $env:CANONICAL_SHARD_1_TARGETS
-          }
-          python scripts/check_test_collection.py `
-            --workers 4 `
-            --shard-count 2 `
-            --shard-index ${{ matrix.shard }} `
-            --canonical-complete-digest "$env:CANONICAL_COMPLETE_DIGEST" `
-            --canonical-targets-json $targetsJson `
-            --write-targets .pytest-shard-targets.txt
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
       - name: Tests and platform smoke coverage
-        shell: pwsh
-        run: |
-          $targets = @(Get-Content -LiteralPath ".pytest-shard-targets.txt")
-          if ($targets.Count -eq 0) {
-            throw "pytest shard target list is empty"
-          }
-          python -m pytest -n 4 --dist=loadfile @targets
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
+        run: python scripts/run_test_shard.py --shard-index ${{ matrix.shard }}
+      - name: Upload exact pytest execution receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}
+          path: |
+            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}/shard.json
+            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}/canonical.json
+            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}/retrieval.json
+          include-hidden-files: true
+          if-no-files-found: error
       - name: Upload detached uninstall lifecycle evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
@@ -162,16 +140,16 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
       - name: Build Python artifacts
+        if: matrix.shard == 0 || matrix.shard == 1
         run: python -m build --outdir dist/python
       - name: Diagnose Python package resources
+        if: matrix.shard == 0 || matrix.shard == 1
         run: python scripts/diagnose_python_packages.py --directory dist/python
 
-  python-windows:
-    name: Python 3.12 - windows-latest
+  python-linux:
+    name: Python 3.12 - ubuntu-latest
     if: ${{ always() }}
-    needs:
-      - python-windows-plan
-      - python-windows-shard
+    needs: python
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -179,23 +157,54 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Propagate Windows pytest shard result
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # pin: actions/download-artifact@v4
+        with:
+          pattern: pytest-${{ github.run_id }}-${{ github.run_attempt }}-linux-*
+          path: .test-runs/receipts
+          merge-multiple: false
+      - name: Require canonical and actual worker coverage
         env:
-          WINDOWS_PLAN_RESULT: ${{ needs.python-windows-plan.result }}
-          WINDOWS_SHARD_RESULT: ${{ needs.python-windows-shard.result }}
-          CANONICAL_COMPLETE_DIGEST: ${{ needs.python-windows-plan.outputs.complete_digest }}
-          CANONICAL_SHARD_0_TARGETS: ${{ needs.python-windows-plan.outputs.shard_0_targets }}
-          CANONICAL_SHARD_1_TARGETS: ${{ needs.python-windows-plan.outputs.shard_1_targets }}
+          SHARD_RESULT: ${{ needs.python.result }}
         run: >-
           python scripts/check_test_collection.py
-          --require-shard-result "$WINDOWS_SHARD_RESULT"
-          --require-plan-result "$WINDOWS_PLAN_RESULT"
-          --require-complete-digest "$CANONICAL_COMPLETE_DIGEST"
-          --require-shard-targets-json "$CANONICAL_SHARD_0_TARGETS"
-          --require-shard-targets-json "$CANONICAL_SHARD_1_TARGETS"
+          --verify-receipts .test-runs/receipts
+          --platform linux
+          --run-id "${{ github.run_id }}"
+          --run-attempt "${{ github.run_attempt }}"
+          --shard-result "$SHARD_RESULT"
+
+  python-windows:
+    name: Python 3.12 - windows-latest
+    if: ${{ always() }}
+    needs: python-windows-shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # pin: actions/download-artifact@v4
+        with:
+          pattern: pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-*
+          path: .test-runs/receipts
+          merge-multiple: false
+      - name: Require canonical and actual worker coverage
+        env:
+          SHARD_RESULT: ${{ needs.python-windows-shard.result }}
+        run: >-
+          python scripts/check_test_collection.py
+          --verify-receipts .test-runs/receipts
+          --platform windows
+          --run-id "${{ github.run_id }}"
+          --run-attempt "${{ github.run_attempt }}"
+          --shard-result "$SHARD_RESULT"
 
   security:
     name: Repository security gates
+    # The dashboard matrix releases two hosted slots for these checks.
+    needs: dashboard
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -253,6 +262,9 @@ jobs:
 
   dashboard-parity:
     name: Dashboard production asset parity
+    # The dashboard matrix releases two hosted slots for these checks.
+    needs: dashboard
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -279,6 +291,9 @@ jobs:
     # Keep these check names stable for branch protection.
     name: Desktop artifact - ${{ matrix.check_label }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      actions: read
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -296,10 +311,12 @@ jobs:
             source: all-the-context
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
           python-version: "3.12.10"
-          cache: pip
+          cache: ${{ runner.os == 'Linux' && 'pip' || '' }}
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.11.32"
@@ -311,7 +328,27 @@ jobs:
       - name: Install Linux Tk runtime
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes python3-tk
+      - name: Start frozen Windows CI donor download
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/windows_ci_pilot.py start
+      - name: Create fresh run-owned Windows environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP 'atc-package-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}'
+          if (Test-Path -LiteralPath $venv) {
+            throw "Refusing to reuse Windows build environment: $venv"
+          }
+          python -m venv --without-pip $venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $venv 'Scripts') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install Windows desktop packager from reviewed lock constraints
+        if: runner.os == 'Windows'
+        run: python scripts/install_locked_python.py --extra packaging --installer uv
       - name: Install desktop packager from reviewed lock constraints
+        if: runner.os != 'Windows'
         run: python scripts/install_locked_python.py --extra packaging
       - name: Exercise native startup and OS credential adapters
         if: runner.os != 'Linux'
@@ -319,7 +356,8 @@ jobs:
       - name: Exercise Linux startup and explicit credential fallback
         if: runner.os == 'Linux'
         run: python scripts/smoke_platform_acceptance.py
-      - name: Build and verify reproducible Windows native components
+      - id: windows_native
+        name: Build and verify reproducible Windows native components
         if: runner.os == 'Windows'
         env:
           SOURCE_COMMIT: ${{ github.sha }}
@@ -327,16 +365,20 @@ jobs:
           python scripts/verify_reproducible_build.py
           --source-commit ${{ github.sha }}
           --output-dir dist/native-build-provenance
+          ${{ github.event_name == 'pull_request' && '--parallel-windows' || '' }}
+          ${{ github.event_name == 'pull_request' && '--windows-ci-donor-pilot' || '' }}
       - name: Build native desktop artifact
         if: runner.os != 'Windows'
         run: python scripts/build_desktop.py
       - name: Smoke-test bundled resources and packaged OS credential access
+        if: runner.os != 'Windows' || github.event_name != 'pull_request'
         run: >-
           python scripts/smoke_desktop_artifact.py
           --artifact-root .
           --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json
           --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
       - name: Smoke packaged console recovery from built bytes
+        if: runner.os != 'Windows' || github.event_name != 'pull_request'
         run: >-
           python scripts/smoke_packaged_recovery.py
           --artifact-root .
@@ -351,8 +393,17 @@ jobs:
           New-Item -ItemType Directory -Force -Path $inventory, $failure | Out-Null
           "ATC_PACKAGED_PROCESS_INVENTORY_DIAGNOSTICS_DIR=$inventory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "ATC_PACKAGED_FAILURE_DIAGNOSTICS_DIR=$failure" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - id: windows_package_checks
+        name: Windows PR lifecycle with independent built-file package preparation
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        env:
+          ATC_CI_WINDOWS_COM_INVENTORY: "1"
+        run: >-
+          python scripts/windows_ci_package_checks.py
+          ${{ steps.windows_native.outputs.route == 'retained' && '--overlap-first-run' || '' }}
       - id: packaged_smoke
         name: Clean-install, startup, MCP, restart, and cleanup smoke
+        if: runner.os != 'Windows' || github.event_name != 'pull_request'
         run: >-
           python scripts/smoke_packaged_first_run.py
           --artifact-root .
@@ -366,7 +417,7 @@ jobs:
           path: ${{ runner.temp }}/packaged-first-run-failure-diagnostics/*.json
           if-no-files-found: ignore
       - name: Upload packaged first-run process-inventory diagnostics
-        if: ${{ always() && runner.os == 'Windows' && steps.packaged_smoke.outcome == 'success' }}
+        if: ${{ always() && runner.os == 'Windows' && (steps.packaged_smoke.outcome == 'success' || steps.windows_package_checks.outputs.lifecycle_success == 'true') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
         with:
           name: packaged-first-run-process-inventory-windows
@@ -381,6 +432,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={__version__}\n")
       - name: Build direct unsigned platform package
+        if: runner.os != 'Windows' || github.event_name != 'pull_request'
         run: >-
           python scripts/package_desktop.py
           --version ${{ steps.runtime-version.outputs.version }}
@@ -393,12 +445,14 @@ jobs:
           python scripts/evaluate_appimage.py
           --output dist/platform/appimage-evaluation.json
       - name: Smoke-test direct platform package and trust disclosure
+        if: runner.os != 'Windows' || github.event_name != 'pull_request'
         run: >-
           python scripts/smoke_platform_package.py
           --directory dist/platform
           --platform ${{ matrix.platform }}
           --architecture ${{ matrix.architecture }}
       - name: Create deterministic candidate archive and metadata
+        if: runner.os != 'Windows' || github.event_name != 'pull_request'
         run: >-
           python scripts/build_release_assets.py
           --source dist/desktop/${{ matrix.source }}
@@ -413,4 +467,5 @@ jobs:
             dist/platform/**
             dist/release/**
             dist/native-build-provenance/**
+          compression-level: ${{ runner.os == 'Windows' && github.event_name == 'pull_request' && '0' || '6' }}
           if-no-files-found: error

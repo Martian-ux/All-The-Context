@@ -604,35 +604,40 @@ def _inventory_packaged_processes(
         raise PackagedProcessInventoryError("native packaged process inventory failed") from exc
     process_environment = os.environ.copy()
     process_environment["ATC_SMOKE_PROCESS_PATH"] = str(resolved_executable)
+    command = (
+        [sys.executable, str(Path(__file__).with_name("windows_ci_process_inventory.py"))]
+        if process_environment.get("ATC_CI_WINDOWS_COM_INVENTORY") == "1"
+        else [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            (
+                "$ErrorActionPreference = 'Stop'; "
+                "$target = [System.IO.Path]::GetFullPath($env:ATC_SMOKE_PROCESS_PATH); "
+                "$name = [System.IO.Path]::GetFileName($target); "
+                '$filterName = $name.Replace("\'", "\'\'"); '
+                "$processes = @(Get-CimInstance -ClassName Win32_Process "
+                "-Filter (\"Name = '{0}'\" -f $filterName) "
+                "-Property ProcessId,CreationDate,ExecutablePath | "
+                "Where-Object { $_.ExecutablePath -eq $target } | "
+                "Select-Object -First 65 | "
+                "ForEach-Object { [pscustomobject]@{ "
+                "pid = [int64]$_.ProcessId; "
+                "creation_identity = $_.CreationDate.ToUniversalTime().Ticks"
+                ".ToString([System.Globalization.CultureInfo]::InvariantCulture); "
+                "exe = [string]$_.ExecutablePath } }); "
+                "if ($processes.Count -gt 64) { exit 2 }; "
+                "ConvertTo-Json -InputObject @($processes) -Compress"
+            ),
+        ]
+    )
     try:
         completed = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                (
-                    "$ErrorActionPreference = 'Stop'; "
-                    "$target = [System.IO.Path]::GetFullPath($env:ATC_SMOKE_PROCESS_PATH); "
-                    "$name = [System.IO.Path]::GetFileName($target); "
-                    '$filterName = $name.Replace("\'", "\'\'"); '
-                    "$processes = @(Get-CimInstance -ClassName Win32_Process "
-                    "-Filter (\"Name = '{0}'\" -f $filterName) "
-                    "-Property ProcessId,CreationDate,ExecutablePath | "
-                    "Where-Object { $_.ExecutablePath -eq $target } | "
-                    "Select-Object -First 65 | "
-                    "ForEach-Object { [pscustomobject]@{ "
-                    "pid = [int64]$_.ProcessId; "
-                    "creation_identity = $_.CreationDate.ToUniversalTime().Ticks"
-                    ".ToString([System.Globalization.CultureInfo]::InvariantCulture); "
-                    "exe = [string]$_.ExecutablePath } }); "
-                    "if ($processes.Count -gt 64) { exit 2 }; "
-                    "ConvertTo-Json -InputObject @($processes) -Compress"
-                ),
-            ],
+            command,
             env=process_environment,
             check=False,
             capture_output=True,

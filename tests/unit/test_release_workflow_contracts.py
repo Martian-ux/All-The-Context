@@ -208,6 +208,76 @@ def test_ci_declares_matrix_security_and_parity_job_names() -> None:
         assert forbidden not in text
 
 
+def test_ci_windows_uses_fresh_locked_uv_and_pr_only_parallel_packaging() -> None:
+    jobs = _job_bodies(_read(WORKFLOWS / "ci.yml"))
+    windows = jobs["python-windows-shard"]
+    desktop = jobs["desktop-package"]
+    for block in (windows, desktop):
+        assert 'python-version: "3.12.10"' in block
+        assert "python -m venv --without-pip $venv" in block
+        assert "Test-Path -LiteralPath $venv" in block
+        assert "$env:RUNNER_TEMP" in block and "$env:GITHUB_PATH" in block
+        assert block.index("python -m venv") < block.index("--installer uv")
+        assert "enable-cache: false" in block
+    assert "cache: pip" not in windows
+    assert "--extra dev --installer uv" in windows
+    assert "--extra packaging --installer uv" in desktop
+    assert "cache: ${{ runner.os == 'Linux' && 'pip' || '' }}" in desktop
+    assert "${{ github.event_name == 'pull_request' && '--parallel-windows' || '' }}" in desktop
+    assert desktop.count("--parallel-windows") == 1
+    assert "python scripts/install_locked_python.py --extra dev\n" in jobs["python"]
+    assert "--installer uv" not in jobs["python"]
+    steps = _step_blocks(desktop)
+    parallel = next(step for step in steps if "--parallel-windows" in step)
+    assert "if: runner.os == 'Windows'" in parallel
+    linux_install = next(
+        step
+        for step in steps
+        if "run: python scripts/install_locked_python.py --extra packaging\n" in step
+    )
+    assert "if: runner.os != 'Windows'" in linux_install
+
+
+def test_ci_desktop_runner_pin_preserves_name_and_bounds_donor_pilot() -> None:
+    text = _read(WORKFLOWS / "ci.yml")
+    desktop = _job_bodies(text)["desktop-package"]
+    assert "name: Desktop artifact - ${{ matrix.check_label }}" in desktop
+    assert "runs-on: ${{ matrix.runner }}" in desktop
+    assert "- check_label: ubuntu-latest\n            runner: ubuntu-24.04" in desktop
+    assert "- check_label: windows-latest\n            runner: windows-latest" in desktop
+    assert desktop.count("actions: read") == text.count("actions: read") == 1
+    assert "pull_request_target" not in text
+    assert "windows-ci-donor-pilot" in desktop
+    assert desktop.index("windows_ci_pilot.py start") < desktop.index(
+        "--extra packaging --installer uv"
+    )
+    assert "fetch-depth: 0" in desktop
+    steps = _step_blocks(desktop)
+    start = next(step for step in steps if "windows_ci_pilot.py start" in step)
+    overlap = next(step for step in steps if "windows_ci_package_checks.py" in step)
+    for step in (start, overlap):
+        assert "if: runner.os == 'Windows' && github.event_name == 'pull_request'" in step
+    assert "GH_TOKEN: ${{ github.token }}" in start
+    assert "steps.windows_package_checks.outputs.lifecycle_success == 'true'" in desktop
+    assert 'ATC_CI_WINDOWS_COM_INVENTORY: "1"' in overlap
+    assert "steps.windows_native.outputs.route == 'retained' && '--overlap-first-run'" in overlap
+    canonical = next(step for step in steps if "dist/native-build-provenance/**" in step)
+    assert (
+        "${{ runner.os == 'Windows' && github.event_name == 'pull_request' && '0' || '6' }}"
+        in canonical
+    )
+    for script in (
+        "smoke_desktop_artifact.py",
+        "smoke_packaged_recovery.py",
+        "smoke_packaged_first_run.py",
+        "package_desktop.py",
+        "smoke_platform_package.py",
+        "build_release_assets.py",
+    ):
+        stock = next(step for step in steps if script in step)
+        assert "if: runner.os != 'Windows' || github.event_name != 'pull_request'" in stock
+
+
 def test_ci_python_documentation_checks_have_full_history_and_pinned_actions() -> None:
     python_job = _job_bodies(_read(WORKFLOWS / "ci.yml"))["python"]
     steps = _step_blocks(python_job)
