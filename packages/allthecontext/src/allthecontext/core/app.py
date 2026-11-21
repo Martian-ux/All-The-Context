@@ -903,11 +903,10 @@ def create_app(
         result = response.model_dump(mode="json")
         result["project_context"] = project_activation.to_dict()
         result["total_used_chars"] = response.used_chars + project_used_chars
-        if (
-            project_activation.reason
-            in {"no_authorized_project_context", "project_signal_not_found"}
-            and not any(item.kind.casefold() != "interaction_preference" for item in response.items)
-        ):
+        if project_activation.reason in {
+            "no_authorized_project_context",
+            "project_signal_not_found",
+        } and not any(item.kind.casefold() != "interaction_preference" for item in response.items):
             label = project_search_label(project_snapshot, request.current_project)
             if label is not None:
                 evidence = core.retrieval.project_search_evidence(

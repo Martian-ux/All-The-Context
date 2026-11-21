@@ -1412,9 +1412,7 @@ def _build_snapshot(
 ) -> ProjectContinuitySnapshot:
     normalized_as_of = _timestamp(as_of)
     normalized_bindings, evidence = _normalized_inputs(bindings, values, purged_ids)
-    projects, _anchors = _discover_projects(
-        normalized_bindings, evidence, as_of=normalized_as_of
-    )
+    projects, _anchors = _discover_projects(normalized_bindings, evidence, as_of=normalized_as_of)
     assignments = _assign_projects(
         normalized_bindings,
         evidence,

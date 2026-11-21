@@ -31,60 +31,113 @@ def lifecycle_fixture(directory: Path, module=harness):
     events, payloads = [], {}
 
     def event(event_type, **fields):
-        events.append({
-            "schema_version": 2, "seq": len(events) + 1, "wall_time_unix_ms": 0,
-            "thread_id": thread, "codex_turn_id": turn, "rollout_id": rollout,
-            "payload": {"type": event_type, **fields},
-        })
+        events.append(
+            {
+                "schema_version": 2,
+                "seq": len(events) + 1,
+                "wall_time_unix_ms": 0,
+                "thread_id": thread,
+                "codex_turn_id": turn,
+                "rollout_id": rollout,
+                "payload": {"type": event_type, **fields},
+            }
+        )
 
     def ref(name, kind, value):
         path = f"payloads/{name}.json"
         payloads[path] = value
         return {"raw_payload_id": f"fixture-payload-{name}", "kind": kind, "path": path}
 
-    tools = [{"type": "namespace", "name": "functions", "tools": [
-        {"type": "custom", "name": "exec", "description": "fixture wrapper"},
-        {"type": "function", "name": "wait", "parameters": {"type": "object"}},
-    ]}]
+    tools = [
+        {
+            "type": "namespace",
+            "name": "functions",
+            "tools": [
+                {"type": "custom", "name": "exec", "description": "fixture wrapper"},
+                {"type": "function", "name": "wait", "parameters": {"type": "object"}},
+            ],
+        }
+    ]
 
     def inference(index):
-        request = {"type": "response.create", "model": "gpt-6.1-sol",
-                   "reasoning": {"effort": "xhigh"}, "input": []}
+        request = {
+            "type": "response.create",
+            "model": "gpt-6.1-sol",
+            "reasoning": {"effort": "xhigh"},
+            "input": [],
+        }
         if index == 1:
             request["input"] = [{"tools": tools}]
         else:
             request["previous_response_id"] = f"fixture-response-juniper-{index - 1}"
-        event("inference_started", inference_call_id=f"fixture-inference-juniper-{index}",
-              provider_name="OpenAI",
-              request_payload=ref(f"request-{index}", "inference_request", request))
+        event(
+            "inference_started",
+            inference_call_id=f"fixture-inference-juniper-{index}",
+            provider_name="OpenAI",
+            request_payload=ref(f"request-{index}", "inference_request", request),
+        )
 
     def complete_inference(index):
         response_id = f"fixture-response-juniper-{index}"
-        event("inference_completed", inference_call_id=f"fixture-inference-juniper-{index}",
-              response_id=response_id, response_payload=ref(
-                  f"response-{index}", "inference_response", {"response_id": response_id}))
+        event(
+            "inference_completed",
+            inference_call_id=f"fixture-inference-juniper-{index}",
+            response_id=response_id,
+            response_payload=ref(
+                f"response-{index}", "inference_response", {"response_id": response_id}
+            ),
+        )
 
     def start_cell(name, source):
-        event("code_cell_started", runtime_cell_id=f"fixture-cell-{name}",
-              model_visible_call_id=f"fixture-call-{name}", source_js=source + "\n")
+        event(
+            "code_cell_started",
+            runtime_cell_id=f"fixture-cell-{name}",
+            model_visible_call_id=f"fixture-call-{name}",
+            source_js=source + "\n",
+        )
 
     def end_cell(name, output):
-        event("code_cell_ended", runtime_cell_id=f"fixture-cell-{name}", status="completed",
-              response_payload=ref(f"{name}-result", "tool_result", {"response": {"Result": {
-                  "cell_id": f"fixture-cell-{name}", "error_text": None,
-                  "content_items": [{"type": "input_text", "text": json.dumps(output)}],
-              }}}))
+        event(
+            "code_cell_ended",
+            runtime_cell_id=f"fixture-cell-{name}",
+            status="completed",
+            response_payload=ref(
+                f"{name}-result",
+                "tool_result",
+                {
+                    "response": {
+                        "Result": {
+                            "cell_id": f"fixture-cell-{name}",
+                            "error_text": None,
+                            "content_items": [{"type": "input_text", "text": json.dumps(output)}],
+                        }
+                    }
+                },
+            ),
+        )
 
-    names = sorted({f"mcp__project__{tool}" for tool in module.ARTIFACT_TOOLS}
-                   | {f"mcp__atc__{tool}" for tool in module.READ_TOOLS}
-                   | module.NATIVE_UTILITIES)
-    roster = {"declared": names, "callable": names,
-              "ambient": dict.fromkeys(("require", "process", "fetch", "Deno", "Bun"), "undefined"),
-              "forbidden": dict.fromkeys(module.FORBIDDEN_CALLABLES, "undefined")}
+    names = sorted(
+        {f"mcp__project__{tool}" for tool in module.ARTIFACT_TOOLS}
+        | {f"mcp__atc__{tool}" for tool in module.READ_TOOLS}
+        | module.NATIVE_UTILITIES
+    )
+    roster = {
+        "declared": names,
+        "callable": names,
+        "ambient": dict.fromkeys(("require", "process", "fetch", "Deno", "Bun"), "undefined"),
+        "forbidden": dict.fromkeys(module.FORBIDDEN_CALLABLES, "undefined"),
+    }
     client_events = [
-        {"type": "thread.started", "thread_id": thread}, {"type": "turn.started"},
-        {"type": "item.completed", "item": {"id": "fixture-notice-juniper",
-         "type": "error", "message": "Optional feature notice for fixture testing."}},
+        {"type": "thread.started", "thread_id": thread},
+        {"type": "turn.started"},
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "fixture-notice-juniper",
+                "type": "error",
+                "message": "Optional feature notice for fixture testing.",
+            },
+        },
     ]
     inference(1)
     complete_inference(1)
@@ -102,53 +155,102 @@ def lifecycle_fixture(directory: Path, module=harness):
             field = "resources" if name == "list_mcp_resources" else "resourceTemplates"
             checks.append({"name": name, "args": args, "result": json.dumps({field: []})})
             continue
-        error = ("unknown MCP server 'continuity_unconfigured'"
-                 if args["server"] == "continuity_unconfigured"
-                 else "resources/read failed: Method not found")
+        error = (
+            "unknown MCP server 'continuity_unconfigured'"
+            if args["server"] == "continuity_unconfigured"
+            else "resources/read failed: Method not found"
+        )
         checks.append({"name": name, "args": args, "rejected": error})
         call_id = f"fixture-tool-juniper-{index}"
-        event("tool_call_started", tool_call_id=call_id,
-              requester={"type": "code_cell", "runtime_cell_id": "fixture-cell-resources"},
-              invocation_payload=ref(f"resource-{index}-invocation", "tool_invocation", {
-                  "tool_name": name, "tool_namespace": None,
-                  "payload": {"type": "function", "arguments": json.dumps(args)},
-              }))
+        event(
+            "tool_call_started",
+            tool_call_id=call_id,
+            requester={"type": "code_cell", "runtime_cell_id": "fixture-cell-resources"},
+            invocation_payload=ref(
+                f"resource-{index}-invocation",
+                "tool_invocation",
+                {
+                    "tool_name": name,
+                    "tool_namespace": None,
+                    "payload": {"type": "function", "arguments": json.dumps(args)},
+                },
+            ),
+        )
         if args["server"] != "continuity_unconfigured":
-            event("tool_call_runtime_started", tool_call_id=call_id,
-                  kind={"type": "mcp", "server": args["server"], "tool": name},
-                  runtime_payload=ref(f"resource-{index}-runtime", "tool_runtime_event", {
-                      "call_id": call_id, "turn_id": turn,
-                      "invocation": {"server": args["server"], "tool": name, "arguments": args},
-                  }))
-            client_events.append({"type": "item.completed", "item": {
-                "id": f"fixture-item-juniper-{index}", "type": "mcp_tool_call",
-                "server": args["server"], "tool": name, "arguments": copy.deepcopy(args),
-                "status": "failed", "result": None, "error": {"message": error},
-            }})
-        event("tool_call_ended", tool_call_id=call_id, status="failed",
-              result_payload=ref(f"resource-{index}-result", "tool_result",
-                                 {"type": "error", "error": error}))
+            event(
+                "tool_call_runtime_started",
+                tool_call_id=call_id,
+                kind={"type": "mcp", "server": args["server"], "tool": name},
+                runtime_payload=ref(
+                    f"resource-{index}-runtime",
+                    "tool_runtime_event",
+                    {
+                        "call_id": call_id,
+                        "turn_id": turn,
+                        "invocation": {"server": args["server"], "tool": name, "arguments": args},
+                    },
+                ),
+            )
+            client_events.append(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": f"fixture-item-juniper-{index}",
+                        "type": "mcp_tool_call",
+                        "server": args["server"],
+                        "tool": name,
+                        "arguments": copy.deepcopy(args),
+                        "status": "failed",
+                        "result": None,
+                        "error": {"message": error},
+                    },
+                }
+            )
+        event(
+            "tool_call_ended",
+            tool_call_id=call_id,
+            status="failed",
+            result_payload=ref(
+                f"resource-{index}-result", "tool_result", {"type": "error", "error": error}
+            ),
+        )
     end_cell("resources", {"continuity_resources_v1": checks})
     complete_inference(3)
     event("recording_completed", trace_id=trace, root_thread_id=thread)
-    client_events.append({"type": "turn.completed", "usage": {
-        "input_tokens": 180, "cached_input_tokens": 40, "output_tokens": 20,
-    }})
+    client_events.append(
+        {
+            "type": "turn.completed",
+            "usage": {
+                "input_tokens": 180,
+                "cached_input_tokens": 40,
+                "output_tokens": 20,
+            },
+        }
+    )
     return {
-        "manifest": {"schema_version": 2, "root_thread_id": thread, "rollout_id": rollout,
-                     "trace_id": trace, "raw_event_log": "trace.jsonl", "payloads_dir": "payloads",
-                     "started_at_unix_ms": 0},
-        "events": events, "payloads": payloads, "client_events": client_events,
-        "artifact_audit": [{"operation": "read", "name": name, "allowed": False}
-                           for name in module.NEGATIVE_NAMES],
+        "manifest": {
+            "schema_version": 2,
+            "root_thread_id": thread,
+            "rollout_id": rollout,
+            "trace_id": trace,
+            "raw_event_log": "trace.jsonl",
+            "payloads_dir": "payloads",
+            "started_at_unix_ms": 0,
+        },
+        "events": events,
+        "payloads": payloads,
+        "client_events": client_events,
+        "artifact_audit": [
+            {"operation": "read", "name": name, "allowed": False} for name in module.NEGATIVE_NAMES
+        ],
         "canary": "FIXTURE_RESOURCE_CANARY_JUNIPER",
     }
 
 
 def materialize(directory, capture, module=harness):
     manifest = capture["manifest"]
-    bundle = directory / "native-trace" / (
-        f"trace-{manifest['trace_id']}-{manifest['root_thread_id']}"
+    bundle = (
+        directory / "native-trace" / (f"trace-{manifest['trace_id']}-{manifest['root_thread_id']}")
     )
     (bundle / "payloads").mkdir(parents=True, exist_ok=True)
     module.dump(bundle / "manifest.json", manifest)
@@ -174,13 +276,18 @@ def fixture_client(directory, capture, monkeypatch, module=harness, *, secrets=(
         assert kwargs["prompt"].count(module.ROSTER_CODE) == 1
         materialize(owned, capture, module)
         return {
-            "returncode": 0, "timed_out": False, "reaped": True,
-            "credential_redaction": False, "stdout": str(owned / "client.jsonl"),
+            "returncode": 0,
+            "timed_out": False,
+            "reaped": True,
+            "credential_redaction": False,
+            "stdout": str(owned / "client.jsonl"),
         }
 
     monkeypatch.setattr(module, "run_command", fixture_command)
     journey = SimpleNamespace(
-        secrets=list(secrets), reader="UNUSED_OFFLINE_READER", reader_id="offline-reader",
+        secrets=list(secrets),
+        reader="UNUSED_OFFLINE_READER",
+        reader_id="offline-reader",
         core=SimpleNamespace(url="http://127.0.0.1:1"),
     )
     client = module.RealClient(directory, journey, float("inf"))
@@ -197,8 +304,10 @@ def test_fixture_lifecycle_positive_through_driver(tmp_path, monkeypatch):
     execution = client.executions[0]
     assert execution["native_recording_completed"]
     assert len(execution["expected_resource_failures"]) == 19
-    assert sum(item["client_item_id"] is not None
-               for item in execution["expected_resource_failures"]) == 18
+    assert (
+        sum(item["client_item_id"] is not None for item in execution["expected_resource_failures"])
+        == 18
+    )
     proof = json.loads((directory / "verified-roster.json").read_text())
     inventory = proof["inference_tool_inventory"]
     assert len(inventory) == 3
@@ -221,24 +330,59 @@ def resource_checks(capture):
     return content, json.loads(content["text"])["continuity_resources_v1"]
 
 
-@pytest.mark.parametrize("broken", (
-    "unrelated_tool", "uncorrelated_arguments", "changed_error", "duplicate_failure",
-    "native_error", "native_requester", "native_invocation", "native_runtime", "native_turn",
-    "real_resource_failure", "malformed_tools",
-    "unknown_parent", "stale_parent", "cross_turn_parent", "missing_parent_completion",
-    "model", "effort", "extra_tools", "changed_schema", "missing_initial_tools",
-    "changed_source", "two_lfs", "crlf", "resource_content", "resource_server",
-    "resource_template", "resource_inventory_malformed", "resource_missing",
-    "leaked_canary", "unclosed", "malformed_closure", "missing_payload", "fatal_provider",
-    "origin_zero", "origin_two", "sequence_gap", "sequence_duplicate", "sequence_reordered",
-))
+@pytest.mark.parametrize(
+    "broken",
+    (
+        "unrelated_tool",
+        "uncorrelated_arguments",
+        "changed_error",
+        "duplicate_failure",
+        "native_error",
+        "native_requester",
+        "native_invocation",
+        "native_runtime",
+        "native_turn",
+        "real_resource_failure",
+        "malformed_tools",
+        "unknown_parent",
+        "stale_parent",
+        "cross_turn_parent",
+        "missing_parent_completion",
+        "model",
+        "effort",
+        "extra_tools",
+        "changed_schema",
+        "missing_initial_tools",
+        "changed_source",
+        "two_lfs",
+        "crlf",
+        "resource_content",
+        "resource_server",
+        "resource_template",
+        "resource_inventory_malformed",
+        "resource_missing",
+        "leaked_canary",
+        "unclosed",
+        "malformed_closure",
+        "missing_payload",
+        "fatal_provider",
+        "origin_zero",
+        "origin_two",
+        "sequence_gap",
+        "sequence_duplicate",
+        "sequence_reordered",
+    ),
+)
 def test_fixture_lifecycle_broken_variants_fail_closed(tmp_path, monkeypatch, broken):
     directory = tmp_path / "fixture-lifecycle"
     capture = lifecycle_fixture(directory)
     request = capture["payloads"]["payloads/request-2.json"]
     first_tools = capture["payloads"]["payloads/request-1.json"]["input"][0]["tools"]
-    failures = [event for event in capture["client_events"]
-                if event.get("item", {}).get("status") == "failed"]
+    failures = [
+        event
+        for event in capture["client_events"]
+        if event.get("item", {}).get("status") == "failed"
+    ]
     item = failures[0]["item"]
     if broken in {"origin_zero", "origin_two"}:
         for event in capture["events"]:
@@ -272,9 +416,12 @@ def test_fixture_lifecycle_broken_variants_fail_closed(tmp_path, monkeypatch, br
         runtime = capture["payloads"]["payloads/resource-3-runtime.json"]
         runtime["invocation"]["server"] = "unrelated"
     elif broken in {"native_requester", "native_turn"}:
-        start = next(event for event in capture["events"]
-                     if event["payload"].get("invocation_payload", {}).get("path")
-                     == "payloads/resource-3-invocation.json")
+        start = next(
+            event
+            for event in capture["events"]
+            if event["payload"].get("invocation_payload", {}).get("path")
+            == "payloads/resource-3-invocation.json"
+        )
         if broken == "native_requester":
             start["payload"]["requester"]["runtime_cell_id"] = "1"
         else:
@@ -282,17 +429,22 @@ def test_fixture_lifecycle_broken_variants_fail_closed(tmp_path, monkeypatch, br
     elif broken == "unknown_parent":
         request["previous_response_id"] = "unobserved-response"
     elif broken == "stale_parent":
-        capture["payloads"]["payloads/request-3.json"]["previous_response_id"] = (
-            request["previous_response_id"]
-        )
+        capture["payloads"]["payloads/request-3.json"]["previous_response_id"] = request[
+            "previous_response_id"
+        ]
     elif broken == "cross_turn_parent":
-        event = next(event for event in capture["events"]
-                     if event["payload"].get("request_payload", {}).get("path")
-                     == "payloads/request-2.json")
+        event = next(
+            event
+            for event in capture["events"]
+            if event["payload"].get("request_payload", {}).get("path") == "payloads/request-2.json"
+        )
         event["codex_turn_id"] = "unrelated-turn"
     elif broken == "missing_parent_completion":
-        completion = next(event for event in capture["events"]
-                          if event["payload"]["type"] == "inference_completed")
+        completion = next(
+            event
+            for event in capture["events"]
+            if event["payload"]["type"] == "inference_completed"
+        )
         completion["payload"]["type"] = "unobserved_completion"
     elif broken == "model":
         request["model"] = "other-model"
@@ -309,11 +461,15 @@ def test_fixture_lifecycle_broken_variants_fail_closed(tmp_path, monkeypatch, br
     elif broken == "missing_initial_tools":
         capture["payloads"]["payloads/request-1.json"]["input"] = []
     elif broken in {"changed_source", "two_lfs", "crlf"}:
-        source = next(event["payload"] for event in capture["events"]
-                      if event["payload"]["type"] == "code_cell_started")
-        source["source_js"] = source["source_js"].removesuffix("\n") + {
-            "changed_source": "; text('extra');\n", "two_lfs": "\n\n", "crlf": "\r\n"
-        }[broken]
+        source = next(
+            event["payload"]
+            for event in capture["events"]
+            if event["payload"]["type"] == "code_cell_started"
+        )
+        source["source_js"] = (
+            source["source_js"].removesuffix("\n")
+            + {"changed_source": "; text('extra');\n", "two_lfs": "\n\n", "crlf": "\r\n"}[broken]
+        )
     elif broken.startswith("resource_") or broken == "leaked_canary":
         content, checks = resource_checks(capture)
         if broken == "resource_missing":
@@ -323,11 +479,13 @@ def test_fixture_lifecycle_broken_variants_fail_closed(tmp_path, monkeypatch, br
         elif broken == "resource_inventory_malformed":
             checks[1]["result"] = '{"resources":[]'
         else:
-            checks[1]["result"] = json.dumps({
-                "resource_content": {"resources": [{"uri": "file:///hidden"}]},
-                "resource_server": {"server": "unrelated", "resources": []},
-                "resource_template": {"resources": [], "resourceTemplates": [{"uri": "x"}]},
-            }[broken])
+            checks[1]["result"] = json.dumps(
+                {
+                    "resource_content": {"resources": [{"uri": "file:///hidden"}]},
+                    "resource_server": {"server": "unrelated", "resources": []},
+                    "resource_template": {"resources": [], "resourceTemplates": [{"uri": "x"}]},
+                }[broken]
+            )
         content["text"] = json.dumps({"continuity_resources_v1": checks})
     elif broken == "unclosed":
         capture["events"].pop()
@@ -358,34 +516,65 @@ def complete_report():
     for phase in (None, *harness.PHASES):
         for arm in harness.ARMS:
             execution = {
-                "arm": arm, "probe": phase is None, "directory": f"{phase}/{arm}",
-                "native_recording_completed": True, "returncode": 0, "reaped": True,
-                "timed_out": False, "credential_redaction": False,
-                "trace_credential_redaction": False, "turn_completed": True, "fatal": [],
+                "arm": arm,
+                "probe": phase is None,
+                "directory": f"{phase}/{arm}",
+                "native_recording_completed": True,
+                "returncode": 0,
+                "reaped": True,
+                "timed_out": False,
+                "credential_redaction": False,
+                "trace_credential_redaction": False,
+                "turn_completed": True,
+                "fatal": [],
             }
             executions.append(execution)
             if phase is not None:
-                cells.append({
-                    "arm": arm, "phase": phase, "directory": execution["directory"],
-                    "fresh_session": True, "execution_boundary": "actual_supported_codex_client",
-                    "execution": copy.deepcopy(execution),
-                    "evaluation": {
-                        "success": False, "classification": "observed_action_failure",
-                        "failures": ["missing_or_inexact_atc_provenance"],
-                    },
-                })
+                cells.append(
+                    {
+                        "arm": arm,
+                        "phase": phase,
+                        "directory": execution["directory"],
+                        "fresh_session": True,
+                        "execution_boundary": "actual_supported_codex_client",
+                        "execution": copy.deepcopy(execution),
+                        "evaluation": {
+                            "success": False,
+                            "classification": "observed_action_failure",
+                            "failures": ["missing_or_inexact_atc_provenance"],
+                        },
+                    }
+                )
     return {
-        "mode": "real", "status": "COMPLETED", "source_public_journey_complete": True,
-        "cleanup_complete": True, "errors": [], "not_executed": [], "arms": cells,
-        "executions": executions, "semantic_success": False,
+        "mode": "real",
+        "status": "COMPLETED",
+        "source_public_journey_complete": True,
+        "cleanup_complete": True,
+        "errors": [],
+        "not_executed": [],
+        "arms": cells,
+        "executions": executions,
+        "semantic_success": False,
     }
 
 
-@pytest.mark.parametrize("broken", (
-    "blocked", "scripted", "missing_cell", "duplicate_cell", "missing_evaluation",
-    "missing_isolation", "missing_recording", "missing_probe", "missing_execution",
-    "missing_cleanup", "failed_execution", "failed_source_journey",
-))
+@pytest.mark.parametrize(
+    "broken",
+    (
+        "blocked",
+        "scripted",
+        "missing_cell",
+        "duplicate_cell",
+        "missing_evaluation",
+        "missing_isolation",
+        "missing_recording",
+        "missing_probe",
+        "missing_execution",
+        "missing_cleanup",
+        "failed_execution",
+        "failed_source_journey",
+    ),
+)
 def test_complete_gate_requires_actual_unique_evaluated_cells(broken):
     report = complete_report()
     assert harness.experiment_complete(report)  # Measured task failure is complete.
@@ -414,9 +603,14 @@ def test_complete_gate_requires_actual_unique_evaluated_cells(broken):
     assert not harness.experiment_complete(report)
 
 
-@pytest.mark.parametrize(("strict", "complete", "expected"), (
-    (False, False, 0), (True, False, 1), (True, True, 0),
-))
+@pytest.mark.parametrize(
+    ("strict", "complete", "expected"),
+    (
+        (False, False, 0),
+        (True, False, 1),
+        (True, True, 0),
+    ),
+)
 def test_cli_complete_gate_keeps_report_and_measured_failures(
     tmp_path, monkeypatch, capsys, strict, complete, expected
 ):
@@ -429,10 +623,18 @@ def test_cli_complete_gate_keeps_report_and_measured_failures(
 
     output = tmp_path / "report"
     monkeypatch.setattr(harness, "run_harness", fixture_run)
-    monkeypatch.setattr(sys, "argv", [
-        "smoke_agent_continuity.py", "--mode", "real", "--output", str(output),
-        *(["--require-complete"] if strict else []),
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "smoke_agent_continuity.py",
+            "--mode",
+            "real",
+            "--output",
+            str(output),
+            *(["--require-complete"] if strict else []),
+        ],
+    )
     assert harness.main() == expected
     assert json.loads((output / "report.json").read_text()) == report
     assert json.loads(capsys.readouterr().out)["report"] == str(output.resolve() / "report.json")

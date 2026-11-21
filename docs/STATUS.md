@@ -14,6 +14,25 @@ release candidate and consumer rollout blocker. The OTA protocol mismatch exists
 independently of the legacy version pin; this source does not establish a working
 beta.6 upgrade route.
 
+## 2026-11-21 — beta.8 Python dependency security floors
+
+The Python lock selects the fixed minima `certifi==2026.10.18`,
+`filelock==4.2.1`, `mcp==2.2.0`, `msgpack==1.2.3`,
+`opentelemetry-api==1.45.2` and `setuptools==84.1.0`, with MCP's required
+`mcp-types==2.2.0`. Certifi, msgpack, OpenTelemetry API and MCP types remain
+transitive dependencies. The runtime bounds require filelock 4.2.1 and MCP 2.2.0;
+both build-system and packaging-extra metadata require setuptools 84.1.0.
+Hash-pinned installs, audits and `--no-build-isolation` remain required.
+
+Beta.8 identity, dashboard inputs and existing authentication/resource checks
+are preserved. An SDK warning about its upcoming resource-check default does
+not change ATC's stored-audience rejection before SDK token creation. Historical
+artifact fixtures retain beta.7; the current-default desktop smoke regression
+uses the runtime version to reach source-commit rejection before any launch.
+The bounded formatter changes must preserve ASTs including type comments,
+all comment text and review/lint pragma statement attachment. These source
+contracts do not establish native, hosted, candidate or release acceptance.
+
 ## 2026-11-20 — principal-scoped project capsule provenance
 
 Core project snapshots now pass the caller's principal through the existing

@@ -243,9 +243,11 @@ def test_completion_winning_cancel_race_preserves_exact_terminal_row(
                 operation_id,
             ),
         )
-        expected = dict(connection.execute(
-            "SELECT * FROM import_operations WHERE id=?", (operation_id,)
-        ).fetchone())
+        expected = dict(
+            connection.execute(
+                "SELECT * FROM import_operations WHERE id=?", (operation_id,)
+            ).fetchone()
+        )
         cancel_thread.start()
         assert cancel_boundary.wait(timeout=3)
     cancel_thread.join(timeout=3)
@@ -254,9 +256,11 @@ def test_completion_winning_cancel_race_preserves_exact_terminal_row(
     assert cancellation["already_terminal"] is True
     assert cancellation["cancel_requested"] is False
     with core.store.connect() as connection:
-        actual = dict(connection.execute(
-            "SELECT * FROM import_operations WHERE id=?", (operation_id,)
-        ).fetchone())
+        actual = dict(
+            connection.execute(
+                "SELECT * FROM import_operations WHERE id=?", (operation_id,)
+            ).fetchone()
+        )
     assert actual == expected
 
 

@@ -154,10 +154,7 @@ class CoreRelaySync:
                 or result.get("event_id") != event.event_id
                 or type(result.get("sequence")) is not int
                 or result.get("sequence") != event.sequence
-                or (
-                    "replayed" in result
-                    and type(result["replayed"]) is not bool
-                )
+                or ("replayed" in result and type(result["replayed"]) is not bool)
             ):
                 raise RuntimeError("Relay acceptance did not match the sent event")
             if result.get("replayed") is True:

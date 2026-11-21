@@ -438,9 +438,7 @@ def test_runtime_normalizes_anchor_expiry_before_discovery_and_assignment() -> N
         def list_memory_truth(self, *, limit: int, offset: int) -> Any:
             return SimpleNamespace(items=list(records[offset : offset + limit]), total=len(records))
 
-    snapshot = build_project_runtime(
-        FakeStore(), as_of="2026-08-24T20:00:00-04:00"
-    )
+    snapshot = build_project_runtime(FakeStore(), as_of="2026-08-24T20:00:00-04:00")
     assert snapshot.projects == ()
     goal = next(item for item in snapshot.assignments if item.evidence_id == "offset-unscoped-goal")
     assert goal.outcome.value == "unresolved"
@@ -520,9 +518,7 @@ def test_truth_runtime_pages_keep_one_sqlite_revision_during_a_concurrent_write(
 
         monkeypatch.setattr(service.store, "_truth_records_tx", write_after_first_page)
         records = _read_truth(service.store, principal=expected_principal)
-        snapshot = build_project_runtime(
-            service.store, as_of=AS_OF, principal=expected_principal
-        )
+        snapshot = build_project_runtime(service.store, as_of=AS_OF, principal=expected_principal)
         assert len(snapshot.assignments) == 501
 
     observed_ids = [record.record.id for record in records]

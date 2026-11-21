@@ -73,7 +73,9 @@ def test_closed_provenance_contract_is_exposed(tmp_path: Path) -> None:
         raise NoModelExecution
 
     journey = SimpleNamespace(
-        secrets=[], reader="UNUSED_OFFLINE_READER", reader_id="offline-reader",
+        secrets=[],
+        reader="UNUSED_OFFLINE_READER",
+        reader_id="offline-reader",
         core=SimpleNamespace(url="http://127.0.0.1:1"),
     )
     client = harness.RealClient(tmp_path, journey, float("inf"))
@@ -144,13 +146,17 @@ def test_closed_provenance_contract_is_exposed(tmp_path: Path) -> None:
         assert frozen["limits"]["per_arm_retry_allowed"] is False
         with pytest.raises(FileExistsError):
             harness.run_harness(output, mode="scripted")
-    harness.dump(tmp_path / "direct-contract-evidence.json", {
-        "kind": "offline_direct_functions_not_live_inference",
-        "action_protocol": harness.action_protocol_metadata(),
-        "prompt_count": 9, "probe_count": 3,
-        "same_contract_on_all_arms_and_mcp": True,
-        "no_per_arm_retry": True,
-    })
+    harness.dump(
+        tmp_path / "direct-contract-evidence.json",
+        {
+            "kind": "offline_direct_functions_not_live_inference",
+            "action_protocol": harness.action_protocol_metadata(),
+            "prompt_count": 9,
+            "probe_count": 3,
+            "same_contract_on_all_arms_and_mcp": True,
+            "no_per_arm_retry": True,
+        },
+    )
 
 
 def test_fixture_actions_reject_unsupported_provenance(tmp_path: Path) -> None:
@@ -178,8 +184,13 @@ def test_fixture_actions_reject_unsupported_provenance(tmp_path: Path) -> None:
             control_history = []
         elif phase == "post_forget":
             control_history = [event for event in control_history if event["key"] != "handoff"]
-        positive = grade(tmp_path / "positive" / phase / arm,
-                         json.dumps(action).encode(), control_history, arm, phase)
+        positive = grade(
+            tmp_path / "positive" / phase / arm,
+            json.dumps(action).encode(),
+            control_history,
+            arm,
+            phase,
+        )
         assert positive["success"], positive
         broken = deepcopy(action)
         broken["provenance"]["rows"] = {"source_reference": "fixture:computed-output"}
@@ -194,17 +205,28 @@ def test_fixture_actions_reject_unsupported_provenance(tmp_path: Path) -> None:
             for proof in reference_only["provenance"].values():
                 proof.pop("record_id")
                 proof.pop("provenance_ids")
-            assert grade(tmp_path / "reference-only-positive", json.dumps(reference_only).encode(),
-                         control_history, arm, phase)["success"]
+            assert grade(
+                tmp_path / "reference-only-positive",
+                json.dumps(reference_only).encode(),
+                control_history,
+                arm,
+                phase,
+            )["success"]
         # Each prohibited outer field and plausible extra citation metadata must still fail.
         if phase == "current" and arm == "atc":
             for key in UNCITED_KEYS:
                 broken = deepcopy(action)
                 broken["provenance"][key] = {"source_reference": "input.json"}
-                assert "unsupported_provenance" in grade(
-                    tmp_path / "extra-fact" / key, json.dumps(broken).encode(),
-                    control_history, arm, phase,
-                )["failures"]
+                assert (
+                    "unsupported_provenance"
+                    in grade(
+                        tmp_path / "extra-fact" / key,
+                        json.dumps(broken).encode(),
+                        control_history,
+                        arm,
+                        phase,
+                    )["failures"]
+                )
             for key, value in {
                 "source_artifact": "summary.json",
                 "observation_id": action["provenance"]["route"]["provenance_ids"][-1],
@@ -212,20 +234,35 @@ def test_fixture_actions_reject_unsupported_provenance(tmp_path: Path) -> None:
             }.items():
                 broken = deepcopy(action)
                 broken["provenance"]["route"][key] = value
-                assert "unsupported_provenance" in grade(
-                    tmp_path / "extra-metadata" / key, json.dumps(broken).encode(),
-                    control_history, arm, phase,
-                )["failures"]
+                assert (
+                    "unsupported_provenance"
+                    in grade(
+                        tmp_path / "extra-metadata" / key,
+                        json.dumps(broken).encode(),
+                        control_history,
+                        arm,
+                        phase,
+                    )["failures"]
+                )
         if phase == "post_forget" and arm == "atc":
             broken = deepcopy(action)
             broken["provenance"]["handoff"] = {"source_reference": "unavailable"}
-            assert "unsupported_provenance" in grade(
-                tmp_path / "unavailable-citation", json.dumps(broken).encode(),
-                control_history, arm, phase,
-            )["failures"]
+            assert (
+                "unsupported_provenance"
+                in grade(
+                    tmp_path / "unavailable-citation",
+                    json.dumps(broken).encode(),
+                    control_history,
+                    arm,
+                    phase,
+                )["failures"]
+            )
     assert len(receipt) == 9
-    harness.dump(tmp_path / "fixture-contract-evidence.json", {
-        "kind": "invented_fixture_contract_not_live_outcome",
-        "fixture_negatives": receipt,
-        "independent_positive_controls": 9,
-    })
+    harness.dump(
+        tmp_path / "fixture-contract-evidence.json",
+        {
+            "kind": "invented_fixture_contract_not_live_outcome",
+            "fixture_negatives": receipt,
+            "independent_positive_controls": 9,
+        },
+    )

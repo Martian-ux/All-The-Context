@@ -477,9 +477,7 @@ def test_adapter_recovery_pages_all_sources_and_resets_only_valid_unleased_rows(
     coordinator = _coordinator(tmp_path)
     base_id = _source(coordinator)
     with coordinator.ledger.store.transaction() as connection:
-        base = connection.execute(
-            "SELECT * FROM capture_sources WHERE id=?", (base_id,)
-        ).fetchone()
+        base = connection.execute("SELECT * FROM capture_sources WHERE id=?", (base_id,)).fetchone()
         assert base is not None
         columns = list(base.keys())
         insert_sql = (

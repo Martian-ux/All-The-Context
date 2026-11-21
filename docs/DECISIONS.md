@@ -10,6 +10,28 @@ retain historical acceptance fixtures and fixed legacy updater behavior. Source
 preparation does not satisfy native validation, independent review, external
 security reassessment, migration or release gates.
 
+## Beta.8 dependency floors and preserved contracts (2026-11-21)
+
+Use the minimum fixed Python lock versions: certifi 2026.10.18, filelock 4.2.1,
+MCP 2.2.0, msgpack 1.2.3, OpenTelemetry API 1.45.2 and setuptools 84.1.0.
+MCP types follows MCP at 2.2.0. Raise only the existing direct filelock/MCP
+bounds and the setuptools floor in both build-system and packaging-extra
+metadata; retain the other packages as transitive. Keep platform-marked
+resolution, lock hashes, audit enforcement and no-build-isolation controls.
+
+Preserve beta.8 metadata, dashboard inputs and ATC's authentication/resource
+contract. The provider rejects a mismatched stored audience before creating
+an SDK token; the SDK's upcoming-default warning alone warrants no runtime
+change. Dependency adaptations require a concrete compatibility failure.
+
+Keep historical artifact fixtures at beta.7 by default. Only the desktop smoke
+test invoking the current-default entrypoint supplies its runtime version to
+reach source-commit rejection and assert zero executable launches.
+The release workflow test parses both real TOML requirement scopes to require
+the setuptools floor. Restrict formatter alignment to the approved existing
+files, preserving ASTs with type comments, all comments and pragma attachment.
+These requirements supply no hosted, candidate or release acceptance.
+
 ## Authorize project truth before bounded projection (2026-11-20)
 
 Thread the requesting principal from `project_runtime._read_truth` through

@@ -1327,9 +1327,7 @@ def _codex_apply_transaction(plans: tuple[_CodexWritePlan, ...]) -> dict[Path, P
                 break
         attempted_paths = {plan.document.path for plan in attempted}
         for path, backup in backups.items():
-            if backup is not None and (
-                path not in attempted_paths or path in restored
-            ):
+            if backup is not None and (path not in attempted_paths or path in restored):
                 with suppress(OSError):
                     backup.unlink(missing_ok=True)
         if rollback_error is not None:

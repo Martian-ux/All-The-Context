@@ -45,12 +45,8 @@ def _post(
     return response.json()
 
 
-def _client(
-    client: TestClient, owner: dict[str, str], name: str
-) -> tuple[str, dict[str, str]]:
-    result = _post(
-        client, owner, "/v1/admin/clients", {"name": name, "scopes": ["context:read"]}
-    )
+def _client(client: TestClient, owner: dict[str, str], name: str) -> tuple[str, dict[str, str]]:
+    result = _post(client, owner, "/v1/admin/clients", {"name": name, "scopes": ["context:read"]})
     return result["client"]["id"], {"Authorization": f"Bearer {result['token']}"}
 
 
@@ -131,14 +127,16 @@ def _mcp_first_read(
 
     monkeypatch.setattr(http_client.httpx, "request", request)
     monkeypatch.setattr(
-        mcp_adapter, "_client",
+        mcp_adapter,
+        "_client",
         lambda: ContextHttpClient(
             "http://testserver", reader_id, reader["Authorization"].removeprefix("Bearer ")
         ),
     )
     server = mcp_adapter.build_mcp()
     call = anyio.run(
-        server.call_tool, "bootstrap_context",
+        server.call_tool,
+        "bootstrap_context",
         {"task_description": TASKS[0], "current_project": PROJECT},
     )
     assert call.structured_content is not None
@@ -171,9 +169,7 @@ def test_named_first_read_returns_useful_partial_evidence_without_activation(
     assert evidence["establishes_membership"] is False
     assert evidence["complete_task_coverage"] is False
     assert _evidence_ids(result) == {item["id"] for item in facts}
-    assert {item["id"]: item for item in evidence["items"]} == {
-        item["id"]: item for item in facts
-    }
+    assert {item["id"]: item for item in evidence["items"]} == {item["id"]: item for item in facts}
     assert evidence["used_chars"] + result["used_chars"] == result["total_used_chars"]
     assert result["total_used_chars"] <= 4000
     assert evidence["selection_metadata"]["used_chars"] == result["total_used_chars"]
@@ -188,16 +184,24 @@ def test_arbitrary_mentions_are_search_evidence_but_other_project_bindings_are_e
     client, owner, _, reader = world
     mention = _save(client, owner, "An unrelated book mentions Silver Finch in its appendix.")
     bound = _save(
-        client, owner, "Amber planning mentions Silver Finch as a comparison.",
+        client,
+        owner,
+        "Amber planning mentions Silver Finch as a comparison.",
         scopes=["project:amber"],
     )
     entity_bound = _save(
-        client, owner, "Amber compares Silver Finch for its own room choice.",
-        entity_key="project:amber", attribute_key="room",
+        client,
+        owner,
+        "Amber compares Silver Finch for its own room choice.",
+        entity_key="project:amber",
+        attribute_key="room",
     )
     identity = _save(
-        client, owner, "Amber identity mentions Silver Finch as a comparison.",
-        kind="project", structured_value={"project_name": "Amber"},
+        client,
+        owner,
+        "Amber identity mentions Silver Finch as a comparison.",
+        kind="project",
+        structured_value={"project_name": "Amber"},
     )
     result = _bootstrap(client, reader)
     assert _evidence_ids(result) == {mention["id"]}
@@ -216,18 +220,26 @@ def test_provider_bound_fact_is_excluded_while_unbound_mention_survives_http_and
     client, owner, reader_id, reader = world
     # A real public upload establishes a complete provider source, as in the
     # native binding probe. Publish the witnessed archive claims through a session.
-    export = [{
-        "id": "fixture-source",
-        "mapping": {"u": {"message": {
-            "id": "source-note", "author": {"role": "user"},
-            "content": {"parts": ["Fact: The fixture reference is a paper catalog."]},
-        }}},
-    }]
+    export = [
+        {
+            "id": "fixture-source",
+            "mapping": {
+                "u": {
+                    "message": {
+                        "id": "source-note",
+                        "author": {"role": "user"},
+                        "content": {"parts": ["Fact: The fixture reference is a paper catalog."]},
+                    }
+                }
+            },
+        }
+    ]
     bundle = io.BytesIO()
     with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("conversations.json", json.dumps(export))
     uploaded = client.post(
-        "/v1/admin/import", headers=owner,
+        "/v1/admin/import",
+        headers=owner,
         files={"file": ("fictional-provider.zip", bundle.getvalue(), "application/zip")},
         data={"provider": "chatgpt"},
     )
@@ -235,47 +247,78 @@ def test_provider_bound_fact_is_excluded_while_unbound_mention_survives_http_and
     source = uploaded.json()["source"]
     assert source["import_status"] == "complete"
     source_id = source["id"]
-    witness = _post(client, owner, "/v1/admin/clients", {
-        "name": "Fictional archive witness",
-        "scopes": ["context:ingest", "context:propose", WITNESS_EXPLICIT_USER_STATEMENT],
-    })
+    witness = _post(
+        client,
+        owner,
+        "/v1/admin/clients",
+        {
+            "name": "Fictional archive witness",
+            "scopes": ["context:ingest", "context:propose", WITNESS_EXPLICIT_USER_STATEMENT],
+        },
+    )
     writer = {"Authorization": f"Bearer {witness['token']}"}
-    begun = _post(client, writer, "/v1/ingestion/begin", {
-        "mode": "archive_import", "accessible_sources": [source_id],
-        "idempotency_key": "fictional-binding-archive",
-    })
+    begun = _post(
+        client,
+        writer,
+        "/v1/ingestion/begin",
+        {
+            "mode": "archive_import",
+            "accessible_sources": [source_id],
+            "idempotency_key": "fictional-binding-archive",
+        },
+    )
     assert begun["status"] == "open"
     common = {
-        "source_id": source_id, "source_type": "provider_archive", "source_service": "chatgpt",
-        "explicit_user_statement": True, "confidence": 1.0, "scopes": ["project"],
+        "source_id": source_id,
+        "source_type": "provider_archive",
+        "source_service": "chatgpt",
+        "explicit_user_statement": True,
+        "confidence": 1.0,
+        "scopes": ["project"],
     }
     claims = [
         {
-            **common, "kind": "project", "content": "Amber",
+            **common,
+            "kind": "project",
+            "content": "Amber",
             "structured_value": {"project_name": "Amber"},
             "source_reference": "conversations.json#conversation=other&message=anchor",
         },
         {
-            **common, "kind": "fact",
+            **common,
+            "kind": "fact",
             "content": "Amber reference manual compares Silver Finch fixtures.",
             "source_reference": "conversations.json#conversation=other&message=fact",
         },
         {
-            **common, "kind": "fact", "explicit_user_statement": False,
+            **common,
+            "kind": "fact",
+            "explicit_user_statement": False,
             "content": "Amber catalog compares Silver Finch receiver models.",
             "source_reference": "conversations.json#conversation=other&message=reviewed-fact",
             "allowed_clients": [reader_id],
         },
     ]
-    batch = _post(client, writer, "/v1/ingestion/batch", {
-        "session_id": begun["session_id"], "idempotency_key": "fictional-binding-batch",
-        "candidates": claims,
-    })
+    batch = _post(
+        client,
+        writer,
+        "/v1/ingestion/batch",
+        {
+            "session_id": begun["session_id"],
+            "idempotency_key": "fictional-binding-batch",
+            "candidates": claims,
+        },
+    )
     assert len(batch["candidate_ids"]) == 3
-    finished = _post(client, writer, "/v1/ingestion/finish", {
-        "session_id": begun["session_id"],
-        "coverage_report": {"available": [source_id], "complete": True},
-    })
+    finished = _post(
+        client,
+        writer,
+        "/v1/ingestion/finish",
+        {
+            "session_id": begun["session_id"],
+            "coverage_report": {"available": [source_id], "complete": True},
+        },
+    )
     assert finished["status"] == "finished"
     assert finished["candidate_count"] == 3
     assert finished["accessible_sources"] == [source_id]
@@ -296,7 +339,9 @@ def test_provider_bound_fact_is_excluded_while_unbound_mention_survives_http_and
             assert observation["disposition"] == "tentative"
             assert observation["record_id"] is None
             approved = _post(
-                client, owner, f"/v1/admin/candidates/{observation_id}/approve",
+                client,
+                owner,
+                f"/v1/admin/candidates/{observation_id}/approve",
                 {"reason": "Approve this fictional imported fact without changing its source."},
             )
             record_id = approved["id"]
@@ -304,9 +349,7 @@ def test_provider_bound_fact_is_excluded_while_unbound_mention_survives_http_and
         else:
             assert observation["disposition"] == "applied"
             record_id = observation["record_id"]
-        truth_response = client.get(
-            f"/v1/context/truth/{record_id}", headers=reader
-        )
+        truth_response = client.get(f"/v1/context/truth/{record_id}", headers=reader)
         assert truth_response.status_code == 200, truth_response.text
         truth = truth_response.json()
         record = truth["record"]
@@ -331,8 +374,9 @@ def test_provider_bound_fact_is_excluded_while_unbound_mention_survives_http_and
     assert approved_import["structured_value"] is None
     assert approved_import["observation_origin"] == "local_admin"
     for fact in (bound_fact, approved_import):
-        assert anchor["source_reference"].split("&message=")[0] == (
-            fact["source_reference"].split("&message=")[0]
+        assert (
+            anchor["source_reference"].split("&message=")[0]
+            == (fact["source_reference"].split("&message=")[0])
         )
     projects = client.get("/v1/admin/projects", headers=owner)
     assert projects.status_code == 200, projects.text
@@ -345,7 +389,9 @@ def test_provider_bound_fact_is_excluded_while_unbound_mention_survives_http_and
     # fallback eligibility, not a weakened fixture or a capsule admission change.
     search = _post(client, reader, "/v1/context/search", {"query": PROJECT})
     assert {item["id"] for item in search["items"]} == {
-        mention["id"], bound_fact["id"], approved_import["id"],
+        mention["id"],
+        bound_fact["id"],
+        approved_import["id"],
     }
     http_result = _bootstrap(client, reader)
     mcp_result = _mcp_first_read(client, reader_id, reader, monkeypatch)
@@ -365,9 +411,19 @@ def test_provider_bound_fact_is_excluded_while_unbound_mention_survives_http_and
 @pytest.mark.parametrize(
     "signal",
     [
-        None, "", "SF", " Silver Finch", "Silver  Finch", "Silver\nFinch",
-        "Silver Finch or Amber", "Silver Finch, Amber", "project:Silver Finch",
-        "C:/Silver Finch", "project-" + "a" * 64, "a" * 32, "a" * 161,
+        None,
+        "",
+        "SF",
+        " Silver Finch",
+        "Silver  Finch",
+        "Silver\nFinch",
+        "Silver Finch or Amber",
+        "Silver Finch, Amber",
+        "project:Silver Finch",
+        "C:/Silver Finch",
+        "project-" + "a" * 64,
+        "a" * 32,
+        "a" * 161,
         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         "one two three four five six seven eight nine",
     ],
@@ -403,11 +459,15 @@ def test_known_aliases_and_ambiguous_names_abstain_even_without_capsule_items(
     client, owner, _, reader = world
     for index in range(2 if duplicate_names else 1):
         _save(
-            client, owner, f"Fictional identity {index}", kind="project",
+            client,
+            owner,
+            f"Fictional identity {index}",
+            kind="project",
             scopes=[f"project:identity-{index}"],
             # Separate declared slots keep equal display names from reinforcing
             # one canonical identity before ambiguity can reach retrieval.
-            entity_key=f"project:identity-{index}", attribute_key="identity",
+            entity_key=f"project:identity-{index}",
+            attribute_key="identity",
             structured_value={
                 "project_name": PROJECT if duplicate_names else "Amber",
                 "aliases": [] if duplicate_names else [PROJECT],
@@ -457,8 +517,11 @@ def test_acl_scopes_confidence_conflicts_and_current_lifecycle_apply_before_sele
     # The correction's proposer must be permitted to access its target too.
     correction_clients = [owner_id, reader_id]
     good = _save(
-        client, owner, "Silver Finch visitors use Elm Hall.",
-        allowed_clients=[reader_id], confidence=0.8,
+        client,
+        owner,
+        "Silver Finch visitors use Elm Hall.",
+        allowed_clients=[reader_id],
+        confidence=0.8,
     )
     excluded = [
         _save(client, owner, "Silver Finch denied marker.", denied_clients=[reader_id]),
@@ -469,13 +532,20 @@ def test_acl_scopes_confidence_conflicts_and_current_lifecycle_apply_before_sele
         _save(client, owner, "Silver Finch expired marker.", expires_at="2000-01-01T00:00:00Z"),
     ]
     old = _save(
-        client, owner, "Silver Finch old equipment marker.", allowed_clients=correction_clients,
+        client,
+        owner,
+        "Silver Finch old equipment marker.",
+        allowed_clients=correction_clients,
     )
     # Owner approval of a tentative proposal creates a separate successor;
     # an automatic targeted proposal would update the same canonical record.
     current = _save(
-        client, owner, "Silver Finch uses loan receivers.", supersedes=old["id"],
-        explicit_user_statement=False, allowed_clients=correction_clients,
+        client,
+        owner,
+        "Silver Finch uses loan receivers.",
+        supersedes=old["id"],
+        explicit_user_statement=False,
+        allowed_clients=correction_clients,
     )
     assert current["id"] != old["id"]
     assert current["supersedes"] == old["id"]
@@ -502,7 +572,8 @@ def test_acl_scopes_confidence_conflicts_and_current_lifecycle_apply_before_sele
     observations = client.get("/v1/admin/observations", headers=owner)
     assert observations.status_code == 200, observations.text
     correction = next(
-        item for item in observations.json()["items"]
+        item
+        for item in observations.json()["items"]
         if item["id"] == correction_link["observation_id"]
     )
     assert correction["record_id"] == current["id"]
@@ -517,7 +588,8 @@ def test_acl_scopes_confidence_conflicts_and_current_lifecycle_apply_before_sele
     assert old_truth["superseded_by"] == [current["id"]]
     assert old_truth["source"] is None
     assert all(
-        link[key] is None for link in old_truth["evidence"]
+        link[key] is None
+        for link in old_truth["evidence"]
         for key in ("source_id", "source_service", "source_type")
     )
     assert client.get(f"/v1/context/truth/{current['id']}", headers=outsider).status_code == 404
@@ -526,11 +598,17 @@ def test_acl_scopes_confidence_conflicts_and_current_lifecycle_apply_before_sele
     assert current["content"] not in outsider_result
     excluded.append(old)
     for room in ("copper", "indigo"):
-        excluded.append(_save(
-            client, owner, f"Silver Finch disputed room is {room}.",
-            entity_key="fictional:finch", attribute_key="room",
-            structured_value={"room": room}, explicit_user_statement=False,
-        ))
+        excluded.append(
+            _save(
+                client,
+                owner,
+                f"Silver Finch disputed room is {room}.",
+                entity_key="fictional:finch",
+                attribute_key="room",
+                structured_value={"room": room},
+                explicit_user_statement=False,
+            )
+        )
     truth = client.get(f"/v1/context/truth/{excluded[-1]['id']}", headers=reader)
     assert truth.status_code == 200, truth.text
     assert truth.json()["conflict_state"] == "active"
@@ -547,9 +625,7 @@ def test_acl_scopes_confidence_conflicts_and_current_lifecycle_apply_before_sele
         if record["id"] != old["id"]:
             assert record["id"] not in serialized
         assert record["content"] not in serialized
-    assert "project_search_evidence" not in _bootstrap(
-        client, reader, requested_scopes=["work"]
-    )
+    assert "project_search_evidence" not in _bootstrap(client, reader, requested_scopes=["work"])
 
 
 @pytest.mark.parametrize("delta", [-1, 0, 1])
@@ -575,7 +651,9 @@ def test_raw_capture_mentions_do_not_become_first_read_evidence(
 ) -> None:
     client, owner, _, reader = world
     capture = _post(
-        client, owner, "/v1/admin/clients",
+        client,
+        owner,
+        "/v1/admin/clients",
         {"name": "Fictional capture", "scopes": ["context:capture"]},
     )
     capture_headers = {
@@ -584,7 +662,9 @@ def test_raw_capture_mentions_do_not_become_first_read_evidence(
     }
     for sequence, role in enumerate(("user", "assistant", "imported"), start=1):
         captured = _post(
-            client, capture_headers, "/v1/lifecycle/events",
+            client,
+            capture_headers,
+            "/v1/lifecycle/events",
             {
                 "event_id": f"fictional-first-read-{sequence}",
                 "idempotency_key": f"00000000-0000-4000-8000-{sequence:012d}",
@@ -625,8 +705,11 @@ def test_ordinary_complete_pack_and_activated_capsule_do_not_add_fallback(
 ) -> None:
     client, owner, _, reader = world
     fact = _save(
-        client, owner, "Juniper workflow uses a tally.",
-        kind="fact", scopes=["project:juniper"],
+        client,
+        owner,
+        "Juniper workflow uses a tally.",
+        kind="fact",
+        scopes=["project:juniper"],
     )
     result = _bootstrap(
         client, reader, task_description="Juniper workflow", current_project="juniper"
@@ -635,7 +718,11 @@ def test_ordinary_complete_pack_and_activated_capsule_do_not_add_fallback(
     assert result["project_context"]["capsule"] is None
     assert "project_search_evidence" not in result
     _save(
-        client, owner, PROJECT, kind="project", scopes=["project:finch"],
+        client,
+        owner,
+        PROJECT,
+        kind="project",
+        scopes=["project:finch"],
         structured_value={"project_name": PROJECT},
     )
     _save(client, owner, "Silver Finch uses Elm Hall.", scopes=["project:finch"])
@@ -657,10 +744,15 @@ def test_corrected_and_forgotten_first_read_survives_core_and_mcp_recreation(
         owner, reader_id, reader = _setup(client)
         fact = _save(client, owner, old_content)
         correction = _post(
-            client, owner, "/v1/ingestion/propose",
+            client,
+            owner,
+            "/v1/ingestion/propose",
             {
-                "kind": "correction", "content": current_content, "supersedes": fact["id"],
-                "explicit_user_statement": True, "source_reference": "fictional:revised-room",
+                "kind": "correction",
+                "content": current_content,
+                "supersedes": fact["id"],
+                "explicit_user_statement": True,
+                "source_reference": "fictional:revised-room",
                 "evidence": "The fictional owner revised the visitor room to Elm Hall.",
             },
         )
@@ -684,6 +776,8 @@ def test_corrected_and_forgotten_first_read_survives_core_and_mcp_recreation(
                 assert item["content"] == current_content
                 assert item["source_reference"] == "fictional:revised-room"
                 _post(
-                    client, owner, "/v1/ingestion/forget",
+                    client,
+                    owner,
+                    "/v1/ingestion/forget",
                     {"record_id": fact["id"], "reason": "Forget the fictional room."},
                 )

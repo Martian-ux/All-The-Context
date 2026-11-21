@@ -137,9 +137,7 @@ def test_cli_encrypted_export_restore_round_trip(
     assert _CLI_SOURCE_BYTES not in encrypted
     destination = CoreConfig.in_directory(tmp_path / "restored")
 
-    restored = _run_cli(
-        tmp_path, "restore", str(archive), "--data-dir", str(destination.data_dir)
-    )
+    restored = _run_cli(tmp_path, "restore", str(archive), "--data-dir", str(destination.data_dir))
 
     assert restored.returncode == 0, (restored.stdout, restored.stderr)
     result = json.loads(restored.stdout)

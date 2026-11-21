@@ -260,21 +260,37 @@ def fixture_client_events() -> list[dict[str, Any]]:
     return [
         {"type": "thread.started", "thread_id": "neutral-thread-cobalt"},
         {"type": "turn.started"},
-        {"type": "item.completed", "item": {
-            "id": "neutral-notice-willow", "type": "error",
-            "message": "Optional feature notice for fixture testing.",
-        }},
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "neutral-notice-willow",
+                "type": "error",
+                "message": "Optional feature notice for fixture testing.",
+            },
+        },
         *[
-            {"type": "item.completed", "item": {
-                "id": f"neutral-item-willow-{index}", "type": "mcp_tool_call",
-                "server": "project", "tool": tool, "status": "completed",
-                "arguments": {}, "result": {"fixture_only": True},
-            }}
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": f"neutral-item-willow-{index}",
+                    "type": "mcp_tool_call",
+                    "server": "project",
+                    "tool": tool,
+                    "status": "completed",
+                    "arguments": {},
+                    "result": {"fixture_only": True},
+                },
+            }
             for index, tool in enumerate(("list_artifacts", "read_artifact") * 2)
         ],
-        {"type": "turn.completed", "usage": {
-            "input_tokens": 120, "cached_input_tokens": 30, "output_tokens": 12,
-        }},
+        {
+            "type": "turn.completed",
+            "usage": {
+                "input_tokens": 120,
+                "cached_input_tokens": 30,
+                "output_tokens": 12,
+            },
+        },
     ]
 
 
@@ -631,8 +647,9 @@ def test_fixture_warning_allows_mocked_native_probe_without_fabricating_action(
         materialize_trace(owned, shape)
         record_escape_denials(owned)
         stdout = owned / "client.jsonl"
-        stdout.write_text("".join(json.dumps(event) + "\n" for event in fixture_client_events()),
-                          encoding="utf-8")
+        stdout.write_text(
+            "".join(json.dumps(event) + "\n" for event in fixture_client_events()), encoding="utf-8"
+        )
         return {
             "returncode": 0,
             "timed_out": False,

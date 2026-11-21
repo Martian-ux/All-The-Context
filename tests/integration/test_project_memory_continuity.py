@@ -254,21 +254,26 @@ def test_project_decision_correction_and_forget_survive_core_recreation(
     # No post-correction retrieval happens until both Core and HTTP client are recreated.
     with CoreService(config) as service, TestClient(create_app(config, service=service)) as client:
         assert client.get(f"/v1/context/{record_id}", headers=writer).status_code == 403
-        assert client.post(
-            "/v1/ingestion/propose", headers=reader, json=correction_payload
-        ).status_code == 403
+        assert (
+            client.post(
+                "/v1/ingestion/propose", headers=reader, json=correction_payload
+            ).status_code
+            == 403
+        )
         forget_payload = {"record_id": record_id, "reason": "Forget the fictional region decision."}
-        assert client.post(
-            "/v1/ingestion/forget", headers=reader, json=forget_payload
-        ).status_code == 403
+        assert (
+            client.post("/v1/ingestion/forget", headers=reader, json=forget_payload).status_code
+            == 403
+        )
         for route in (f"/v1/context/{record_id}", f"/v1/context/truth/{record_id}"):
             assert client.get(route, headers=outsider).status_code == 404
         denied = client.post("/v1/ingestion/propose", headers=outsider, json=correction_payload)
         assert denied.status_code == 200, denied.text
         assert denied.json()["disposition"] == "ignored"
-        assert client.post(
-            "/v1/ingestion/forget", headers=outsider, json=forget_payload
-        ).status_code == 404
+        assert (
+            client.post("/v1/ingestion/forget", headers=outsider, json=forget_payload).status_code
+            == 404
+        )
         denied_search, denied_bootstrap = _retrieve_project(client, outsider)
         assert denied_search["items"] == []
         assert denied_bootstrap["items"] == []

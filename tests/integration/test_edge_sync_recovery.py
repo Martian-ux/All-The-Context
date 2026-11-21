@@ -512,10 +512,13 @@ def test_public_key_claim_keeps_edge_inert_then_rotates_durable_credentials(
             assert claimed.claim_bundle is None
             assert prepared.bundle.replication_token != claimed.bundle.replication_token
             assert claim_store.acknowledged()
-            assert client.post(
-                "/v1/edge/claim/ack",
-                headers={"Authorization": f"Bearer {new_token}"},
-            ).status_code == 200
+            assert (
+                client.post(
+                    "/v1/edge/claim/ack",
+                    headers={"Authorization": f"Bearer {new_token}"},
+                ).status_code
+                == 200
+            )
             manager = EdgeSyncManager(connections, core.store)
             assert manager.sync_now(http_client=client)["state"] == "ready"
             assert client.get("/about").status_code == 200

@@ -23,7 +23,7 @@ LOCKS = {
 
 
 def _artifact_tree(
-    tmp_path: Path, *, source_commit: str = SOURCE_COMMIT
+    tmp_path: Path, *, source_commit: str = SOURCE_COMMIT, version: str = VERSION
 ) -> tuple[Path, Path, Path]:
     root = tmp_path / "artifact-root"
     paths = contract.native_component_paths(root)
@@ -51,7 +51,7 @@ def _artifact_tree(
     snapshot = provenance.BuildSnapshot("clean-build-1", tuple(components))
     second = provenance.BuildSnapshot("clean-build-2", tuple(components))
     payload = provenance.build_payload(
-        version=VERSION,
+        version=version,
         source_commit=source_commit,
         toolchain=TOOLCHAIN,
         locks=LOCKS,
@@ -169,7 +169,7 @@ def test_contract_rejects_manifest_bound_to_wrong_source_commit(
 def test_desktop_smoke_rejects_wrong_source_provenance_before_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, manifest, checksum = _artifact_tree(tmp_path)
+    root, manifest, checksum = _artifact_tree(tmp_path, version=desktop_smoke.__version__)
     monkeypatch.setattr(
         "sys.argv",
         [

@@ -583,10 +583,12 @@ class ArtifactStore:
             """Read an exact listed name; filenames, directories and URLs are unsupported."""
             return self.read(name)
 
-        @server.tool(description=(
-            "Persist a bounded JSON dispatch action (each attempt is retained). "
-            + ACTION_CONTRACT_TEXT
-        ))
+        @server.tool(
+            description=(
+                "Persist a bounded JSON dispatch action (each attempt is retained). "
+                + ACTION_CONTRACT_TEXT
+            )
+        )
         def write_result(result: dict[str, Any]) -> dict[str, Any]:
             """Persist a bounded JSON dispatch action (each attempt is retained)."""
             return self.write(result)
@@ -1099,7 +1101,8 @@ class NativeTrace:
             payload = event["payload"]
             if payload.get("type") == "inference_completed":
                 matches = [
-                    item for item in inventory
+                    item
+                    for item in inventory
                     if item["inference_call_id"] == payload.get("inference_call_id")
                 ]
                 response = self.payload(payload.get("response_payload"), "inference_response")
@@ -1215,7 +1218,8 @@ class NativeTrace:
                     "reasoning_effort": request["reasoning"]["effort"],
                     "previous_response_id": parent_id,
                     "declaration_seq": parent["declaration_seq"]
-                    if not declarations and parent is not None else event["seq"],
+                    if not declarations and parent is not None
+                    else event["seq"],
                     "tools": sorted(names),
                     "tools_sha256": hashlib.sha256(
                         json.dumps(tools, sort_keys=True).encode()
@@ -1305,7 +1309,8 @@ class NativeTrace:
             "source_js_sha256": hashlib.sha256(start["payload"]["source_js"].encode()).hexdigest(),
             "requested_source_sha256": hashlib.sha256(source.encode()).hexdigest(),
             "source_representation": "exact_plus_terminal_lf"
-            if start["payload"]["source_js"] == source + "\n" else "exact",
+            if start["payload"]["source_js"] == source + "\n"
+            else "exact",
             "response_payload": end["payload"]["response_payload"],
             "texts": texts,
         }
@@ -1582,7 +1587,8 @@ def verify_resource_failures(
             continue
         call_id = terminal.get("tool_call_id")
         starts = [
-            event for event in trace.events
+            event
+            for event in trace.events
             if event["payload"].get("type") == "tool_call_started"
             and event["payload"].get("tool_call_id") == call_id
         ]
@@ -1599,8 +1605,10 @@ def verify_resource_failures(
         except (KeyError, TypeError, ValueError) as error:
             raise BoundaryError("failed native tool has malformed arguments") from error
         checks = [
-            check for check in proof["checks"]
-            if check["name"] == invocation.get("tool_name") and check["args"] == args
+            check
+            for check in proof["checks"]
+            if check["name"] == invocation.get("tool_name")
+            and check["args"] == args
             and isinstance(check.get("rejected"), str)
         ]
         if (
@@ -1608,9 +1616,8 @@ def verify_resource_failures(
             or invocation.get("tool_name") != "read_mcp_resource"
             or invocation.get("tool_namespace") is not None
             or invocation["payload"].get("type") != "function"
-            or payload.get("requester") != {
-                "type": "code_cell", "runtime_cell_id": proof["runtime_cell_id"]
-            }
+            or payload.get("requester")
+            != {"type": "code_cell", "runtime_cell_id": proof["runtime_cell_id"]}
             or not proof["start_seq"] < start["seq"] < end["seq"] < proof["end_seq"]
             or any(
                 event.get("thread_id") != proof["thread_id"]
@@ -1622,11 +1629,13 @@ def verify_resource_failures(
                 event["payload"].get("type") == "tool_call_ended"
                 and event["payload"].get("tool_call_id") == call_id
                 for event in trace.events
-            ) != 1
+            )
+            != 1
         ):
             raise BoundaryError("failed native tool is not a correlated expected resource denial")
         runtimes = [
-            event for event in trace.events
+            event
+            for event in trace.events
             if event["payload"].get("type") == "tool_call_runtime_started"
             and event["payload"].get("tool_call_id") == call_id
         ]
@@ -1639,13 +1648,16 @@ def verify_resource_failures(
                 not start["seq"] < runtime["seq"] < end["seq"]
                 or runtime.get("thread_id") != proof["thread_id"]
                 or runtime.get("codex_turn_id") != proof["codex_turn_id"]
-                or runtime["payload"].get("kind") != {
-                    "type": "mcp", "server": args["server"], "tool": "read_mcp_resource"
-                }
-                or runtime_value != {
-                    "call_id": call_id, "turn_id": proof["codex_turn_id"],
+                or runtime["payload"].get("kind")
+                != {"type": "mcp", "server": args["server"], "tool": "read_mcp_resource"}
+                or runtime_value
+                != {
+                    "call_id": call_id,
+                    "turn_id": proof["codex_turn_id"],
                     "invocation": {
-                        "server": args["server"], "tool": "read_mcp_resource", "arguments": args
+                        "server": args["server"],
+                        "tool": "read_mcp_resource",
+                        "arguments": args,
                     },
                 }
             ):
@@ -1654,14 +1666,21 @@ def verify_resource_failures(
             raise BoundaryError("unconfigured resource server unexpectedly reached MCP")
         if any(item["arguments"] == args for item in expected):
             raise BoundaryError("ambiguous repeated native resource denial")
-        expected.append({
-            "tool_call_id": call_id, "arguments": args, "error": result["error"],
-            "start_seq": start["seq"], "end_seq": end["seq"], "client_item_id": None,
-        })
+        expected.append(
+            {
+                "tool_call_id": call_id,
+                "arguments": args,
+                "error": result["error"],
+                "start_seq": start["seq"],
+                "end_seq": end["seq"],
+                "client_item_id": None,
+            }
+        )
     for event in classify_client_events(client_events)["tool_errors"]:
         item = event["item"]
         matches = [
-            native for native in expected
+            native
+            for native in expected
             if item.get("tool") == "read_mcp_resource"
             and item.get("server") == native["arguments"]["server"]
             and item.get("arguments") == native["arguments"]
@@ -1717,12 +1736,15 @@ class RealClient:
         ):
             raise BoundaryError("one full batch only: at most 12 fresh sessions; no per-arm retry")
         self.execution_slots.add(slot)
-        dump(self.directory / "execution-reservations.json", {
-            "action_protocol_id": ACTION_PROTOCOL_ID,
-            "max_executions": MAX_REAL_EXECUTIONS,
-            "reserved_slots": sorted(self.execution_slots),
-            "per_arm_retry_allowed": False,
-        })
+        dump(
+            self.directory / "execution-reservations.json",
+            {
+                "action_protocol_id": ACTION_PROTOCOL_ID,
+                "max_executions": MAX_REAL_EXECUTIONS,
+                "reserved_slots": sorted(self.execution_slots),
+                "per_arm_retry_allowed": False,
+            },
+        )
 
     def remaining(self, limit: int) -> float:
         remaining = self.deadline - time.monotonic()
@@ -1982,8 +2004,7 @@ class RealClient:
                 "route (destination), strategy, completed (completed task names), task "
                 "(unfinished task name), handoff (label), reviewer, launch_window, rows "
                 "(objects with id and units), repeat_completed (boolean), unknown (field names), "
-                "provenance (fact citations). "
-                + ACTION_CONTRACT_TEXT + " "
+                "provenance (fact citations). " + ACTION_CONTRACT_TEXT + " "
                 "Do not invent unavailable facts. "
                 "You may make multiple useful retrievals. Finish when the action is persisted "
                 "or an actual tool/permission error prevents progress."
@@ -2163,9 +2184,11 @@ def experiment_complete(report: dict[str, Any]) -> bool:
     for cell in cells:
         evaluation = cell.get("evaluation")
         matches = [
-            item for item in executions
+            item
+            for item in executions
             if item.get("directory") == cell.get("directory")
-            and item.get("arm") == cell.get("arm") and item.get("probe") is False
+            and item.get("arm") == cell.get("arm")
+            and item.get("probe") is False
         ]
         if (
             cell.get("fresh_session") is not True
@@ -2177,9 +2200,12 @@ def experiment_complete(report: dict[str, Any]) -> bool:
             or not isinstance(evaluation, dict)
             or type(evaluation.get("success")) is not bool
             or not isinstance(evaluation.get("failures"), list)
-            or evaluation.get("classification") not in {
-                "task_success", "warranted_uncertainty",
-                "observed_action_failure", "missing_artifact",
+            or evaluation.get("classification")
+            not in {
+                "task_success",
+                "warranted_uncertainty",
+                "observed_action_failure",
+                "missing_artifact",
             }
         ):
             return False
@@ -2233,16 +2259,19 @@ def run_harness(output: Path, *, mode: str, model: str = "gpt-6.1-sol", effort: 
         ),
     }
     dump(output / "report.json", report)
-    dump(output / "frozen-action-protocol.json", {
-        **action_protocol_metadata(),
-        "contract": ACTION_CONTRACT,
-        "planned_probes": list(ARMS),
-        "planned_cells": report["planned_cells"],
-        "limits": report["limits"],
-        "model": model,
-        "effort": effort,
-        "one_full_batch_only": True,
-    })
+    dump(
+        output / "frozen-action-protocol.json",
+        {
+            **action_protocol_metadata(),
+            "contract": ACTION_CONTRACT,
+            "planned_probes": list(ARMS),
+            "planned_cells": report["planned_cells"],
+            "limits": report["limits"],
+            "model": model,
+            "effort": effort,
+            "one_full_batch_only": True,
+        },
+    )
     dump(output / "frozen-fixture.json", fixture)
     report["fixture_file_sha256"] = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
     report["fixture_sha256"] = hashlib.sha256(
@@ -2435,7 +2464,8 @@ def main() -> int:
     parser.add_argument("--model", default="gpt-6.1-sol", choices=("gpt-6.1-sol",))
     parser.add_argument("--effort", default="xhigh", choices=("xhigh",))
     parser.add_argument(
-        "--require-complete", action="store_true",
+        "--require-complete",
+        action="store_true",
         help="return nonzero unless all nine actual cells have verified isolation and evaluation",
     )
     parser.add_argument("--artifact-server", type=Path, help=argparse.SUPPRESS)

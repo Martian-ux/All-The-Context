@@ -107,8 +107,16 @@ class _PushAckClient:
 @pytest.mark.parametrize(
     "fault",
     [
-        "rejected", "wrong_event", "wrong_sequence", "wrong_types", "non_object", "malformed",
-        "accepted_number", "boolean_sequence", "float_sequence", "replayed_string",
+        "rejected",
+        "wrong_event",
+        "wrong_sequence",
+        "wrong_types",
+        "non_object",
+        "malformed",
+        "accepted_number",
+        "boolean_sequence",
+        "float_sequence",
+        "replayed_string",
     ],
 )
 def test_push_requires_exact_relay_ack_and_retries_same_event(
@@ -168,17 +176,23 @@ def test_push_requires_exact_relay_ack_and_retries_same_event(
         sync.push()
 
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT delivered_at FROM replication_events WHERE id=?", (event.event_id,)
-        ).fetchone()[0] is None
+        assert (
+            connection.execute(
+                "SELECT delivered_at FROM replication_events WHERE id=?", (event.event_id,)
+            ).fetchone()[0]
+            is None
+        )
     first_sent = client.sent[0]
     client.body = exact_ack
     assert sync.push() == {"delivered": 1, "replayed": 0, "remaining": 0}
     assert client.sent[1] == first_sent
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT delivered_at FROM replication_events WHERE id=?", (event.event_id,)
-        ).fetchone()[0] is not None
+        assert (
+            connection.execute(
+                "SELECT delivered_at FROM replication_events WHERE id=?", (event.event_id,)
+            ).fetchone()[0]
+            is not None
+        )
     sync.close()
 
 

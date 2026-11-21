@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 from allthecontext.acceptance_receipt import (
@@ -286,9 +287,13 @@ def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
     assert "--disable-pip" in audit_script
     assert "uv export" in audit_script or '"export"' in audit_script
     assert "pip-audit==2.10.1" in _read(ROOT / "pyproject.toml")
-    pyproject = _read(ROOT / "pyproject.toml")
-    assert "setuptools>=75" in pyproject
-    assert '"wheel"' in pyproject
+    pyproject = tomllib.loads(_read(ROOT / "pyproject.toml"))
+    for requirements in (
+        pyproject["build-system"]["requires"],
+        pyproject["project"]["optional-dependencies"]["packaging"],
+    ):
+        assert "setuptools>=84.1.0" in requirements
+        assert "wheel" in requirements
 
     for name in (
         "ci.yml",

@@ -6,6 +6,19 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-11-21 beta.8 dependency and fixture invariants
+
+These are objective source requirements; native validation, independent review,
+hosted checks and candidate/release acceptance retain their separate gates.
+
+| Requirement | Source and regression contract |
+|---|---|
+| Minimum fixed dependencies without promoting transitives | `uv.lock` selects certifi 2026.10.18, filelock 4.2.1, MCP/MCP types 2.2.0, msgpack 1.2.3, OpenTelemetry API 1.45.2 and setuptools 84.1.0. `pyproject.toml` raises existing filelock/MCP bounds and both setuptools scopes; certifi, msgpack, OpenTelemetry API and MCP types remain transitive. Platform markers and artifact hashes remain part of the lock contract. |
+| Correct build floor in both actual metadata scopes | `test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools` parses TOML and requires `setuptools>=84.1.0` and wheel in both `build-system.requires` and `project.optional-dependencies.packaging`, retaining pinned uv, hash enforcement and no-build-isolation assertions. |
+| Current-default provenance rejection without rewriting history | `test_packaged_artifact_contract.py::_artifact_tree` defaults to historical `VERSION`; only `test_desktop_smoke_rejects_wrong_source_provenance_before_launch` supplies `desktop_smoke.__version__`, retaining the source-commit error and zero executable-launch assertion. |
+| Dependency changes preserve product and authorization contracts | Beta.8 metadata and dashboard inputs stay unchanged. Existing authentication/resource checks, including stored-audience rejection before SDK token creation, remain authoritative; an upcoming SDK default warning is not a compatibility failure. |
+| Bounded formatting preserves meaning | The approved 17 existing Python paths must match the pinned formatter output and preserve ASTs including type comments, all Python comment text and review/lint pragma statement attachment. No formatting outside that set is authorized. |
+
 ### 2026-11-21 public beta.8 source contract
 
 | Requirement | Source and regression contract |

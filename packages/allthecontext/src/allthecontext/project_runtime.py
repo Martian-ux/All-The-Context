@@ -263,10 +263,7 @@ def _record_is_current_anchor(record: MemoryTruthRecordOut, *, as_of: str) -> bo
         or record.conflict_state is not TruthConflictState.NONE
         or record.record.kind.casefold() not in {"project", "project_identity"}
         or not record.record.explicit_user_statement
-        or (
-            expiry is not None
-            and datetime.fromisoformat(expiry) <= datetime.fromisoformat(as_of)
-        )
+        or (expiry is not None and datetime.fromisoformat(expiry) <= datetime.fromisoformat(as_of))
     ):
         return False
     return not (record.source is not None and record.source.deleted_at is not None)
@@ -560,9 +557,8 @@ def project_search_label(
         or len(words) > 8
         or bool(set(words) & {"and", "or"})
         or label.startswith("project-")
-        or re.fullmatch(
-            r"[0-9a-f]{16,}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", label
-        ) is not None
+        or re.fullmatch(r"[0-9a-f]{16,}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", label)
+        is not None
     ):
         return None
     matches = [
