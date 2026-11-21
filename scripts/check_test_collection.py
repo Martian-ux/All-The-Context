@@ -104,6 +104,7 @@ WINDOWS_SINGLETON_NODE_IDS = frozenset(
 )
 # Hosted receipt replay places a few measured slow groups on lighter runners.
 WINDOWS_FILE_SHARDS = {
+    "tests/integration/test_mcp_stdio.py": 1,
     PROJECT_FIRST_READ_TEST_FILE: 2,
     PROJECT_MEMORY_TEST_FILE: 8,
     "tests/unit/test_memory_reliability_lab_e01b.py": 4,

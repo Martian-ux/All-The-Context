@@ -172,6 +172,7 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
     first_read = "tests/integration/test_project_first_read.py"
     continuity = "tests/integration/test_project_memory_continuity.py"
     e01b = "tests/unit/test_memory_reliability_lab_e01b.py"
+    stdio = "tests/integration/test_mcp_stdio.py"
     split_modules = [
         f"{path}::test_family[{case}@value]"
         for path in (agent, first_read)
@@ -183,13 +184,15 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
     continuity_cases = [f"{continuity_function}[{case}]" for case in ("allow", "deny")]
     ordinary_cases = [f"{continuity_function}[other]", f"{continuity}::test_unrelated"]
     e01b_nodes = [f"{e01b}::test_keep", f"{e01b}::test_other"]
+    stdio_nodes = [f"{stdio}::test_start", f"{stdio}::test_roundtrip"]
     first_read_cases = [node for node in split_modules if node.startswith(first_read + "::")]
-    moved = Counter(continuity_cases + ordinary_cases + e01b_nodes + first_read_cases)
+    moved = Counter(continuity_cases + ordinary_cases + e01b_nodes + stdio_nodes + first_read_cases)
     nodes = (
         split_modules
         + continuity_cases
         + ordinary_cases
         + e01b_nodes
+        + stdio_nodes
         + [f"tests/test_{i}.py::test_other" for i in range(20)]
     )
 
@@ -204,7 +207,7 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
         assert default_groups[nodes[first]] == default_groups[nodes[other]]
         assert windows_groups[nodes[first]] == windows_groups[nodes[second]]
         assert windows_groups[nodes[first]] != windows_groups[nodes[other]]
-    for intact in (ordinary_cases, e01b_nodes):
+    for intact in (ordinary_cases, e01b_nodes, stdio_nodes):
         assert len({windows_groups[node] for node in intact}) == 1
     assert len({default_groups[node] for node in continuity_cases + ordinary_cases}) == 1
     assert len({windows_groups[node] for node in continuity_cases + ordinary_cases}) == 3
@@ -215,6 +218,7 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
     assert [shard - moved for shard in new] == [shard - moved for shard in old]
     assert new[8] & moved == Counter(continuity_cases + ordinary_cases)
     assert new[4] & moved == Counter(e01b_nodes)
+    assert new[1] & moved == Counter(stdio_nodes)
     assert new[2] & moved == Counter(first_read_cases)
     checker.verify_complete_disjoint_union(complete, new)
 
