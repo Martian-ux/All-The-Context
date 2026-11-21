@@ -193,7 +193,7 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
         + ordinary_cases
         + e01b_nodes
         + stdio_nodes
-        + [f"tests/test_{i}.py::test_other" for i in range(20)]
+        + [f"tests/test_{i}.py::test_other" for i in range(220)]
     )
 
     default_groups = checker.test_case_groups(nodes)
