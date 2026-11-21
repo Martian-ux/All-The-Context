@@ -5,9 +5,12 @@ import re
 import tomllib
 from pathlib import Path
 
+from allthecontext import __version__
+from allthecontext.build_identity import PRODUCT_VERSION, runtime_build_identity_status
+
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "0.1.0-beta.7"
-PYTHON_LOCK_VERSION = "0.1.0b7"
+VERSION = "0.1.0-beta.8"
+PYTHON_LOCK_VERSION = "0.1.0b8"
 
 
 def test_candidate_version_is_coherent_across_release_metadata() -> None:
@@ -27,6 +30,7 @@ def test_candidate_version_is_coherent_across_release_metadata() -> None:
         if isinstance(package, dict) and package.get("name") == "all-the-context"
     ]
 
+    assert __version__ == PRODUCT_VERSION == runtime_build_identity_status()["version"] == VERSION
     assert pyproject["project"]["version"] == VERSION
     assert re.search(rf'^__version__ = "{re.escape(VERSION)}"$', runtime, re.MULTILINE)
     assert dashboard["version"] == VERSION

@@ -115,6 +115,155 @@ def test_start_operation_creates_id_before_bytes_and_refuses_boundary_plus_one(
     assert total == 0
 
 
+def test_terminal_import_cancel_is_truthful_and_preserves_completed_telemetry(
+    tmp_path: Path,
+) -> None:
+    core, ops = _ops(tmp_path)
+    operation = ops.start_operation(declared_byte_size=8, filename="synthetic.jsonl")
+    operation_id = str(operation["operation_id"])
+    core.store.update_import_operation(
+        operation_id,
+        status="complete",
+        phase="complete",
+        bytes_received=8,
+        bytes_committed=8,
+        progress={"phase": "complete", "percent": 100, "marker": "unchanged"},
+        result={"source": {"id": "synthetic-source"}},
+        completed=True,
+    )
+    before = ops.get_operation(operation_id)
+
+    response = core.store.request_import_operation_cancel(operation_id)
+    after = ops.get_operation(operation_id)
+
+    assert response == {
+        "operation_id": operation_id,
+        "status": "complete",
+        "cancel_requested": False,
+        "already_terminal": True,
+        "source_id": None,
+    }
+    for field in (
+        "status",
+        "phase",
+        "bytes_received",
+        "bytes_committed",
+        "progress",
+        "result",
+        "error_message",
+        "updated_at",
+        "completed_at",
+    ):
+        assert after[field] == before[field]
+
+
+def test_cancel_racing_upload_claim_has_one_atomic_initial_transition(tmp_path: Path) -> None:
+    core, ops = _ops(tmp_path)
+    operation = ops.start_operation(declared_byte_size=8, filename="race.jsonl")
+    operation_id = str(operation["operation_id"])
+    barrier = threading.Barrier(3)
+    results: dict[str, object] = {}
+
+    def cancel() -> None:
+        barrier.wait(timeout=3)
+        results["cancel"] = core.store.request_import_operation_cancel(operation_id)
+
+    def claim() -> None:
+        barrier.wait(timeout=3)
+        try:
+            results["claim"] = core.store.claim_import_operation_upload(operation_id)
+        except BaseException as error:
+            results["claim_error"] = error
+
+    cancel_thread = threading.Thread(target=cancel)
+    claim_thread = threading.Thread(target=claim)
+    cancel_thread.start()
+    claim_thread.start()
+    barrier.wait(timeout=3)
+    cancel_thread.join(timeout=3)
+    claim_thread.join(timeout=3)
+
+    assert not cancel_thread.is_alive() and not claim_thread.is_alive()
+    cancellation = results["cancel"]
+    assert isinstance(cancellation, dict)
+    final = ops.get_operation(operation_id)
+    if cancellation.get("immediate"):
+        assert cancellation["status"] == "cancelled"
+        assert isinstance(results.get("claim_error"), InvalidStateError)
+        assert final["status"] == "cancelled"
+    else:
+        assert cancellation["status"] == "uploading"
+        assert isinstance(results.get("claim"), dict)
+        assert final["status"] == "uploading"
+        assert final["cancel_requested"] is True
+
+
+def test_completion_winning_cancel_race_preserves_exact_terminal_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    operation_id = str(ops.start_operation(declared_byte_size=8)["operation_id"])
+    core.store.claim_import_operation_upload(operation_id)
+    core.store.update_import_operation(operation_id, status="processing", phase="parsing")
+    cancel_boundary = threading.Event()
+    cancellation: dict[str, object] = {}
+    original_get = core.store.get_import_operation
+    original_transaction = core.store.transaction
+
+    def observed_get(identifier: str):  # type: ignore[no-untyped-def]
+        result = original_get(identifier)
+        if threading.current_thread() is cancel_thread:
+            cancel_boundary.set()
+        return result
+
+    @contextmanager
+    def observed_transaction(*, immediate: bool = True):  # type: ignore[no-untyped-def]
+        if threading.current_thread() is cancel_thread:
+            cancel_boundary.set()
+        with original_transaction(immediate=immediate) as connection:
+            yield connection
+
+    def cancel() -> None:
+        cancellation.update(core.store.request_import_operation_cancel(operation_id))
+
+    cancel_thread = threading.Thread(target=cancel)
+    monkeypatch.setattr(core.store, "get_import_operation", observed_get)
+    monkeypatch.setattr(core.store, "transaction", observed_transaction)
+    with original_transaction() as connection:
+        connection.execute(
+            "UPDATE import_operations SET status='complete',phase='complete',"
+            "bytes_received=8,bytes_committed=8,progress_json=?,result_json=?,"
+            "updated_at=?,completed_at=? WHERE id=?",
+            (
+                '{"phase":"complete","percent":100}',
+                '{"source":{"id":"synthetic"}}',
+                "2026-11-15T00:00:01Z",
+                "2026-11-15T00:00:01Z",
+                operation_id,
+            ),
+        )
+        expected = dict(
+            connection.execute(
+                "SELECT * FROM import_operations WHERE id=?", (operation_id,)
+            ).fetchone()
+        )
+        cancel_thread.start()
+        assert cancel_boundary.wait(timeout=3)
+    cancel_thread.join(timeout=3)
+
+    assert not cancel_thread.is_alive()
+    assert cancellation["already_terminal"] is True
+    assert cancellation["cancel_requested"] is False
+    with core.store.connect() as connection:
+        actual = dict(
+            connection.execute(
+                "SELECT * FROM import_operations WHERE id=?", (operation_id,)
+            ).fetchone()
+        )
+    assert actual == expected
+
+
 def test_stream_upload_commits_within_one_chunk_and_completes(tmp_path: Path) -> None:
     core, ops = _ops(tmp_path)
     payload = b'{"kind":"goal","content":"Ship durable import operations"}\n'

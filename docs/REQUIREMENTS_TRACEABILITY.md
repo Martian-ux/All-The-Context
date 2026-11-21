@@ -6,6 +6,125 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-11-21 beta.8 dependency and fixture invariants
+
+These are objective source requirements; native validation, independent review,
+hosted checks and candidate/release acceptance retain their separate gates.
+
+| Requirement | Source and regression contract |
+|---|---|
+| Minimum fixed dependencies without promoting transitives | `uv.lock` selects certifi 2026.10.18, filelock 4.2.1, MCP/MCP types 2.2.0, msgpack 1.2.3, OpenTelemetry API 1.45.2 and setuptools 84.1.0. `pyproject.toml` raises existing filelock/MCP bounds and both setuptools scopes; certifi, msgpack, OpenTelemetry API and MCP types remain transitive. Platform markers and artifact hashes remain part of the lock contract. |
+| Correct build floor in both actual metadata scopes | `test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools` parses TOML and requires `setuptools>=84.1.0` and wheel in both `build-system.requires` and `project.optional-dependencies.packaging`, retaining pinned uv, hash enforcement and no-build-isolation assertions. |
+| Current-default provenance rejection without rewriting history | `test_packaged_artifact_contract.py::_artifact_tree` defaults to historical `VERSION`; only `test_desktop_smoke_rejects_wrong_source_provenance_before_launch` supplies `desktop_smoke.__version__`, retaining the source-commit error and zero executable-launch assertion. |
+| Dependency changes preserve product and authorization contracts | Beta.8 metadata and dashboard inputs stay unchanged. Existing authentication/resource checks, including stored-audience rejection before SDK token creation, remain authoritative; an upcoming SDK default warning is not a compatibility failure. |
+| Bounded formatting preserves meaning | The approved 17 existing Python paths must match the pinned formatter output and preserve ASTs including type comments, all Python comment text and review/lint pragma statement attachment. No formatting outside that set is authorized. |
+
+### 2026-11-21 public beta.8 source contract
+
+| Requirement | Source and regression contract |
+|---|---|
+| Coherent selected version without changing historical acceptance | `test_candidate_version_is_coherent_across_release_metadata` requires beta.8 in Python/runtime/build identity/dashboard metadata and normalized b8 in the Python lock. Historical beta.7 fixtures and fixed legacy updater behavior retain their own contracts. |
+| Public continuity inputs preserve meaningful coverage | Invented lifecycle IDs and event references replace private capture inputs; action, parser/driver, completion, artifact isolation and reader-scoped privacy regressions remain public source contracts. Native validation and independent review establish exact-source outcomes. |
+| Release and installed beta.6 migration remain separate gates | The release runbook and current status require a supported independently verified beta.6 migration/upgrade route; the OTA protocol mismatch is independent of the legacy pin. Source preparation supplies no live acceptance, external security reassessment or release acceptance. |
+
+### 2026-11-20 principal-scoped capsule provenance
+
+These are maintained source/test contracts. Native checks and independent review
+own their exact-candidate outcomes and acceptance.
+
+| Requirement | Source and regression contract |
+|---|---|
+| Preserve authorized partial and full decision provenance | `storage.py::_memory_truth_snapshot` passes the principal to `_truth_records_tx`; `project_runtime.py::_read_truth` supplies it. `test_project_decision_correction_and_forget_survive_core_recreation` uses the existing fictional Harborlight fixture with both allow- and deny-based narrower observation ACLs. Same-principal public truth is the oracle for exact item and aggregate provenance, with current text, canonical source reference and project identity retained. The admin capsule retains full lineage. |
+| Authorization precedes bounded selection in one snapshot | Existing truth evidence SQL filters before ranking; `test_truth_snapshot_applies_record_acl_before_its_bound` covers canonical allow/deny before count/page bounds. The public journey lowers the evidence limit to one and retains the permitted correction after excluding the earlier observation. `test_truth_runtime_pages_keep_one_sqlite_revision_during_a_concurrent_write` also covers a scoped caller across 501 rows and a concurrent update. |
+| Principal isolation reaches shared public projections and revision | The public Harborlight journey interleaves full/partial/denied HTTP readers and fresh SDK MCP/HTTP clients after Core recreation, compares complete project contexts across repeated reads, and requires different full/partial revisions. The unchanged compiler derives item/aggregate provenance, dependencies, counts, omissions and revision only from the scoped snapshot. Dashboard admin capsule reads retain the same unscoped projection. |
+| Fail closed without authorized evidence; retain lifecycle policies | `test_scoped_runtime_requires_an_authorized_snapshot` refuses the unscoped list fallback for a principal. The public journey retains denial and project-scope selection, then suppresses the forgotten decision and observation IDs through HTTP/MCP after another recreation while admin truth keeps deleted evidence/version history. Naming, conflict and supersession logic remain unchanged. |
+
+### 2026-11-17 bounded named-project first read
+
+Native execution and independent exact-source review establish outcomes for these
+source/test contracts; the contracts themselves do not establish product acceptance.
+
+| Requirement | Source and focused contract |
+|---|---|
+| Useful first named read without invented membership or complete coverage | `core/app.py` optional `project_search_evidence`; `models.py::ProjectSearchEvidence`; `test_named_first_read_returns_useful_partial_evidence_without_activation` covers three task shapes, complete records/provenance, preference retention, deterministic results and unchanged project projection using separate fictional Silver Finch evidence. |
+| Safe explicit label and truthful abstention | `project_runtime.py::project_search_label`; focused public tests reject invalid/conjoined signals, prefixes, known aliases and duplicate authorized names even with empty capsules. Distinct declared identity slots and public project-list assertions establish the duplicate-name precondition before retrieval; projection failure preserves ordinary retrieval and suppresses fallback. |
+| Bindings, permissions and changing truth | `retrieval.py::project_search_evidence` reuses current bounded retrieval/compiler; public tests distinguish arbitrary mentions from named scopes/entities, enforce allow/deny, requested scopes, confidence, conflict, future/expired/superseded records, and correction/forget across fresh Core and SDK MCP readers. `test_acl_scopes_confidence_conflicts_and_current_lifecycle_apply_before_selection` establishes a distinct owner-approved direct successor, its observation target, null predecessor/successor/evidence source metadata, current truth and predecessor supersession, and reader access with outsider denial before checking current evidence. The separate correction/recreation test retains automatic in-place update coverage. Raw lifecycle captures remain outside current evidence. |
+| Fail-closed source coverage without reinterpreting unresolved bindings | `retrieval.py::project_search_evidence` reuses the established direct USER origins (`ongoing_client`, `local_admin`, `context_error`, `legacy_migration`) only with null `source_id`, `source_service` and `source_type`, retaining ordinary `source_reference` provenance and generic direct `project` prose. All source-backed/described records (including provider archives/memories, registered/workspace captures and attributed direct-user statements) and other/unknown origins are deliberately unsupported by this optional fallback; ordinary retrieval/capsule contracts remain unchanged. `test_provider_bound_fact_is_excluded_while_unbound_mention_survives_http_and_mcp` uses public ZIP upload plus witnessed begin/batch/finish and owner approval, asserts complete source and applied/current claims with shared conversation lineage, verifies the approved imported fact has `local_admin` origin while retaining provider metadata/binding, and verifies all facts are authorized search hits. HTTP and SDK MCP bootstrap must exclude both imported facts' IDs/content while retaining the genuine unbound direct mention. |
+| Bounded combined context | Public exact-fit/one-character-short tests retain preferences and full evidence; the bounded-pool test exercises 105 authorized records and the combined 32-item limit. Existing complete-anchor composition tests remain unchanged; activated capsules suppress the fallback and retain total accounting. |
+
+### 2026-11-16 bounded source-process/agent continuity contracts
+
+The [harness guide](operations/AGENT_CONTINUITY.md) names the invocation and evidence
+boundary. These are implementation/test contracts; native execution and review
+receipts establish their actual exact-source outcomes.
+
+| Requirement | Source and focused contract |
+|---|---|
+| Prospective closed provenance contract without answer exposure | `FACT_PROVENANCE_KEYS` and `CITATION_METADATA_KEYS` in `smoke_agent_continuity.py` supply the unchanged validator and one rendered contract in actual continuation prompts and artifact MCP `write_result`. `test_closed_provenance_contract_is_exposed(tmp_path)` checks all nine prompt surfaces, actual MCP description, exact six/three keys, forbidden citations, protocol/hash metadata and twelve-slot/no-retry bounds through an offline command boundary. It executes no Core/model. |
+| Fictional positive and negative citation contracts | `test_fixture_actions_reject_unsupported_provenance` checks all nine arm/phase combinations using independently authored valid actions and invented source IDs. Derived-field, extra-metadata and unavailable-fact citations fail; valid full and reference-only citations pass. These are fixture contracts, without historical replay or efficacy claims. |
+| One bounded development protocol repair batch | Report schema 2, `agent-continuity-action-v2` canonical contract SHA256, `frozen-action-protocol.json`, invocation metadata and pre-execution slot reservations bind the prospective contract. Exactly three probes plus nine planned cells, maximum twelve fresh sessions, no per-arm retries; failures remain measurements. Same model/effort, time bounds, permissions, history and baselines remain in force. Native preflight/live/review/full gates apply to the exact committed source; this is neither preregistered nor held-out evidence. |
+| Actual source process continuity through public contracts | `smoke_agent_continuity.py` owns Core handles, loopback readiness, changed restart PIDs and cleanup; `test_scripted_source_process_public_http_and_mcp_journey` covers public capture/approval/correction, forget, client revocation and real STDIO reads over four Core lifetimes. |
+| Fair fresh continuations with frozen outcomes | `scripts/fixtures/agent_continuity_v1.json` freezes fictional history/input/outcomes; real mode requires committed clean source. Equal artifact tools and settings support ATC, lossless current summary and no-memory arms. Post-forget and post-ACL cells have distinct fresh invocations; unavailable cells stay explicitly unexecuted. |
+| Isolation based on actual capability evidence | Run-owned configuration removes shell/patch, agents and unrelated tools. `NativeTrace` binds the exact unchanged roster source to a completed schema-2 runtime result and recording closure; all actual artifact denials remain mandatory. Exact nested MCP/native utility sets, ambient restrictions, per-request direct schema inventory and separate resource-helper negatives reject broader reachability. Actual artifact STDIO tests include resources, while labeled native shape mutations test broken bindings, extra tools and leaks without claiming real client compatibility. |
+| Independent action/provenance/uncertainty evaluation | Hand-authored positives and broken stale, repeated-failure, completed-work, calculation, exact-provenance, forgotten/ACL-fact and missing-action variants exercise the evaluator. Earlier failed persisted attempts survive later correct writes. |
+| Durable bounded evidence without credential copying | Exclusive output creation, retained JSONL/final/action/error/usage/process receipts, bounded owned cleanup and valid BLOCKED reports; environment tests exclude ambient provider/owner secrets. Native owns the real experiment and all declared checks; shared auth/log ownership remains explicit. |
+| Native trace and warning compatibility | Fresh per-child `CODEX_ROLLOUT_TRACE_ROOT`; safe bundle-relative payloads, strict JSON, schema/version/sequence/thread/turn/cell bindings, terminal `response.Result` and recording completion. Invented CLI warning fixtures exercise nonfatal notices; fatal turn/provider events, reroutes, timeouts, nonzero exits and failed MCP invocations block acceptance and retain evidence. Focused native shapes exercise yielded completion, malformed/missing/ambiguous traces and late direct capabilities. |
+| Trace privacy and ownership | `redact_native_trace` scans all owned files after child reaping, including failed/incomplete traces; known synthetic credential emissions are redacted and invalidate acceptance. Link/junction/path escapes are refused. Failed-child/malformed-stream tests cover scan ordering and retained failures; neighbors and old reports remain untouched. Native request tool inventories retain content-free schema hashes, and native usage is not added to CLI totals. |
+| Fixture-level native representation contracts | `tests/unit/test_agent_continuity_native_capture.py` constructs invented three-request lifecycle chains through the driver: same-thread/turn completed response inheritance, unchanged tool schemas, pinned model/effort, exact source plus one optional LF, scalar empty inventories and correlated resource failures. Broken source, schema, parent, resource, closure, credential, unrelated failure and transport variants fail closed. No captured fidelity or live outcome is claimed. |
+| Strict native origin and ordering | Invented lifecycle fixtures start at seq 1. Origin 0/2, gaps, duplicates and reordered events, broken identities/references and recording closure must fail. The neutral native-shape fixture contains only invented correlated identifiers and parser markers. These checks do not certify a native executable. |
+| Complete actual experiment acceptance | Optional `--require-complete` preserves the report and returns nonzero for incomplete/BLOCKED/scripted coverage. `experiment_complete` requires nine unique actual cells with evaluation, verified native isolation, three probes, recorded successful executions and cleanup. Gate tests retain measured action/provenance failures as completed outcomes without changing task answers or success criteria. |
+
+### 2026-11-16 public project decision continuity coverage
+
+Regression node:
+`tests/integration/test_project_memory_continuity.py::test_project_decision_correction_and_forget_survive_core_recreation`.
+
+| Requirement | Regression contract |
+|---|---|
+| Corrected project memory survives a fresh Core and client before retrieval | Public proposals and owner approval establish fictional records; a witnessed correction preserves the record ID. Recreated Core/client get, search, bootstrap and project capsule expose the corrected decision, with exact truth observation IDs, source references and capsule provenance; the displaced decision stays outside current context. |
+| Authorization and project selection remain distinct | Read-only mutation and write-only read attempts fail by operation grant; an outside client with both grants cannot retrieve or mutate the restricted record. Project scope filtering selects the appropriate independently approved decision. |
+| Forget persists across another restart without claiming purge | Public forget removes the decision from current get/truth/search/bootstrap immediately and after recreation. Authorized admin truth retains the deleted record, both evidence links and version history; ordinary readers cannot use the admin history route, and the unrelated decision remains retrievable. |
+
+This coverage is limited to deterministic public API state in a disposable vault;
+it does not establish live assistant outcomes or irreversible erasure.
+
+### 2026-11-15 public CLI encrypted export/restore
+
+| Requirement | Implementation and regression coverage |
+|---|---|
+| Public encrypted source-inclusive round trip preserves accepted content and blob bytes | `tests/unit/test_cli_context_commands.py::test_cli_encrypted_export_restore_round_trip` invokes `python -m allthecontext` with checkout source imports, fictional ingestion, null keyring and explicit development credential isolation. |
+| Valid dry-run never initializes the destination | `test_cli_restore_dry_run_does_not_initialize_destination` exercises the public parser/main path; the existing mocked direct-handler regression remains. |
+| Wrong-passphrase dry/non-dry restore preserves absent and existing destinations | `test_cli_restore_auth_failure_preserves_destination` checks structured authentication failure, absent directory/database, and existing database bytes, accepted content and source bytes. `cli.py` defers preparation to the validated library boundary. |
+| Destination migration follows authentication and archive/graph validation in one pass | `export.py` adds opt-in `migrate_destination=False`; `test_restore_destination_migration_authenticates_once` and `test_restore_destination_migration_waits_for_graph_validation` cover one decryption, dry-run precedence and rejection before destination mutation. Existing library and legacy-archive tests remain. |
+
+### 2026-11-15 dashboard dependency remediation checkpoint
+
+| Requirement | Local evidence and remaining boundary |
+|---|---|
+| Dashboard development dependency pins | `apps/dashboard/package.json` pins Vite 8.1.6 and Vitest 4.1.12; the lock resolves `@vitest/mocker` 4.1.12, `source-map-js` 1.2.2 and `undici` 7.30.2 through existing constraints. Each candidate requires its own dependency audit. |
+| Preserve dashboard behavior and packaged web assets | Dashboard tests, TypeScript checking, build/copy and public serving/parity/search checks define the validation contract. Independent review and native gates bind actual results to the exact source; historical local runs supply no current acceptance. |
+
+### 2026-11-15 state-machine audit repairs
+
+These rows describe the local implementation and focused regression coverage.
+Independent review and maintained exact-source final validation remain pending.
+
+| Requirement | Implementation and focused evidence |
+|---|---|
+| Claim ACK consumes the runtime credential only after activation | `edge_claim.py`, `relay/app.py`, `tests/unit/test_edge_claim.py`, paused activation in `tests/integration/test_edge_sync_recovery.py` |
+| Encrypted export interruption preserves the previous backup and source database | `export.py`, encryption-write interruption and restore roundtrip in `tests/unit/test_export.py` |
+| Incomplete configuration rollback preserves recovery originals | `client_config.py`, later write plus earlier restore fault in `tests/unit/test_client_config.py` |
+| Replication delivery requires an exact accepted ACK | `sync.py`, malformed, rejected and mismatched ACK retry coverage in `tests/unit/test_sync.py` |
+| Anchor expiry has consistent discovery and assignment semantics | `project_continuity.py`, `project_runtime.py`, UTC/offset and expiry-boundary tests in their unit suites |
+| More than 500 truth rows share one SQLite revision | `storage.py`, deterministic between-page writer in `tests/unit/test_project_runtime.py` |
+| One dashboard import owns callbacks and completion | `apps/dashboard/src/App.tsx`, same-tick drop/picker and stale callback coverage in `App.test.tsx` |
+| Updater status refreshes busy states while preserving drafts and response order | `UpdatesView`, fake-timer, deferred-response and unmount tests in `App.test.tsx` |
+| Every eligible adapter-unavailable source recovers after validation | `capture.py`, mixed 510-source recovery and live lease exclusion in `tests/unit/test_capture.py`, exhausted-source scheduler path in `tests/unit/test_capture_scheduler_productization.py` |
+| Interrupted promotion completes a validated immutable artifact pair on retry | `publication_gate.py`, `release_candidate.py`, receipt-copy interruption and conflict checks in `tests/unit/test_publication_gate.py` |
+| Cancellation races preserve the winning import transition and telemetry | `storage.py`, upload-claim race and exact terminal-row preservation in `tests/unit/test_import_operations.py` |
+| Proposal protection rotation preserves queued payload readability and failure state | `relay/service.py`, pending, empty, restart, failure and concurrent proposal tests in `tests/unit/test_relay_proposal_protection.py` |
+| Same-turn lifecycle callbacks share one serialized state | `lifecycle_runtime.py`, interleaved user/assistant capture and stable-turn retry tests in `tests/unit/test_lifecycle_runtime.py` |
+
 ### 2026-09-22 ZF010 loaded-worker observation correction
 
 | Requirement | Implementation/evidence | Status |

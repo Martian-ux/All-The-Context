@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,8 @@ import pytest
 import truststore
 from allthecontext.core.service import CoreService
 from allthecontext.models import ApprovalStatus
+from allthecontext.replication import EventType, build_event
+from allthecontext.storage import CoreStore
 from allthecontext.sync import CoreRelaySync
 
 
@@ -66,7 +69,7 @@ class _NoopClient:
 
 
 class _Response:
-    def __init__(self, body: dict[str, Any], *, status_code: int = 200) -> None:
+    def __init__(self, body: Any, *, status_code: int = 200) -> None:
         self.body = body
         self.status_code = status_code
 
@@ -76,8 +79,121 @@ class _Response:
             response = httpx.Response(self.status_code, request=request)
             raise httpx.HTTPStatusError("failed", request=request, response=response)
 
-    def json(self) -> dict[str, Any]:
+    def json(self) -> Any:
+        if isinstance(self.body, BaseException):
+            raise self.body
         return self.body
+
+
+class _PushAckClient:
+    def __init__(self, body: Any) -> None:
+        self.body = body
+        self.sent: list[dict[str, Any]] = []
+
+    def post(self, _url: str, **kwargs: Any) -> _Response:
+        self.sent.append(kwargs["json"])
+        return _Response(self.body)
+
+    def get(self, _url: str, **_kwargs: Any) -> _Response:
+        raise AssertionError("not called")
+
+    def patch(self, _url: str, **_kwargs: Any) -> _Response:
+        raise AssertionError("not called")
+
+    def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "rejected",
+        "wrong_event",
+        "wrong_sequence",
+        "wrong_types",
+        "non_object",
+        "malformed",
+        "accepted_number",
+        "boolean_sequence",
+        "float_sequence",
+        "replayed_string",
+    ],
+)
+def test_push_requires_exact_relay_ack_and_retries_same_event(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    database = tmp_path / "core-outbox.db"
+    store = CoreStore(database)
+    store.initialize_vault()
+    event = build_event(
+        vault_id=store.vault_id(),
+        sequence=1,
+        event_type=EventType.RECORD_UPSERTED,
+        record_id="synthetic-record",
+        payload={"content": "synthetic owned replication event"},
+    )
+    with store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO replication_events"
+            "(id,vault_id,sequence,event_type,record_id,payload_json,payload_hash,mac,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                event.event_id,
+                event.vault_id,
+                event.sequence,
+                event.event_type.value,
+                event.record_id,
+                json.dumps(dict(event.payload), sort_keys=True, separators=(",", ":")),
+                event.payload_hash,
+                None,
+                event.created_at,
+            ),
+        )
+
+    exact_ack = {"accepted": True, "event_id": event.event_id, "sequence": 1, "replayed": False}
+    faulty: Any = {
+        "rejected": {**exact_ack, "accepted": False},
+        "wrong_event": {**exact_ack, "event_id": "other-event"},
+        "wrong_sequence": {**exact_ack, "sequence": 2},
+        "wrong_types": {"accepted": "true", "event_id": 9, "sequence": True},
+        "non_object": [exact_ack],
+        "malformed": ValueError("invalid JSON"),
+        "accepted_number": {**exact_ack, "accepted": 1},
+        "boolean_sequence": {**exact_ack, "sequence": True},
+        "float_sequence": {**exact_ack, "sequence": 1.0},
+        "replayed_string": {**exact_ack, "replayed": "false"},
+    }[fault]
+    client = _PushAckClient(faulty)
+    sync = CoreRelaySync(
+        database,
+        "https://relay.example.test",
+        b"x" * 32,
+        "token",
+        http_client=client,
+    )
+    with pytest.raises((RuntimeError, ValueError)):
+        sync.push()
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT delivered_at FROM replication_events WHERE id=?", (event.event_id,)
+            ).fetchone()[0]
+            is None
+        )
+    first_sent = client.sent[0]
+    client.body = exact_ack
+    assert sync.push() == {"delivered": 1, "replayed": 0, "remaining": 0}
+    assert client.sent[1] == first_sent
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT delivered_at FROM replication_events WHERE id=?", (event.event_id,)
+            ).fetchone()[0]
+            is not None
+        )
+    sync.close()
 
 
 class _ProposalClient:

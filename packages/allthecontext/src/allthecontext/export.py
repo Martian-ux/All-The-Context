@@ -596,6 +596,28 @@ def _encrypt_file(source: Path, destination: Path, passphrase: str) -> None:
             outgoing.write(encryptor.update(chunk))
         outgoing.write(encryptor.finalize())
         outgoing.write(encryptor.tag)
+        outgoing.flush()
+        os.fsync(outgoing.fileno())
+
+
+def _same_file_if_present(first: Path, second: Path) -> bool:
+    if first == second:
+        return True
+    try:
+        return first.samefile(second)
+    except FileNotFoundError:
+        return False
+
+
+def _sync_directory(path: Path) -> None:
+    """Persist a completed rename where the platform supports directory fsync."""
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def create_export(
@@ -609,17 +631,29 @@ def create_export(
     """Create an encrypted portable package without placing plaintext beside it."""
     database_path = database_path.resolve()
     destination = destination.resolve()
+    if _same_file_if_present(database_path, destination):
+        raise ValueError("export destination must not overwrite the source database")
     _repair_secret_boundary(database_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="atc-export-") as temporary:
-        archive_path = Path(temporary) / "payload.zip"
-        manifest = _database_to_zip(
-            database_path,
-            archive_path,
-            include_sources=include_sources,
-            include_audit=include_audit,
-        )
-        _encrypt_file(archive_path, destination, passphrase)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".atc-export", dir=destination.parent
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        with tempfile.TemporaryDirectory(prefix="atc-export-") as temporary:
+            archive_path = Path(temporary) / "payload.zip"
+            manifest = _database_to_zip(
+                database_path,
+                archive_path,
+                include_sources=include_sources,
+                include_audit=include_audit,
+            )
+            _encrypt_file(archive_path, temporary_path, passphrase)
+        os.replace(temporary_path, destination)
+        _sync_directory(destination.parent)
+    finally:
+        temporary_path.unlink(missing_ok=True)
     return manifest
 
 
@@ -2310,8 +2344,13 @@ def restore_export(
     passphrase: str,
     *,
     dry_run: bool = False,
+    migrate_destination: bool = False,
 ) -> dict[str, Any]:
-    """Validate and duplicate-safely restore known rows into a migrated database."""
+    """Validate and duplicate-safely restore known rows into a migrated database.
+
+    Callers may opt into destination migration after archive authentication and
+    validation. Dry runs never prepare the destination, even with this option.
+    """
     source = source.resolve()
     database_path = database_path.resolve()
     with tempfile.TemporaryDirectory(prefix="atc-restore-") as temporary:
@@ -2351,6 +2390,8 @@ def restore_export(
             _validate_package_purge_identity(archive, manifest_tables, package_vault_ids)
             if dry_run:
                 return {"valid": True, "dry_run": True, "manifest": manifest}
+            if migrate_destination:
+                CoreStore(database_path).migrate()
             connection = sqlite3.connect(database_path)
             connection.row_factory = sqlite3.Row
             try:

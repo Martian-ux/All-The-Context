@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from allthecontext import publication_gate as publication_gate_module
 from allthecontext.acceptance_receipt import (
     CERTIFICATION_PUBLICATION_POLICY,
     EXACT_ARTIFACT_PUBLICATION_GATES,
@@ -497,6 +498,87 @@ def test_publication_gate_passes_with_required_set(tmp_path: Path) -> None:
     assert (release_dir / PUBLICATION_GATE_RECORD_FILE_NAME).is_file()
     assert "acceptance-receipt-bundle-v1.json" in record["assets"]
     assert PUBLICATION_GATE_RECORD_FILE_NAME in record["assets"]
+
+
+def test_publication_artifact_copy_retry_is_atomic_and_conflicts_do_not_mutate_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release_dir = _candidate_dir(tmp_path)
+    candidate = release_dir / CANDIDATE_FILE_NAME
+    digest, _ = sha256_file(candidate)
+    _promotion_extras(release_dir)
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(
+        json.dumps(_full_bundle(digest, inventory_digests=_inventory_digests(release_dir))),
+        encoding="utf-8",
+    )
+    arguments = {
+        "release_dir": release_dir,
+        "candidate_sha256": digest,
+        "source_commit": SOURCE,
+        "receipt_bundle_path": bundle_path,
+        "keyring_path": KEYRING,
+        "key_id": "release-2026-b",
+        "expected_public_key_sha256": PUBLIC_FP,
+        "asset_stage": "promotion",
+    }
+    bundle_destination = release_dir / "acceptance-receipt-bundle-v1.json"
+    record_destination = release_dir / PUBLICATION_GATE_RECORD_FILE_NAME
+    real_write_record = publication_gate_module.write_publication_record
+
+    def interrupt_after_first_artifact(path: Path, record: Any) -> None:
+        assert bundle_destination.is_file()
+        assert not path.exists()
+        raise OSError("injected interruption after receipt copy")
+
+    monkeypatch.setattr(
+        publication_gate_module, "write_publication_record", interrupt_after_first_artifact
+    )
+    with pytest.raises(OSError, match="after receipt copy"):
+        evaluate_publication_gate(**arguments)
+    copied_bytes = bundle_destination.read_bytes()
+    assert not record_destination.exists()
+
+    monkeypatch.setattr(publication_gate_module, "write_publication_record", real_write_record)
+    completed = evaluate_publication_gate(**arguments)
+    accepted_bundle = bundle_destination.read_bytes()
+    accepted_record = record_destination.read_bytes()
+    assert accepted_bundle == copied_bytes
+    assert completed["ok"] is True
+    exact_retry = evaluate_publication_gate(**arguments)
+    assert exact_retry["publication_record_sha256"] == completed["publication_record_sha256"]
+
+    record_destination.write_text('{"conflict":"decision"}\n', encoding="utf-8")
+    conflicting_record_before = record_destination.read_bytes()
+    bundle_before = bundle_destination.read_bytes()
+    with pytest.raises(ManifestError, match="conflicts with this decision"):
+        evaluate_publication_gate(**arguments)
+    assert record_destination.read_bytes() == conflicting_record_before
+    assert bundle_destination.read_bytes() == bundle_before
+    record_destination.write_bytes(accepted_record)
+
+    original_bundle = bundle_path.read_bytes()
+    bundle_path.write_bytes(original_bundle + b" ")
+    with pytest.raises(ManifestError, match="conflicts with this decision"):
+        evaluate_publication_gate(**arguments)
+    assert bundle_destination.read_bytes() == bundle_before
+    assert record_destination.read_bytes() == accepted_record
+    bundle_path.write_bytes(original_bundle)
+
+    with pytest.raises(ManifestError, match="source_commit"):
+        evaluate_publication_gate(**{**arguments, "source_commit": "f" * 40})
+    with pytest.raises(ManifestError, match="public-key identity"):
+        evaluate_publication_gate(
+            **{**arguments, "expected_public_key_sha256": "sha256:" + "0" * 64}
+        )
+    extra_asset = release_dir / "unreviewed-extra.bin"
+    extra_asset.write_bytes(b"synthetic extra")
+    with pytest.raises(ManifestError, match="asset set differs"):
+        evaluate_publication_gate(**arguments)
+    extra_asset.unlink()
+    assert bundle_destination.read_bytes() == bundle_before
+    assert record_destination.read_bytes() == accepted_record
 
 
 def test_publication_gate_passes_with_exact_lean_public_beta_set(tmp_path: Path) -> None:

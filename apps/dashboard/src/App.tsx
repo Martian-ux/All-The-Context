@@ -431,6 +431,8 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
+  const activeImportRef = useRef<symbol | null>(null);
+  const activeOperationRef = useRef<{ token: symbol; id: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [provider, setProvider] = useState<ArchiveProvider>("auto");
   const [lastImport, setLastImport] = useState<ImportResult | null>(null);
@@ -452,12 +454,17 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   useEffect(() => { void load(); }, [load]);
 
   async function upload(file?: File) {
-    if (!file) return;
+    if (!file || activeImportRef.current !== null) return;
+    const operationToken = Symbol("archive-import");
+    activeImportRef.current = operationToken;
+    activeOperationRef.current = null;
     setUploading(true); setNotice(null); setLastImport(null); setRemovedSource(null); setError(null);
     setUploadProgress("Starting import operation…"); setActiveOperationId(null);
     try {
       const result = await api.importSource(file, provider, {
         onOperation: (operation) => {
+          if (activeImportRef.current !== operationToken) return;
+          activeOperationRef.current = { token: operationToken, id: operation.operation_id };
           setActiveOperationId(operation.operation_id);
           const percent = operation.progress?.percent ?? 0;
           const phase = operation.phase || operation.status;
@@ -474,19 +481,24 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
       await load();
     } catch (caught) { setError(errorMessage(caught)); }
     finally {
-      setUploading(false);
-      setUploadProgress(null);
-      setActiveOperationId(null);
+      if (activeImportRef.current === operationToken) {
+        activeImportRef.current = null;
+        activeOperationRef.current = null;
+        setUploading(false);
+        setUploadProgress(null);
+        setActiveOperationId(null);
+      }
     }
   }
 
   async function cancelActiveImport() {
-    if (!activeOperationId) return;
+    const active = activeOperationRef.current;
+    if (!active || active.token !== activeImportRef.current) return;
     try {
-      await api.cancelImportOperation(activeOperationId);
-      setUploadProgress("Cancellation requested…");
+      await api.cancelImportOperation(active.id);
+      if (activeImportRef.current === active.token) setUploadProgress("Cancellation requested…");
     } catch (caught) {
-      setError(errorMessage(caught));
+      if (activeImportRef.current === active.token) setError(errorMessage(caught));
     }
   }
 
@@ -1644,20 +1656,66 @@ function UpdatesView() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const actionInFlightRef = useRef<string | null>(null);
+  const preferencesEditedRef = useRef(false);
+  const statusRequestInFlightRef = useRef(false);
+  const statusRequestVersionRef = useRef(0);
+  const mountedRef = useRef(false);
 
-  const apply = useCallback((next: UpdateStatus) => {
+  const apply = useCallback((next: UpdateStatus, preserveEditedPreferences = false) => {
     setStatus(next);
-    setChannel(next.channel);
-    setEnabled(next.enabled);
-    setStagingEnabled(next.automatic_staging_enabled);
+    if (!preserveEditedPreferences || !preferencesEditedRef.current) {
+      setChannel(next.channel);
+      setEnabled(next.enabled);
+      setStagingEnabled(next.automatic_staging_enabled);
+      preferencesEditedRef.current = false;
+    }
     setError(null);
   }, []);
-  useEffect(() => {
-    void api.updateStatus().then(apply).catch((caught) => setError(errorMessage(caught)));
+
+  const refreshStatus = useCallback(async () => {
+    if (statusRequestInFlightRef.current || actionInFlightRef.current !== null) return;
+    statusRequestInFlightRef.current = true;
+    const requestVersion = ++statusRequestVersionRef.current;
+    try {
+      const next = await api.updateStatus();
+      if (mountedRef.current && requestVersion === statusRequestVersionRef.current) {
+        apply(next, true);
+      }
+    } catch (caught) {
+      if (mountedRef.current && requestVersion === statusRequestVersionRef.current) {
+        setError(errorMessage(caught));
+      }
+    } finally {
+      statusRequestInFlightRef.current = false;
+    }
   }, [apply]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void refreshStatus();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [refreshStatus]);
+
+  useEffect(() => {
+    if (
+      status?.phase !== "checking"
+      && status?.phase !== "downloading"
+      && status?.phase !== "installing"
+    ) return;
+    const timer = window.setInterval(() => void refreshStatus(), 1000);
+    const refreshOnFocus = () => void refreshStatus();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [refreshStatus, status?.phase]);
 
   function beginAction(label: string): boolean {
     if (actionInFlightRef.current !== null) return false;
+    statusRequestVersionRef.current += 1;
     actionInFlightRef.current = label;
     setWorking(label);
     return true;
@@ -1672,8 +1730,11 @@ function UpdatesView() {
   async function act(label: string, action: () => Promise<UpdateStatus>) {
     if (!beginAction(label)) return;
     setError(null); setNotice(null);
-    try { apply(await action()); }
-    catch (caught) { setError(errorMessage(caught)); }
+    try {
+      const next = await action();
+      if (mountedRef.current) apply(next, label !== "save");
+    }
+    catch (caught) { if (mountedRef.current) setError(errorMessage(caught)); }
     finally { finishAction(label); }
   }
 
@@ -1728,9 +1789,9 @@ function UpdatesView() {
       <section className="section-block update-controls">
         <div className="section-heading"><div><h2>Preferences</h2><p>Only channels backed by bundled trust metadata are selectable.</p></div></div>
         <div className="update-preferences">
-          <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={controlsBusy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable" disabled={!availableChannels.includes("stable")}>Stable</option><option value="beta" disabled={!availableChannels.includes("beta")}>Beta</option></select></label>
-          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={controlsBusy} onChange={(event) => setEnabled(event.target.checked)} /> Check for updates automatically at launch, at most daily</label>
-          <label className="update-checkbox"><input type="checkbox" checked={stagingEnabled} disabled={controlsBusy || !status?.automatic_staging_supported} onChange={(event) => setStagingEnabled(event.target.checked)} /> Stage verified updates automatically (packaged Windows only)</label>
+          <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={controlsBusy} onChange={(event) => { preferencesEditedRef.current = true; setChannel(event.target.value as "stable" | "beta"); }}><option value="stable" disabled={!availableChannels.includes("stable")}>Stable</option><option value="beta" disabled={!availableChannels.includes("beta")}>Beta</option></select></label>
+          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={controlsBusy} onChange={(event) => { preferencesEditedRef.current = true; setEnabled(event.target.checked); }} /> Check for updates automatically at launch, at most daily</label>
+          <label className="update-checkbox"><input type="checkbox" checked={stagingEnabled} disabled={controlsBusy || !status?.automatic_staging_supported} onChange={(event) => { preferencesEditedRef.current = true; setStagingEnabled(event.target.checked); }} /> Stage verified updates automatically (packaged Windows only)</label>
           {status?.automatic_staging_paused ? <Notice kind="info">{status.automatic_staging_supported ? "Automatic staging is paused after cancellation. Resume automatic staging to check again and reverify the signed metadata." : "Automatic staging is paused after cancellation and is unavailable in this build."}</Notice> : null}
           <button className="secondary-button" disabled={controlsBusy || !selectedChannelAvailable || (!resumeAutomaticStaging && preferencesUnchanged)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel, stagingEnabled))}>{resumeAutomaticStaging ? "Resume automatic staging" : "Save preferences"}</button>
         </div>

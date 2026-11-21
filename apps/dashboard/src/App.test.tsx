@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "./api";
 import App from "./App";
-import type { Availability } from "./types";
+import type { Availability, ImportOperation, ImportResult } from "./types";
 
 function json(value: unknown): Response {
   return new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -1006,7 +1007,7 @@ describe("dashboard", () => {
       warnings: [],
       coverage: { available: ["2 conversations"], unavailable: [], limitations: [], warnings: [], complete: true },
     };
-    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { observations: 0, tentative_observations: 0, active_records: 0, sources: 0, pending_replication_events: 0 } });
       if (url.endsWith("/admin/import-operations") && init?.method === "POST") {
@@ -1057,13 +1058,18 @@ describe("dashboard", () => {
       }
       if (url.endsWith("/admin/sources")) return json({ total: 0, items: [] });
       return json({ items: [] });
-    }));
+    });
+    vi.stubGlobal("fetch", fetch);
 
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Sources" }));
     fireEvent.change(await screen.findByLabelText("Archive type"), { target: { value: "claude" } });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(input, { target: { files: [new File(["archive"], "claude-export.zip", { type: "application/zip" })] } });
+    const file = new File(["archive"], "claude-export.zip", { type: "application/zip" });
+    act(() => {
+      fireEvent.drop(input.closest("label") as HTMLLabelElement, { dataTransfer: { files: [file] } });
+      fireEvent.change(input, { target: { files: [file] } });
+    });
 
     expect(await screen.findByText(/Claude: 2 conversations scanned and 3 observations processed automatically/i)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Import coverage" })).toHaveTextContent("7");
@@ -1073,6 +1079,108 @@ describe("dashboard", () => {
       /1 applied.*1 tentative.*1 ignored/,
     );
     expect(submittedProvider).toBe("claude");
+    expect(fetch.mock.calls.filter(([request, init]) => String(request).endsWith("/admin/import-operations") && init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("keeps cancellation, errors, and late progress callbacks with their import owner", async () => {
+    const callbacks: Array<(operation: ImportOperation) => void> = [];
+    const pending: Array<{
+      resolve: (result: ImportResult) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    const importSource = vi.spyOn(api, "importSource").mockImplementation((_file, _provider, options) =>
+      new Promise<ImportResult>((resolve, reject) => {
+        callbacks.push(options?.onOperation ?? (() => undefined));
+        pending.push({ resolve, reject });
+      }),
+    );
+    const cancelImport = vi.spyOn(api, "cancelImportOperation").mockResolvedValue({
+      operation_id: "operation-1",
+      status: "processing",
+      phase: "uploading",
+      declared_byte_size: 10,
+      bytes_received: 4,
+      bytes_committed: 0,
+      cancel_requested: true,
+      progress: { percent: 40, message: "cancellation requested" },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:01Z",
+    });
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/sources")) return json({ total: 0, items: [] });
+      return json({ items: [] });
+    }));
+
+    const operation = (id: string, message: string): ImportOperation => ({
+      operation_id: id,
+      status: "processing",
+      phase: "uploading",
+      declared_byte_size: 10,
+      bytes_received: 4,
+      bytes_committed: 0,
+      cancel_requested: false,
+      progress: { percent: 40, message },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:01Z",
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["first"], "first.jsonl", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(callbacks).toHaveLength(1));
+    act(() => callbacks[0](operation("operation-1", "first operation progress")));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel import" }));
+    expect(cancelImport).toHaveBeenCalledWith("operation-1");
+    expect(await screen.findByText("Cancellation requested…")).toBeInTheDocument();
+    let rejectStaleCancellation: ((reason: Error) => void) | undefined;
+    cancelImport.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      rejectStaleCancellation = reject;
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel import" }));
+
+    await act(async () => {
+      pending[0]?.reject(new Error("synthetic upload failure"));
+      await Promise.resolve();
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("synthetic upload failure");
+
+    const secondFile = new File(["second"], "second.jsonl", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [secondFile] } });
+    await waitFor(() => expect(callbacks).toHaveLength(2));
+    act(() => {
+      callbacks[1](operation("operation-2", "current operation progress"));
+      callbacks[0](operation("operation-1", "stale progress from first operation"));
+    });
+    const dropZone = document.querySelector(".drop-zone") as HTMLElement;
+    expect(dropZone).toHaveTextContent("current operation progress");
+    expect(dropZone).not.toHaveTextContent("stale progress from first operation");
+    await act(async () => {
+      rejectStaleCancellation?.(new Error("stale cancellation failure"));
+    });
+    expect(screen.queryByText("stale cancellation failure")).not.toBeInTheDocument();
+
+    await act(async () => {
+      pending[1]?.resolve({
+        source_id: "synthetic-source",
+        observation_count: 1,
+        duplicate: false,
+        import_status: "complete",
+        source_terminal_reason: null,
+        provider: "chatgpt",
+        export_format: "chatgpt_conversation_graph",
+        stats: { conversations: 1, user_messages: 1, observations: 1 } as ImportResult["stats"],
+        outcomes: { applied: 1 },
+        warnings: [],
+        coverage: { available: ["1 conversation"], unavailable: [], limitations: [], warnings: [], closed_coverage: { recognized: 1, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: 0 }, coverage_complete: true, source_terminal_reason: null, item_accounting_available: false },
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText(/ChatGPT: 1 conversations scanned and 1 observations processed automatically/i)).toBeInTheDocument();
+    expect(importSource).toHaveBeenCalledTimes(2);
   });
 
   it("retries failed extraction from the preserved source", async () => {
@@ -1338,6 +1446,96 @@ describe("dashboard", () => {
     expect(await screen.findByRole("button", { name: /install & restart/i })).toBeEnabled();
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/check"))).toBe(true);
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/download"))).toBe(true);
+  });
+
+  it("refreshes a busy updater without overlap or discarding preference edits", async () => {
+    let updateReads = 0;
+    let resolveTransitionalStatus: ((response: Response) => void) | undefined;
+    const available = updateStatusPayload({ phase: "available", offered_version: "0.2.0" });
+    const fetch = vi.fn((request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return Promise.resolve(json(status()));
+      if (url.endsWith("/admin/updates/check")) {
+        return Promise.resolve(json(updateStatusPayload({ phase: "checking" })));
+      }
+      if (url.endsWith("/admin/updates") && !init?.method) {
+        updateReads += 1;
+        if (updateReads === 1) return Promise.resolve(json(updateStatusPayload({ automatic_staging_supported: true })));
+        if (updateReads === 2) {
+          return new Promise<Response>((resolve) => { resolveTransitionalStatus = resolve; });
+        }
+        return Promise.resolve(json(available));
+      }
+      return Promise.resolve(json({ items: [] }));
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+    const automatic = await screen.findByLabelText(/Stage verified updates automatically/i);
+    await waitFor(() => expect(automatic).not.toBeDisabled());
+    fireEvent.click(automatic);
+    expect(automatic).toBeChecked();
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: /check now/i }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("checking")).toBeInTheDocument();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(updateReads).toBe(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    fireEvent.focus(window);
+    expect(updateReads).toBe(2);
+
+    await act(async () => {
+      resolveTransitionalStatus?.(json(available));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("available")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Stage verified updates automatically/i)).toBeChecked();
+    expect(updateReads).toBe(2);
+  });
+
+  it("ignores pre-action update replies and cleans up busy polling on unmount", async () => {
+    const pending: Array<(response: Response) => void> = [];
+    let updateReads = 0;
+    vi.stubGlobal("fetch", vi.fn((request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return Promise.resolve(json(status()));
+      if (url.endsWith("/admin/updates/cancel")) return Promise.resolve(json(updateStatusPayload()));
+      if (url.endsWith("/admin/updates/check")) return Promise.resolve(json(updateStatusPayload({ phase: "checking" })));
+      if (url.endsWith("/admin/updates")) {
+        updateReads += 1;
+        if (updateReads === 1) return Promise.resolve(json(updateStatusPayload({ phase: "downloading" })));
+        return new Promise<Response>((resolve) => pending.push(resolve));
+      }
+      return Promise.resolve(json({ items: [] }));
+    }));
+
+    vi.useFakeTimers();
+    const view = render(<App />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Updates" })); });
+    const cancel = screen.getByRole("button", { name: "Cancel download" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(pending).toHaveLength(1);
+    await act(async () => { fireEvent.click(cancel); });
+    expect(screen.getByText("idle")).toBeInTheDocument();
+    await act(async () => { pending[0](json(updateStatusPayload({ phase: "downloading" }))); });
+    expect(screen.getByText("idle")).toBeInTheDocument();
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /check now/i })); });
+    expect(screen.getByText("checking")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(pending).toHaveLength(2);
+    view.unmount();
+    await act(async () => {
+      pending[1](json(updateStatusPayload({ phase: "available" })));
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    fireEvent.focus(window);
+    expect(updateReads).toBe(3);
+    expect(screen.queryByText("available")).not.toBeInTheDocument();
   });
 
   it("allows cancelling an active update download while protecting unrelated actions", async () => {

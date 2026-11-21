@@ -1,5 +1,280 @@
 # Architecture decisions
 
+## Public beta.8 source boundary (2026-11-21)
+
+Project public-eligible bytes onto the public base without private ancestry or
+capture archives. Keep only independently invented lifecycle fixtures, preserving
+parser, driver, completion, artifact isolation and reader-scoped privacy contracts.
+Use beta.8 consistently across runtime, build identity and package metadata;
+retain historical acceptance fixtures and fixed legacy updater behavior. Source
+preparation does not satisfy native validation, independent review, external
+security reassessment, migration or release gates.
+
+## Beta.8 dependency floors and preserved contracts (2026-11-21)
+
+Use the minimum fixed Python lock versions: certifi 2026.10.18, filelock 4.2.1,
+MCP 2.2.0, msgpack 1.2.3, OpenTelemetry API 1.45.2 and setuptools 84.1.0.
+MCP types follows MCP at 2.2.0. Raise only the existing direct filelock/MCP
+bounds and the setuptools floor in both build-system and packaging-extra
+metadata; retain the other packages as transitive. Keep platform-marked
+resolution, lock hashes, audit enforcement and no-build-isolation controls.
+
+Preserve beta.8 metadata, dashboard inputs and ATC's authentication/resource
+contract. The provider rejects a mismatched stored audience before creating
+an SDK token; the SDK's upcoming-default warning alone warrants no runtime
+change. Dependency adaptations require a concrete compatibility failure.
+
+Keep historical artifact fixtures at beta.7 by default. Only the desktop smoke
+test invoking the current-default entrypoint supplies its runtime version to
+reach source-commit rejection and assert zero executable launches.
+The release workflow test parses both real TOML requirement scopes to require
+the setuptools floor. Restrict formatter alignment to the approved existing
+files, preserving ASTs with type comments, all comments and pragma attachment.
+These requirements supply no hosted, candidate or release acceptance.
+
+## Authorize project truth before bounded projection (2026-11-20)
+
+Thread the requesting principal from `project_runtime._read_truth` through
+`CoreStore._memory_truth_snapshot` to `_truth_records_tx`. Reuse the established
+truth client allow/deny SQL predicate for canonical snapshot selection and the
+existing linked-observation filter before `ROW_NUMBER`/evidence limits. Keep the
+count, pages and evidence in one SQLite read transaction, with no per-record
+fetches or client redaction. A scoped caller cannot use the legacy unscoped list
+fallback, whose evidence has no observation ACL contract. Principal-less admin
+snapshots and truth/history routes keep their existing complete lineage.
+
+Leave `project_continuity.evidence_from_memory_truth`, capsule compilation and
+revision hashing unchanged: observation provenance comes only from the supplied
+truth evidence; item/aggregate provenance, dependencies, omissions, counts and
+revision are then derived from the scoped records. The adapter uses authorized
+canonical source identity and does not copy linked observation content, evidence
+text or source references into a capsule. Reader truth still exposes only its
+permitted observations and references. This fixes the projection boundary without
+changing record-scope selection, role grants, naming, conflict, deletion or
+supersession policy, or adding fields and a second ACL implementation.
+
+Extend the existing public fictional correction/forget journey. Establish
+narrower observation ACLs in its owned fixture (there is no public observation-ACL
+editor), then compare HTTP and SDK MCP capsules to same-principal reader truth.
+Require exact visible provenance, preserved current content/attribution and
+project identity, stable interleaved views, distinct full/partial revisions,
+authorized admin lineage and post-forget suppression. A reduced evidence limit
+exercises ordering with the two ordinary fixture observations. Existing concurrent
+snapshot coverage also exercises principal propagation; canonical allow/deny
+bounds and unavailable scoped fallback have focused unit contracts.
+
+## Separate named mention evidence from complete task context (2026-11-17)
+
+Keep bootstrap's complete-content-anchor `items` contract and conservative project
+activation. When both abstain (apart from mandatory interaction preferences), an
+explicit bounded literal `current_project` may retrieve a separate
+`project_search_evidence` envelope. A generic unbound mention is reachable and may
+be unrelated to the user's project; it is therefore partial search evidence with
+no membership or complete-task-coverage claim, never a capsule or durable binding.
+
+Reject invalid/conjoined/ambiguous labels and known aliases, with no task, host-root,
+path or opaque-ID expansion. Check authorized identities even without capsule
+content. Exclude named scopes/entities and structured identities. Restrict the
+optional fallback to the established direct USER origins (`ongoing_client`,
+`local_admin`, `context_error`, `legacy_migration`) with null `source_id`,
+`source_service` and `source_type`; keep ordinary `source_reference` provenance.
+This admits source-free owner-approved direct corrections. Approval reclassifies
+imports as `local_admin` too, but preserves their source metadata and binding;
+origin classification alone therefore cannot establish direct-source eligibility.
+Generic direct Core `project` prose remains eligible as a mention without treating
+its prose-derived identity as named membership. Reuse current authorized bounded
+search (minimum confidence 0.8), admissibility and the normal compiler, retaining
+preferences and counting all supplied content against one budget. The extra
+envelope is optional; an empty result adds no coverage claim.
+
+Assignment eligibility is not binding absence: a provider conversation can supply
+a trusted project reference while an imported kind remains `UNRESOLVED` because
+it cannot enter a capsule. Fail closed by excluding all source-backed/described
+records, including provider archives/memories, registered/workspace captures and
+attributed direct-user statements, plus all other/unknown observation origins.
+This deliberately narrower source coverage avoids new binding/projection state
+and leaves identity, inference, capsule admission, promotion and authorization
+unchanged. The public provider regression establishes complete/applied/current
+source state and same-conversation lineage, then checks both the applied bound
+fact's and an owner-approved imported fact's absence and the direct mention's
+presence through HTTP and SDK MCP decoding.
+
+Exercise ambiguity with separate declared project identity slots: identical
+structured values in one direct-observation slot reinforce the existing record,
+even when prose or scopes differ. Exercise a separate superseding row through
+owner approval of a tentative direct proposal, asserting its observation target,
+source-free predecessor/successor truth and ACL before retrieval. Automatic targeted proposals update the
+canonical record in place; they do not promise a new row or a self-referential
+`supersedes` link. These fixture boundaries preserve the existing ingestion and
+retrieval contracts rather than changing runtime identity or correction policy.
+
+## Expose the existing closed action contract prospectively (2026-11-16)
+
+Close the prompt/tool provenance boundary: share the exact six allowed fact keys
+and three citation metadata keys with the existing validator, and render one
+answer-free contract in every arm's actual prompt and MCP `write_result`
+description. Explicitly prohibit citations for derived rows, repeat_completed,
+unknown, launch_window and provenance itself, and for unavailable facts. Keep
+ATC's exact current source/record/observation requirements. Do not expand the
+validator, revise expected outcomes or change memory, histories or baselines.
+
+Use `agent-continuity-action-v2`, report schema 2 and a canonical JSON contract
+SHA256 in reports/invocations and the pre-inference frozen plan. Reserve one
+three-probe plus three-arm/three-phase batch with twelve fresh sessions maximum;
+failed attempts spend their slot and cannot authorize per-arm retries. Exclusive
+output creation still prevents resume/overwrite. Native authority, not a new
+output name, controls any additional experiment.
+
+Use independent fictional positive actions and meaningful invalid-citation
+variants across every arm/phase to exercise the unchanged evaluator. Keep private
+historical evidence outside public source. Fixture-level contracts establish no
+captured fidelity, native compatibility, efficacy or release acceptance.
+Independent exact-source review and native validation remain separate gates.
+
+## Correlate native runtime traces beside reduced exec JSONL (2026-11-16)
+
+Require sequence origin 1 and every subsequent integer in order. Bind schema-2
+manifest/root thread, payload references and recording closure. Public tests use
+invented thread/turn/run/item identities with matching event references, not
+transcripts, digests or identifiers from private captures. Include complete
+three-request chains and correlated native invocation/runtime/result and client
+failures, alongside malformed origin/order/identity/closure cases.
+
+Allow tool-schema inheritance only through an observed completed response in the
+same thread/turn, with unchanged full schema and pinned model/effort. Permit the
+requested expression plus at most one terminal LF and scalar JSON empty resource
+inventories. Retain requested/executed source and schema hashes in run receipts.
+Expected resource-denial errors must bind to the exact verified cell, arguments,
+invocation, runtime, terminal result and client error. Transport errors and
+uncorrelated failures block acceptance, with every failed event retained.
+Fixture-level driver checks are not a recorded replay or native execution proof.
+
+Use optional `--require-complete` for native experiment acceptance: a durable
+BLOCKED report cannot satisfy the nine-cell gate. Completion requires unique
+actual evaluated cells, verified isolation, probes and cleanup. Task/provenance
+failures remain valid measured outcomes; completion does not require perfect
+model performance or permit favorable retries. Default report generation stays
+compatible. Fresh native evidence and independent review still govern acceptance.
+
+Keep the supported Codex 0.167.2 exec route, same main authentication owner,
+OpenAI provider, Sol/xhigh model and two-field catalog restriction. Its reduced
+JSONL omits outer Code Mode source/results and represents startup warnings as
+nonfatal `item.error` notices. Require a fresh `CODEX_ROLLOUT_TRACE_ROOT` for each
+actual child instead of inferring execution from nested calls or final answers.
+Bind schema-2 manifest/root thread, ordered events, exact source, cell/turn/call
+identities, terminal `response.Result`, safe payload references and recording
+closure. An initial yielded response cannot replace terminal completion.
+
+Freeze the four native clock/resource utilities alongside the owned MCP roster.
+Clock reads time only; resource helpers resolve configured MCP connections. Both
+owned servers register no resources/templates. Require actual helper negatives,
+an unmapped canary, all artifact denial audits and every inference request's
+direct Code Mode wrapper/search surface. This adds no filesystem or network
+reader. Disable agents, plan and interactive-input tools explicitly, retaining
+all existing catalog, ambient and unrelated-tool restrictions. Redact known
+grants from every retained trace file after reaping, and fail acceptance when
+redaction was needed. Preserve incomplete bundles and fatal/provider errors.
+
+Tests use invented CLI warning/usage events and neutral native schema shapes;
+neither supplies a successful agent outcome. All real compatibility,
+comparison and independent review gates remain exact-source native work. Output
+directories stay exclusive, with no report reuse, efficacy retry or fallback.
+See the [operation guide](operations/AGENT_CONTINUITY.md).
+
+## Bound continuity evidence to source processes and persisted agent actions (2026-11-16)
+
+Use one versioned fictional fixture and a source smoke script, reusing public
+HTTP and ordinary read-only MCP contracts. Require actual owned Core PID changes,
+fresh client sessions, current correction/provenance checks, forgetting and client
+revocation. Grade persisted dispatch actions independently, retaining every failed
+attempt. Keep scripted actions explicitly separate from model evidence. A strong
+query-blind deterministic summary preserves all eligible evidence and distinctions
+with construction costs recorded; no-memory uncertainty has its own outcome.
+
+Keep evaluator rules, transcripts and other arms outside dictionary-only artifact
+tools. Real Codex invocations share existing authentication ownership without auth
+copying or main configuration writes. Use supported invocation-local controls and
+a two-field model-catalog capability override, then require actual executed tool
+declarations and escape negatives. Configuration or a model's roster assertion
+alone cannot establish isolation. Preserve a valid BLOCKED real report when that
+boundary is unavailable; never replace missing real outputs with canned evidence.
+See the [operation boundary](operations/AGENT_CONTINUITY.md) for limits and reruns.
+
+## Exercise project correction before forgetting across fresh Core sessions (2026-11-16)
+
+Keep one public HTTP regression for the project decision journey in
+`tests/integration/test_project_memory_continuity.py`. The composed cross-client
+preference test corrects and forgets within one Core lifetime, while the project
+continuity unit tests construct derived evidence. Recreate both Core and HTTP
+client after correction and before retrieval or forgetting to cover the persisted
+canonical identity, current context and exact observation/source explanation.
+
+Construct all fictional fixtures through public proposals and actual owner
+approval of unwitnessed observations. Use a separately granted witness for the
+correction, existing null/test credential isolation, and the same temporary vault
+across restarts. Treat record ACLs as authorization and project scopes as query
+filters. Assert current public exclusion separately from authorized admin deleted
+history: ordinary forget is reversible deletion, not purge. No runtime behavior
+or approval policy changes are introduced by this coverage.
+
+## Public CLI restore prepares the destination after validation (2026-11-15)
+
+Keep destination preparation inside the authenticated restore boundary. The CLI
+uses `restore_export(..., migrate_destination=True)` to migrate only after the
+existing archive and portable graph validation, then continues normal vault
+initialization and policy rebuilding. The opt-in defaults to false for existing
+library callers. Dry-run returns before any destination preparation, including
+when migration is requested. Each command decrypts and validates once; archive
+formats and legacy handling are unchanged. Public subprocess regressions isolate
+the keyring, development credentials, configuration and data in fictional paths.
+
+## Dashboard dependency audit remediation (2026-11-15)
+
+Use exact direct development pins Vite 8.1.6 and Vitest 4.1.12. Retain generated
+integrity and registry metadata, with `@vitest/mocker` 4.1.12,
+`source-map-js` 1.2.2 and `undici` 7.30.2 in the lock. Existing transitive
+constraints accept those patches without overrides or new direct dependencies.
+
+Use the maintained native execution owner for Windows subprocess-dependent
+checks. Dependency audit, dashboard behavior/build, packaged asset parity,
+independent review and exact-source native gates establish their own outcomes;
+source pins do not claim zero advisories or hosted, platform or release acceptance.
+
+## State-machine recovery boundaries (2026-11-15)
+
+Validate authorization and durable state at the transition that consumes them.
+Claim acknowledgement checks the persisted runtime token after activation, and
+Core marks replication delivered only for an exact successful Relay ACK. Import
+cancellation selects and updates the eligible operation under one write transaction,
+so a winning terminal transition keeps its telemetry intact.
+
+Publish encrypted exports through an owned same-directory temporary file, flush
+the ciphertext, then atomically replace the destination. Reject the source database
+as a destination. Preserve originals whenever Codex configuration rollback cannot
+finish. Promotion artifacts are immutable atomic creates. Retry validates the exact
+incoming receipt bytes and any existing decision before completing a missing pair.
+Only the two decision artifact names are tolerated during pre-decision inventory
+verification, and the complete promotion inventory is verified afterwards.
+
+Use one SQLite snapshot for all pages of runtime project truth and one normalized
+time for anchor discovery and assignment. Expiry is inclusive at its boundary,
+including offset-equivalent timestamps and fractional seconds. Adapter recovery
+collects all source pages before mutations can reorder them and resets only
+validated adapter-unavailable rows without live leases.
+
+Reuse Relay's store lock and transaction to serialize key selection with proposal
+encryption and reads. A different key is rejected while protected proposals remain
+queued. Restart authenticates each existing envelope before selecting its key.
+Failure rolls back cleanup and preserves the prior service secret. The existing
+envelope authenticates the key, so this change requires no database migration.
+
+Serialize lifecycle read/mutate/write across callbacks sharing a stable provider,
+client, session and turn identity. Active correlations remain pinned through their
+callback operations, and assistant-first callbacks reuse the same stored state.
+Session-only callbacks retain their existing unpaired behavior. Dashboard operation
+ownership and request versions protect import progress, updater drafts and responses
+across asynchronous completion, actions and component unmount.
+
 ## Dependency lock decision — urllib3 audit remediation (2026-09-30)
 
 The PR118 combined candidate's hosted frozen dependency audit found three

@@ -693,14 +693,14 @@ def _cmd_restore(args: argparse.Namespace) -> None:
             )
         )
         return
-    store = CoreStore(config.database_path)
-    store.migrate()
     result = restore_export(
         Path(args.source),
         config.database_path,
         _passphrase(args),
         dry_run=False,
+        migrate_destination=True,
     )
+    store = CoreStore(config.database_path)
     store.initialize_vault()
     while store.evaluate_staged_observations():
         pass

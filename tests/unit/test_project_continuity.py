@@ -3,6 +3,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import pytest
 from allthecontext.models import ContextRecordOut
 from allthecontext.project_continuity import (
     AssignmentOutcome,
@@ -36,6 +37,45 @@ def _project(snapshot: Any, project_ref: str) -> Any:
 
 def _assignment(snapshot: Any, evidence_id: str) -> Any:
     return next(item for item in snapshot.assignments if item.evidence_id == evidence_id)
+
+
+@pytest.mark.parametrize("future_expiry", ["2026-08-25T00:00:01Z", "2026-08-25T00:00:00.000001Z"])
+def test_expired_only_anchor_does_not_attract_unscoped_evidence_and_uses_utc_boundary(
+    future_expiry: str,
+) -> None:
+    binding = AuthorizedSourceBinding(
+        binding_id="binding-expiry",
+        workspace_ref="workspace-expiry",
+    )
+    task = ProjectEvidence(
+        evidence_id="unscoped-task",
+        kind="goal",
+        content="Keep this task unresolved without an active anchor.",
+        binding_id=binding.binding_id,
+        origin=EvidenceOrigin.USER,
+        explicit=True,
+    )
+    anchor = ProjectEvidence(
+        evidence_id="expiring-anchor",
+        kind="project",
+        content="Temporary project anchor",
+        binding_id=binding.binding_id,
+        project_ref="project-ref-expiring",
+        origin=EvidenceOrigin.USER,
+        explicit=True,
+        expires_at="2026-08-25T00:00:00Z",
+    )
+    expired = optimized_rebuild((binding,), (anchor, task), as_of=AS_OF)
+    assert expired.projects == ()
+    assert _assignment(expired, "unscoped-task").outcome is AssignmentOutcome.UNRESOLVED
+
+    just_before = replace(anchor, expires_at=future_expiry)
+    utc_snapshot = optimized_rebuild((binding,), (just_before, task), as_of=AS_OF)
+    offset_snapshot = optimized_rebuild(
+        (binding,), (just_before, task), as_of="2026-08-24T20:00:00-04:00"
+    )
+    assert utc_snapshot == offset_snapshot
+    assert _assignment(utc_snapshot, "unscoped-task").outcome is AssignmentOutcome.RESOLVED
 
 
 def test_cold_session_capsule_contains_project_state_and_isolated_facts() -> None:

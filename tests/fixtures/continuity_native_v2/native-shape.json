@@ -1,0 +1,126 @@
+{
+  "manifest": {
+    "schema_version": 2,
+    "rollout_id": "neutral-rollout-cobalt",
+    "root_thread_id": "neutral-thread-cobalt",
+    "started_at_unix_ms": 0,
+    "raw_event_log": "trace.jsonl",
+    "payloads_dir": "payloads",
+    "trace_id": "neutral-trace-cobalt"
+  },
+  "events": [
+    {
+      "schema_version": 2,
+      "seq": 1,
+      "wall_time_unix_ms": 0,
+      "rollout_id": "neutral-rollout-cobalt",
+      "thread_id": "neutral-thread-cobalt",
+      "codex_turn_id": "neutral-turn-cobalt",
+      "payload": {
+        "type": "inference_started",
+        "inference_call_id": "neutral-inference-cobalt",
+        "provider_name": "OpenAI",
+        "request_payload": {
+          "raw_payload_id": "neutral-request-cobalt",
+          "kind": "inference_request",
+          "path": "payloads/request.json"
+        }
+      }
+    },
+    {
+      "schema_version": 2,
+      "seq": 2,
+      "wall_time_unix_ms": 0,
+      "rollout_id": "neutral-rollout-cobalt",
+      "thread_id": "neutral-thread-cobalt",
+      "codex_turn_id": "neutral-turn-cobalt",
+      "payload": {
+        "type": "code_cell_started",
+        "runtime_cell_id": "neutral-cell-cobalt",
+        "model_visible_call_id": "neutral-call-cobalt",
+        "source_js": "text({trace_parser_shape: true});"
+      }
+    },
+    {
+      "schema_version": 2,
+      "seq": 3,
+      "wall_time_unix_ms": 0,
+      "rollout_id": "neutral-rollout-cobalt",
+      "thread_id": "neutral-thread-cobalt",
+      "codex_turn_id": "neutral-turn-cobalt",
+      "payload": {
+        "type": "code_cell_ended",
+        "runtime_cell_id": "neutral-cell-cobalt",
+        "status": "completed",
+        "response_payload": {
+          "raw_payload_id": "neutral-result-cobalt",
+          "kind": "tool_result",
+          "path": "payloads/result.json"
+        }
+      }
+    },
+    {
+      "schema_version": 2,
+      "seq": 4,
+      "wall_time_unix_ms": 0,
+      "rollout_id": "neutral-rollout-cobalt",
+      "thread_id": "neutral-thread-cobalt",
+      "codex_turn_id": "neutral-turn-cobalt",
+      "payload": {
+        "type": "recording_completed",
+        "trace_id": "neutral-trace-cobalt",
+        "root_thread_id": "neutral-thread-cobalt"
+      }
+    }
+  ],
+  "payloads": {
+    "request": {
+      "model": "gpt-6.1-sol",
+      "reasoning": {
+        "effort": "xhigh"
+      },
+      "tools": [
+        {
+          "type": "namespace",
+          "name": "functions",
+          "tools": [
+            {
+              "type": "custom",
+              "name": "exec",
+              "description": "shape-only wrapper",
+              "format": {
+                "type": "text"
+              }
+            },
+            {
+              "type": "function",
+              "name": "wait",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "cell_id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "result": {
+      "response": {
+        "Result": {
+          "cell_id": "neutral-cell-cobalt",
+          "content_items": [
+            {
+              "type": "input_text",
+              "text": "{\"trace_parser_shape\": true}"
+            }
+          ],
+          "error_text": null
+        }
+      }
+    }
+  }
+}

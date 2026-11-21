@@ -139,6 +139,7 @@ from ..project_runtime import (
     build_project_runtime,
     capsule_for_project,
     project_list_payload,
+    project_search_label,
 )
 from ..security import (
     CLIENT_SCOPE_ALLOWLIST,
@@ -902,6 +903,23 @@ def create_app(
         result = response.model_dump(mode="json")
         result["project_context"] = project_activation.to_dict()
         result["total_used_chars"] = response.used_chars + project_used_chars
+        if project_activation.reason in {
+            "no_authorized_project_context",
+            "project_signal_not_found",
+        } and not any(item.kind.casefold() != "interaction_preference" for item in response.items):
+            label = project_search_label(project_snapshot, request.current_project)
+            if label is not None:
+                evidence = core.retrieval.project_search_evidence(
+                    retrieval_request,
+                    principal,
+                    label=label,
+                    snapshot=project_snapshot,
+                    retained_items=response.items,
+                    trace_id=response.audit_trace_id,
+                )
+                if evidence is not None:
+                    result["project_search_evidence"] = evidence.model_dump(mode="json")
+                    result["total_used_chars"] += evidence.used_chars
         if project_activation.capsule is not None:
             core.store.audit_access(
                 principal.id,

@@ -276,18 +276,21 @@ jobs:
         run: python scripts/verify_dashboard_parity.py
 
   desktop-package:
-    name: Desktop artifact - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    # Keep these check names stable for branch protection.
+    name: Desktop artifact - ${{ matrix.check_label }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - check_label: windows-latest
+            runner: windows-latest
             platform: windows
             architecture: x86_64
             source: AllTheContextSetup.exe
-          - os: ubuntu-latest
+          - check_label: ubuntu-latest
+            runner: ubuntu-24.04
             platform: linux
             architecture: x86_64
             source: all-the-context

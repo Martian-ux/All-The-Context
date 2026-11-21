@@ -70,6 +70,60 @@ counts, budget usage, provenance-backed selected-item count, and explicit
 candidate-pool, budget, or record-limit truncation reasons. It contains no raw
 query or ranking diagnostics.
 
+When ordinary task `items` are absent (interaction preferences may remain) and
+project activation abstains without an invalid/ambiguous/unavailable projection,
+Core may add `project_search_evidence` for an explicit `current_project` label:
+
+```json
+{
+  "schema_version": "atc.project-search-evidence.v1",
+  "project_label": "Silver Finch",
+  "evidence_kind": "partial_exact_name_content_matches",
+  "establishes_membership": false,
+  "complete_task_coverage": false,
+  "items": [],
+  "used_chars": 0,
+  "selection_metadata": {}
+}
+```
+
+The illustration shows field names; emitted envelopes contain at least one full
+authorized current record and valid `ContextPackMetadata`. A mention can come from
+unrelated prose: use it as search evidence, never as project membership, a capsule,
+or complete task coverage. No binding is created. Ordinary `items`, `used_chars`
+and `pack_metadata` retain their existing meanings. `total_used_chars` adds the
+evidence cost and any activated capsule (activation suppresses this fallback).
+`selection_metadata` describes the combined retained preferences/evidence selection.
+Normal compiler accounting charges full content plus 64 characters per record;
+capsules retain their existing text cost. Records and provenance are not clipped.
+
+The fallback accepts only literal labels of 3–160 characters, beginning with a
+letter, with at most eight alphanumeric words separated by single spaces/hyphens.
+Conjoined `and`/`or` signals, paths, scope prefixes, opaque IDs, known aliases and
+ambiguous authorized identities are rejected. Matching is case-insensitive with
+whole-label boundaries, with no prefix or alias expansion. The authorized project
+projection must be available, including for checking identities with empty capsules.
+Only the established direct USER origins (`ongoing_client`, `local_admin`,
+`context_error`, `legacy_migration`) with null `source_id`, `source_service`
+and `source_type` are eligible; an ordinary `source_reference` is allowed.
+Source-free owner-approved direct corrections remain eligible subject to normal
+current-truth and ACL checks. Owner approval also gives imports `local_admin`
+origin but retains their provider source metadata and binding, so they remain
+excluded. An origin label alone never establishes eligibility. Named
+project scopes/entities and structured identities remain excluded. All
+source-backed/source-described records (including provider archives/memories,
+registered/workspace captures and attributed direct-user statements) and all
+other/unknown observation origins are deliberately unsupported by this optional
+fallback, even when assignment is unresolved. `UNRESOLVED` does not mean unbound.
+Generic direct Core `project` prose is still mention evidence. Ordinary retrieval
+and capsule admission retain their existing source contracts. Search uses requested
+scopes, per-record ACLs, current lifecycle/admissibility, confidence at least 0.8, a bounded
+100-record pool and normal compiler conflict/duplicate/budget policy. The combined
+preference/evidence pack has at most 32 records. An empty selection omits the field.
+Task text and MCP root hints never trigger it. Direct MCP forwarding preserves the
+envelope; the automatic Codex hook currently supplies no `current_project` and
+consumes only `items`.
+
 The v1 metadata contract is closed and bounded: candidate and omitted counts
 are limited to 50,000, selected and provenance-backed counts to 32, and budget
 and used-character counts to 100,000; duplicate- and conflict-suppression

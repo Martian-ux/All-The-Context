@@ -13,6 +13,7 @@ import re
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Final, Literal
 
 from .ids import utc_now
@@ -28,8 +29,11 @@ from .project_continuity import (
     build_project_continuity,
     evidence_from_memory_truth,
 )
+from .project_continuity import (
+    _timestamp as _normalize_timestamp,
+)
 from .security import ClientPrincipal, record_is_allowed
-from .storage import CoreStore
+from .storage import CoreStore, InvalidStateError
 
 RUNTIME_TRUTH_PAGE_SIZE: Final = 500
 RUNTIME_MAX_TRUTH_RECORDS: Final = 10_000
@@ -251,6 +255,7 @@ def _authorized_binding(
 
 
 def _record_is_current_anchor(record: MemoryTruthRecordOut, *, as_of: str) -> bool:
+    expiry = _normalize_timestamp(record.record.expires_at)
     if (
         record.status is not MemoryTruthStatus.CURRENT
         or record.record.status is not MemoryTruthStatus.CURRENT
@@ -258,7 +263,7 @@ def _record_is_current_anchor(record: MemoryTruthRecordOut, *, as_of: str) -> bo
         or record.conflict_state is not TruthConflictState.NONE
         or record.record.kind.casefold() not in {"project", "project_identity"}
         or not record.record.explicit_user_statement
-        or (record.record.expires_at is not None and record.record.expires_at <= as_of)
+        or (expiry is not None and datetime.fromisoformat(expiry) <= datetime.fromisoformat(as_of))
     ):
         return False
     return not (record.source is not None and record.source.deleted_at is not None)
@@ -289,6 +294,25 @@ def _read_truth(
     *,
     principal: ClientPrincipal | None = None,
 ) -> tuple[MemoryTruthRecordOut, ...]:
+    snapshot_reader = getattr(store, "_memory_truth_snapshot", None)
+    if callable(snapshot_reader):
+        try:
+            snapshot_records, total = snapshot_reader(
+                page_size=RUNTIME_TRUTH_PAGE_SIZE,
+                max_records=RUNTIME_MAX_TRUTH_RECORDS,
+                principal=principal,
+            )
+        except InvalidStateError as error:
+            raise ProjectRuntimeError("truth_projection_bound_exceeded") from error
+        if len(snapshot_records) != total:
+            raise ProjectRuntimeError("truth_projection_changed_during_read")
+        return tuple(item for item in snapshot_records if _principal_allows_truth(item, principal))
+
+    if principal is not None:
+        # The legacy list projection has no observation ACL contract. Canonical
+        # ACL checks alone cannot authorize its linked evidence or derived IDs.
+        raise ProjectRuntimeError("authorized_truth_snapshot_unavailable")
+
     records: list[MemoryTruthRecordOut] = []
     offset = 0
     scanned = 0
@@ -411,7 +435,8 @@ def build_project_runtime(
 ) -> ProjectContinuitySnapshot:
     """Build one in-memory project projection from bounded authorized Core truth."""
 
-    effective_as_of = as_of or utc_now()
+    effective_as_of = _normalize_timestamp(as_of or utc_now())
+    assert effective_as_of is not None
     records = _read_truth(store, principal=principal)
     bindings, evidence = _runtime_evidence(records, store=store, as_of=effective_as_of)
     return build_project_continuity(
@@ -510,6 +535,43 @@ def _task_mentions_label(task: str, label: str) -> bool:
         )
         is not None
     )
+
+
+def project_search_label(
+    snapshot: ProjectContinuitySnapshot, current_project: str | None
+) -> str | None:
+    """Accept a literal named search signal, never an alias, path, or opaque ID.
+
+    Check all authorized identities, including those without a usable capsule:
+    activation's content-bearing subset alone cannot establish unambiguity.
+    Unknown labels remain literal search terms, not newly discovered projects.
+    """
+    if current_project is None or not 3 <= len(current_project) <= 160:
+        return None
+    if re.fullmatch(r"[^\W_]+(?:[ -][^\W_]+)*", current_project) is None:
+        return None
+    label = current_project.casefold()
+    words = re.split(r"[ -]", label)
+    if (
+        not current_project[0].isalpha()
+        or len(words) > 8
+        or bool(set(words) & {"and", "or"})
+        or label.startswith("project-")
+        or re.fullmatch(r"[0-9a-f]{16,}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", label)
+        is not None
+    ):
+        return None
+    matches = [
+        project
+        for project in snapshot.projects
+        if label
+        in _project_match_values(
+            project.project_id, project.project_ref, project.name, project.aliases
+        )
+    ]
+    if len(matches) > 1 or (matches and (matches[0].name or "").casefold() != label):
+        return None
+    return current_project
 
 
 def activate_project_context(
@@ -651,4 +713,5 @@ __all__ = [
     "build_project_runtime",
     "capsule_for_project",
     "project_list_payload",
+    "project_search_label",
 ]

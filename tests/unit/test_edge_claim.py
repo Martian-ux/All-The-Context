@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import time
 from dataclasses import replace
@@ -30,6 +31,12 @@ def test_claim_is_public_key_bound_encrypted_replay_safe_and_restart_safe(tmp_pa
     credentials = decrypt_claim(bundle, private, envelope)
     assert len(credentials["replication_secret"]) >= 32
     assert len(credentials["replication_token"]) >= 32
+    assert store.credentials() == (
+        credentials["replication_secret"],
+        credentials["replication_token"],
+    )
+    with pytest.raises(EdgeClaimError, match="credential"):
+        store.acknowledge(hashlib.sha256(bundle.claim_id.encode()).hexdigest())
     with pytest.raises(EdgeClaimError, match="replayed"):
         store.complete(challenge, signature)
 
@@ -40,7 +47,7 @@ def test_claim_is_public_key_bound_encrypted_replay_safe_and_restart_safe(tmp_pa
         sign_claim(private, bundle, retry_challenge, "https://edge.example.test"),
     )
     assert decrypt_claim(bundle, private, retry) == credentials
-    restarted.acknowledge()
+    restarted.acknowledge(credentials["replication_token"])
     with pytest.raises(EdgeClaimError, match="unavailable"):
         restarted.challenge()
 
