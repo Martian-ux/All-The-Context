@@ -564,54 +564,40 @@ def test_packet_a_json_loader_enforces_bounded_input_limits(tmp_path: Path) -> N
     with pytest.raises(SpecificationValidationError, match="byte limit"):
         validator_module.load_json_document(oversized_path)
 
-    deep_path = tmp_path / "deep.json"
-    deep_path.write_text(
-        "[" * (validator_module.MAX_JSON_DEPTH + 1)
-        + "0"
-        + "]" * (validator_module.MAX_JSON_DEPTH + 1),
-        encoding="utf-8",
-    )
-    with pytest.raises(SpecificationValidationError, match="depth limit"):
-        validator_module.load_json_document(deep_path)
-
-    very_deep_path = tmp_path / "very-deep.json"
-    very_deep_level = validator_module.MAX_JSON_DEPTH * 20
-    very_deep_path.write_text(
-        "[" * very_deep_level + "0" + "]" * very_deep_level,
-        encoding="utf-8",
-    )
-    with pytest.raises(SpecificationValidationError):
-        validator_module.load_json_document(very_deep_path)
-
-    long_string_path = tmp_path / "long-string.json"
-    long_string_path.write_text(
-        '{"value":"' + "x" * (validator_module.MAX_JSON_STRING_CHARS + 1) + '"}',
-        encoding="utf-8",
-    )
-    with pytest.raises(SpecificationValidationError, match="string limit"):
-        validator_module.load_json_document(long_string_path)
-
-    long_number_path = tmp_path / "long-number.json"
-    long_number_path.write_text(
-        '{"value":' + "9" * (validator_module.MAX_JSON_NUMBER_DIGITS + 1) + "}",
-        encoding="utf-8",
-    )
-    with pytest.raises(SpecificationValidationError, match="number digit limit"):
-        validator_module.load_json_document(long_number_path)
-
-    many_nodes_path = tmp_path / "many-nodes.json"
-    many_nodes_path.write_text(
-        json.dumps({"values": [0] * (validator_module.MAX_JSON_NODES + 1)}),
-        encoding="utf-8",
-    )
-    with pytest.raises(SpecificationValidationError, match="node limit"):
-        validator_module.load_json_document(many_nodes_path)
+    valid_path = tmp_path / "valid.json"
+    valid_path.write_bytes(b'{"value":[1,"bounded"]}')
+    assert validator_module.load_json_document(valid_path) == {"value": [1, "bounded"]}
 
     malformed_path = tmp_path / "malformed.json"
     malformed_path.write_text('{"value":', encoding="utf-8")
     with pytest.raises(SpecificationValidationError, match="invalid JSON") as malformed_error:
         validator_module.load_json_document(malformed_path)
     assert str(malformed_error.value) == "invalid JSON document"
+
+
+def test_packet_a_json_parser_enforces_bounded_shape_limits() -> None:
+    # Exercise the loader's parser without involving filesystem identity checks.
+    deep_level = validator_module.MAX_JSON_DEPTH + 1
+    with pytest.raises(SpecificationValidationError, match="depth limit"):
+        validator_module._parse_bounded_json_bytes(b"[" * deep_level + b"0" + b"]" * deep_level)
+
+    very_deep_level = validator_module.MAX_JSON_DEPTH * 20
+    with pytest.raises(SpecificationValidationError):
+        validator_module._parse_bounded_json_bytes(
+            b"[" * very_deep_level + b"0" + b"]" * very_deep_level
+        )
+
+    long_string = b'{"value":"' + b"x" * (validator_module.MAX_JSON_STRING_CHARS + 1) + b'"}'
+    with pytest.raises(SpecificationValidationError, match="string limit"):
+        validator_module._parse_bounded_json_bytes(long_string)
+
+    long_number = b'{"value":' + b"9" * (validator_module.MAX_JSON_NUMBER_DIGITS + 1) + b"}"
+    with pytest.raises(SpecificationValidationError, match="number digit limit"):
+        validator_module._parse_bounded_json_bytes(long_number)
+
+    many_nodes = json.dumps({"values": [0] * (validator_module.MAX_JSON_NODES + 1)}).encode("utf-8")
+    with pytest.raises(SpecificationValidationError, match="node limit"):
+        validator_module._parse_bounded_json_bytes(many_nodes)
 
     with pytest.raises(SpecificationValidationError, match="byte limit"):
         compute_narrative_semantic_digest(
