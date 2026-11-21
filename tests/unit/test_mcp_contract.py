@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 import anyio
+import httpx2 as httpx
 import pytest
 from allthecontext import mcp_adapter as local_mcp
 from allthecontext.config import CoreConfig
@@ -88,6 +89,74 @@ def test_public_mcp_call_rejects_unexpected_tool_arguments(server_kind: str) -> 
 
     with pytest.raises(ToolError):
         anyio.run(server.call_tool, "context_status", {"unexpected": "value"})
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        pytest.param(
+            httpx.Response(
+                503,
+                json={"detail": {"error": {"code": "target_down", "message": "Retry soon"}}},
+            ),
+            {"ok": False, "error": {"code": "target_down", "message": "Retry soon"}},
+            id="nested-error",
+        ),
+        pytest.param(
+            httpx.Response(503, content='["temporarily unavailable"]'),
+            {
+                "ok": False,
+                "error": {"code": "http_error", "message": '["temporarily unavailable"]'},
+            },
+            id="array-error",
+        ),
+        pytest.param(
+            httpx.Response(503, content="null"),
+            {"ok": False, "error": {"code": "http_error", "message": "null"}},
+            id="null-error",
+        ),
+        pytest.param(
+            httpx.Response(503, content='"' + "x" * 600 + '"'),
+            {"ok": False, "error": {"code": "http_error", "message": '"' + "x" * 499}},
+            id="string-error-raw-500-character-fallback",
+        ),
+        pytest.param(
+            httpx.Response(503, content="Retry soon"),
+            {"ok": False, "error": {"code": "http_error", "message": "Retry soon"}},
+            id="plain-text-error",
+        ),
+        pytest.param(
+            httpx.Response(200, json={"core_online": True}),
+            {"core_online": True},
+            id="successful-object",
+        ),
+        pytest.param(
+            httpx.Response(200, json=["available"]),
+            {"ok": True, "result": ["available"]},
+            id="successful-array",
+        ),
+        pytest.param(
+            httpx.Response(204),
+            {"ok": True},
+            id="successful-no-content",
+        ),
+    ],
+)
+def test_context_status_keeps_structured_http_errors(
+    monkeypatch: pytest.MonkeyPatch, response: httpx.Response, expected: dict[str, Any]
+) -> None:
+    def request(method: str, url: str, **_kwargs: Any) -> httpx.Response:
+        assert (method, url) == ("GET", "https://core.example.test/v1/context/status")
+        return response
+
+    monkeypatch.setattr("allthecontext.http_client.httpx.request", request)
+    monkeypatch.setattr(
+        local_mcp,
+        "_client",
+        lambda: ContextHttpClient("https://core.example.test", "test-client", "test-token"),
+    )
+
+    assert _call_tool(build_mcp(), "context_status", {}) == expected
 
 
 def test_edge_mcp_app_uses_atc_request_limit() -> None:

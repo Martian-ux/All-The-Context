@@ -604,35 +604,40 @@ def _inventory_packaged_processes(
         raise PackagedProcessInventoryError("native packaged process inventory failed") from exc
     process_environment = os.environ.copy()
     process_environment["ATC_SMOKE_PROCESS_PATH"] = str(resolved_executable)
+    command = (
+        [sys.executable, str(Path(__file__).with_name("windows_ci_process_inventory.py"))]
+        if process_environment.get("ATC_CI_WINDOWS_COM_INVENTORY") == "1"
+        else [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            (
+                "$ErrorActionPreference = 'Stop'; "
+                "$target = [System.IO.Path]::GetFullPath($env:ATC_SMOKE_PROCESS_PATH); "
+                "$name = [System.IO.Path]::GetFileName($target); "
+                '$filterName = $name.Replace("\'", "\'\'"); '
+                "$processes = @(Get-CimInstance -ClassName Win32_Process "
+                "-Filter (\"Name = '{0}'\" -f $filterName) "
+                "-Property ProcessId,CreationDate,ExecutablePath | "
+                "Where-Object { $_.ExecutablePath -eq $target } | "
+                "Select-Object -First 65 | "
+                "ForEach-Object { [pscustomobject]@{ "
+                "pid = [int64]$_.ProcessId; "
+                "creation_identity = $_.CreationDate.ToUniversalTime().Ticks"
+                ".ToString([System.Globalization.CultureInfo]::InvariantCulture); "
+                "exe = [string]$_.ExecutablePath } }); "
+                "if ($processes.Count -gt 64) { exit 2 }; "
+                "ConvertTo-Json -InputObject @($processes) -Compress"
+            ),
+        ]
+    )
     try:
         completed = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                (
-                    "$ErrorActionPreference = 'Stop'; "
-                    "$target = [System.IO.Path]::GetFullPath($env:ATC_SMOKE_PROCESS_PATH); "
-                    "$name = [System.IO.Path]::GetFileName($target); "
-                    '$filterName = $name.Replace("\'", "\'\'"); '
-                    "$processes = @(Get-CimInstance -ClassName Win32_Process "
-                    "-Filter (\"Name = '{0}'\" -f $filterName) "
-                    "-Property ProcessId,CreationDate,ExecutablePath | "
-                    "Where-Object { $_.ExecutablePath -eq $target } | "
-                    "Select-Object -First 65 | "
-                    "ForEach-Object { [pscustomobject]@{ "
-                    "pid = [int64]$_.ProcessId; "
-                    "creation_identity = $_.CreationDate.ToUniversalTime().Ticks"
-                    ".ToString([System.Globalization.CultureInfo]::InvariantCulture); "
-                    "exe = [string]$_.ExecutablePath } }); "
-                    "if ($processes.Count -gt 64) { exit 2 }; "
-                    "ConvertTo-Json -InputObject @($processes) -Compress"
-                ),
-            ],
+            command,
             env=process_environment,
             check=False,
             capture_output=True,
@@ -1726,6 +1731,17 @@ def _parse_arguments() -> argparse.Namespace:
 def main() -> int:
     arguments = _parse_arguments()
     system = os.environ.get("ATC_SMOKE_PLATFORM") or platform.system()
+    record_windows_timing = system == "Windows" and os.environ.get("ATC_CI_PACKAGED_TIMING") == "1"
+    phase_started = time.perf_counter() if record_windows_timing else None
+
+    def record_phase(phase: str) -> None:
+        nonlocal phase_started
+        if phase_started is None:
+            return
+        now = time.perf_counter()
+        print(f"Windows CI lifecycle phase {phase}: {now - phase_started:.2f}s", flush=True)
+        phase_started = now
+
     try:
         artifact_root = resolve_artifact_root(arguments.artifact_root)
         if system == "Windows":
@@ -1879,6 +1895,7 @@ def main() -> int:
             )
 
     atexit.register(cleanup_failed_smoke)
+    record_phase("artifact-validation-and-fixture")
 
     report = _run_headless_setup(
         executable=executable,
@@ -1893,6 +1910,7 @@ def main() -> int:
         diagnostics_root=diagnostics_root,
         label="headless first-run setup",
     )
+    record_phase("clean-install")
     if report.get("core_url") != f"http://127.0.0.1:{port}":
         fail_smoke("validate-setup-report", "unexpected_core_url")
     # Contract: this smoke uses the explicit isolated development store only.
@@ -2003,6 +2021,7 @@ def main() -> int:
         if str(installed_app) not in startup_content or "--core" not in startup_content:
             raise SystemExit("isolated XDG startup entry did not use the portable app")
 
+    record_phase("installed-identity-and-registration")
     packaged_uninstall_failure_result = "not_applicable"
     if system == "Windows":
         failure_report_path = work / "uninstall-failure-report.json"
@@ -2088,6 +2107,7 @@ def main() -> int:
         ):
             fail_smoke("packaged-uninstall-failure", "install_or_vault_not_preserved")
         packaged_uninstall_failure_result = "passed"
+    record_phase("negative-uninstall")
 
     try:
         dashboard_url = str(report.get("dashboard_url", ""))
@@ -2143,6 +2163,8 @@ def main() -> int:
     finally:
         stop_core(base_url, admin_token, data_dir=data_dir)
 
+    record_phase("dashboard-and-mcp")
+
     # The already-configured packaged adapter must recover Core without the
     # user opening the desktop app again.
     restart_log_path = work / "mcp-restart-stderr.log"
@@ -2151,6 +2173,8 @@ def main() -> int:
     if "Traceback" in restart_log_path.read_text(encoding="utf-8", errors="replace"):
         raise RuntimeError("packaged MCP Core restart wrote a traceback")
     stop_core(base_url, admin_token, data_dir=data_dir)
+
+    record_phase("cold-mcp-restart")
 
     # Reopen the stable installed copy and run the idempotent setup/upgrade
     # path; the same vault and desktop authority must survive.
@@ -2182,6 +2206,7 @@ def main() -> int:
         fail_smoke("validate-reopen-core", "reopened_core_not_ready")
     stop_core(base_url, admin_token, data_dir=data_dir)
 
+    record_phase("reopen-and-readiness")
     packaged_update_result = "not_applicable"
     if system == "Windows":
         assert packaged_identity is not None
@@ -2200,6 +2225,7 @@ def main() -> int:
                 target_version=__version__,
                 packaged_identity=packaged_identity,
             )
+        record_phase("interrupted-update-preparation")
         interrupted_environment = dict(environment)
         interrupted_environment["ATC_UPDATE_FAULT_AFTER_PHASE"] = "binary_replaced"
         interrupted = subprocess.run(
@@ -2217,6 +2243,7 @@ def main() -> int:
             "binary_replaced"
         ):
             raise SystemExit("packaged updater did not persist the interrupted cutover")
+        record_phase("interrupted-helper")
         subprocess.run(
             [str(crash_helper), "--journal", str(crash_journal)],
             env=environment,
@@ -2231,6 +2258,7 @@ def main() -> int:
         wait_for_core(base_url, admin_token)
         stop_core(base_url, admin_token, data_dir=data_dir)
 
+        record_phase("resumed-update-and-readiness")
         with _temporary_environment(helper_authority):
             rollback_helper, rollback_journal = prepare_packaged_update_transaction(
                 data_dir=data_dir,
@@ -2241,6 +2269,7 @@ def main() -> int:
                 target_version=__version__,
                 packaged_identity=packaged_identity,
             )
+        record_phase("rollback-preparation")
         rollback_environment = dict(environment)
         rollback_environment.update(
             {
@@ -2296,6 +2325,7 @@ def main() -> int:
             connection.close()
         stop_core(base_url, admin_token, data_dir=data_dir)
         packaged_update_result = "passed"
+        record_phase("rollback-and-restored-state")
 
     uninstall_result = "not_applicable"
     if system == "Windows":
@@ -2457,6 +2487,7 @@ def main() -> int:
         remove_work_tree(work)
     except (OSError, RuntimeError):
         raise SystemExit("packaged_first_run_cleanup_failed") from None
+    record_phase("final-uninstall-and-cleanup")
     atexit.unregister(cleanup_failed_smoke)
     print(
         json.dumps(

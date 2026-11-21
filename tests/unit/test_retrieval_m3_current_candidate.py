@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import tempfile
 from collections.abc import Iterator
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Any
 
@@ -25,14 +27,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="module")
-def current_candidate_reports() -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+def current_candidate_reports(
+    request: pytest.FixtureRequest,
+) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
     report_root = ROOT / "tmp"
     report_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
         prefix="test-retrieval-m3-current-candidate-", dir=report_root
     ) as run_root:
         root = Path(run_root)
-        yield run(root / "one"), run(root / "two")
+        if hasattr(request.config, "workerinput"):
+            # xdist already owns process parallelism; do not nest another pool.
+            first_report, second_report = run(root / "one"), run(root / "two")
+        else:
+            with (
+                ProcessPoolExecutor(max_workers=4, mp_context=get_context("spawn")) as cases,
+                ThreadPoolExecutor(max_workers=2) as replicas,
+            ):
+                first = replicas.submit(run, root / "one", case_executor=cases)
+                second = replicas.submit(run, root / "two", case_executor=cases)
+                # Future.result propagates worker failures before reports are yielded.
+                first_report, second_report = first.result(), second.result()
+        yield first_report, second_report
 
 
 def test_current_candidate_fixture_requires_distinct_one_anchor_split_records() -> None:
