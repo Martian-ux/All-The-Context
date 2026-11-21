@@ -28,6 +28,7 @@ PROPOSAL_PATH = (
     ROOT / "docs" / "research" / "POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md"
 )
 FREEZE_PATH = ROOT / "docs" / "research" / "ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md"
+_SEMANTIC_MUTATION_BUCKET_COUNT = 8
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -328,15 +329,36 @@ def test_packet_a_validator_rejects_cross_field_contract_mutations() -> None:
             )
 
 
-def test_packet_a_code_owned_digest_rejects_every_semantic_leaf_after_rebound() -> None:
+@pytest.mark.parametrize(
+    "bucket",
+    range(_SEMANTIC_MUTATION_BUCKET_COUNT),
+    ids=[
+        f"bucket-{index + 1:02d}-of-{_SEMANTIC_MUTATION_BUCKET_COUNT:02d}"
+        for index in range(_SEMANTIC_MUTATION_BUCKET_COUNT)
+    ],
+)
+def test_packet_a_code_owned_digest_rejects_every_semantic_leaf_after_rebound(bucket: int) -> None:
     pristine = _load(SPEC_PATH)
     spec = deepcopy(pristine)
     scalar_paths = _scalar_paths(spec)
     assert len(scalar_paths) > 300
 
-    for path, original in scalar_paths:
-        if path == ("packet_a", "content_binding", "specification_digest"):
-            continue
+    semantic_paths = [
+        (path, value)
+        for path, value in scalar_paths
+        if path != ("packet_a", "content_binding", "specification_digest")
+    ]
+    buckets = [
+        semantic_paths[index::_SEMANTIC_MUTATION_BUCKET_COUNT]
+        for index in range(_SEMANTIC_MUTATION_BUCKET_COUNT)
+    ]
+    # Check the complete partition without fixing the evolving schema's leaf count.
+    scheduled_paths = [path for paths in buckets for path, _ in paths]
+    assert len(scheduled_paths) == len(semantic_paths)
+    assert len(set(scheduled_paths)) == len(scheduled_paths)
+    assert set(scheduled_paths) == {path for path, _ in semantic_paths}
+
+    for path, original in buckets[bucket]:
         _replace_path(spec, path, _mutated_scalar(original))
         try:
             candidate = with_recomputed_digest(spec)
