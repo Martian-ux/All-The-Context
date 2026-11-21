@@ -168,59 +168,48 @@ def test_exact_case_schedule_defaults_to_files_and_admits_new_nodes() -> None:
 
 def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
     checker = _load_collection_script()
-    agent = "tests/integration/test_agent_continuity_harness.py"
-    first_read = "tests/integration/test_project_first_read.py"
-    continuity = "tests/integration/test_project_memory_continuity.py"
-    e01b = "tests/unit/test_memory_reliability_lab_e01b.py"
-    stdio = "tests/integration/test_mcp_stdio.py"
-    split_modules = [
-        f"{path}::test_family[{case}@value]"
-        for path in (agent, first_read)
-        for case in ("allow", "deny")
-    ] + [f"{path}::test_other" for path in (agent, first_read)]
-    continuity_function = (
-        f"{continuity}::test_project_decision_correction_and_forget_survive_core_recreation"
+    split_files = (
+        "tests/integration/test_agent_continuity_harness.py",
+        "tests/integration/test_project_first_read.py",
+        "tests/unit/test_capture_runtime.py",
+        "tests/unit/test_provider_ingestion.py",
     )
-    continuity_cases = [f"{continuity_function}[{case}]" for case in ("allow", "deny")]
-    ordinary_cases = [f"{continuity_function}[other]", f"{continuity}::test_unrelated"]
-    e01b_nodes = [f"{e01b}::test_keep", f"{e01b}::test_other"]
-    stdio_nodes = [f"{stdio}::test_start", f"{stdio}::test_roundtrip"]
-    first_read_cases = [node for node in split_modules if node.startswith(first_read + "::")]
-    moved = Counter(continuity_cases + ordinary_cases + e01b_nodes + stdio_nodes + first_read_cases)
-    nodes = (
-        split_modules
-        + continuity_cases
-        + ordinary_cases
-        + e01b_nodes
-        + stdio_nodes
-        + [f"tests/test_{i}.py::test_other" for i in range(220)]
+    families = [
+        [f"{path}::test_family[allow]", f"{path}::test_family[deny]", f"{path}::test_other"]
+        for path in split_files
+    ]
+    continuity = (
+        "tests/integration/test_project_memory_continuity.py"
+        "::test_project_decision_correction_and_forget_survive_core_recreation"
     )
+    allow, deny = (f"{continuity}[{acl}]" for acl in ("allow", "deny"))
+    ordinary = [f"{continuity}[other]", continuity.rsplit("::", 1)[0] + "::test_unrelated"]
+    nodes = [case for family in families for case in family]
+    nodes += [allow, deny, *ordinary, *(f"tests/test_{i}.py::test_other" for i in range(30))]
+    complete = Counter(nodes)
 
     default_groups = checker.test_case_groups(nodes)
     windows_groups = checker.test_case_groups(nodes, platform="windows")
     assert checker.test_case_groups(nodes, platform="linux") == default_groups
-    split_nodes = set(split_modules + continuity_cases)
-    assert all(
-        windows_groups[node] == default_groups[node] for node in nodes if node not in split_nodes
-    )
-    for first, second, other in ((0, 1, 4), (2, 3, 5)):
-        assert default_groups[nodes[first]] == default_groups[nodes[other]]
-        assert windows_groups[nodes[first]] == windows_groups[nodes[second]]
-        assert windows_groups[nodes[first]] != windows_groups[nodes[other]]
-    for intact in (ordinary_cases, e01b_nodes, stdio_nodes):
-        assert len({windows_groups[node] for node in intact}) == 1
-    assert len({default_groups[node] for node in continuity_cases + ordinary_cases}) == 1
-    assert len({windows_groups[node] for node in continuity_cases + ordinary_cases}) == 3
+    for sibling_a, sibling_b, other in families:
+        assert default_groups[sibling_a] == default_groups[other]
+        assert windows_groups[sibling_a] == windows_groups[sibling_b] != windows_groups[other]
+    assert len({windows_groups[node] for node in (allow, deny, ordinary[0])}) == 3
+    assert windows_groups[ordinary[0]] == windows_groups[ordinary[1]]
+    assert all(windows_groups[node] == default_groups[node] for node in ordinary)
 
-    complete = Counter(nodes)
-    old = checker.assign_test_cases(complete, shard_count=9)
-    new = checker.assign_test_cases(complete, shard_count=9, platform="windows")
-    assert [shard - moved for shard in new] == [shard - moved for shard in old]
-    assert new[8] & moved == Counter(continuity_cases + ordinary_cases)
-    assert new[4] & moved == Counter(e01b_nodes)
-    assert new[1] & moved == Counter(stdio_nodes)
-    assert new[2] & moved == Counter(first_read_cases)
-    checker.verify_complete_disjoint_union(complete, new)
+    count = checker.CI_SHARD_COUNTS["windows"]
+    shards = checker.assign_test_cases(complete, shard_count=count, platform="windows")
+    checker.verify_complete_disjoint_union(complete, shards)
+    assert all(not {allow, deny} <= set(shard) for shard in shards)
+    for sibling_a, sibling_b, _ in families:
+        assert any(sibling_a in shard and sibling_b in shard for shard in shards)
+    assert shards == checker.assign_test_cases(
+        Counter(reversed(nodes)), shard_count=count, platform="windows"
+    )
+    weighted = checker.windows_groups_by_runtime(nodes)
+    positions = {node: index for index, (_, cases, _) in enumerate(weighted) for node in cases}
+    assert positions[allow] < positions[deny] < positions[ordinary[0]]
 
 
 def test_exact_projection_preserves_literal_at_signs_and_rejects_collisions() -> None:
@@ -389,6 +378,7 @@ def test_ci_starts_frozen_shards_without_a_planner_and_keeps_required_gates() ->
     assert "--deselect" not in workflow
     assert "-k " not in workflow
 
+
 @pytest.fixture(scope="module")
 def small_suite(tmp_path_factory):
     """A real default-discovery suite with platform, runtime and xfail outcomes."""
@@ -476,9 +466,8 @@ def small_suite(tmp_path_factory):
         assert spec is not None and spec.loader is not None
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
-    identity = dict(
-        head="a" * 40, tree="b" * 40, platform=sys.platform, run_id="42", run_attempt="1"
-    )
+    platform = "windows" if sys.platform == "win32" else "linux"
+    identity = dict(head="a" * 40, tree="b" * 40, platform=platform, run_id="42", run_attempt="1")
 
     def run(mode, shard=0, count=2):
         output = root / f"receipt-{mode}-{shard}"
@@ -679,10 +668,20 @@ def _verify_fixture_witnesses(homes, witnesses):
 
 
 def test_real_loadgroup_preserves_shared_fixtures_and_splits_audited_cases(small_suite):
-    checker, _, root, _, canonical, receipts = small_suite
+    checker, _, root, identity, canonical, receipts = small_suite
     _verify_small(small_suite)
-    groups = checker.test_case_groups(canonical["collection"])
+    platform = identity["platform"]
+    cases = canonical["collection"]
+    groups = checker.test_case_groups(cases, platform=platform)
     inverse = checker.projected_ids(groups)
+    if platform == "windows":
+        parallel = checker.xdist_collection(Counter(cases))
+        ordered = checker.windows_groups_by_runtime(list(parallel))
+        ranks = {node: rank for rank, (_, nodes, _) in enumerate(ordered) for node in nodes}
+        for receipt in receipts:
+            for worker_nodes in receipt["collections"].values():
+                worker_order = [ranks[inverse[node]] for node in worker_nodes]
+                assert worker_order == sorted(worker_order)
     homes = {}
     audited = []
     for shard, receipt in enumerate(receipts):

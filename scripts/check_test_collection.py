@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 COLLECTION_PREFIX = "tests/"
-CI_SHARD_COUNTS = {"linux": 4, "windows": 9}
+CI_SHARD_COUNTS = {"linux": 4, "windows": 10}
 DEFAULT_TEST_FILE_SECONDS = 0.859
 
 # The twenty slowest files in the exact d18b4b7 sequential JUnit receipt. These
@@ -88,14 +88,18 @@ FUNCTION_AFFINITY_FILES = frozenset(
 )
 
 
+AGENT_CONTINUITY_TEST_FILE = "tests/integration/test_agent_continuity_harness.py"
 PROJECT_FIRST_READ_TEST_FILE = "tests/integration/test_project_first_read.py"
 PROJECT_MEMORY_TEST_FILE = "tests/integration/test_project_memory_continuity.py"
+PACKET_H_TEST_FILE = "tests/unit/test_packet_h_retrieval.py"
 
-# Native Windows parity covered every case and fixture in these two modules.
+# Windows fixture audits support group boundaries at test functions in these modules.
 WINDOWS_FUNCTION_AFFINITY_FILES = frozenset(
     {
-        "tests/integration/test_agent_continuity_harness.py",
+        AGENT_CONTINUITY_TEST_FILE,
         PROJECT_FIRST_READ_TEST_FILE,
+        "tests/unit/test_capture_runtime.py",
+        "tests/unit/test_provider_ingestion.py",
     }
 )
 # Those two observation-ACL journeys have independent vaults and instances.
@@ -103,13 +107,88 @@ WINDOWS_SINGLETON_NODE_IDS = frozenset(
     f"{PROJECT_MEMORY_TEST_FILE}::test_project_decision_correction_and_forget_survive_core_recreation[{acl}]"
     for acl in ("allow", "deny")
 )
-# Hosted receipt replay places a few measured slow groups on lighter runners.
-WINDOWS_FILE_SHARDS = {
-    "tests/integration/test_mcp_stdio.py": 1,
-    PROJECT_FIRST_READ_TEST_FILE: 2,
-    PROJECT_MEMORY_TEST_FILE: 8,
-    "tests/unit/test_memory_reliability_lab_e01b.py": 4,
+# Worker seconds from the authenticated Windows receipts for PRs 128-130.
+WINDOWS_FILE_SECONDS = {
+    AGENT_CONTINUITY_TEST_FILE: 107.17,
+    "tests/integration/test_claude_code_memory_core_api.py": 39.52,
+    "tests/integration/test_core_api.py": 40.61,
+    "tests/integration/test_cross_client_memory_acceptance.py": 56.79,
+    PROJECT_FIRST_READ_TEST_FILE: 183.31,
+    PROJECT_MEMORY_TEST_FILE: 105.60,
+    "tests/security/test_edge_forwarding.py": 44.12,
+    "tests/unit/test_application_install.py": 47.03,
+    "tests/unit/test_capture.py": 84.59,
+    "tests/unit/test_capture_runtime.py": 90.42,
+    "tests/unit/test_capture_scheduler.py": 43.80,
+    "tests/unit/test_export.py": 38.71,
+    "tests/unit/test_import_operations.py": 38.30,
+    "tests/unit/test_local_git_workspace_connector.py": 32.40,
+    "tests/unit/test_memory_reliability_lab_e01b.py": 86.59,
+    "tests/unit/test_memory_reliability_lab_e02_wave4.py": 56.23,
+    PACKET_A_TEST_FILE: 127.46,
+    "tests/unit/test_memory_truth.py": 36.53,
+    PACKET_H_TEST_FILE: 195.85,
+    "tests/unit/test_provider_ingestion.py": 90.35,
+    "tests/unit/test_retrieval_bootstrap_composition.py": 46.02,
+    "tests/unit/test_updater.py": 38.50,
+    "tests/unit/test_windows_update_helper.py": 55.39,
+    "tests/unit/test_zero_dashboard_harness.py": 38.15,
 }
+
+WINDOWS_SCOPE_SECONDS = {
+    (
+        f"{AGENT_CONTINUITY_TEST_FILE}::"
+        "test_scripted_client_failure_finishes_public_journey_without_fallback"
+    ): 64.79,
+    (
+        f"{AGENT_CONTINUITY_TEST_FILE}::test_scripted_source_process_public_http_and_mcp_journey"
+    ): 38.63,
+    (
+        f"{PROJECT_FIRST_READ_TEST_FILE}::test_bounded_pool_and_total_item_limit_are_deterministic"
+    ): 42.33,
+    f"{PROJECT_FIRST_READ_TEST_FILE}::test_fallback_requires_one_safe_explicit_named_signal": 42.38,
+    (
+        f"{PROJECT_FIRST_READ_TEST_FILE}::"
+        "test_named_first_read_returns_useful_partial_evidence_without_activation"
+    ): 28.29,
+    (
+        f"{PROJECT_MEMORY_TEST_FILE}::"
+        "test_project_decision_correction_and_forget_survive_core_recreation[allow]"
+    ): 58.42,
+    (
+        f"{PROJECT_MEMORY_TEST_FILE}::"
+        "test_project_decision_correction_and_forget_survive_core_recreation[deny]"
+    ): 47.18,
+    f"{PACKET_A_BUCKET_PREFIX}01-of-08]": 15.93,
+    f"{PACKET_A_BUCKET_PREFIX}02-of-08]": 18.39,
+    f"{PACKET_A_BUCKET_PREFIX}04-of-08]": 15.04,
+    f"{PACKET_A_BUCKET_PREFIX}07-of-08]": 17.55,
+    f"{PACKET_H_TEST_FILE}::test_packet_h_c_h_a_validator_rejects_unhashable_status_values": 30.36,
+    f"{PACKET_H_TEST_FILE}::test_packet_h_c_module_cli_uses_repository_root": 34.06,
+    f"{PACKET_H_TEST_FILE}::test_packet_h_c_refuses_wrong_h_a_replay_state": 43.96,
+}
+# Shard zero runs lint, type checks, docs, and a Python build. Shard one builds too.
+# Reserve four workers' worth of extra wall time for those gate roles.
+WINDOWS_GATE_RESERVES = (140.0, 20.0)
+
+
+def _case_scope(nodeid: str, *, windows: bool = False) -> str:
+    path, _, test = nodeid.partition("::")
+    function, parameter, _ = test.partition("[")
+    if (
+        path == "tests/unit/test_windows_update_helper.py"
+        or (
+            path == PACKET_A_TEST_FILE
+            and function == PACKET_A_BLOCK_FUNCTION
+            and bool(parameter)
+            and test.endswith("]")
+        )
+        or (windows and nodeid in WINDOWS_SINGLETON_NODE_IDS)
+    ):
+        return nodeid
+    if path in FUNCTION_AFFINITY_FILES or (windows and path in WINDOWS_FUNCTION_AFFINITY_FILES):
+        return f"{path}::{function}"
+    return path
 
 
 def test_case_groups(nodeids: Sequence[str], *, platform: str | None = None) -> dict[str, str]:
@@ -121,33 +200,17 @@ def test_case_groups(nodeids: Sequence[str], *, platform: str | None = None) -> 
         len({path.casefold() for path in files}) == len(files),
         "test file list contains duplicate normalized paths",
     )
-    keys = {}
-    windows_splits = {}
-    for nodeid in nodeids:
-        path, _, test = nodeid.partition("::")
-        function, parameter, _ = test.partition("[")
-        independent = (path == "tests/unit/test_windows_update_helper.py") or (
-            path == PACKET_A_TEST_FILE
-            and function == PACKET_A_BLOCK_FUNCTION
-            and bool(parameter)
-            and test.endswith("]")
-        )
-        if independent:
-            keys[nodeid] = nodeid
-        elif path in FUNCTION_AFFINITY_FILES:
-            keys[nodeid] = f"{path}::{function}"
-        else:
-            keys[nodeid] = path
-        if platform == "windows":
-            if nodeid in WINDOWS_SINGLETON_NODE_IDS:
-                windows_splits[nodeid] = nodeid
-            elif path in WINDOWS_FUNCTION_AFFINITY_FILES:
-                windows_splits[nodeid] = f"{path}::{function}"
+    original = {node: _case_scope(node) for node in nodeids}
+    scopes = (
+        {node: _case_scope(node, windows=True) for node in nodeids}
+        if platform == "windows"
+        else original
+    )
     # Append Windows scopes so unaffected nodes retain their projected IDs.
-    original = set(keys.values())
-    order = sorted(original) + sorted(set(windows_splits.values()) - original)
+    original_keys = set(original.values())
+    order = sorted(original_keys) + sorted(set(scopes.values()) - original_keys)
     names = {key: f"atc-group-{index:06d}" for index, key in enumerate(order)}
-    return {nodeid: names[windows_splits.get(nodeid, key)] for nodeid, key in keys.items()}
+    return {node: names[scope] for node, scope in scopes.items()}
 
 
 def projected_ids(canonical_to_group: dict[str, str]) -> dict[str, str]:
@@ -164,6 +227,65 @@ def projected_ids(canonical_to_group: dict[str, str]) -> dict[str, str]:
     return inverse
 
 
+def windows_groups_by_runtime(
+    nodeids: Sequence[str],
+) -> list[tuple[str, list[str], float]]:
+    """Order whole fixture groups by measured Windows worker time."""
+
+    members: dict[str, list[str]] = {}
+    file_counts = Counter(test_file_for_nodeid(node) for node in nodeids)
+    for node in nodeids:
+        members.setdefault(_case_scope(node, windows=True), []).append(node)
+
+    measured_counts: Counter[str] = Counter()
+    measured_costs: dict[str, float] = {}
+    for scope in sorted(members.keys() & WINDOWS_SCOPE_SECONDS.keys()):
+        path = test_file_for_nodeid(members[scope][0])
+        measured_counts[path] += len(members[scope])
+        measured_costs[path] = measured_costs.get(path, 0.0) + WINDOWS_SCOPE_SECONDS[scope]
+
+    weighted = []
+    for scope, nodes in members.items():
+        path = test_file_for_nodeid(nodes[0])
+        seconds = WINDOWS_SCOPE_SECONDS.get(scope)
+        if seconds is None:
+            file_seconds = WINDOWS_FILE_SECONDS.get(
+                path, HISTORICAL_TEST_FILE_SECONDS.get(path, DEFAULT_TEST_FILE_SECONDS)
+            )
+            remaining = max(0.05, file_seconds - measured_costs.get(path, 0.0))
+            seconds = remaining * len(nodes) / (file_counts[path] - measured_counts[path])
+        weighted.append((scope, nodes, seconds))
+    return sorted(weighted, key=lambda group: (-group[2], group[0]))
+
+
+def _assign_windows_cases(complete: Counter[str], shard_count: int) -> tuple[Counter[str], ...]:
+    ordered = windows_groups_by_runtime(list(complete))
+    require(0 < shard_count <= len(ordered), "shard count exceeds collected work groups")
+    shards: tuple[Counter[str], ...] = tuple(Counter() for _ in range(shard_count))
+    group_counts = [0] * shard_count
+    totals = [0.0] * shard_count
+    if shard_count == CI_SHARD_COUNTS["windows"]:
+        totals[:2] = WINDOWS_GATE_RESERVES
+    unassigned = set(range(shard_count))
+    continuity_shard = None
+    for offset, (scope, nodes, seconds) in enumerate(ordered):
+        allowed = unassigned if len(ordered) - offset == len(unassigned) else range(shard_count)
+        eligible = (
+            [index for index in allowed if index != continuity_shard]
+            if shard_count > 1 and scope in WINDOWS_SINGLETON_NODE_IDS
+            else allowed
+        )
+        shard = min(eligible, key=lambda index: (totals[index], group_counts[index], index))
+        shards[shard].update(nodes)
+        group_counts[shard] += 1
+        totals[shard] += seconds
+        unassigned.discard(shard)
+        if scope in WINDOWS_SINGLETON_NODE_IDS:
+            continuity_shard = shard
+    verify_complete_disjoint_union(complete, shards)
+    return shards
+
+
 def assign_test_cases(
     complete: Counter[str], *, shard_count: int, platform: str | None = None
 ) -> tuple[Counter[str], ...]:
@@ -173,7 +295,8 @@ def assign_test_cases(
         all(type(count) is int and count == 1 for count in complete.values()),
         "duplicate or invalid canonical counts",
     )
-    # Worker affinity is independent of the historical hosted shard placement.
+    if platform == "windows":
+        return _assign_windows_cases(complete, shard_count)
     groups = test_case_groups(list(complete))
     members: dict[str, list[str]] = {}
     file_counts = Counter(test_file_for_nodeid(node) for node in complete)
@@ -212,15 +335,6 @@ def assign_test_cases(
         shards[shard].update(members[group])
         totals[shard] += weights[group]
         unassigned.discard(shard)
-    if platform == "windows" and shard_count == CI_SHARD_COUNTS["windows"]:
-        for nodes in members.values():
-            destination = WINDOWS_FILE_SHARDS.get(test_file_for_nodeid(nodes[0]))
-            if destination is None:
-                continue
-            source = next(shard for shard in shards if nodes[0] in shard)
-            target = shards[destination]
-            if source is not target:
-                target.update({node: source.pop(node) for node in nodes})
     verify_complete_disjoint_union(complete, shards)
     return shards
 

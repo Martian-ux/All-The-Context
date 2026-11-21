@@ -50,6 +50,8 @@ def run_pytest(root: Path, output: Path, metadata: dict) -> int:
         command.extend(
             ["-n", str(metadata["workers"]), "--dist=loadgroup", "--max-worker-restart=0"]
         )
+        if metadata["platform"] == "windows":
+            command.append("--no-loadscope-reorder")
     # Separate canonical stdout avoids interleaving its full node listing with
     # live shard failures. Both logs survive failed invocations for diagnosis.
     with (output / f"{mode}.log").open("w", encoding="utf-8") as log:

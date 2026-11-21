@@ -14,6 +14,7 @@ from scripts.check_test_collection import (
     normalize_nodeid,
     projected_ids,
     test_case_groups,
+    windows_groups_by_runtime,
     xdist_collection,
 )
 
@@ -58,10 +59,9 @@ class Receipt:
             platform = self.metadata.get("platform")
             groups = test_case_groups(self.full, platform=platform)
             inverse = projected_ids(groups)
+            parallel = xdist_collection(Counter(self.full))
             shards = assign_test_cases(
-                xdist_collection(Counter(self.full)),
-                shard_count=self.metadata["shard_count"],
-                platform=platform,
+                parallel, shard_count=self.metadata["shard_count"], platform=platform
             )
             targets = shards[self.metadata["shard"]]
             for item, nodeid in zip(items, self.full, strict=True):
@@ -78,6 +78,10 @@ class Receipt:
                 destination = selected if inverse[item.nodeid] in targets else rejected
                 destination.append(item)
             self.config.hook.pytest_deselected(items=rejected)
+            if platform == "windows":
+                ordered = windows_groups_by_runtime(list(parallel))
+                ranks = {node: rank for rank, (_, nodes, _) in enumerate(ordered) for node in nodes}
+                selected.sort(key=lambda item: ranks[inverse[item.nodeid]])
             items[:] = selected
             self.config.workeroutput["atc_ci_full"] = self.full
             self.config.workeroutput["atc_ci_schedule"] = {
