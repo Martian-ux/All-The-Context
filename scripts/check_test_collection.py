@@ -87,7 +87,22 @@ FUNCTION_AFFINITY_FILES = frozenset(
 )
 
 
-def test_case_groups(nodeids: Sequence[str]) -> dict[str, str]:
+# Native Windows parity covered every case and fixture in these two modules.
+WINDOWS_FUNCTION_AFFINITY_FILES = frozenset(
+    {
+        "tests/integration/test_agent_continuity_harness.py",
+        "tests/integration/test_project_first_read.py",
+    }
+)
+# PR #128 receipt replay places these slow intact groups on otherwise light
+# runners. Keep all other Windows shard placement on the historical schedule.
+WINDOWS_INTACT_GROUP_SHARDS = {
+    "tests/integration/test_project_memory_continuity.py": 8,
+    "tests/unit/test_memory_reliability_lab_e01b.py": 4,
+}
+
+
+def test_case_groups(nodeids: Sequence[str], *, platform: str | None = None) -> dict[str, str]:
     """Default to file locality; split only audited independent exact cases."""
 
     receipt_collection(list(nodeids))
@@ -97,6 +112,7 @@ def test_case_groups(nodeids: Sequence[str]) -> dict[str, str]:
         "test file list contains duplicate normalized paths",
     )
     keys = {}
+    windows_splits = {}
     for nodeid in nodeids:
         path, _, test = nodeid.partition("::")
         function, parameter, _ = test.partition("[")
@@ -112,8 +128,13 @@ def test_case_groups(nodeids: Sequence[str]) -> dict[str, str]:
             keys[nodeid] = f"{path}::{function}"
         else:
             keys[nodeid] = path
-    names = {key: f"atc-group-{index:06d}" for index, key in enumerate(sorted(set(keys.values())))}
-    return {nodeid: names[key] for nodeid, key in keys.items()}
+        if platform == "windows" and path in WINDOWS_FUNCTION_AFFINITY_FILES:
+            windows_splits[nodeid] = f"{path}::{function}"
+    # Append Windows scopes so unaffected nodes retain their projected IDs.
+    original = set(keys.values())
+    order = sorted(original) + sorted(set(windows_splits.values()) - original)
+    names = {key: f"atc-group-{index:06d}" for index, key in enumerate(order)}
+    return {nodeid: names[windows_splits.get(nodeid, key)] for nodeid, key in keys.items()}
 
 
 def projected_ids(canonical_to_group: dict[str, str]) -> dict[str, str]:
@@ -139,6 +160,7 @@ def assign_test_cases(
         all(type(count) is int and count == 1 for count in complete.values()),
         "duplicate or invalid canonical counts",
     )
+    # Worker affinity is independent of the historical hosted shard placement.
     groups = test_case_groups(list(complete))
     members: dict[str, list[str]] = {}
     file_counts = Counter(test_file_for_nodeid(node) for node in complete)
@@ -177,6 +199,15 @@ def assign_test_cases(
         shards[shard].update(members[group])
         totals[shard] += weights[group]
         unassigned.discard(shard)
+    if platform == "windows" and shard_count == CI_SHARD_COUNTS["windows"]:
+        for nodes in members.values():
+            destination = WINDOWS_INTACT_GROUP_SHARDS.get(test_file_for_nodeid(nodes[0]))
+            if destination is None:
+                continue
+            source = next(shard for shard in shards if nodes[0] in shard)
+            target = shards[destination]
+            if source is not target:
+                target.update({node: source.pop(node) for node in nodes})
     verify_complete_disjoint_union(complete, shards)
     return shards
 
@@ -634,7 +665,7 @@ def verify_execution_receipts(
     check_identity(canonical, mode="canonical", shard=0)
     complete = receipt_collection(canonical["collection"])
     require(canonical["collection_digest"] == collection_digest(complete), "bad collection digest")
-    groups = test_case_groups(list(complete))
+    groups = test_case_groups(list(complete), platform=identity.get("platform"))
     inverse = projected_ids(groups)
     parallel = xdist_collection(complete)
     expected = assign_test_cases(

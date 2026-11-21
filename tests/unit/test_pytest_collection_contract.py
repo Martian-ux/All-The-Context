@@ -166,6 +166,44 @@ def test_exact_case_schedule_defaults_to_files_and_admits_new_nodes() -> None:
         checker.assign_test_cases(Counter({nodes[0]: 2}), shard_count=1)
 
 
+def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
+    checker = _load_collection_script()
+    agent = "tests/integration/test_agent_continuity_harness.py"
+    first_read = "tests/integration/test_project_first_read.py"
+    continuity = "tests/integration/test_project_memory_continuity.py"
+    e01b = "tests/unit/test_memory_reliability_lab_e01b.py"
+    split_modules = [
+        f"{path}::test_family[{case}@value]"
+        for path in (agent, first_read)
+        for case in ("allow", "deny")
+    ] + [f"{path}::test_other" for path in (agent, first_read)]
+    continuity_nodes = [f"{continuity}::test_recreate[{case}]" for case in ("allow", "deny")]
+    e01b_nodes = [f"{e01b}::test_keep", f"{e01b}::test_other"]
+    moved = Counter(continuity_nodes + e01b_nodes)
+    nodes = split_modules + list(moved) + [f"tests/test_{i}.py::test_other" for i in range(20)]
+
+    default_groups = checker.test_case_groups(nodes)
+    windows_groups = checker.test_case_groups(nodes, platform="windows")
+    assert checker.test_case_groups(nodes, platform="linux") == default_groups
+    assert {node: windows_groups[node] for node in nodes if node not in split_modules} == {
+        node: default_groups[node] for node in nodes if node not in split_modules
+    }
+    for first, second, other in ((0, 1, 4), (2, 3, 5)):
+        assert default_groups[nodes[first]] == default_groups[nodes[other]]
+        assert windows_groups[nodes[first]] == windows_groups[nodes[second]]
+        assert windows_groups[nodes[first]] != windows_groups[nodes[other]]
+    for intact in (continuity_nodes, e01b_nodes):
+        assert len({windows_groups[node] for node in intact}) == 1
+
+    complete = Counter(nodes)
+    old = checker.assign_test_cases(complete, shard_count=9)
+    new = checker.assign_test_cases(complete, shard_count=9, platform="windows")
+    assert [shard - moved for shard in new] == [shard - moved for shard in old]
+    assert new[8] & moved == Counter(continuity_nodes)
+    assert new[4] & moved == Counter(e01b_nodes)
+    checker.verify_complete_disjoint_union(complete, new)
+
+
 def test_exact_projection_preserves_literal_at_signs_and_rejects_collisions() -> None:
     checker = _load_collection_script()
     nodes = [

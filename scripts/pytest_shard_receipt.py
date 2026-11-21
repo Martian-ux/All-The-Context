@@ -55,12 +55,13 @@ class Receipt:
             loadgroup = self.config.getoption("loadgroup", False)
             if not self.is_worker or loadgroup is not True:
                 raise pytest.UsageError("CI shards require real loadgroup workers")
-            groups = test_case_groups(self.full)
+            platform = self.metadata.get("platform")
+            groups = test_case_groups(self.full, platform=platform)
             inverse = projected_ids(groups)
             shards = assign_test_cases(
                 xdist_collection(Counter(self.full)),
                 shard_count=self.metadata["shard_count"],
-                platform=self.metadata.get("platform"),
+                platform=platform,
             )
             targets = shards[self.metadata["shard"]]
             for item, nodeid in zip(items, self.full, strict=True):
