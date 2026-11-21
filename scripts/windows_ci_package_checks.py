@@ -87,6 +87,71 @@ def packaged_checks_then_prepare() -> None:
     prepare()
 
 
+def candidate_checks(artifact_root: Path) -> int:
+    """Use all stock commands against an isolated provisional artifact layout."""
+    artifact_root = artifact_root.resolve(strict=True)
+    manifest = artifact_root / "dist/native-build-provenance/native-build-provenance-v1.json"
+    provenance = [
+        "--artifact-root",
+        str(artifact_root),
+        "--provenance-manifest",
+        str(manifest),
+        "--provenance-checksum",
+        str(manifest.with_suffix(".json.sha256")),
+    ]
+    source = str(artifact_root / "dist/desktop/AllTheContextSetup.exe")
+    target = [
+        "--version",
+        project_version(ROOT),
+        "--platform",
+        "windows",
+        "--architecture",
+        "x86_64",
+    ]
+
+    def first():
+        run("smoke_packaged_first_run.py", *provenance)
+
+    def ancillary():
+        run("smoke_desktop_artifact.py", *provenance)
+        run("smoke_packaged_recovery.py", *provenance)
+        run(
+            "package_desktop.py",
+            "--source",
+            source,
+            *target,
+            "--output-dir",
+            str(artifact_root / "dist/platform"),
+        )
+        run(
+            "smoke_platform_package.py",
+            "--directory",
+            str(artifact_root / "dist/platform"),
+            "--platform",
+            "windows",
+            "--architecture",
+            "x86_64",
+        )
+        run(
+            "build_release_assets.py",
+            "--source",
+            source,
+            *target,
+            "--output-dir",
+            str(artifact_root / "dist/release"),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tasks = [pool.submit(first), pool.submit(ancillary)]
+        failed = False
+        for task in tasks:
+            try:
+                task.result()
+            except (OSError, ValueError, subprocess.SubprocessError):
+                failed = True
+    return 1 if failed else 0
+
+
 def main(*, overlap_first_run: bool = False) -> int:
     # First-run has its own install, settings and process paths.
     primary, ancillary = (
@@ -107,4 +172,10 @@ def main(*, overlap_first_run: bool = False) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--overlap-first-run", action="store_true")
-    raise SystemExit(main(overlap_first_run=parser.parse_args().overlap_first_run))
+    parser.add_argument("--artifact-root", type=Path)
+    arguments = parser.parse_args()
+    raise SystemExit(
+        candidate_checks(arguments.artifact_root)
+        if arguments.artifact_root is not None
+        else main(overlap_first_run=arguments.overlap_first_run)
+    )

@@ -28,9 +28,9 @@ COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
 REPOSITORY = "Martian-ux/All-The-Context"
 REPOSITORY_ID = 1307248106
 SOURCE = "e9bdaab8afcc6265802d690834fbb7fa60cd1a0e"
-# Frozen reviewed packager from the 04ca79c3 candidate. Its parallel orchestration
-# differs from the donor, but its graph/identity methods below must also match.
-PACKAGER_BLOB = "8dfd5c284919239c9dc4e603cb312a6f3c4bad81"
+# Reviewed packager with the PR witness opt-in. The CI-only route leaves that
+# opt-in off, and the graph/identity methods below must still match the donor.
+PACKAGER_BLOB = "233b11b625c2f75aa17609cd8f7500d7d6930acf"
 RUN = 44945160616
 ARTIFACT = 14723830372
 ARCHIVE_SHA256 = "5e05a475e623c7e6b4c7a0d2d9a2454ee08dde60d6f4e02efd3ff7507e57d591"
@@ -84,11 +84,14 @@ CI_FILES = {
     "scripts/install_locked_python.py",
     "scripts/windows_ci_pilot.py",
     "scripts/windows_ci_components.py",
+    "scripts/windows_ci_witness.py",
+    "scripts/windows_ci_canonical.py",
     "scripts/windows_ci_package_checks.py",
     "scripts/windows_ci_process_inventory.py",
     "scripts/smoke_packaged_first_run.py",
     "tests/unit/test_packaged_first_run_diagnostics.py",
     "tests/unit/test_windows_ci_pilot.py",
+    "tests/unit/test_windows_ci_witness.py",
     "tests/unit/test_pytest_collection_contract.py",
     "tests/unit/test_release_workflow_contracts.py",
     "tests/unit/test_native_build_provenance.py",
@@ -308,7 +311,14 @@ def download() -> None:
 
 def start_download(root: Path) -> None:
     try:
-        admit_source(root, os.environ["GITHUB_SHA"])
+        try:
+            admit_source(root, os.environ["GITHUB_SHA"])
+        except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError):
+            if __package__:
+                from scripts.windows_ci_witness import admit_source as admit_ordinary
+            else:
+                from windows_ci_witness import admit_source as admit_ordinary
+            admit_ordinary(root, os.environ["GITHUB_SHA"])
         folder = download_directory()
         folder.mkdir(exist_ok=False)
     except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError):

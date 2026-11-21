@@ -1,5 +1,25 @@
 # Project status
 
+## 2026-11-21 — bounded ordinary Windows PR stock witness
+
+Same-repository synthetic PR merges against reviewed base
+`2681c5ec9ced8aa15de77d82fcffc0730cf85731` can provisionally assemble two
+isolated retained arms for edits to existing shipped Python files. Packaging
+inputs and helper blobs remain pinned. A separate Windows VM builds the full
+stock graph with the same locked absolute packaging environment and PR-only
+marshal encoding. Publication requires the completed exact producer's upload
+and marker steps, its authenticated artifact ID/digest, and all four full-file
+names, lengths and SHA-256 values matching both retained arms.
+
+All existing Windows lifecycle and direct-package checks run against provisional
+bytes. A witness or provisional miss drains work and selects the original cold
+double build and complete lifecycle in fresh roots; a proved candidate's genuine
+lifecycle failure remains required. The CI-only pilot, stock push/release routes,
+required names and canonical per-platform coverage remain in place. Windows
+discovery waits for Node 22 with `!cancelled()` to retain the initial runner cap.
+Native checks, independent review and hosted timing remain separate gates; this
+source change does not establish a 180-second result or release acceptance.
+
 ## 2026-11-21 — four Linux pytest shards
 
 PR #128 reached Windows desktop at 160 seconds and Windows Python at

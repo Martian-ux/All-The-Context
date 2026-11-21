@@ -334,7 +334,9 @@ def test_ci_starts_frozen_shards_without_a_planner_and_keeps_required_gates() ->
     linux, rest = jobs.split("  python-windows-shard:", 1)
     windows, rest = rest.split("  python-windows-discovery:\n", 1)
     discovery, aggregates = rest.split("  python-linux:\n", 1)
-    assert all("needs:" not in block for block in (linux, windows, discovery))
+    assert all("needs:" not in block for block in (linux, windows))
+    assert "    needs: dashboard\n" in discovery
+    assert "    if: ${{ !cancelled() }}\n" in discovery
     assert "run: python scripts/run_test_shard.py --discovery" in discovery
     assert "windows-discovery/canonical.json" in discovery
     assert "windows-discovery/retrieval.json" in discovery

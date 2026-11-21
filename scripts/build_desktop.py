@@ -356,6 +356,7 @@ def build(
     source_commit: str | None = None,
     architecture: str | None = None,
     parallel_windows: bool = False,
+    ci_witness: bool = False,
 ) -> Path:
     try:
         import PyInstaller.__main__
@@ -396,7 +397,7 @@ def build(
     parallel = parallel_windows and active_system == "Windows"
 
     def package(arguments: list[str]) -> None:
-        if not parallel:
+        if not parallel and not ci_witness:
             PyInstaller.__main__.run(arguments)
             return
         # PyInstaller has process-global state and a mutable configuration cache.
@@ -409,8 +410,13 @@ def build(
         arguments[arguments.index("--specpath") + 1] = str(spec_root)
         environment = dict(os.environ)
         environment["PYINSTALLER_CONFIG_DIR"] = str(config_root / "config")
+        compiler = (
+            [sys.executable, str(ROOT / "scripts" / "windows_ci_canonical.py")]
+            if ci_witness and active_system == "Windows"
+            else [sys.executable, "-m", "PyInstaller"]
+        )
         subprocess.run(
-            [sys.executable, "-m", "PyInstaller", *arguments],
+            [*compiler, *arguments],
             cwd=ROOT,
             env=environment,
             check=True,
@@ -529,6 +535,7 @@ def main() -> int:
     parser.add_argument("--version", default=__version__)
     parser.add_argument("--source-commit")
     parser.add_argument("--architecture", choices=("x86_64", "arm64"))
+    parser.add_argument("--ci-witness", action="store_true")
     parser.add_argument(
         "--parallel-windows",
         action="store_true",
@@ -544,6 +551,7 @@ def main() -> int:
         source_commit=arguments.source_commit,
         architecture=arguments.architecture,
         parallel_windows=arguments.parallel_windows,
+        ci_witness=arguments.ci_witness,
     )
     print(artifact)
     return 0

@@ -1,5 +1,26 @@
 # Architecture decisions
 
+## Independent stock authority for ordinary Windows PRs (2026-11-21)
+
+Retained A/B agreement cannot prove that an ordinary edit preserves the stock
+dependency graph. Restrict the first route to the fixed reviewed base, existing
+Python names and exact packaging inputs. Authenticate the existing protected
+donor, refresh lock-bound installed INSTALLER/RECORD destinations by exact archive
+member name, and use marshal format 2 only for the independent PR witness and
+retained PR arms. Keep release compression and normal stock discovery unchanged.
+Both independent VMs use `C:/atc-ci-package-<run>-<attempt>` so installed console
+launcher RECORD bytes bind the same absolute interpreter path.
+
+Authorize publication only through the exact run-attempt jobs endpoint, one
+successful completed producer job, successful upload and dedicated marker steps,
+and the authenticated log for that marker's verified step number. Bind the
+upload action's immutable artifact ID/digest to provider metadata, downloaded ZIP
+bytes, the bounded exact-source receipt and every full role file. A missing or
+unrecognized input selects complete stock fallback after provisional work drains.
+Keep provisional paths and outputs separate until all smokes pass; do not mask a
+real lifecycle failure after the stock join proves the candidate. Independent
+review, maintained native gates and release controls retain their authority.
+
 ## Linux CI scheduling (2026-11-21)
 
 After the first hosted trial missed 180 seconds on Linux pytest, increase

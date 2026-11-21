@@ -1,5 +1,15 @@
 # Requirements traceability
 
+### 2026-11-21 bounded Windows stock witness
+
+| Requirement | Implementation | Verification |
+|---|---|---|
+| Restrict ordinary retained builds to reviewed inputs | Fixed base, existing modified Python/test/doc names, covered checkout inventory and pinned CI/native blobs; original CI-only route retained | `tests/unit/test_windows_ci_witness.py` source qualification and existing pilot contracts; native execution downstream |
+| Authenticate one completed same-run/attempt stock producer | Exact attempt jobs, immutable job ID, successful upload and marker steps, exact marker-step log, artifact ID/digest, bounded ZIP and receipt | Provider custody, unrelated-marker, wrong identity/digest/archive and unavailable-provider contract cases |
+| Compare actual complete stock and both retained arms | Independent full stock graph; shared absolute locked venv; exact metadata member refresh; four raw role names/sizes/SHA-256 values | Full-file join, changed-role/graph rejection and installed metadata contracts; native byte proof remains required |
+| Preserve lifecycle failure and complete fallback | Provisional smokes/packages in isolated roots; drain before stock cold double build and full existing lifecycle; promote only proved passing bytes | Production control-flow fixture, cold fallback, lifecycle failure and explicit artifact-root contracts |
+| Preserve required gates and capacity | Stable reducers and required names, full Windows discovery after Node 22 with `!cancelled()`, independent optional witness | Existing collection/workflow contracts and new witness workflow contract; hosted measurement downstream |
+
 ### 2026-11-21 Linux CI timing follow-up
 
 | Requirement | Implementation | Verification |

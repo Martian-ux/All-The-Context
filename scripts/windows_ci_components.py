@@ -17,11 +17,14 @@ import os
 import struct
 import subprocess
 import sys
+import sysconfig
 import tarfile
+import tomllib
 import zlib
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
+from types import CodeType
 
 if __package__:
     from scripts import build_desktop
@@ -259,6 +262,97 @@ def validate_abi(root: Path) -> None:
         require(importlib.metadata.version(name) == versions[name], "packaging dependency mismatch")
 
 
+def installed_metadata(root: Path, entries: dict[str, Entry]) -> dict[str, bytes]:
+    """Refresh exact archive destinations from this fresh hash-locked environment."""
+    import re
+    from importlib.metadata import Distribution
+
+    versions = {
+        (row["name"], row["version"])
+        for row in tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))["package"]
+    }
+    site = Path(sysconfig.get_path("purelib")).resolve(strict=True)
+    require(
+        sys.prefix != sys.base_prefix and site.is_relative_to(Path(sys.prefix).resolve()),
+        "metadata requires the isolated packaging environment",
+    )
+    replacements = {}
+    for name, entry in entries.items():
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+\.dist-info)\\(INSTALLER|RECORD)", name)
+        if match is None:
+            continue
+        directory, leaf = match.groups()
+        candidate = site / directory / leaf
+        path = candidate.resolve(strict=True)
+        require(path == candidate and entry.kind == "b", "invalid metadata member")
+        provenance._regular_file(path, label="installed metadata")
+        distribution = Distribution.at(path.parent)
+        package = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
+        require((package, distribution.version) in versions, "unlocked installed metadata")
+        require(
+            directory == f"{package.replace('-', '_')}-{distribution.version}.dist-info",
+            "metadata destination mismatch",
+        )
+        require(path.stat().st_size <= 10_000_000, "oversized installed metadata")
+        replacements[name] = path.read_bytes()
+    return replacements
+
+
+def canonical_pyz(data: bytes, source: dict[str, bytes], destination: Path) -> bytes:
+    """Use stock writer/order for the entire PYZ, including retained dependencies."""
+    from PyInstaller.archive.writers import ZlibArchiveWriter
+    from PyInstaller.loader.pyimod01_archive import (
+        PYZ_ITEM_MODULE,
+        PYZ_ITEM_NSPKG,
+        PYZ_ITEM_PKG,
+    )
+
+    header = ZlibArchiveWriter._HEADER_LENGTH
+    require(data[:8] == b"PYZ\0" + importlib.util.MAGIC_NUMBER, "unsupported PYZ ABI")
+    toc_at = struct.unpack_from("!i", data, 8)[0]
+    require(header <= toc_at < len(data) and len(data) - toc_at < 1_000_000, "invalid PYZ bounds")
+    index = marshal.loads(data[toc_at:])
+    require(isinstance(index, list) and len(index) < 2000, "invalid PYZ index")
+    rows, codes, names = [], {}, set()
+    owned = 0
+    for name, (kind, offset, size) in index:
+        require(
+            isinstance(name, str)
+            and name not in names
+            and all(part.isidentifier() for part in name.split("."))
+            and header <= offset <= toc_at
+            and 0 <= size <= toc_at - offset,
+            "invalid PYZ member",
+        )
+        names.add(name)
+        if kind == PYZ_ITEM_NSPKG:
+            require(not size and name.split(".")[0] != "allthecontext", "unsupported namespace")
+            rows.append((name, None, "PYMODULE"))
+            continue
+        require(kind in (PYZ_ITEM_MODULE, PYZ_ITEM_PKG), "unsupported PYZ module kind")
+        filename = name.replace(".", "\\") + ("\\__init__.py" if kind == PYZ_ITEM_PKG else ".py")
+        if name.split(".")[0] == "allthecontext":
+            raw = compile_module(source[SRC + filename.replace("\\", "/")], filename)
+            owned += 1
+        else:
+            decoder = zlib.decompressobj()
+            raw = decoder.decompress(data[offset : offset + size], MAX_RAW + 1)
+            require(
+                len(raw) <= MAX_RAW
+                and decoder.eof
+                and not decoder.unused_data
+                and not decoder.unconsumed_tail,
+                "invalid PYZ payload",
+            )
+        code = marshal.loads(raw)
+        require(isinstance(code, CodeType), "invalid PYZ code")
+        codes[name] = code
+        rows.append((name, filename, "PYMODULE"))
+    require(owned > 0, "missing ATC modules")
+    ZlibArchiveWriter(str(destination), rows, codes)
+    return destination.read_bytes()
+
+
 def read_source(root: Path, commit: str) -> dict[str, bytes]:
     data = git(
         root,
@@ -281,11 +375,19 @@ def read_source(root: Path, commit: str) -> dict[str, bytes]:
         return source
 
 
-def build_arm(root: Path, commit: str, donor: Path, build: Path, dist: Path) -> None:
+def build_arm(
+    root: Path, commit: str, donor: Path, build: Path, dist: Path, *, witness_profile: bool = False
+) -> None:
     from PyInstaller.building.utils import replace_filename_in_code_object
     from PyInstaller.utils.win32 import versioninfo
 
     validate_abi(root)
+    if witness_profile:
+        if __package__:
+            from scripts.windows_ci_canonical import install
+        else:
+            from windows_ci_canonical import install
+        install()
     require(os.environ.get("PYTHONHASHSEED") == "0", "non-deterministic compilation environment")
     verifier._fresh_directory(build, label="pilot build root")
     verifier._fresh_directory(dist, label="pilot dist root")
@@ -325,9 +427,24 @@ def build_arm(root: Path, commit: str, donor: Path, build: Path, dist: Path) -> 
         )
         changes = {
             IDENTITY: identity_path.read_bytes(),
-            "PYZ.pyz": compile_pyz(archive.entries["PYZ.pyz"].raw, source),
+            "PYZ.pyz": (
+                canonical_pyz(archive.entries["PYZ.pyz"].raw, source, build / f"{role}.pyz")
+                if witness_profile
+                else compile_pyz(archive.entries["PYZ.pyz"].raw, source)
+            ),
             entry: marshal.dumps(replace_filename_in_code_object(original, f"{entry}.py")),
         }
+        if witness_profile:
+            changes.update(installed_metadata(root, archive.entries))
+            for name, row in archive.entries.items():
+                if row.kind in ("s", "m", "M"):
+                    code = (
+                        replace_filename_in_code_object(original, f"{entry}.py")
+                        if name == entry
+                        else marshal.loads(row.raw)
+                    )
+                    require(isinstance(code, CodeType), "invalid archive code member")
+                    changes[name] = marshal.dumps(code, 2)
         for name in archive.entries:
             if name.startswith("allthecontext\\") and name != IDENTITY:
                 changes[name] = source[SRC + name.replace("\\", "/")]
@@ -374,7 +491,9 @@ def verify_version_resource(path: Path, expected: bytes) -> None:
     require(raw == [expected], "rebuilt PE version identity mismatch")
 
 
-def component_runner(root: Path, commit: str, donor_paths: dict[str, Path]):
+def component_runner(
+    root: Path, commit: str, donor_paths: dict[str, Path], *, witness_profile: bool = False
+):
     validate_abi(root)
     donor = donor_paths["main"].parent
 
@@ -395,6 +514,8 @@ def component_runner(root: Path, commit: str, donor_paths: dict[str, Path]):
             "--dist",
             str(dist),
         ]
+        if witness_profile:
+            command.append("--witness-profile")
         completed = subprocess.run(
             command, cwd=root, check=False, env=verifier.reproducible_environment(config_root=build)
         )
@@ -411,8 +532,16 @@ def main() -> None:
     for option in ("root", "donor", "build", "dist"):
         parser.add_argument(f"--{option}", type=Path, required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--witness-profile", action="store_true")
     args = parser.parse_args()
-    build_arm(args.root, args.commit, args.donor, args.build, args.dist)
+    build_arm(
+        args.root,
+        args.commit,
+        args.donor,
+        args.build,
+        args.dist,
+        witness_profile=args.witness_profile,
+    )
 
 
 if __name__ == "__main__":

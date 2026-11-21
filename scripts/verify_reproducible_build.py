@@ -1,9 +1,8 @@
 """Build native Windows components twice from clean roots and compare bytes.
 
-This gate never launches a produced executable.  It stages the second verified
-build into the normal build/dist layout only after all four components match,
-then writes a canonical metadata document and checksum with no workspace
-paths or timestamps.
+The stock gate stages the second verified build only after all four components
+match, then writes canonical provenance. The ordinary PR witness opt-in also
+runs the maintained lifecycle against isolated provisional bytes before staging.
 """
 
 from __future__ import annotations
@@ -60,6 +59,8 @@ def reproducible_environment(*, config_root: Path) -> dict[str, str]:
     """Return process settings that remove host-time and hash-order variance."""
 
     environment = dict(os.environ)
+    for name in ("GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN"):
+        environment.pop(name, None)
     environment.update(
         {
             "LANG": "C",
@@ -84,6 +85,7 @@ def _run_clean_build(
     version: str,
     source_commit: str,
     parallel_windows: bool = False,
+    ci_witness: bool = False,
 ) -> native_build_provenance.BuildSnapshot:
     _fresh_directory(build_root, label="clean build root")
     _fresh_directory(dist_root, label="clean dist root")
@@ -107,6 +109,8 @@ def _run_clean_build(
     ]
     if parallel_windows:
         command.append("--parallel-windows")
+    if ci_witness:
+        command.append("--ci-witness")
     completed = subprocess.run(
         command,
         cwd=repository_root,
@@ -366,30 +370,62 @@ def main() -> int:
         if checked_out_commit(repository_root) != arguments.source_commit:
             raise ReproducibleBuildError("checked-out commit does not match source commit input")
         toolchain = locks = runner = None
+        ordinary = None
         if arguments.windows_ci_donor_pilot:
             toolchain = current_toolchain()
             locks = lock_digests(repository_root)
             if __package__:
+                from scripts import windows_ci_witness as witness
                 from scripts.windows_ci_pilot import pilot_runner
             else:
+                import windows_ci_witness as witness
                 from windows_ci_pilot import pilot_runner
-            runner = pilot_runner(repository_root, arguments.source_commit, toolchain, locks)
-        payload, _paths = generate_provenance(
-            repository_root=repository_root,
-            version=version,
-            source_commit=arguments.source_commit,
-            final_build_root=arguments.build_root,
-            final_dist_root=arguments.dist_root,
-            output_dir=arguments.output_dir,
-            toolchain=toolchain,
-            locks=locks,
-            build_runner=runner,
-            parallel_windows=arguments.parallel_windows,
+            try:
+                identity = witness.admit_source(repository_root, arguments.source_commit)
+            except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError):
+                identity = None
+            if identity is not None:
+                ordinary = witness.try_ordinary(
+                    repository_root,
+                    arguments.source_commit,
+                    version=version,
+                    build=arguments.build_root,
+                    dist=arguments.dist_root,
+                    output=arguments.output_dir,
+                    identity=identity,
+                    tools=toolchain,
+                    locks=locks,
+                )
+            else:
+                runner = pilot_runner(repository_root, arguments.source_commit, toolchain, locks)
+        payload, _paths = (
+            ordinary
+            if ordinary is not None
+            else generate_provenance(
+                repository_root=repository_root,
+                version=version,
+                source_commit=arguments.source_commit,
+                final_build_root=arguments.build_root,
+                final_dist_root=arguments.dist_root,
+                output_dir=arguments.output_dir,
+                toolchain=toolchain,
+                locks=locks,
+                build_runner=runner,
+                parallel_windows=arguments.parallel_windows,
+            )
         )
         if arguments.windows_ci_donor_pilot and (github_output := os.environ.get("GITHUB_OUTPUT")):
-            route = "retained" if runner is not None else "cold"
+            route = (
+                "witnessed"
+                if ordinary is not None
+                else "retained"
+                if runner is not None
+                else "cold"
+            )
             with Path(github_output).open("a", encoding="utf-8") as stream:
                 stream.write(f"route={route}\n")
+                if ordinary is not None:
+                    stream.write("lifecycle_success=true\n")
         output = arguments.output_dir.expanduser().resolve()
         print(output / native_build_provenance.PROVENANCE_FILE_NAME)
         print(output / native_build_provenance.CHECKSUM_FILE_NAME)
@@ -402,6 +438,7 @@ def main() -> int:
     except (
         native_build_provenance.NativeBuildProvenanceError,
         ReproducibleBuildError,
+        ValueError,
         OSError,
         subprocess.SubprocessError,
     ) as exc:

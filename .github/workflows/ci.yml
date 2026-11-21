@@ -150,6 +150,8 @@ jobs:
 
   python-windows-discovery:
     name: Windows canonical collection and standalone retrieval
+    needs: dashboard
+    if: ${{ !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -326,6 +328,60 @@ jobs:
       - name: Verify committed dashboard assets match production build
         run: python scripts/verify_dashboard_parity.py
 
+  windows-stock-witness:
+    name: Windows independent stock witness
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 10
+    # Optional evidence must never make the complete stock route unavailable.
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - *windows_test_runtime
+      - *windows_test_uv
+      - name: Create fresh locked witness packaging environment
+        shell: pwsh
+        run: |
+          $venv = 'C:/atc-ci-package-${{ github.run_id }}-${{ github.run_attempt }}'
+          if (Test-Path -LiteralPath $venv) {
+            throw "Refusing to reuse Windows build environment: $venv"
+          }
+          python -m venv --without-pip $venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Join-Path $venv 'Scripts') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install Windows desktop packager from reviewed lock constraints
+        run: python scripts/install_locked_python.py --extra packaging --installer uv
+      - id: stock
+        name: Build independent full stock Windows graph
+        run: >-
+          python scripts/windows_ci_witness.py
+          --receipt "${{ runner.temp }}/atc-windows-stock-witness/windows-stock-witness-v1.json"
+      - id: stock_upload
+        name: Upload bounded Windows stock witness
+        if: steps.stock.outputs.available == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: windows-stock-witness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/atc-windows-stock-witness/windows-stock-witness-v1.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Record Windows stock witness upload identity
+        if: steps.stock.outputs.available == 'true'
+        shell: pwsh
+        env:
+          STOCK_ARTIFACT_ID: ${{ steps.stock_upload.outputs.artifact-id }}
+          STOCK_ARTIFACT_DIGEST: ${{ steps.stock_upload.outputs.artifact-digest }}
+        run: |
+          if ($env:STOCK_ARTIFACT_ID -cnotmatch '^[1-9][0-9]{0,19}$' -or
+              $env:STOCK_ARTIFACT_DIGEST -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'Invalid stock witness upload identity'
+          }
+          Write-Output "ATC_WINDOWS_STOCK_V1 artifact_id=$env:STOCK_ARTIFACT_ID digest=sha256:$env:STOCK_ARTIFACT_DIGEST"
+
   desktop-package:
     # Keep these check names stable for branch protection.
     name: Desktop artifact - ${{ matrix.check_label }}
@@ -378,6 +434,10 @@ jobs:
         shell: pwsh
         run: |
           $venv = Join-Path $env:RUNNER_TEMP 'atc-package-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}'
+          if ('${{ github.event_name }}' -eq 'pull_request' -and
+              '${{ github.event.pull_request.head.repo.full_name }}' -eq '${{ github.repository }}') {
+            $venv = 'C:/atc-ci-package-${{ github.run_id }}-${{ github.run_attempt }}'
+          }
           if (Test-Path -LiteralPath $venv) {
             throw "Refusing to reuse Windows build environment: $venv"
           }
@@ -396,11 +456,23 @@ jobs:
       - name: Exercise Linux startup and explicit credential fallback
         if: runner.os == 'Linux'
         run: python scripts/smoke_platform_acceptance.py
+      - name: Prepare Windows packaged first-run diagnostics
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $inventory = Join-Path $env:RUNNER_TEMP 'packaged-first-run-process-inventory'
+          $failure = Join-Path $env:RUNNER_TEMP 'packaged-first-run-failure-diagnostics'
+          New-Item -ItemType Directory -Force -Path $inventory, $failure | Out-Null
+          "ATC_PACKAGED_PROCESS_INVENTORY_DIAGNOSTICS_DIR=$inventory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ATC_PACKAGED_FAILURE_DIAGNOSTICS_DIR=$failure" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - id: windows_native
         name: Build and verify reproducible Windows native components
         if: runner.os == 'Windows'
         env:
           SOURCE_COMMIT: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          ATC_CI_WINDOWS_COM_INVENTORY: "1"
+          ATC_CI_PACKAGED_TIMING: "1"
         run: >-
           python scripts/verify_reproducible_build.py
           --source-commit ${{ github.sha }}
@@ -424,18 +496,9 @@ jobs:
           --artifact-root .
           --provenance-manifest dist/native-build-provenance/native-build-provenance-v1.json
           --provenance-checksum dist/native-build-provenance/native-build-provenance-v1.json.sha256
-      - name: Prepare Windows packaged first-run diagnostics
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $inventory = Join-Path $env:RUNNER_TEMP 'packaged-first-run-process-inventory'
-          $failure = Join-Path $env:RUNNER_TEMP 'packaged-first-run-failure-diagnostics'
-          New-Item -ItemType Directory -Force -Path $inventory, $failure | Out-Null
-          "ATC_PACKAGED_PROCESS_INVENTORY_DIAGNOSTICS_DIR=$inventory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "ATC_PACKAGED_FAILURE_DIAGNOSTICS_DIR=$failure" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - id: windows_package_checks
         name: Windows PR lifecycle with independent built-file package preparation
-        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        if: runner.os == 'Windows' && github.event_name == 'pull_request' && steps.windows_native.outputs.route != 'witnessed'
         env:
           ATC_CI_WINDOWS_COM_INVENTORY: "1"
           ATC_CI_PACKAGED_TIMING: "1"
@@ -458,7 +521,7 @@ jobs:
           path: ${{ runner.temp }}/packaged-first-run-failure-diagnostics/*.json
           if-no-files-found: ignore
       - name: Upload packaged first-run process-inventory diagnostics
-        if: ${{ always() && runner.os == 'Windows' && (steps.packaged_smoke.outcome == 'success' || steps.windows_package_checks.outputs.lifecycle_success == 'true') }}
+        if: ${{ always() && runner.os == 'Windows' && (steps.packaged_smoke.outcome == 'success' || steps.windows_package_checks.outputs.lifecycle_success == 'true' || steps.windows_native.outputs.lifecycle_success == 'true') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
         with:
           name: packaged-first-run-process-inventory-windows
