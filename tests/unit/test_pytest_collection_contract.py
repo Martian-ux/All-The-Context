@@ -342,10 +342,15 @@ def test_ci_starts_frozen_shards_without_a_planner_and_keeps_required_gates() ->
     assert "--shard-index ${{ matrix.shard }}" in workflow
     jobs = workflow.split("  security:", 1)[0]
     linux, rest = jobs.split("  python-windows-shard:", 1)
-    windows, aggregates = rest.split("  python-linux:", 1)
-    assert "needs:" not in linux and "needs:" not in windows
+    windows, rest = rest.split("  python-windows-discovery:\n", 1)
+    discovery, aggregates = rest.split("  python-linux:\n", 1)
+    assert all("needs:" not in block for block in (linux, windows, discovery))
+    assert "run: python scripts/run_test_shard.py --discovery" in discovery
+    assert "windows-discovery/canonical.json" in discovery
+    assert "windows-discovery/retrieval.json" in discovery
+    assert "/canonical.json" not in windows and "/retrieval.json" not in windows
     checker = _load_collection_script()
-    assert checker.CI_SHARD_COUNTS == {"linux": 4, "windows": 9}
+    assert checker.CI_SHARD_COUNTS == {"linux": 4, "windows": 10}
     for platform, block in (("linux", linux), ("windows", windows)):
         indices = list(range(checker.CI_SHARD_COUNTS[platform]))
         assert f"shard: {indices}\n" in block
@@ -354,7 +359,7 @@ def test_ci_starts_frozen_shards_without_a_planner_and_keeps_required_gates() ->
         assert "    needs: [dashboard, dashboard-node-20]\n" in delayed
         assert "    if: ${{ !cancelled() }}\n" in delayed
     assert "needs: python\n" in aggregates
-    assert "needs: python-windows-shard\n" in aggregates
+    assert "needs: [python-windows-shard, python-windows-discovery]\n" in aggregates
     assert aggregates.count("--verify-receipts .test-runs/receipts") == 2
     assert aggregates.count("merge-multiple: false") == 2
     assert "--platform linux" in aggregates and "--platform windows" in aggregates
@@ -362,6 +367,8 @@ def test_ci_starts_frozen_shards_without_a_planner_and_keeps_required_gates() ->
     assert "fail-fast: false" in workflow
     assert "SHARD_RESULT: ${{ needs.python-windows-shard.result }}" in workflow
     assert '--shard-result "$SHARD_RESULT"' in workflow
+    assert "DISCOVERY_RESULT: ${{ needs.python-windows-discovery.result }}" in aggregates
+    assert '--discovery-result "$DISCOVERY_RESULT"' in aggregates
     assert workflow.count("name: Python 3.12 - windows-latest\n") == 1
     assert workflow.count("name: Python 3.12 - ubuntu-latest\n") == 1
     for block in (linux, windows):
@@ -381,7 +388,6 @@ def test_ci_starts_frozen_shards_without_a_planner_and_keeps_required_gates() ->
     assert "--ignore" not in workflow
     assert "--deselect" not in workflow
     assert "-k " not in workflow
-
 
 @pytest.fixture(scope="module")
 def small_suite(tmp_path_factory):

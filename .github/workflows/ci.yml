@@ -78,29 +78,34 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
+      - &windows_test_checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
+      - &windows_test_runtime
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
           python-version: "3.12.10"
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+      - &windows_test_uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.11.32"
           enable-cache: false
-      - name: Create fresh run-owned Windows environment
+      - &windows_test_venv
+        name: Create fresh run-owned Windows environment
         shell: pwsh
         run: |
-          $venv = Join-Path $env:RUNNER_TEMP 'atc-pytest-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}'
+          $venv = Join-Path $env:RUNNER_TEMP 'atc-pytest-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index }}'
           if (Test-Path -LiteralPath $venv) {
             throw "Refusing to reuse Windows build environment: $venv"
           }
           python -m venv --without-pip $venv
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           (Join-Path $venv 'Scripts') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - name: Install from reviewed lock constraints
+      - &windows_test_install
+        name: Install from reviewed lock constraints
         run: python scripts/install_locked_python.py --extra dev --installer uv
       - name: Ruff formatting
         if: matrix.shard == 0
@@ -121,10 +126,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
         with:
           name: pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}
-          path: |
-            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}/shard.json
-            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}/canonical.json
-            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}/retrieval.json
+          path: .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-${{ matrix.shard }}/shard.json
           include-hidden-files: true
           if-no-files-found: error
       - name: Upload detached uninstall lifecycle evidence
@@ -145,6 +147,29 @@ jobs:
       - name: Diagnose Python package resources
         if: matrix.shard == 0 || matrix.shard == 1
         run: python scripts/diagnose_python_packages.py --directory dist/python
+
+  python-windows-discovery:
+    name: Windows canonical collection and standalone retrieval
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - *windows_test_checkout
+      - *windows_test_runtime
+      - *windows_test_uv
+      - *windows_test_venv
+      - *windows_test_install
+      - name: Collect all tests and run standalone retrieval without xdist
+        run: python scripts/run_test_shard.py --discovery
+      - name: Upload canonical collection and standalone retrieval receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-discovery
+          path: |
+            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-discovery/canonical.json
+            .test-runs/pytest-${{ github.run_id }}-${{ github.run_attempt }}-windows-discovery/retrieval.json
+          include-hidden-files: true
+          if-no-files-found: error
 
   python-linux:
     name: Python 3.12 - ubuntu-latest
@@ -176,7 +201,7 @@ jobs:
   python-windows:
     name: Python 3.12 - windows-latest
     if: ${{ always() }}
-    needs: python-windows-shard
+    needs: [python-windows-shard, python-windows-discovery]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -192,6 +217,7 @@ jobs:
       - name: Require canonical and actual worker coverage
         env:
           SHARD_RESULT: ${{ needs.python-windows-shard.result }}
+          DISCOVERY_RESULT: ${{ needs.python-windows-discovery.result }}
         run: >-
           python scripts/check_test_collection.py
           --verify-receipts .test-runs/receipts
@@ -199,6 +225,7 @@ jobs:
           --run-id "${{ github.run_id }}"
           --run-attempt "${{ github.run_attempt }}"
           --shard-result "$SHARD_RESULT"
+          --discovery-result "$DISCOVERY_RESULT"
 
   security:
     name: Repository security gates
