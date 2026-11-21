@@ -1243,6 +1243,30 @@ def test_packaged_uninstall_process_inventory_is_bounded_and_path_bound(
     assert observed and observed[0][0] == "powershell.exe"
 
 
+def test_ci_packaged_inventory_uses_the_same_path_and_timeout_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from scripts.windows_ci_process_inventory import creation_ticks
+
+    assert creation_ticks("19700101010000.100000+060") == "621355968001000000"
+    target = tmp_path / "AllTheContext.exe"
+
+    def observe(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert Path(command[1]).name == "windows_ci_process_inventory.py"
+        assert kwargs["timeout"] == 10
+        assert kwargs["capture_output"] is True
+        output = [{"pid": 17, "creation_identity": "621355968001000000", "exe": str(target)}]
+        return subprocess.CompletedProcess(command, 0, json.dumps(output), "")
+
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(smoke.subprocess, "run", observe)
+    monkeypatch.setenv("ATC_CI_WINDOWS_COM_INVENTORY", "1")
+    assert smoke.snapshot_packaged_processes(target) == (
+        (17, "621355968001000000", smoke._normalized_process_path(str(target))),
+    )
+
+
 def test_process_inventory_probe_accepts_native_output_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

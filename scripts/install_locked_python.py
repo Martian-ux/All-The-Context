@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import importlib.util
 import os
 import platform
@@ -176,8 +177,8 @@ def _hash_requirement_from_lock(lock: dict[str, object], name: str) -> str | Non
     return None
 
 
-def _install_locked_build_backends(python: str, root: Path, temporary: Path) -> None:
-    """Install the complete build environment from uv.lock digests.
+def _locked_build_backend_requirements(root: Path, temporary: Path) -> Path:
+    """Write the complete build environment from uv.lock digests.
 
     Packaging, setuptools, and wheel must all be present with hashes. Partial
     success would either make ``--require-hashes`` resolve an unpinned
@@ -204,6 +205,11 @@ def _install_locked_build_backends(python: str, root: Path, temporary: Path) -> 
         )
     requirements = temporary / "build-backends.txt"
     requirements.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return requirements
+
+
+def _install_locked_build_backends(python: str, root: Path, temporary: Path) -> None:
+    requirements = _locked_build_backend_requirements(root, temporary)
     _run(
         [
             python,
@@ -218,9 +224,46 @@ def _install_locked_build_backends(python: str, root: Path, temporary: Path) -> 
     )
 
 
+def _require_fresh_windows_venv(python: str) -> None:
+    """Limit the uv opt-in to a fresh, isolated Windows virtual environment."""
+
+    if platform.system() != "Windows":
+        raise RuntimeError("--installer uv is supported only on Windows")
+    prefix = Path(sys.prefix).resolve()
+    config = prefix / "pyvenv.cfg"
+    if (
+        prefix == Path(sys.base_prefix).resolve()
+        or Path(python).resolve().parent != prefix / "Scripts"
+        or not config.is_file()
+    ):
+        raise RuntimeError("--installer uv requires an isolated virtual environment")
+    settings = {}
+    for line in config.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            settings[key.strip().lower()] = value.strip().lower()
+    if settings.get("include-system-site-packages") != "false":
+        raise RuntimeError("--installer uv requires system site packages to be disabled")
+    # Python 3.12+ venv seeds only pip. Reject an already-used environment so
+    # unrelated installed packages cannot silently survive the locked install.
+    if any(
+        (distribution.metadata["Name"] or "").lower() != "pip"
+        for distribution in importlib.metadata.distributions(
+            path=[str(prefix / "Lib" / "site-packages")]
+        )
+    ):
+        raise RuntimeError("--installer uv requires a fresh virtual environment (only pip seeded)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository-root", type=Path, default=REPOSITORY_ROOT)
+    parser.add_argument(
+        "--installer",
+        choices=("pip", "uv"),
+        default="pip",
+        help="dependency installer (uv requires a fresh isolated Windows venv)",
+    )
     parser.add_argument(
         "--extra",
         action="append",
@@ -240,11 +283,20 @@ def main() -> int:
         return 1
     python = sys.executable
     try:
+        uv_environment: dict[str, str] | None = None
+        if arguments.installer == "uv":
+            _require_fresh_windows_venv(python)
+            # --python alone does not override configured target/prefix paths.
+            # Keep all opt-in uv calls bound to our cwd and validated venv,
+            # without inherited uv settings or discovered configuration files.
+            uv_environment = {
+                key: value for key, value in os.environ.items() if not key.upper().startswith("UV_")
+            }
         uv = ensure_pinned_uv(python)
         with tempfile.TemporaryDirectory(prefix="atc-locked-") as temporary_name:
             temporary = Path(temporary_name)
             constraints = temporary / "constraints.txt"
-            # Export frozen versions WITH hashes so pip can enforce digests.
+            # Export frozen versions WITH hashes so either installer enforces digests.
             export_command = [
                 uv,
                 "export",
@@ -253,6 +305,8 @@ def main() -> int:
                 "--output-file",
                 str(constraints),
             ]
+            if arguments.installer == "uv":
+                export_command.append("--no-config")
             if not arguments.extra:
                 export_command.append("--no-dev")
             for extra in arguments.extra:
@@ -263,22 +317,35 @@ def main() -> int:
                 check=True,
                 capture_output=True,
                 text=True,
+                env=uv_environment,
             )
             constraints_text = constraints.read_text(encoding="utf-8")
             if "--hash=" not in constraints_text and "sha256:" not in constraints_text:
                 raise RuntimeError("uv export did not produce hash-pinned requirements")
             # Third-party packages only, hash-enforced.
-            install_environment = locked_install_environment(arguments.extra)
-            _run(
-                [
-                    python,
-                    "-m",
+            install_environment = (
+                uv_environment
+                if arguments.installer == "uv"
+                else locked_install_environment(arguments.extra)
+            )
+            install_command = [python, "-m", "pip", "install"]
+            requirements = ["-r", str(constraints)]
+            if arguments.installer == "uv":
+                install_command = [
+                    uv,
                     "pip",
                     "install",
-                    "--require-hashes",
-                    "-r",
-                    str(constraints),
-                ],
+                    "--python",
+                    python,
+                    "--link-mode",
+                    "copy",
+                    "--no-config",
+                ]
+                if not arguments.skip_project:
+                    backends = _locked_build_backend_requirements(root, temporary)
+                    requirements.extend(["-r", str(backends)])
+            _run(
+                [*install_command, "--require-hashes", *requirements],
                 cwd=root,
                 env=install_environment,
             )
@@ -286,7 +353,8 @@ def main() -> int:
             if not arguments.skip_project:
                 # Build backend must come from the reviewed lock digests, not an
                 # unpinned download during uncontrolled build isolation.
-                _install_locked_build_backends(python, root, temporary)
+                if arguments.installer == "pip":
+                    _install_locked_build_backends(python, root, temporary)
                 extras = ""
                 if arguments.extra:
                     extras = "[" + ",".join(arguments.extra) + "]"
@@ -294,16 +362,14 @@ def main() -> int:
                 # uncontrolled build isolation (build tools come from the lock).
                 _run(
                     [
-                        python,
-                        "-m",
-                        "pip",
-                        "install",
+                        *install_command,
                         "--no-deps",
                         "--no-build-isolation",
                         "-e",
                         f".{extras}",
                     ],
                     cwd=root,
+                    env=uv_environment,
                 )
         print(
             f"installed Python dependencies from reviewed uv.lock "

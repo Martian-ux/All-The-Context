@@ -1,5 +1,12 @@
 # Requirements traceability
 
+### 2026-11-21 Linux CI timing follow-up
+
+| Requirement | Implementation | Verification |
+|---|---|---|
+| Run every Linux case across four shards with the same required check | CI matrix and shared producer/reducer shard counts retain the exact canonical receipt union and original test outcomes | Collection, workflow and native receipt tests. Hosted timing follows separately |
+| Keep the same initial runner capacity | Dashboard parity and security wait for the two dashboard jobs, and still run on active failed-dashboard workflows | Workflow contract and pinned Actions parser |
+
 "Implemented" means exercised by repository tests. Protected-main CI and
 CodeQL evidence is credited only when bound to an exact SHA; exact artifact,
 live/private client/provider, and release acceptance remain separate gates.
@@ -124,6 +131,27 @@ Independent review and maintained exact-source final validation remain pending.
 | Cancellation races preserve the winning import transition and telemetry | `storage.py`, upload-claim race and exact terminal-row preservation in `tests/unit/test_import_operations.py` |
 | Proposal protection rotation preserves queued payload readability and failure state | `relay/service.py`, pending, empty, restart, failure and concurrent proposal tests in `tests/unit/test_relay_proposal_protection.py` |
 | Same-turn lifecycle callbacks share one serialized state | `lifecycle_runtime.py`, interleaved user/assistant capture and stable-turn retry tests in `tests/unit/test_lifecycle_runtime.py` |
+
+### 2026-11-21 bounded CI donor pilot
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Repair pinned Python availability without renaming a protected desktop context | CI matrix separates `check_label` (status name) from `runner`; Linux desktop uses Ubuntu 24.04; workflow contract | Source handoff; exact-source native and hosted gates pending |
+| Reuse only the frozen trusted Windows closure on eligible CI-only PRs | `windows_ci_pilot.py`: exact base/context/source/graph/packager admission, pinned run/artifact/archive/manifest, bounded selective intake, stock four-role provenance and locks; `test_windows_ci_pilot.py` | Admission misses use cold builds; no release or cache expansion |
+| Fresh exact-source ATC arms retain full byte/provenance checks | `windows_ci_components.py`: bounded lossless retained encodings, fresh Git compilation, matched ABI, new PE/PYZ/CArchive identity and own helpers; existing verifier runner hook, snapshots, equality and staging | Retained dependency closure, not a fresh dependency scan; admitted divergence fails |
+| Overlap work while preserving all package/lifecycle gates | Early fixed donor download with closed-file completion marker; `windows_ci_package_checks.py` drains stock lifecycle and noninterfering built-file package/archive checks; original outputs and diagnostics | Windows PR CI only; fail-closed join; native execution remains downstream |
+| Preserve scheduling coverage and fixture affinity outside the audited change | `test_case_groups` uses function families only for the two audited modules; existing real-worker fixture now includes both names and parameter siblings; frozen 9 Windows / 2 Linux shards and reducers | Real proof-5abef068: 226 cases with matching outcomes/skips; local timing does not establish hosted timing |
+
+### 2026-11-21 integrated protected CI candidate
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Preserve complete OS coverage, stable protected contexts and real worker evidence | `.github/workflows/ci.yml`, `scripts/run_test_shard.py`, `scripts/pytest_shard_receipt.py`, `scripts/check_test_collection.py`; independent full collection, exact identity and complete/disjoint terminal reducer; existing security/dashboard/desktop/CodeQL jobs | Local source contract; exact integrated native, independent and hosted gates remain separate |
+| Retain actual full-suite timing in existing artifacts without changing verdicts | `pytest_shard_receipt.py` stores `report.duration` as `duration_seconds`; `run_test_shard.py` records monotonic `process_elapsed_seconds` through wait completion; `test_pytest_collection_contract.py` covers real controlled phase delays, standalone retrieval, failed invocation retention and old receipts without profiling keys | Optional diagnostic fields; existing artifact upload, admission, source binding and outcome checks preserved; exact-source native execution and independent review owned downstream |
+| Preserve fixture lifetimes while exposing audited work | `test_case_groups`, `assign_test_cases`; default file affinity, exact updater-module singletons, Packet A bucket singletons; named-module proof-3db07e46 covered 236 nodes on four workers; 236.066s archived work weight and unknown-file fallback | Named-module evidence only; no total-suite or hosted timing claim |
+| Retain exhaustive semantic mutations and both retrieval reports | `tests/unit/test_memory_reliability_spec.py`, `bench/retrieval_m3_current_candidate.py`, `tests/unit/test_retrieval_m3_current_candidate.py`; explicit non-xdist invocation and required retrieval receipt in full union; `test_pytest_collection_contract.py` covers shared fixtures, terminal failures and receipt corruption | Original mutation/report assertions retained; native execution owned downstream |
+| Restrict locked uv to fresh Windows venvs | CI Python 3.12.10 venvs under runner temp; `scripts/install_locked_python.py` validates freshness, hashes, pinned uv, isolated configuration/backends and copy links; existing exact-lock tests plus workflow wiring contract | Windows only; Linux/release defaults and lock unchanged |
+| Keep real native/package/recovery gates while parallelizing PR Windows builds | `scripts/build_desktop.py`, `scripts/verify_reproducible_build.py`; PR-only Windows switch, independent clean A/B arms, failure draining, byte validation and exact staging; native provenance and workflow contracts | Authentic package/platform/credential/update/rollback/uninstall and release acceptance still required |
 
 ### 2026-09-22 ZF010 loaded-worker observation correction
 

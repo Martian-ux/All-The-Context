@@ -1,5 +1,17 @@
 # Project status
 
+## 2026-11-21 — four Linux pytest shards
+
+PR #128 reached Windows desktop at 160 seconds and Windows Python at
+176 seconds. Both Linux pytest shards were still running at 180 seconds.
+Use four Linux shards with four workers each and retain exact full collection,
+one terminal outcome per case, and the existing protected status. Linux
+placement uses measured work from PR #128 and reserves capacity on shard zero
+for its extra serial checks. Dashboard
+parity and repository security start after the two dashboard jobs finish,
+which keeps the initial hosted job count at 20 including CodeQL. Both
+checks still run after a dashboard failure when the workflow is active.
+
 ## 2026-11-21 — beta.8 source selection and release boundary
 
 The selected source version is `0.1.0-beta.8`; beta.6 remains the current public
@@ -225,6 +237,83 @@ Focused regression and injected-failure contracts use owned synthetic data.
 Exact-source independent review and maintained native final gates are required.
 Packaged dashboard assets remain part of the source contract, alongside existing
 release, disconnected-dogfood and spending constraints.
+
+## 2026-11-21 — bounded Windows CI donor pilot and supported Linux desktop image
+
+The Linux desktop CI matrix selects Ubuntu 24.04 while keeping the protected
+`Desktop artifact - ubuntu-latest` name and Python 3.12.10. Windows keeps its
+existing runner image. Fresh Windows uv environments omit bootstrap pip; the
+reviewed hash-locked install still supplies the requested environment.
+
+The Windows CI donor pilot is limited to same-repository synthetic PR merges
+against public base `e9bdaab8afcc6265802d690834fbb7fa60cd1a0e`, with CI-only
+changes and an unchanged product/dependency graph. It downloads only protected
+main push run 44945160616 / artifact 14723830372, checks the pinned full archive,
+selects the setup and provenance members, and verifies all four canonical role
+bytes, embedded helpers, stock provenance, locks and matched compression ABI.
+Graph changes, moved bases, unsupported events, forks and unavailable or untrusted
+donors retain the two cold-build fallback. Release workflows are unchanged.
+
+Two separate interpreters compile exact Git ATC source, rebuild identities and
+PE/PYZ/CArchive metadata, and link their own helpers in fresh roots while retaining
+the verified stock dependency closure. This is not a fresh dependency scan.
+The maintained four-role comparison, provenance and staging remain authoritative;
+divergence after admission fails the job. Download overlaps environment setup and
+locked installation. On admitted builds, the independent first-run install
+runs alongside the resource, credential, recovery and package preparation checks.
+On cold fallback, the original order of the lifecycle smokes is preserved.
+Both branches must pass before the canonical artifact upload.
+Original artifact paths, failure diagnostics and trust gates remain required.
+The Windows PR inventory can query the same local process provider through COM
+with the same executable-path and creation-time checks. The final PR upload stores
+already-compressed Windows payloads without a second compression pass.
+
+Function affinity now applies only to `test_updater.py` and
+`test_packet_h_retrieval.py`, keeping each parameter family together. The real
+226-case proof supplies their aggregate placement weights; all other grouping,
+canonical coverage, receipts and nine Windows / two Linux shards remain.
+Exact-source independent review, native checks and hosted timing remain separate
+gates. No three-minute result or release readiness is claimed.
+
+## 2026-11-21 — integrated protected CI candidate
+
+CI starts nine Windows and two Linux pytest jobs independently, retaining the
+stable aggregate check names and the separate security, dashboard, desktop and
+CodeQL gates. Each OS reducer checks exact source/run/job identity, independent
+full discovery, all real xdist workers, complete terminal protocols and a disjoint
+union of the same canonical node set. Live shard output streams while receipts
+and owned logs are retained. The Python dependency audit precedes Linux tests.
+
+The existing JSON artifacts retain each actual pytest phase's
+`duration_seconds` alongside outcome, worker and expected-failure evidence.
+Each invocation also records monotonic `process_elapsed_seconds` through process
+wait completion, including failed invocations and standalone retrieval. Timing
+is optional diagnostic evidence; older receipts keep the same coverage verdict.
+The small real-worker contract covers controlled phase delays, standalone timing,
+failure retention and receipts without profiling fields. Exact-source native and
+independent review gates remain required.
+
+Loadgroup preserves file fixture affinity except the exact audited Windows
+updater module (singleton nodes) and the eight exhaustive Packet A buckets.
+The full updater proof covered all 236 nodes: 235 passed and the existing symlink
+skip remained, across four loaded workers in 62.349 process seconds. Its archived
+236.066 work seconds seed placement; weights predict work, not elapsed job time.
+Unknown files retain the deterministic fallback. The retrieval module runs once
+per OS outside xdist with its shared four-process spawn pool, both complete
+reports and original assertions; its separate receipt joins the same full reducer.
+
+Windows test and packaging jobs use fresh run-owned Python 3.12.10 venvs and the
+opt-in pinned, configuration-isolated uv installer, retaining lock hashes, locked
+build backends and wheel-copy semantics. Redundant Windows pip cache staging is
+removed. Only PR Windows native reproducibility opts into independent clean A/B
+arms and parallel helper builds; byte comparisons and exact staging remain.
+Linux and release installer/build defaults, platform credential/startup checks,
+packaged lifecycle, artifacts and final acceptance gates remain required.
+
+This is local candidate behavior. The Windows CI timeline model remains about
+5m16s, not a demonstrated three-minute CI or merge result. Eleven test jobs plus
+fixed checks compete for the shared 20 standard runner slots; actual hosted
+capacity, timing and protected merge require their separate authorized evidence.
 
 ## 2026-09-30 — urllib3 correction for the PR118 combined candidate
 
