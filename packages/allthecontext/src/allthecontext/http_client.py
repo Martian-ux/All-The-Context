@@ -134,7 +134,7 @@ class ContextHttpClient:
             message = response.text[:500]
             try:
                 body = response.json()
-                detail = body.get("detail", body)
+                detail = body.get("detail", body) if isinstance(body, dict) else message
                 if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
                     detail = detail["error"]
                 if isinstance(detail, dict):
