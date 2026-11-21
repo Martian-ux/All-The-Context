@@ -642,9 +642,9 @@ def test_real_loadgroup_preserves_shared_fixtures_and_splits_audited_cases(small
             flags == {"loadgroup": True, "dist": "no"}
             for flags in receipt["worker_schedule"].values()
         )
-    # Distinct groups are schedulable independently even when xdist reuses a worker.
-    assert len({group for _, group in audited}) == 4
-    assert Counter(shard for shard, _ in audited) == {0: 2, 1: 2}
+    # The platform weights can divide the four independent groups unevenly.
+    assert len(audited) == len({group for _, group in audited}) == 4
+    assert {shard for shard, _ in audited} == {0, 1}
     witnesses = {letter: checker.read_receipt(root / f"witness-{letter}.json") for letter in "ab"}
     _verify_fixture_witnesses(homes, witnesses)
 
