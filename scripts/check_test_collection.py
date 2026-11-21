@@ -47,6 +47,7 @@ HISTORICAL_TEST_FILE_SECONDS = {
 # The complete 236-node proof-3db07e46 audit supports singleton groups only
 # for this exact module. Other files retain fixture affinity by default.
 RETRIEVAL_TEST_FILE = "tests/unit/test_retrieval_m3_current_candidate.py"
+WINDOWS_DISCOVERY_JOB = "python-windows-discovery"
 PACKET_A_TEST_FILE = "tests/unit/test_memory_reliability_spec.py"
 PACKET_A_BLOCK_FUNCTION = (
     "test_packet_a_code_owned_digest_rejects_every_semantic_leaf_after_rebound"
@@ -653,14 +654,15 @@ def verify_execution_receipts(
     workers: int,
     job: str,
     retrieval: dict | None = None,
+    discovery_job: str | None = None,
 ) -> dict[str, str]:
     """Compare every real worker and terminal node against independent discovery."""
 
     require(shard_count > 0 and workers > 0, "invalid schedule")
     base = dict(identity, schema=1, shard_count=shard_count, workers=workers)
 
-    def check_identity(receipt: dict, *, mode: str, shard: int) -> None:
-        expected = dict(base, mode=mode, shard=shard, job=f"{job}/{shard}")
+    def check_identity(receipt: dict, *, mode: str, shard: int, producer: str) -> None:
+        expected = dict(base, mode=mode, shard=shard, job=f"{producer}/{shard}")
         require(
             all(
                 type(receipt.get(key)) is type(value) and receipt[key] == value
@@ -674,7 +676,8 @@ def verify_execution_receipts(
             "pytest subprocess did not succeed",
         )
 
-    check_identity(canonical, mode="canonical", shard=0)
+    discovery_producer = job if discovery_job is None else discovery_job
+    check_identity(canonical, mode="canonical", shard=0, producer=discovery_producer)
     complete = receipt_collection(canonical["collection"])
     require(canonical["collection_digest"] == collection_digest(complete), "bad collection digest")
     groups = test_case_groups(list(complete), platform=identity.get("platform"))
@@ -690,7 +693,7 @@ def verify_execution_receipts(
     executed: list[Counter[str]] = []
     for shard, nodes in enumerate(expected):
         receipt = by_shard[shard]
-        check_identity(receipt, mode="shard", shard=shard)
+        check_identity(receipt, mode="shard", shard=shard, producer=job)
         worker_ids = {f"gw{index}" for index in range(workers)}
         require(set(receipt["collections"]) == worker_ids, "missing or extra real workers")
         require(set(receipt["worker_full"]) == worker_ids, "missing full worker discovery")
@@ -744,7 +747,7 @@ def verify_execution_receipts(
     standalone = complete - parallel
     require((retrieval is not None) == bool(standalone), "missing or extra retrieval receipt")
     if retrieval is not None:
-        check_identity(retrieval, mode="retrieval", shard=0)
+        check_identity(retrieval, mode="retrieval", shard=0, producer=discovery_producer)
         require(
             receipt_collection(retrieval["collection"]) == standalone,
             "retrieval collection differs",
@@ -770,26 +773,39 @@ def verify_execution_receipts(
 
 
 def verify_receipt_directory(
-    directory: Path, *, platform: str, run_id: str, run_attempt: str, shard_result: str
+    directory: Path,
+    *,
+    platform: str,
+    run_id: str,
+    run_attempt: str,
+    shard_result: str,
+    discovery_result: str | None = None,
 ) -> None:
-    """Validate current-run artifacts and the OS matrix's actual job conclusion."""
+    """Validate current-run artifacts and their producers' actual job conclusions."""
 
     require(shard_result == "success", f"pytest matrix did not succeed: {shard_result}")
-    require(bool(run_id) and bool(run_attempt), "missing run identity")
+    require(run_id.isdecimal() and run_attempt.isdecimal(), "invalid run identity")
     count = CI_SHARD_COUNTS[platform]
     job = "python" if platform == "linux" else "python-windows-shard"
-    expected_paths = {
-        f"pytest-{run_id}-{run_attempt}-{platform}-{shard}/shard.json" for shard in range(count)
-    }
-    canonical = f"pytest-{run_id}-{run_attempt}-{platform}-0/canonical.json"
+    discovery_job = WINDOWS_DISCOVERY_JOB if platform == "windows" else None
+    stem = f"pytest-{run_id}-{run_attempt}-{platform}"
+    discovery_directory = f"{stem}-0"
+    if discovery_job is not None:
+        require(
+            discovery_result == "success", f"pytest discovery did not succeed: {discovery_result}"
+        )
+        discovery_directory = f"{stem}-discovery"
+    shard_paths = [f"{stem}-{shard}/shard.json" for shard in range(count)]
+    expected_paths = set(shard_paths)
+    canonical = f"{discovery_directory}/canonical.json"
     expected_paths.add(canonical)
     require((directory / canonical).is_file(), "missing canonical receipt artifact")
     canonical_receipt = read_receipt(directory / canonical)
-    has_retrieval = any(
+    has_retrieval = discovery_job is not None or any(
         test_file_for_nodeid(node) == RETRIEVAL_TEST_FILE
         for node in receipt_collection(canonical_receipt["collection"])
     )
-    retrieval_path = f"pytest-{run_id}-{run_attempt}-{platform}-0/retrieval.json"
+    retrieval_path = f"{discovery_directory}/retrieval.json"
     if has_retrieval:
         expected_paths.add(retrieval_path)
     actual_paths = {
@@ -799,15 +815,13 @@ def verify_receipt_directory(
     identity = dict(source_identity(), platform=platform, run_id=run_id, run_attempt=run_attempt)
     verify_execution_receipts(
         canonical_receipt,
-        [
-            read_receipt(directory / f"pytest-{run_id}-{run_attempt}-{platform}-{i}/shard.json")
-            for i in range(count)
-        ],
+        [read_receipt(directory / path) for path in shard_paths],
         identity=identity,
         shard_count=count,
         workers=4,
         job=job,
         retrieval=read_receipt(directory / retrieval_path) if has_retrieval else None,
+        discovery_job=discovery_job,
     )
     print(f"{platform} canonical collection and {count} real-worker execution receipts passed")
 
@@ -830,6 +844,7 @@ def main() -> int:
     parser.add_argument("--run-id")
     parser.add_argument("--run-attempt")
     parser.add_argument("--shard-result")
+    parser.add_argument("--discovery-result")
     arguments = parser.parse_args()
     try:
         if arguments.verify_receipts is not None:
@@ -843,6 +858,7 @@ def main() -> int:
                 run_id=arguments.run_id,
                 run_attempt=arguments.run_attempt,
                 shard_result=arguments.shard_result,
+                discovery_result=arguments.discovery_result,
             )
             return 0
         if arguments.require_shard_result is not None:

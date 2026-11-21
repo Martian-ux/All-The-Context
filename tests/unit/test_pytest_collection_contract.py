@@ -638,6 +638,35 @@ def test_retrieval_receipt_is_required_and_bound_to_complete_union(small_suite, 
         )
 
 
+def test_discovery_and_matrix_bind_real_receipts_to_distinct_producers(small_suite):
+    checker, _, root, identity, canonical, original_shards = small_suite
+    retrieval = checker.read_receipt(root / "receipt-retrieval-0/retrieval.json")
+    discovery_job = checker.WINDOWS_DISCOVERY_JOB
+    canonical = dict(canonical, job=f"{discovery_job}/0")
+    retrieval["job"] = f"{discovery_job}/0"
+    shards = deepcopy(original_shards)
+
+    def verify():
+        return checker.verify_execution_receipts(
+            canonical,
+            shards,
+            identity=identity,
+            shard_count=2,
+            workers=3,
+            job="proof",
+            retrieval=retrieval,
+            discovery_job=discovery_job,
+        )
+
+    assert verify() == _verify_small(small_suite)
+    for receipt in (canonical, retrieval, shards[0]):
+        original_job = receipt["job"]
+        receipt["job"] = "proof/0" if receipt is not shards[0] else f"{discovery_job}/0"
+        with pytest.raises(ValueError, match="job or invocation identity"):
+            verify()
+        receipt["job"] = original_job
+
+
 def _verify_fixture_witnesses(homes, witnesses):
     assert set(witnesses) == {"a", "b"}
     for letter, cases in (("a", [1, 2, 3, 4]), ("b", [1, 2])):
@@ -814,7 +843,59 @@ def test_aggregate_rejects_failed_matrices_and_missing_artifacts(tmp_path, resul
             run_id="42",
             run_attempt="1",
             shard_result=result,
+            discovery_result="success",
         )
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", "", None])
+def test_windows_aggregate_rejects_unsuccessful_discovery(tmp_path, result):
+    checker = _load_collection_script()
+    with pytest.raises(ValueError, match="pytest discovery did not succeed"):
+        checker.verify_receipt_directory(
+            tmp_path,
+            platform="windows",
+            run_id="42",
+            run_attempt="1",
+            shard_result="success",
+            discovery_result=result,
+        )
+
+
+def test_windows_aggregate_requires_exact_discovery_artifact_paths(tmp_path, monkeypatch):
+    checker = _load_collection_script()
+    monkeypatch.setattr(checker, "source_identity", lambda: dict(head="a" * 40, tree="b" * 40))
+    captured = []
+    monkeypatch.setattr(checker, "verify_execution_receipts", lambda *a, **kw: captured.append(kw))
+    discovery = tmp_path / "pytest-42-1-windows-discovery"
+    discovery.mkdir()
+    (discovery / "canonical.json").write_text("{}", encoding="utf-8")
+    for shard in range(checker.CI_SHARD_COUNTS["windows"]):
+        folder = tmp_path / f"pytest-42-1-windows-{shard}"
+        folder.mkdir()
+        (folder / "shard.json").write_text("{}", encoding="utf-8")
+
+    def verify():
+        checker.verify_receipt_directory(
+            tmp_path,
+            platform="windows",
+            run_id="42",
+            run_attempt="1",
+            shard_result="success",
+            discovery_result="success",
+        )
+
+    alias = tmp_path / "pytest-42-1-windows-0/retrieval.json"
+    alias.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing, extra or ambiguous receipt artifacts"):
+        verify()
+    retrieval = discovery / "retrieval.json"
+    alias.rename(retrieval)
+    retrieval.write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError):
+        verify()
+    retrieval.write_text("{}", encoding="utf-8")
+    verify()
+    assert captured[0]["discovery_job"] == checker.WINDOWS_DISCOVERY_JOB
 
 
 @pytest.mark.parametrize("failure", ["setup", "call", "teardown", "crash", "empty"])

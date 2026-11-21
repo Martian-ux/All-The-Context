@@ -1,4 +1,4 @@
-"""Run an immediate fixture-aware shard alongside independent full collection."""
+"""Run a fixture-aware CI shard or independent Windows discovery and retrieval."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from time import perf_counter
 from check_test_collection import (
     CI_SHARD_COUNTS,
     RETRIEVAL_TEST_FILE,
+    WINDOWS_DISCOVERY_JOB,
     read_receipt,
     require,
     source_identity,
@@ -84,20 +85,31 @@ def run_pytest(root: Path, output: Path, metadata: dict) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--shard-index", type=int, required=True)
+    invocation = parser.add_mutually_exclusive_group(required=True)
+    invocation.add_argument("--shard-index", type=int)
+    invocation.add_argument("--discovery", action="store_true")
     arguments = parser.parse_args()
     try:
         platform = {"win32": "windows", "linux": "linux"}[sys.platform]
         count = CI_SHARD_COUNTS[platform]
-        shard = arguments.shard_index
-        require(0 <= shard < count, "shard index is outside the frozen OS schedule")
+        job = "python-windows-shard" if platform == "windows" else "python"
+        if arguments.discovery:
+            require(platform == "windows", "standalone discovery requires Windows")
+            job, shard, suffix = WINDOWS_DISCOVERY_JOB, 0, "discovery"
+            modes = ["canonical", "retrieval"]
+        else:
+            shard = arguments.shard_index
+            require(0 <= shard < count, "shard index is outside the frozen OS schedule")
+            suffix = str(shard)
+            modes = ["shard"]
+            if platform == "linux" and shard == 0:
+                modes.extend(["canonical", "retrieval"])
         run_id, run_attempt = os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"]
         require(run_id.isdecimal() and run_attempt.isdecimal(), "invalid GitHub run identity")
         source = source_identity()
         require(source["head"] == os.environ["GITHUB_SHA"], "checkout differs from CI source")
-        job = "python-windows-shard" if platform == "windows" else "python"
         require(os.environ["GITHUB_JOB"] == job, "unexpected CI job")
-        output = ROOT / ".test-runs" / f"pytest-{run_id}-{run_attempt}-{platform}-{shard}"
+        output = ROOT / ".test-runs" / f"pytest-{run_id}-{run_attempt}-{platform}-{suffix}"
         output.mkdir(parents=True, exist_ok=False)
         metadata = dict(
             source,
@@ -110,7 +122,6 @@ def main() -> int:
             job=f"{job}/{shard}",
             shard=shard,
         )
-        modes = ["shard", "canonical", "retrieval"] if shard == 0 else ["shard"]
         with ThreadPoolExecutor(max_workers=len(modes)) as pool:
             futures = [
                 pool.submit(run_pytest, ROOT, output, dict(metadata, mode=mode)) for mode in modes
