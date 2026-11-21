@@ -281,6 +281,18 @@ def create_app(
 
     authenticator = _TokenAuthenticator(replication_bearer_token, client_tokens)
     pairing_secret = [bytes(edge_pairing_secret or b"")]
+    claim_activation_lock = Lock()
+    claim_credentials = claim_store.credentials() if claim_store is not None else None
+    claim_activation_ready = [
+        claim_store is None
+        or claim_store.acknowledged()
+        or (
+            claim_credentials is not None
+            and hmac.compare_digest(replication_bearer_token, claim_credentials[1])
+            and hmac.compare_digest(service._replication_secret, claim_credentials[0].encode())
+            and hmac.compare_digest(pairing_secret[0], claim_credentials[0].encode())
+        )
+    ]
     edge_enabled = edge_provider is not None
     if edge_enabled and (
         owner_secret_hash is None or vault_id is None or edge_pairing_secret is None
@@ -415,8 +427,9 @@ def create_app(
 
     def replication_token_authorized(
         authorization: Annotated[str | None, Header()] = None,
-    ) -> None:
+    ) -> str:
         authenticator.require_replication(authorization)
+        return authenticator._bearer(authorization)
 
     @app.get("/healthz")
     def health(
@@ -468,24 +481,37 @@ def create_app(
         if not isinstance(challenge, str) or not isinstance(signature, str):
             raise HTTPException(status_code=422, detail="claim proof is invalid")
         try:
-            envelope = claim_store.complete(challenge, signature)
-            credentials = claim_store.credentials()
-            assert credentials is not None
-            new_secret, new_token = credentials
-            service.rotate_replication_secret(new_secret.encode())
-            authenticator.rotate_replication(new_token)
-            pairing_secret[0] = new_secret.encode()
+            with claim_activation_lock:
+                envelope = claim_store.complete(challenge, signature)
+                credentials = claim_store.credentials()
+                assert credentials is not None
+                new_secret, new_token = credentials
+                service.rotate_replication_secret(new_secret.encode())
+                authenticator.rotate_replication(new_token)
+                pairing_secret[0] = new_secret.encode()
+                claim_activation_ready[0] = True
             return envelope
         except EdgeClaimError as exc:
             raise HTTPException(status_code=403, detail="claim proof was rejected") from exc
 
     @app.post("/v1/edge/claim/ack")
     def acknowledge_edge_claim(
-        _authorized: None = Depends(replication_token_authorized),
+        authorized_token: str = Depends(replication_token_authorized),
     ) -> dict[str, bool]:
         if claim_store is None:
             raise HTTPException(status_code=404, detail="Edge claim is not enabled")
-        claim_store.acknowledge()
+        credentials = claim_store.credentials()
+        if credentials is None or not hmac.compare_digest(authorized_token, credentials[1]):
+            raise HTTPException(status_code=401, detail="invalid credential")
+        if not claim_activation_ready[0]:
+            raise HTTPException(status_code=409, detail="Edge claim activation is not ready")
+        with claim_activation_lock:
+            if not claim_activation_ready[0]:
+                raise HTTPException(status_code=409, detail="Edge claim activation is not ready")
+            try:
+                claim_store.acknowledge(authorized_token)
+            except EdgeClaimError as exc:
+                raise HTTPException(status_code=401, detail="invalid credential") from exc
         return {"claimed": True}
 
     @app.get("/v1/forward/requests")

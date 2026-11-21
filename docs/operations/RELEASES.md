@@ -121,13 +121,19 @@ Its source retained contradictory active-state prose, so it is also historical,
 unsigned, and unpublished. The immutable `0.1.0-beta.6` prerelease remains the
 current public downloadable release. Its exact post-build identity is recorded
 in the external exact prepublication ledger; no occupied draft is retargeted,
-deleted, reused, or published. Source metadata uses `0.1.0-beta.7` only for a
-private replacement-source/candidate slot. No beta.7 candidate has been built,
-executed, scanned, submitted, approved, published, tagged, uploaded, or
-released. The private replacement workflow is artifact-only, exact-allowlist,
-and approval-gated; it is not publication, execution, or AV evidence. Future
-beta.7+ acceptance requires exact candidate-bound Microsoft closed no-malware
-reassessment evidence, and none exists.
+deleted, reused, or published. The occupied `0.1.0-beta.7` draft is unpublished
+and quarantined for older source. The selected new source version is
+`0.1.0-beta.8`. Source preparation
+supplies no publication, live acceptance or completed external security
+reassessment. Exact candidate-bound Microsoft closed no-malware reassessment,
+independent review and the applicable protected release gates remain required.
+The private replacement workflow remains artifact-only, exact-allowlist and
+approval-gated; it is not publication, execution or antivirus evidence.
+
+A supported, independently verified beta.6 migration/upgrade route remains a
+release candidate and consumer rollout blocker. The OTA protocol mismatch is
+independent of the legacy version pin. Preparing beta.8 source does not resolve
+that mismatch or establish a working beta.6 upgrade route.
 
 The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
 Each job compares the actual OS, CPU, and 64-bit runtime with its label before

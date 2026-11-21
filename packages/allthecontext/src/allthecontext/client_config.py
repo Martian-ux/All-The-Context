@@ -1317,20 +1317,26 @@ def _codex_apply_transaction(plans: tuple[_CodexWritePlan, ...]) -> dict[Path, P
                 _codex_atomic_write(plan.document.path, plan.updated)
     except BaseException:
         rollback_error: BaseException | None = None
+        restored: set[Path] = set()
         for plan in reversed(attempted):
             try:
                 _codex_restore(plan)
+                restored.add(plan.document.path)
             except BaseException as candidate:
                 rollback_error = candidate
                 break
-        for backup in backups.values():
-            if backup is not None:
+        attempted_paths = {plan.document.path for plan in attempted}
+        for path, backup in backups.items():
+            if backup is not None and (
+                path not in attempted_paths or path in restored
+            ):
                 with suppress(OSError):
                     backup.unlink(missing_ok=True)
         if rollback_error is not None:
-            raise RuntimeError("Codex configuration failed and could not be rolled back") from (
-                rollback_error
-            )
+            raise RuntimeError(
+                "Codex configuration failed and rollback is incomplete; "
+                "recovery originals were retained"
+            ) from rollback_error
         raise
     return backups
 

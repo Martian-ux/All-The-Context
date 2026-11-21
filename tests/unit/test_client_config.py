@@ -236,6 +236,48 @@ def test_client_config_write_fault_restores_exact_prior_config(
     assert config.read_text(encoding="utf-8") == original
 
 
+def test_codex_incomplete_multifile_rollback_retains_recovery_originals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.toml"
+    hooks = tmp_path / "hooks.json"
+    original_config = 'theme = "light"\n'
+    original_hooks = '{"unrelated":true}\n'
+    config.write_text(original_config, encoding="utf-8")
+    hooks.write_text(original_hooks, encoding="utf-8")
+    real_atomic_write = client_config._codex_atomic_write
+    attempts = 0
+
+    def fail_write_then_rollback(path: Path, content: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 4:
+            raise OSError("injected earlier-file rollback failure")
+        real_atomic_write(path, content)
+        if attempts == 2:
+            raise OSError("injected later-file write failure")
+
+    monkeypatch.setattr(client_config, "_codex_atomic_write", fail_write_then_rollback)
+    with pytest.raises(RuntimeError, match="Codex configuration failed") as raised:
+        configure_codex_integration(
+            RuntimeCommand(Path("python")),
+            read_client_id="read-client",
+            capture_client_id="capture-client",
+            path=config,
+            hooks_path=hooks,
+            skills_dir=tmp_path / "skills",
+        )
+
+    assert attempts == 4
+    assert "synthetic-credential-value" not in str(raised.value)
+    assert hooks.read_text(encoding="utf-8") == original_hooks
+    retained = list(tmp_path.glob("config.toml.atc-backup-*"))
+    assert len(retained) == 1
+    assert retained[0].read_text(encoding="utf-8") == original_config
+    assert "rollback is incomplete" in str(raised.value)
+
+
 def test_configure_claude_preserves_other_servers_and_is_idempotent(tmp_path: Path) -> None:
     config = tmp_path / "claude_desktop_config.json"
     config.write_text(

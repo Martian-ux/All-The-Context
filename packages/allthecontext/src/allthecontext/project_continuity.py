@@ -347,7 +347,7 @@ class ProjectEvidence:
             return False
         if as_of is None:
             return True
-        return self.expires_at <= as_of
+        return datetime.fromisoformat(self.expires_at) <= datetime.fromisoformat(as_of)
 
 
 @dataclass(frozen=True, slots=True)
@@ -996,12 +996,19 @@ def _label_state(
 def _discover_projects(
     bindings: Sequence[AuthorizedSourceBinding],
     evidence: Sequence[ProjectEvidence],
+    *,
+    as_of: str | None,
 ) -> tuple[tuple[ProjectIdentity, ...], dict[str, tuple[ProjectEvidence, ...]]]:
     bindings_by_id = {binding.binding_id: binding for binding in bindings}
     anchors_by_key: dict[tuple[str, str], list[ProjectEvidence]] = defaultdict(list)
     for item in evidence:
         binding = _active_binding(item, bindings_by_id)
-        if binding is not None and item.assignment_eligible and item.project_ref is not None:
+        if (
+            binding is not None
+            and item.assignment_eligible
+            and not item.is_expired(as_of)
+            and item.project_ref is not None
+        ):
             anchors_by_key[(binding.workspace_ref, item.project_ref)].append(item)
     identities: list[ProjectIdentity] = []
     anchors_by_project: dict[str, tuple[ProjectEvidence, ...]] = {}
@@ -1405,7 +1412,9 @@ def _build_snapshot(
 ) -> ProjectContinuitySnapshot:
     normalized_as_of = _timestamp(as_of)
     normalized_bindings, evidence = _normalized_inputs(bindings, values, purged_ids)
-    projects, _anchors = _discover_projects(normalized_bindings, evidence)
+    projects, _anchors = _discover_projects(
+        normalized_bindings, evidence, as_of=normalized_as_of
+    )
     assignments = _assign_projects(
         normalized_bindings,
         evidence,
@@ -1510,12 +1519,14 @@ def discover_projects(
     evidence: Sequence[PublicEvidence],
     *,
     purged_ids: Iterable[str] = (),
+    as_of: str | None = None,
 ) -> ProjectContinuitySnapshot:
     """Convenience discovery-only call with no capsule content budget pressure."""
 
     return full_rebuild(
         bindings,
         evidence,
+        as_of=as_of,
         character_budget=MAX_CAPSULE_CHARS,
         item_budget=MAX_CAPSULE_ITEMS,
         purged_ids=purged_ids,

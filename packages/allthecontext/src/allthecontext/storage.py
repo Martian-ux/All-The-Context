@@ -2300,57 +2300,67 @@ class CoreStore:
         return self.get_import_operation(operation_id)
 
     def request_import_operation_cancel(self, operation_id: str) -> dict[str, Any]:
-        operation = self.get_import_operation(operation_id)
-        if operation["status"] in {"complete", "failed", "cancelled"}:
+        terminal = {"complete", "failed", "cancelled"}
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?", (operation_id,)
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("import operation not found")
+            status = str(row["status"])
+            source_id = row["source_id"]
+            if status in terminal:
+                return {
+                    "operation_id": operation_id,
+                    "status": status,
+                    "cancel_requested": False,
+                    "already_terminal": True,
+                    "source_id": source_id,
+                }
+
+            now = utc_now()
+            if status == "awaiting_upload":
+                bytes_total = max(int(row["declared_byte_size"] or 1), 1)
+                progress = {
+                    "phase": "cancelled",
+                    "bytes_processed": 0,
+                    "bytes_total": bytes_total,
+                    "percent": 0,
+                    "message": "import cancelled",
+                    "cancel_requested": True,
+                    "cancel_acknowledged": True,
+                }
+                connection.execute(
+                    "UPDATE import_operations SET status='cancelled',phase='cancelled',"
+                    "cancel_requested=1,progress_json=?,updated_at=?,completed_at=? "
+                    "WHERE id=? AND status='awaiting_upload'",
+                    (_json(progress), now, now, operation_id),
+                )
+                return {
+                    "operation_id": operation_id,
+                    "status": "cancelled",
+                    "cancel_requested": True,
+                    "already_terminal": False,
+                    "source_id": source_id,
+                    "immediate": True,
+                }
+
+            if not bool(row["cancel_requested"]):
+                progress = _loads(cast(str | None, row["progress_json"]), {})
+                progress_value = dict(cast(dict[str, Any], progress))
+                progress_value["cancel_requested"] = True
+                connection.execute(
+                    "UPDATE import_operations SET cancel_requested=1,progress_json=?,updated_at=? "
+                    "WHERE id=? AND status IN ('uploading','processing') AND cancel_requested=0",
+                    (_json(progress_value), now, operation_id),
+                )
             return {
                 "operation_id": operation_id,
-                "status": operation["status"],
-                "cancel_requested": False,
-                "already_terminal": True,
-                "source_id": operation.get("source_id"),
-            }
-        # No worker consumes awaiting_upload; terminalize immediately.
-        if operation["status"] == "awaiting_upload":
-            bytes_total = max(int(operation.get("declared_byte_size") or 1), 1)
-            progress = {
-                "phase": "cancelled",
-                "bytes_processed": 0,
-                "bytes_total": bytes_total,
-                "percent": 0,
-                "message": "import cancelled",
-                "cancel_requested": True,
-                "cancel_acknowledged": True,
-            }
-            updated = self.update_import_operation(
-                operation_id,
-                status="cancelled",
-                phase="cancelled",
-                cancel_requested=True,
-                progress=progress,
-                completed=True,
-            )
-            return {
-                "operation_id": operation_id,
-                "status": updated["status"],
+                "status": status,
                 "cancel_requested": True,
                 "already_terminal": False,
-                "source_id": updated.get("source_id"),
-                "immediate": True,
+                "source_id": source_id,
             }
-        progress = dict(operation.get("progress") or {})
-        progress["cancel_requested"] = True
-        updated = self.update_import_operation(
-            operation_id,
-            cancel_requested=True,
-            progress=progress,
-        )
-        return {
-            "operation_id": operation_id,
-            "status": updated["status"],
-            "cancel_requested": True,
-            "already_terminal": False,
-            "source_id": updated.get("source_id"),
-        }
 
     def list_nonterminal_import_operations(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -9100,6 +9110,44 @@ class CoreStore:
             counts=coverage.records_by_status,
             coverage=coverage,
         )
+
+    def _memory_truth_snapshot(
+        self,
+        *,
+        page_size: int = 500,
+        max_records: int = 10_000,
+        principal: ClientPrincipal | None = None,
+    ) -> tuple[tuple[MemoryTruthRecordOut, ...], int]:
+        """Read authorized canonical truth and evidence in one read transaction."""
+        bounded_page_size = min(max(page_size, 1), 500)
+        vault_id = self.vault_id()
+        # Canonical records and linked observations share the client allow/deny
+        # predicate. Apply it before either snapshot or evidence bounds.
+        acl_filter, acl_parameters = self._truth_evidence_acl_filter(principal)
+        where = "c.vault_id=?" + acl_filter
+        parameters = [vault_id, *acl_parameters]
+        with self.connect() as connection:
+            connection.execute("BEGIN")
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM context_records c WHERE {where}", parameters
+                ).fetchone()[0]
+            )
+            if total > max_records:
+                raise InvalidStateError("truth snapshot exceeds its configured bound")
+            records: list[MemoryTruthRecordOut] = []
+            offset = 0
+            while offset < total:
+                rows = connection.execute(
+                    f"SELECT c.* FROM context_records c WHERE {where} "
+                    "ORDER BY updated_at DESC,id LIMIT ? OFFSET ?",
+                    [*parameters, bounded_page_size, offset],
+                ).fetchall()
+                if not rows:
+                    break
+                records.extend(self._truth_records_tx(connection, rows, principal=principal))
+                offset += len(rows)
+        return tuple(records), total
 
     def _insert_version(
         self,

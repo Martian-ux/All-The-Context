@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 PRODUCT_NAME = "All The Context"
-PRODUCT_VERSION = "0.1.0-beta.7"
+PRODUCT_VERSION = "0.1.0-beta.8"
 BUILD_IDENTITY_SCHEMA_VERSION = 1
 BUILD_IDENTITY_FILE_NAME = "build-identity-v1.json"
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")

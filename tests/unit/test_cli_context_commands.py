@@ -2,13 +2,219 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 from allthecontext import cli
 from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, CoreConfig
-from allthecontext.models import ObservationDisposition
+from allthecontext.export import MAGIC
+from allthecontext.models import (
+    CandidateInput,
+    CoverageReport,
+    IngestionMode,
+    ObservationDisposition,
+)
+from allthecontext.storage import CoreStore
+
+_CLI_PASSPHRASE = "fictional-cli-export-passphrase"
+_CLI_CONTENT = "The fictional observatory uses amber notebooks."
+_CLI_SOURCE_BYTES = b"Fictional observatory archive\x00\xff\nAmber notebooks only.\n"
+
+
+def _run_cli(
+    tmp_path: Path,
+    *arguments: str,
+    passphrase: str = _CLI_PASSPHRASE,
+) -> subprocess.CompletedProcess[str]:
+    checkout = Path(__file__).resolve().parents[2]
+    host = tmp_path / "cli-host"
+    temporary = host / "temp"
+    temporary.mkdir(parents=True, exist_ok=True)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("ATC_") and key not in {"PYTHONHOME", "PYTHONPATH"}
+    }
+    environment.update(
+        {
+            "PYTHONPATH": str(checkout / "packages" / "allthecontext" / "src"),
+            "PYTHONNOUSERSITE": "1",
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            "ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE": "1",
+            "ATC_TEST_CLI_PASSPHRASE": passphrase,
+            "ATC_CORE_DATA_DIR": str(host / "unused-core"),
+            "ATC_CLAUDE_CONFIG": str(host / "claude" / "config.json"),
+            "CODEX_HOME": str(host / "codex"),
+            "HOME": str(host),
+            "USERPROFILE": str(host),
+            "APPDATA": str(host / "appdata"),
+            "LOCALAPPDATA": str(host / "localappdata"),
+            "XDG_CONFIG_HOME": str(host / "config"),
+            "XDG_DATA_HOME": str(host / "data"),
+            "XDG_CACHE_HOME": str(host / "cache"),
+            "TMPDIR": str(temporary),
+            "TMP": str(temporary),
+            "TEMP": str(temporary),
+        }
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "allthecontext",
+            *arguments,
+            "--passphrase-env",
+            "ATC_TEST_CLI_PASSPHRASE",
+        ],
+        cwd=checkout,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+@pytest.fixture
+def cli_encrypted_archive(tmp_path: Path) -> tuple[Path, str, str, str]:
+    config = CoreConfig.in_directory(tmp_path / "source")
+    store = CoreStore(config.database_path)
+    vault_id = store.initialize_vault("Fictional observatory")
+    source = store.add_source(
+        _CLI_SOURCE_BYTES,
+        source_service="fictional-observatory",
+        source_type="provider_archive",
+    )
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="fictional-cli-session",
+    )
+    batch = store.submit_batch(
+        str(session["session_id"]),
+        "fictional-cli-batch",
+        [
+            CandidateInput(
+                kind="fact",
+                content=_CLI_CONTENT,
+                source_id=source.id,
+                source_reference="message:fictional-observatory",
+                source_service="fictional-observatory",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=[source.id], complete=True),
+    )
+    record_id = store.get_observation(str(batch["candidate_ids"][0])).record_id
+    assert record_id is not None
+    assert store.get_record(record_id).content == _CLI_CONTENT
+    archive = tmp_path / "fictional.atcexp"
+    exported = _run_cli(
+        tmp_path, "export", str(archive), "--data-dir", str(config.data_dir), "--include-sources"
+    )
+    assert exported.returncode == 0, (exported.stdout, exported.stderr)
+    assert json.loads(exported.stdout)["include_sources"] is True
+    return archive, vault_id, source.id, record_id
+
+
+def test_cli_encrypted_export_restore_round_trip(
+    tmp_path: Path, cli_encrypted_archive: tuple[Path, str, str, str]
+) -> None:
+    archive, vault_id, source_id, record_id = cli_encrypted_archive
+    encrypted = archive.read_bytes()
+    assert encrypted.startswith(MAGIC)
+    assert _CLI_CONTENT.encode() not in encrypted
+    assert _CLI_SOURCE_BYTES not in encrypted
+    destination = CoreConfig.in_directory(tmp_path / "restored")
+
+    restored = _run_cli(
+        tmp_path, "restore", str(archive), "--data-dir", str(destination.data_dir)
+    )
+
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    result = json.loads(restored.stdout)
+    assert result["valid"] is True
+    assert result["dry_run"] is False
+    assert result["manifest"]["include_sources"] is True
+    store = CoreStore(destination.database_path)
+    assert store.vault_id() == vault_id
+    record = store.get_record(record_id)
+    assert record.content == _CLI_CONTENT
+    assert record.source_id == source_id
+    assert store.get_source_content(source_id) == _CLI_SOURCE_BYTES
+
+
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "restore"])
+@pytest.mark.parametrize("existing", [False, True], ids=["absent", "existing"])
+def test_cli_restore_auth_failure_preserves_destination(
+    tmp_path: Path,
+    cli_encrypted_archive: tuple[Path, str, str, str],
+    dry_run: bool,
+    existing: bool,
+) -> None:
+    archive, _vault_id, _source_id, _record_id = cli_encrypted_archive
+    destination = CoreConfig.in_directory(tmp_path / "destination")
+    if existing:
+        store = CoreStore(destination.database_path)
+        vault_id = store.initialize_vault("Existing fictional vault")
+        sentinel = store.add_source(
+            b"existing fictional source must survive",
+            source_service="fictional-destination",
+            source_type="provider_archive",
+        )
+        record = store.add_candidate(
+            CandidateInput(
+                kind="fact", content="Existing fictional fact", explicit_user_statement=True
+            )
+        )
+        before = destination.database_path.read_bytes()
+    arguments = ["restore", str(archive), "--data-dir", str(destination.data_dir)]
+    if dry_run:
+        arguments.append("--dry-run")
+
+    failed = _run_cli(tmp_path, *arguments, passphrase="wrong-fictional-passphrase")
+
+    assert failed.returncode == 1, (failed.stdout, failed.stderr)
+    error = json.loads(failed.stdout)
+    assert error["ok"] is False
+    assert error["error"]["code"] == "InvalidTag"
+    if existing:
+        assert destination.database_path.read_bytes() == before
+        assert store.vault_id() == vault_id
+        assert store.get_record(record.record_id).content == "Existing fictional fact"
+        assert store.get_source_content(sentinel.id) == b"existing fictional source must survive"
+    else:
+        assert not destination.database_path.exists()
+        assert not destination.data_dir.exists()
+
+
+def test_cli_restore_dry_run_does_not_initialize_destination(
+    tmp_path: Path, cli_encrypted_archive: tuple[Path, str, str, str]
+) -> None:
+    archive, _vault_id, _source_id, _record_id = cli_encrypted_archive
+    destination = CoreConfig.in_directory(tmp_path / "dry-run-destination")
+
+    validated = _run_cli(
+        tmp_path, "restore", str(archive), "--data-dir", str(destination.data_dir), "--dry-run"
+    )
+
+    assert validated.returncode == 0, (validated.stdout, validated.stderr)
+    result = json.loads(validated.stdout)
+    assert result["valid"] is True
+    assert result["dry_run"] is True
+    assert result["manifest"]["include_sources"] is True
+    assert not destination.database_path.exists()
+    assert not destination.data_dir.exists()
 
 
 class _Observation:

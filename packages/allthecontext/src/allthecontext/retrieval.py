@@ -32,8 +32,14 @@ from .models import (
     ContextPackMetadata,
     ContextPackTruncationReason,
     ContextRecordOut,
+    ProjectSearchEvidence,
     SearchRequest,
     SearchResponse,
+)
+from .project_continuity import (
+    EvidenceOrigin,
+    ProjectContinuitySnapshot,
+    evidence_from_memory_truth,
 )
 from .security import ClientPrincipal, record_is_allowed
 from .set_selection import (
@@ -2238,6 +2244,92 @@ class RetrievalEngine:
             audit_trace_id=trace_id,
             used_chars=used,
             pack_metadata=pack_metadata,
+        )
+
+    def project_search_evidence(
+        self,
+        request: BootstrapRequest,
+        principal: ClientPrincipal | None,
+        *,
+        label: str,
+        snapshot: ProjectContinuitySnapshot,
+        retained_items: Sequence[ContextRecordOut],
+        trace_id: str,
+    ) -> ProjectSearchEvidence | None:
+        """Compile bounded mention evidence without altering bootstrap item semantics."""
+        search, _explanations, diagnostics = self._search(
+            SearchRequest(
+                query=label,
+                scopes=request.requested_scopes,
+                min_confidence=0.8,
+                limit=100,
+            ),
+            principal,
+            bounded=True,
+        )
+        assignments = {item.evidence_id: item for item in snapshot.assignments}
+        literal = re.compile(rf"(?<![\w-]){re.escape(label.casefold())}(?![\w-])")
+        candidates: list[ContextRecordOut] = []
+        for item in search.items:
+            # UNRESOLVED assignment does not prove absence of a trusted binding.
+            # USER includes owner-approved direct corrections. Approval also
+            # reclassifies imports, so require null source metadata independently.
+            # source_reference alone is provenance text, not a source binding.
+            if (
+                item.source_id is not None
+                or item.source_service is not None
+                or item.source_type is not None
+                or evidence_from_memory_truth(item).origin is not EvidenceOrigin.USER
+            ):
+                continue
+            # A generic mention may be searched; an explicit binding to any
+            # named project is deliberately outside this unbound fallback.
+            if any(scope.casefold().startswith("project:") for scope in item.scopes):
+                continue
+            if (item.entity_key or "").casefold().startswith("project:"):
+                continue
+            assignment = assignments.get(item.id)
+            if assignment is None:
+                continue
+            structured_identity = any(
+                key in (item.structured_value or {})
+                for key in ("project_name", "display_name", "name", "aliases")
+            )
+            kind = item.kind.casefold()
+            if kind == "project_identity" or (kind == "project" and structured_identity):
+                continue
+            generic_project_mention = kind == "project"
+            if assignment.reason == "explicit_project_evidence" and not generic_project_mention:
+                continue
+            if literal.search(item.content.casefold()) is not None:
+                candidates.append(item)
+        if not candidates:
+            return None
+        selected, used, metadata = self.compiler.compile_with_diagnostics(
+            retained_items,
+            candidates,
+            request.budget_chars,
+            candidate_pool_truncated=diagnostics.candidate_pool_truncated,
+        )
+        retained_ids = {item.id for item in retained_items}
+        if not retained_ids <= {item.id for item in selected}:
+            return None
+        evidence = [item for item in selected if item.id not in retained_ids]
+        if not evidence:
+            return None
+        evidence_used = used - sum(self.compiler._cost(item) for item in retained_items)
+        self.store.audit_access(
+            principal.id if principal else None,
+            "project_search_evidence",
+            [item.id for item in evidence],
+            trace_id=trace_id,
+            metadata={"used_chars": evidence_used, "partial_search_evidence": True},
+        )
+        return ProjectSearchEvidence(
+            project_label=label,
+            items=evidence,
+            used_chars=evidence_used,
+            selection_metadata=metadata,
         )
 
 

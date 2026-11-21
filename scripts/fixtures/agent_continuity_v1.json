@@ -1,0 +1,29 @@
+{
+  "version": "agent-continuity-v1",
+  "project": "Harborlight",
+  "scope": "project:harborlight",
+  "history": [
+    {"key": "identity", "kind": "project", "content": "Harborlight", "reference": "fictional:harborlight/identity"},
+    {"key": "route", "kind": "project_decision", "content": "Harborlight dispatch destination is cedar.", "reference": "fictional:harborlight/route-v1"},
+    {"key": "completed", "kind": "project_decision", "content": "Harborlight schema-check is completed; do not repeat it.", "reference": "fictional:harborlight/schema-receipt"},
+    {"key": "failure", "kind": "project_decision", "content": "Harborlight batch dispatch failed because it duplicates crates. Use stream dispatch for the unfinished build-dispatch task.", "reference": "fictional:harborlight/failed-batch"},
+    {"key": "unfinished", "kind": "goal", "content": "Harborlight build-dispatch is unfinished: multiply packs by units_per_pack and prepare the dispatch artifact. Launch window has never been established; mark it unknown.", "reference": "fictional:harborlight/open-task"},
+    {"key": "handoff", "kind": "project_decision", "content": "Harborlight handoff label is amber-otter.", "reference": "fictional:harborlight/handoff"},
+    {"key": "reviewer", "kind": "project_decision", "content": "Harborlight fictional reviewer is Lark.", "reference": "fictional:harborlight/reviewer"},
+    {"key": "route", "kind": "correction", "content": "Harborlight dispatch destination is maple. The revised loading survey supersedes cedar.", "reference": "fictional:harborlight/route-v2"}
+  ],
+  "input": {"project": "Harborlight", "crates": [{"id": "crate-7", "packs": 2, "units_per_pack": 3}, {"id": "crate-9", "packs": 3, "units_per_pack": 4}]},
+  "outcome_rules": {
+    "route": "maple",
+    "stale_route": "cedar",
+    "strategy": "stream",
+    "failed_strategy": "batch",
+    "completed": ["schema-check"],
+    "task": "build-dispatch",
+    "handoff": "amber-otter",
+    "reviewer": "Lark",
+    "launch_window": null,
+    "rows": [{"id": "crate-7", "units": 6}, {"id": "crate-9", "units": 12}],
+    "required_provenance": {"route": "fictional:harborlight/route-v2", "strategy": "fictional:harborlight/failed-batch", "completed": "fictional:harborlight/schema-receipt", "task": "fictional:harborlight/open-task", "handoff": "fictional:harborlight/handoff", "reviewer": "fictional:harborlight/reviewer"}
+  }
+}

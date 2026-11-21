@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import secrets
 import sqlite3
@@ -387,12 +388,22 @@ class EdgeClaimStore:
             None if row is None else (str(row["replication_secret"]), str(row["replication_token"]))
         )
 
-    def acknowledge(self) -> None:
-        with self._connection() as connection:
-            connection.execute(
-                "UPDATE edge_claim_runtime SET acknowledged_at=? WHERE singleton=1",
-                (time.time(),),
-            )
+    def acknowledge(self, replication_token: str) -> None:
+        """Acknowledge only the persisted runtime credential for this claim."""
+        with self._lock, self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT replication_token,acknowledged_at FROM edge_claim_runtime WHERE singleton=1"
+            ).fetchone()
+            if row is None or not hmac.compare_digest(
+                str(row["replication_token"]), replication_token
+            ):
+                raise EdgeClaimError("Edge claim acknowledgement credential is invalid")
+            if row["acknowledged_at"] is None:
+                connection.execute(
+                    "UPDATE edge_claim_runtime SET acknowledged_at=? WHERE singleton=1",
+                    (time.time(),),
+                )
             connection.execute("DELETE FROM edge_claim_challenges")
 
     def acknowledged(self) -> bool:

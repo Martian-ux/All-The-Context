@@ -147,7 +147,20 @@ class CoreRelaySync:
             )
             response.raise_for_status()
             result = response.json()
-            if isinstance(result, Mapping) and bool(result.get("replayed")):
+            if (
+                not isinstance(result, dict)
+                or result.get("accepted") is not True
+                or type(result.get("event_id")) is not str
+                or result.get("event_id") != event.event_id
+                or type(result.get("sequence")) is not int
+                or result.get("sequence") != event.sequence
+                or (
+                    "replayed" in result
+                    and type(result["replayed"]) is not bool
+                )
+            ):
+                raise RuntimeError("Relay acceptance did not match the sent event")
+            if result.get("replayed") is True:
                 replayed += 1
             with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")

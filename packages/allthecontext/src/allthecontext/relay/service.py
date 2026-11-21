@@ -802,6 +802,10 @@ class SQLiteRelayStore:
             return self.purge_compaction_status()
 
     def configure_proposal_protection(self, replication_secret: bytes) -> None:
+        with self._lock:
+            self._configure_proposal_protection(replication_secret)
+
+    def _configure_proposal_protection(self, replication_secret: bytes) -> None:
         """Encrypt legacy queued proposals and scrub completed proposal payloads."""
 
         if len(replication_secret) < 32:
@@ -826,6 +830,22 @@ class SQLiteRelayStore:
                 except json.JSONDecodeError as exc:
                     raise RelayError("stored Edge proposal payload is invalid") from exc
                 if isinstance(stored, dict) and stored.get("algorithm") == "A256GCM":
+                    if self._proposal_encryption_key not in {None, key}:
+                        raise RelayError(
+                            "cannot rotate proposal protection while queued proposals exist"
+                        )
+                    # Also authenticate existing envelopes on restart, before
+                    # committing any cleanup or selecting the candidate key.
+                    _open_proposal(
+                        payload_json,
+                        key=key,
+                        aad=_proposal_aad(
+                            vault_id=str(row["vault_id"]),
+                            client_id=str(row["client_id"]),
+                            idempotency_key=str(row["idempotency_key"]),
+                            proposal_hash=str(row["proposal_hash"]),
+                        ),
+                    )
                     continue
                 if not isinstance(stored, dict):
                     raise RelayError("stored Edge proposal payload is invalid")
@@ -872,13 +892,13 @@ class SQLiteRelayStore:
         idempotency_key: str,
         proposal: Mapping[str, JsonValue],
     ) -> tuple[Mapping[str, Any], bool]:
-        key = self._proposal_encryption_key
-        if key is None:
-            raise RuntimeError("Edge proposal protection is not configured")
         normalized = _normalize_proposal(proposal)
         proposal_hash = hashlib.sha256(canonical_json(normalized).encode("utf-8")).hexdigest()
         now = _utc_now()
         with self._transaction() as connection:
+            key = self._proposal_encryption_key
+            if key is None:
+                raise RuntimeError("Edge proposal protection is not configured")
             self._require_active_edge(connection)
             self._purge_expired_proposals(connection)
             previous = connection.execute(
@@ -957,7 +977,7 @@ class SQLiteRelayStore:
                 "WHERE vault_id = ? AND status = ? ORDER BY created_at, proposal_id LIMIT ?",
                 (vault_id, status, limit),
             ).fetchall()
-        return [self._proposal_row(row) for row in rows]
+            return [self._proposal_row(row) for row in rows]
 
     def _proposal_row(self, row: sqlite3.Row) -> dict[str, Any]:
         proposal: dict[str, Any] | None = None
@@ -1146,14 +1166,17 @@ class RelayService:
         if len(replication_secret) < 32:
             raise ValueError("replication_secret must contain at least 32 bytes")
         self.store = store
+        self._replication_rotation_lock = RLock()
         self._replication_secret = bytes(replication_secret)
         self.store.configure_proposal_protection(self._replication_secret)
 
     def rotate_replication_secret(self, replication_secret: bytes) -> None:
         if len(replication_secret) < 32:
             raise ValueError("replication_secret must contain at least 32 bytes")
-        self._replication_secret = bytes(replication_secret)
-        self.store.configure_proposal_protection(self._replication_secret)
+        next_secret = bytes(replication_secret)
+        with self._replication_rotation_lock:
+            self.store.configure_proposal_protection(next_secret)
+            self._replication_secret = next_secret
 
     def apply(self, event: ReplicationEvent | Mapping[str, Any]) -> ApplyResult:
         parsed = (

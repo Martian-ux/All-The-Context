@@ -361,11 +361,14 @@ def test_verified_update_artifact_is_private_no_store_and_ephemeral(tmp_path: Pa
 def test_dashboard_downloads_complete_encrypted_export(tmp_path: Path, monkeypatch) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     destination = tmp_path / "download.atcexp"
-    temporary_export = tmp_path / "temporary-export.atcexp"
+    real_mkstemp = core_app.tempfile.mkstemp
+    temporary_exports: list[Path] = []
 
-    def isolated_mkstemp(**_kwargs: object) -> tuple[int, str]:
-        descriptor = os.open(temporary_export, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-        return descriptor, str(temporary_export)
+    def isolated_mkstemp(**kwargs: object) -> tuple[int, str]:
+        kwargs.setdefault("dir", tmp_path)
+        descriptor, temporary_name = real_mkstemp(**kwargs)
+        temporary_exports.append(Path(temporary_name))
+        return descriptor, temporary_name
 
     monkeypatch.setattr(core_app.tempfile, "mkstemp", isolated_mkstemp)
     with TestClient(create_app(config)) as client:
@@ -395,7 +398,8 @@ def test_dashboard_downloads_complete_encrypted_export(tmp_path: Path, monkeypat
     )
     assert restored["manifest"]["include_sources"] is True
     assert restored["manifest"]["include_audit"] is True
-    assert not temporary_export.exists()
+    assert temporary_exports
+    assert all(not path.exists() for path in temporary_exports)
 
 
 def test_dashboard_export_failure_cleans_temporary_file_and_redacts_passphrase(

@@ -235,6 +235,8 @@ def build_mcp(*, enabled_tools: frozenset[str] | None = None) -> MCPServer:
         Do not ask the user to open ATC. Supply current_project only when the host or
         task already exposes a project name or returned opaque project ID; otherwise
         Core resolves the task label or sole authorized project and safely abstains.
+        project_search_evidence, when present, contains partial exact-name mentions;
+        it establishes neither project membership nor complete task coverage.
         """
         host_project_hint = (
             await _single_root_project_hint(ctx) if current_project is None else None

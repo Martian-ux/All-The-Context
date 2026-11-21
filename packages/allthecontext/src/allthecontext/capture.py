@@ -1898,8 +1898,11 @@ class CaptureLedger:
                 "UPDATE capture_sources SET lifecycle_state='enabled',retry_count=0,"
                 "next_retry_at=NULL,last_error_code=NULL,last_error_at=NULL,updated_at=? "
                 "WHERE id=? AND lifecycle_state='degraded' "
-                "AND last_error_code='capture_adapter_unavailable'",
-                (now, source_id),
+                "AND last_error_code='capture_adapter_unavailable' "
+                "AND NOT EXISTS (SELECT 1 FROM capture_runs AS r WHERE "
+                "r.source_id=capture_sources.id AND r.state='running' "
+                "AND r.lease_expires_at>?)",
+                (now, source_id, now),
             )
             if updated.rowcount not in {0, 1}:
                 raise CaptureError("capture_failed")
@@ -2079,7 +2082,14 @@ class CaptureCoordinator:
         ``capture_adapter_unavailable`` condition.
         """
 
-        sources, _total = self.list_sources(limit=500, offset=0)
+        sources: list[CaptureSource] = []
+        offset = 0
+        while True:
+            page, total = self.list_sources(limit=500, offset=offset)
+            sources.extend(page)
+            offset += len(page)
+            if not page or offset >= total:
+                break
         recovered: list[str] = []
         for source in sources:
             if (
@@ -2101,8 +2111,9 @@ class CaptureCoordinator:
                 or manifest.connection != "connected"
             ):
                 continue
-            self.ledger.recover_adapter_unavailable(source.id)
-            recovered.append(source.id)
+            updated = self.ledger.recover_adapter_unavailable(source.id)
+            if updated.lifecycle_state == "enabled" and updated.last_error_code is None:
+                recovered.append(source.id)
         return tuple(recovered)
 
     def _adapter_page(

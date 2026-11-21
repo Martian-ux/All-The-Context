@@ -1,5 +1,212 @@
 # Project status
 
+## 2026-11-21 — beta.8 source selection and release boundary
+
+The selected source version is `0.1.0-beta.8`; beta.6 remains the current public
+prerelease and beta.7 is an occupied, unpublished quarantined draft for older
+source. The public source contains invented continuity fixtures and no private
+capture archives. Source preparation is not publication, live acceptance or
+completed external security reassessment. Independent exact-source review,
+native validation and the applicable candidate-bound release gates are required.
+
+A supported, independently verified beta.6 migration/upgrade route remains a
+release candidate and consumer rollout blocker. The OTA protocol mismatch exists
+independently of the legacy version pin; this source does not establish a working
+beta.6 upgrade route.
+
+## 2026-11-20 — principal-scoped project capsule provenance
+
+Core project snapshots now pass the caller's principal through the existing
+truth projection. The shared client allow/deny predicate scopes canonical rows
+before the snapshot bound and linked observations before evidence ranking and
+projection, within the same SQLite read transaction. A partial reader keeps the
+authorized current decision and its visible observation IDs in both item and
+aggregate capsule provenance. A scoped runtime without an authorized snapshot
+fails closed instead of using the unscoped truth-list fallback.
+
+The maintained fictional Harborlight regression covers full, partial and denied
+readers, allow- and deny-based observation ACLs, interleaved HTTP/SDK MCP reads,
+bounded evidence selection, and forgetting after Core/client recreation. Runtime
+unit contracts cover canonical ACLs before bounds and scoped multi-page snapshot
+consistency. Unscoped admin lineage, canonical source attribution, project
+identity, conflicts, supersession and reversible deleted history retain their
+existing policies. Capsule aggregates and revision derive from the scoped input;
+the compiler and public response shapes are unchanged. These source contracts
+require native validation and independent exact-source review; they establish no
+packaged-client, live-data, purge, release or general memory-efficacy acceptance.
+
+## 2026-11-17 — bounded named-project first-read evidence
+
+Core bootstrap can expose `project_search_evidence` when an explicit safe project
+label has no useful ordinary task items or activated capsule. These are partial
+literal-name content matches, with explicit false membership/complete-coverage
+claims. Complete-anchor `items`, project activation and narrow capture formation
+retain their existing contracts. Named bindings are excluded from this unbound
+fallback; authorization, scopes, current retrieval, confidence, conflicts and
+budgeted compilation remain on the normal Core path.
+
+This optional fallback uses the established direct USER origin classification:
+`ongoing_client`, `local_admin`, `context_error` and `legacy_migration`, with
+`source_id`, `source_service` and `source_type` all null; a `source_reference`
+alone remains allowed. This includes source-free owner-approved direct
+corrections. Origin alone is insufficient: approval also gives imported records
+`local_admin` origin while retaining their provider source metadata and binding.
+All source-backed/source-described records, provider
+archives/memories, registered/workspace captures, attributed direct-user records
+and other/unknown origins are deliberately unsupported by this fallback.
+An unresolved project assignment does not establish absence of a trusted binding.
+Ordinary retrieval and capsule admission keep their existing source coverage.
+
+The public regression contract in `tests/integration/test_project_first_read.py`
+uses a separate fictional project, correction/forget and fresh Core/MCP recreation,
+plus ambiguity, binding, ACL, scope and budget boundaries. This is source-level
+implementation; native checks, independent review and product acceptance establish
+their own exact-source outcomes. Direct explicit MCP reads are covered by this
+contract; automatic Codex hooks still consume only `items` without `current_project`.
+
+The provider-binding regression uses a public ZIP upload and witnessed archive
+begin/batch/finish, with asserted complete source, applied/current claims and
+shared conversation lineage. It requires both an automatically applied Amber-bound
+fact and an owner-approved imported fact mentioning Silver Finch to remain
+authorized search hits but be absent, including their IDs/content, from HTTP and
+SDK MCP bootstrap, while a genuinely unbound direct mention remains.
+
+Ambiguity fixtures declare distinct identity slots and verify two empty project
+projections with the same display name before retrieval. Supersession coverage
+uses a tentative public proposal followed by owner approval to create a distinct
+successor; automatic targeted updates keep the canonical record ID. The fixture
+checks the observation's target, source-free predecessor/successor lineage, current
+truth, supersession and reader ACL before asserting current-only evidence and
+provenance. Approval does not erase an imported record's source identity.
+
+## 2026-11-16 — prospective closed action protocol v2
+
+The source continuity harness exposes `agent-continuity-action-v2` in both the
+real continuation prompt and artifact MCP `write_result` description. Shared
+constants name the evaluator's existing six fact-provenance keys and three
+citation metadata keys; derived rows, repeat-completed, uncertainty and the
+provenance object receive no citations. No evaluator rule, task answer, expected
+outcome, source history, baseline construction or memory behavior changes.
+Report schema 2, invocation metadata and `frozen-action-protocol.json` bind the
+canonical contract SHA256. One batch reserves three isolation probes and nine
+fresh task sessions, at most twelve executions, without per-arm session retries.
+
+The public contract tests use independently authored fictional actions across all
+nine arm/phase combinations. Positive controls and derived-field, extra-metadata
+and unavailable-fact citation negatives exercise the unchanged rejection boundary
+without model/Core calls. The [operation guide](operations/AGENT_CONTINUITY.md)
+keeps actual execution, independent review and exact-source gates separate.
+Fixture tests establish no live compatibility, held-out efficacy or better memory.
+
+## 2026-11-16 — native continuity trace compatibility contract
+
+Native sequences start at 1 and remain strictly contiguous. The public fixture
+uses independently invented lifecycle IDs and complete payload relationships.
+Parser/driver cases cover same-thread/turn completed response inheritance,
+unchanged tool schemas, pinned model/effort, exact source plus one optional LF,
+scalar empty inventories and correlated native/client resource-denial failures.
+Wrong origins, gaps, duplicates, ordering, IDs, payloads, parents and closure
+fail closed. These fixture-level contracts make no recorded-fidelity claim.
+
+Optional `--require-complete` retains the report and fails unless nine unique
+actual cells have verified isolation and independent action evaluation;
+unsuccessful measured actions can still constitute a completed experiment.
+Default exit zero means report generation. Fresh native execution and
+candidate-bound independent review remain separate gates.
+
+The source harness binds Codex 0.167.2's opt-in per-child native schema-2 trace
+to the fresh CLI thread, exact unchanged roster expression and completed runtime
+response. Reduced `exec --json` remains the turn/error/usage receipt. Nonfatal
+startup warning items are retained separately from fatal turn/provider failures,
+model rerouting and failed MCP calls. Missing or ambiguous native evidence blocks
+acceptance; model assertions cannot supply it.
+
+The exact nested roster includes the owned MCP tools and four source-documented
+native utilities. Separate native resource-helper negatives and per-request
+direct-tool schema inventories supplement unchanged ambient/forbidden checks and
+the actual artifact denial audit. Invocation controls explicitly disable agents,
+planning and interactive input. All retained native files are scanned for known
+synthetic grants after child cleanup; redaction invalidates acceptance. The
+[guide](operations/AGENT_CONTINUITY.md) documents reachability, retention and
+limits. Invented CLI lifecycle events and labeled native schema shapes support
+focused parser tests; native execution and independent review establish actual
+compatibility and outcomes in external receipts, without inheriting source gates.
+
+## 2026-11-16 — bounded source-process and agent continuity harness
+
+`scripts/smoke_agent_continuity.py` composes public HTTP ingestion, correction,
+forget and client revocation with actual owned source Core restarts and normal
+read-only STDIO MCP. A committed versioned fictional task supports fresh ATC,
+strong maintained-summary and no-memory continuations, with independent persisted
+action evaluation and append-only attempt evidence. Scripted mode is explicitly
+canned; real mode preserves failures or a concrete BLOCKED isolation/client
+report without inventing agent results. Default exit zero means valid report generation.
+
+The [operation guide](operations/AGENT_CONTINUITY.md) describes exclusive external
+output directories, shared main-auth/log ownership, run-owned invocation config,
+effective roster/escape requirements, time bounds and cleanup. Native checks,
+actual experiment evidence and independent review remain separate exact-source
+gates in external receipts; this implementation description claims no efficacy,
+packaged acceptance or physical purge result.
+
+## 2026-11-16 — public project decision continuity regression
+
+`tests/integration/test_project_memory_continuity.py` adds a fictional HTTP
+journey with public ingestion and owner approval, a witnessed in-place correction,
+and fresh Core and HTTP clients over the same disposable vault before corrected
+retrieval. Current get, search, bootstrap and project capsule content are checked
+against the correction; Memory Truth ties both original and correction to their
+exact observation IDs and source references. Read/write grants, record client
+ACLs and project scope filters are exercised separately.
+
+The journey forgets through the public route, checks current retrieval immediately
+and after another restart, and inspects retained deleted history through authorized
+admin Memory Truth. An unrelated decision remains retrievable. This regression
+covers deterministic persisted public state, not physical purge or live assistant
+memory efficacy.
+
+## 2026-11-15 — public CLI encrypted export and restore
+
+The normal `python -m allthecontext` export/restore path has isolated fictional
+vault regressions for accepted content and exact source blob bytes, valid dry-run,
+and wrong-passphrase dry/non-dry restore against absent and existing destinations.
+Restore authenticates and validates the archive before preparing the destination;
+failed authentication leaves an absent destination uninitialized and existing data
+intact. The CLI opts into post-validation migration within the same restore pass.
+Library defaults and legacy archive compatibility remain unchanged.
+
+## 2026-11-15 — dashboard dependency remediation candidate
+
+Dashboard development dependencies pin Vite 8.1.6 and Vitest 4.1.12. The lock
+selects `@vitest/mocker` 4.1.12, `source-map-js` 1.2.2 and `undici` 7.30.2
+through the existing dependency constraints. Dependency audit, dashboard checks,
+build/packaged asset parity and exact-source native gates must validate each
+candidate; historical local test runs establish no acceptance for this source.
+
+## 2026-11-15 — state-machine recovery fixes
+
+The local implementation candidate closes the audit's eleven confirmed defects
+and both conditional findings. Claim ACKs require the persisted runtime token
+and completed activation. Replication delivery requires the exact accepted event
+and sequence. Encrypted exports preserve the previous destination until atomic
+publication, and incomplete Codex configuration rollback retains recovery originals.
+Project discovery and assignment share a normalized timestamp, while paginated
+Core truth uses one SQLite read snapshot. Adapter recovery scans every source,
+resets only validated adapter-unavailable degradation, and respects active leases.
+
+Dashboard imports have one synchronous operation owner. Busy update status polls
+without overlapping reads, protects preference drafts and rejects stale replies.
+Publication retries complete matching receipt/decision pairs and reject conflicting
+artifacts. Import cancellation reads and writes its transition in one transaction.
+Relay key rotation rejects queued protected payloads under the existing store
+lock and authenticates them on restart. Stable-turn lifecycle callbacks serialize
+their complete state transitions and preserve assistant-first correlation state.
+
+Focused regression and injected-failure contracts use owned synthetic data.
+Exact-source independent review and maintained native final gates are required.
+Packaged dashboard assets remain part of the source contract, alongside existing
+release, disconnected-dogfood and spending constraints.
+
 ## 2026-09-30 — urllib3 correction for the PR118 combined candidate
 
 The prior exact-source review, native gates, and final review accept source

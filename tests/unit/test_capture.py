@@ -471,6 +471,102 @@ def test_stale_coordinator_cannot_mutate_after_recovery_and_successful_replaceme
     assert coordinator_b.get_source(source_id).lifecycle_state == "enabled"
 
 
+def test_adapter_recovery_pages_all_sources_and_resets_only_valid_unleased_rows(
+    tmp_path: Path,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    base_id = _source(coordinator)
+    with coordinator.ledger.store.transaction() as connection:
+        base = connection.execute(
+            "SELECT * FROM capture_sources WHERE id=?", (base_id,)
+        ).fetchone()
+        assert base is not None
+        columns = list(base.keys())
+        insert_sql = (
+            "INSERT INTO capture_sources ("
+            + ",".join(f'"{column}"' for column in columns)
+            + ") VALUES("
+            + ",".join("?" for _ in columns)
+            + ")"
+        )
+        for index in range(510):
+            source = dict(base)
+            source_id = f"recovery-source-{index:04d}"
+            provider = "fake" if index <= 500 else "missing-adapter"
+            lifecycle = "degraded"
+            error_code = "capture_adapter_unavailable"
+            if index == 502:
+                provider = "unauthorized"
+            elif index == 503:
+                lifecycle = "paused"
+            elif index == 504:
+                lifecycle = "disabled"
+            elif index == 505:
+                lifecycle = "revoked"
+            elif index == 506:
+                provider = "fake"
+                error_code = "capture_retry_exhausted"
+            source.update(
+                {
+                    "id": source_id,
+                    "provider": provider,
+                    "account_label": f"synthetic-{index}",
+                    "account_fingerprint": f"synthetic-fingerprint-{index}",
+                    "lifecycle_state": lifecycle,
+                    "retry_count": 3,
+                    "next_retry_at": "2020-01-01T00:00:00Z",
+                    "last_error_code": error_code,
+                    "last_error_at": "2020-01-01T00:00:00Z",
+                }
+            )
+            connection.execute(insert_sql, [source[column] for column in columns])
+
+    lease_source = "recovery-source-0000"
+    with coordinator.ledger.store.transaction() as connection:
+        connection.execute(
+            "UPDATE capture_sources SET lifecycle_state='enabled' WHERE id=?",
+            (lease_source,),
+        )
+    coordinator.ledger.begin_run(lease_source)
+    with coordinator.ledger.store.transaction() as connection:
+        connection.execute(
+            "UPDATE capture_sources SET lifecycle_state='degraded',"
+            "last_error_code='capture_adapter_unavailable' WHERE id=?",
+            (lease_source,),
+        )
+    coordinator.register_adapter("fake", DeterministicFakeAdapter([]))
+    coordinator.register_adapter(
+        "unauthorized",
+        DeterministicFakeAdapter(
+            [],
+            capability_manifest=CaptureCapabilityManifest(
+                provider="unauthorized", availability="partial", authorization="unauthorized"
+            ),
+        ),
+    )
+
+    recovered = coordinator.recover_available_adapters()
+
+    assert len(recovered) == 500
+    assert "recovery-source-0500" in recovered
+    assert lease_source not in recovered
+    for index in range(1, 501):
+        source = coordinator.get_source(f"recovery-source-{index:04d}")
+        assert source.lifecycle_state == "enabled"
+        assert source.retry_count == 0
+        assert source.last_error_code is None
+    for source_id in (
+        "recovery-source-0000",
+        "recovery-source-0501",
+        "recovery-source-0502",
+        "recovery-source-0503",
+        "recovery-source-0504",
+        "recovery-source-0505",
+        "recovery-source-0506",
+    ):
+        assert coordinator.get_source(source_id).retry_count == 3
+
+
 def test_missing_adapter_does_not_invalidate_live_run_on_shared_database(tmp_path: Path) -> None:
     clock = _MutableClock()
     database_path = tmp_path / "shared-live-run.sqlite3"

@@ -13,10 +13,13 @@ import hashlib
 import json
 import threading
 import uuid
+from _thread import LockType
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Literal, Protocol, cast
+from functools import wraps
+from typing import Any, Concatenate, Literal, Protocol, cast
 
 from .client_runtime import (
     ClientLifecycleEnvelope,
@@ -265,6 +268,39 @@ class OpaqueCorrelationStore:
         self._lock = threading.Lock()
         self._entries: OrderedDict[str, _CorrelationState] = OrderedDict()
         self._active_by_session: OrderedDict[str, str] = OrderedDict()
+        self._operation_locks: dict[str, tuple[LockType, int]] = {}
+
+    @contextmanager
+    def serialize(
+        self,
+        *,
+        provider: LifecycleProvider,
+        client_id: str,
+        session_id: str,
+        turn_id: str,
+    ) -> Iterator[None]:
+        """Serialize complete user/assistant callback transitions for one turn."""
+        key = _correlation_key(provider, client_id, session_id, turn_id)
+        with self._lock:
+            entry = self._operation_locks.get(key)
+            operation_lock = entry[0] if entry is not None else threading.Lock()
+            self._operation_locks[key] = (
+                operation_lock,
+                (entry[1] + 1) if entry is not None else 1,
+            )
+        operation_lock.acquire()
+        try:
+            yield
+        finally:
+            operation_lock.release()
+            with self._lock:
+                entry = self._operation_locks.get(key)
+                if entry is not None and entry[0] is operation_lock:
+                    if entry[1] == 1:
+                        del self._operation_locks[key]
+                    else:
+                        self._operation_locks[key] = (operation_lock, entry[1] - 1)
+                    self._trim()
 
     def begin(
         self,
@@ -317,8 +353,12 @@ class OpaqueCorrelationStore:
             return state
 
     def _trim(self) -> None:
-        while len(self._entries) > self._capacity:
-            old_key, _old_state = self._entries.popitem(last=False)
+        for old_key in tuple(self._entries):
+            if len(self._entries) <= self._capacity:
+                break
+            if old_key in self._operation_locks:
+                continue
+            del self._entries[old_key]
             for session_key, active_key in tuple(self._active_by_session.items()):
                 if active_key == old_key:
                     del self._active_by_session[session_key]
@@ -462,6 +502,36 @@ def _empty_context_reference(state: _CorrelationState) -> PayloadReference:
     )
 
 
+def _serialize_stable_turn_callback[**Parameters](
+    method: Callable[Concatenate[LifecycleRuntimeAdapter, Parameters], LifecycleRuntimeResult],
+) -> Callable[Concatenate[LifecycleRuntimeAdapter, Parameters], LifecycleRuntimeResult]:
+    @wraps(method)
+    def serialized(
+        self: LifecycleRuntimeAdapter,
+        /,
+        *args: Parameters.args,
+        **kwargs: Parameters.kwargs,
+    ) -> LifecycleRuntimeResult:
+        session_id = kwargs.get("session_id")
+        turn_id = kwargs.get("turn_id")
+        if not isinstance(session_id, str) or not isinstance(turn_id, str):
+            return method(self, *args, **kwargs)
+        try:
+            _bounded_identifier(session_id, label="session ID")
+            _bounded_identifier(turn_id, label="turn ID")
+        except LifecycleRuntimeError:
+            return method(self, *args, **kwargs)
+        with self.correlations.serialize(
+            provider=self.provider,
+            client_id=self.client_id,
+            session_id=session_id,
+            turn_id=turn_id,
+        ):
+            return method(self, *args, **kwargs)
+
+    return serialized
+
+
 class LifecycleRuntimeAdapter:
     """Automatic retrieval and observation for one configured client."""
 
@@ -481,6 +551,7 @@ class LifecycleRuntimeAdapter:
         self.core = core
         self.correlations = correlations or OpaqueCorrelationStore()
 
+    @_serialize_stable_turn_callback
     def observe_user_turn(
         self,
         *,
@@ -568,6 +639,7 @@ class LifecycleRuntimeAdapter:
                 capture=LifecycleCaptureResponse("unavailable", "runtime_error")
             )
 
+    @_serialize_stable_turn_callback
     def observe_assistant_response(
         self,
         *,
@@ -607,25 +679,13 @@ class LifecycleRuntimeAdapter:
             )
             pairing: PairingStatus = "unpaired"
         else:
-            found_state = self.correlations.find(
+            _key, state = self.correlations.begin(
                 provider=self.provider,
                 client_id=self.client_id,
                 session_id=session_id,
                 turn_id=turn_id,
             )
-            if found_state is None:
-                key = _correlation_key(self.provider, self.client_id, session_id, turn_id)
-                state = _new_state(
-                    self.provider,
-                    self.client_id,
-                    key,
-                    session_key=_correlation_key(self.provider, self.client_id, session_id, None),
-                    stable_turn_identity=True,
-                )
-                pairing = "correlation_available"
-            else:
-                state = found_state
-                pairing = "paired" if state.user_event is not None else "correlation_available"
+            pairing = "paired" if state.user_event is not None else "correlation_available"
         try:
             content_digest = _content_sha256(response)
             event: ClientLifecycleEnvelope

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from uuid import UUID
 
 from allthecontext.lifecycle_runtime import (
@@ -110,6 +111,93 @@ def test_retry_reuses_opaque_uuidv4_identity_without_raw_input() -> None:
     assert core.capture_calls[0]["idempotency_key"] == core.capture_calls[1]["idempotency_key"]
     assert core.capture_calls[0]["conversation_id"] == core.capture_calls[1]["conversation_id"]
     assert "retry-safe prompt" not in json.dumps(first.event.as_dict())
+
+
+def test_concurrent_user_and_assistant_callbacks_serialize_one_stable_turn_state() -> None:
+    user_capture_started = threading.Event()
+    assistant_capture_started = threading.Event()
+    release_user_capture = threading.Event()
+
+    class InterleavingCore(FakeCore):
+        def capture_lifecycle_event(self, payload: dict[str, object]) -> object:
+            role = str(payload["role"])
+            if role == "user":
+                user_capture_started.set()
+                assert release_user_capture.wait(timeout=3)
+            else:
+                assistant_capture_started.set()
+            return super().capture_lifecycle_event(payload)
+
+    core = InterleavingCore()
+    runtime = _adapter(core)
+    completion_runtime = LifecycleRuntimeAdapter(
+        provider="codex",
+        client_id="codex-client",
+        core=core,
+        correlations=runtime.correlations,
+    )
+    results: dict[str, object] = {}
+    user = threading.Thread(
+        target=lambda: results.setdefault(
+            "user",
+            runtime.observe_user_turn(
+                prompt="one stable prompt",
+                session_id="session",
+                turn_id="stable-turn",
+                retrieve=False,
+            ),
+        )
+    )
+    assistant = threading.Thread(
+        target=lambda: results.setdefault(
+            "assistant",
+            completion_runtime.observe_assistant_response(
+                response="one stable completion",
+                session_id="session",
+                turn_id="stable-turn",
+            ),
+        )
+    )
+    user.start()
+    assert user_capture_started.wait(timeout=3)
+    assistant.start()
+    assert not assistant_capture_started.wait(timeout=0.05)
+    release_user_capture.set()
+    user.join(timeout=3)
+    assistant.join(timeout=3)
+
+    assert not user.is_alive() and not assistant.is_alive()
+    assert {str(call["role"]) for call in core.capture_calls} == {"user", "assistant"}
+    assert len({str(call["conversation_id"]) for call in core.capture_calls}) == 1
+    state = runtime.correlations.find(
+        provider="codex",
+        client_id="codex-client",
+        session_id="session",
+        turn_id="stable-turn",
+    )
+    assert state is not None and state.user_event is not None and state.assistant_event is not None
+    assert state.user_event.event_id != state.assistant_event.event_id
+    assert runtime.correlations._operation_locks == {}
+
+
+def test_assistant_first_stable_turn_keeps_state_and_retry_event_identity() -> None:
+    core = FakeCore()
+    runtime = _adapter(core)
+    first = runtime.observe_assistant_response(
+        response="completion arrived first", session_id="session", turn_id="turn"
+    )
+    state = runtime.correlations.find(
+        provider="codex", client_id="codex-client", session_id="session", turn_id="turn"
+    )
+    assert state is not None and state.assistant_event is first.event
+    runtime.observe_user_turn(
+        prompt="late prompt callback", session_id="session", turn_id="turn", retrieve=False
+    )
+    replay = runtime.observe_assistant_response(
+        response="completion arrived first", session_id="session", turn_id="turn"
+    )
+    assert replay.event is first.event
+    assert core.capture_calls[0]["idempotency_key"] == core.capture_calls[2]["idempotency_key"]
 
 
 def test_adapter_wire_event_does_not_mutate_reference_host_public_history() -> None:
@@ -222,10 +310,12 @@ def test_malformed_oversized_and_secret_content_never_reaches_core() -> None:
         prompt="password=synthetic-secret",
         session_id="session",
     )
+    invalid_identity = runtime.observe_user_turn(prompt="valid", session_id="", turn_id="turn")
 
     assert malformed.capture.status == "rejected"
     assert oversized.capture.status == "rejected"
     assert secret.capture.status == "rejected"
+    assert invalid_identity.capture.status == "rejected"
     assert secret.capture.reason_code == "secret_like_content"
     assert core.bootstrap_calls == []
     assert core.capture_calls == []

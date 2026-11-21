@@ -284,6 +284,50 @@ def test_encrypted_export_round_trip_and_duplicate_restore(tmp_path: Path) -> No
         connection.close()
 
 
+def test_export_interruption_preserves_destination_and_removes_temporary_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "interrupted-source.db"
+    destination = tmp_path / "existing.atcexp"
+    _database(source, "synthetic retained truth")
+    create_export(source, destination, PASSPHRASE)
+    existing = destination.read_bytes()
+    real_encrypt = portable_export._encrypt_file
+
+    def interrupt_after_partial_output(payload: Path, output: Path, passphrase: str) -> None:
+        del payload, passphrase
+        output.write_bytes(b"partial encrypted output")
+        raise OSError("injected encryption interruption")
+
+    monkeypatch.setattr(portable_export, "_encrypt_file", interrupt_after_partial_output)
+    with pytest.raises(OSError, match="injected encryption interruption"):
+        create_export(source, destination, PASSPHRASE)
+    assert destination.read_bytes() == existing
+    assert not list(tmp_path.glob(".existing.atcexp.*.atc-export"))
+
+    monkeypatch.setattr(portable_export, "_encrypt_file", real_encrypt)
+    create_export(source, destination, PASSPHRASE)
+    restored = tmp_path / "restored-after-interruption.db"
+    _database(restored)
+    restore_export(destination, restored, PASSPHRASE)
+    with sqlite3.connect(restored) as connection:
+        assert connection.execute("SELECT content FROM context_records").fetchone() == (
+            "synthetic retained truth",
+        )
+
+
+def test_export_refuses_to_overwrite_its_source_database(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    _database(source, "must remain a database")
+    before = source.read_bytes()
+
+    with pytest.raises(ValueError, match="must not overwrite"):
+        create_export(source, source, PASSPHRASE)
+
+    assert source.read_bytes() == before
+
+
 def test_machine_local_security_state_is_not_exported_or_restored(
     tmp_path: Path,
 ) -> None:
@@ -538,6 +582,76 @@ def test_wrong_export_passphrase_fails_authentication(tmp_path: Path) -> None:
 
     with pytest.raises(InvalidTag):
         restore_export(package, destination, "incorrect password")
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_restore_destination_migration_authenticates_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dry_run: bool
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    _store, source_id, record_id = _source_inclusive_store(source_database)
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE, include_sources=True)
+    destination = tmp_path / "absent" / "core.sqlite3"
+    real_decrypt = portable_export._decrypt_file
+    decrypt_calls: list[Path] = []
+
+    def decrypt_once(source: Path, payload: Path, passphrase: str) -> None:
+        decrypt_calls.append(source)
+        real_decrypt(source, payload, passphrase)
+
+    monkeypatch.setattr(portable_export, "_decrypt_file", decrypt_once)
+
+    result = restore_export(
+        package, destination, PASSPHRASE, dry_run=dry_run, migrate_destination=True
+    )
+
+    assert result["valid"] is True
+    assert result["dry_run"] is dry_run
+    assert decrypt_calls == [package.resolve()]
+    if dry_run:
+        assert not destination.parent.exists()
+    else:
+        restored = CoreStore(destination)
+        assert restored.get_record(record_id).source_id == source_id
+        assert restored.get_source_content(source_id) == b"source-inclusive export body"
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["absent", "existing"])
+def test_restore_destination_migration_waits_for_graph_validation(
+    tmp_path: Path, existing: bool
+) -> None:
+    source_database = tmp_path / "source.sqlite3"
+    _source_inclusive_store(source_database)
+    package = tmp_path / "source.atcexp"
+    create_export(source_database, package, PASSPHRASE, include_sources=True)
+
+    def break_candidate_reference(members: dict[str, bytes], _manifest: dict[str, object]) -> None:
+        name = "tables/context_records.jsonl"
+        rows = [json.loads(line) for line in members[name].splitlines()]
+        for row in rows:
+            row["candidate_id"] = "missing-fictional-observation"
+        members[name] = b"".join((json.dumps(row) + "\n").encode() for row in rows)
+
+    invalid = _rewrite_export(package, tmp_path / "invalid.atcexp", break_candidate_reference)
+    destination = tmp_path / "destination" / "core.sqlite3"
+    if existing:
+        store = _initialized_store(destination)
+        sentinel = store.add_source(
+            b"existing fictional blob",
+            source_service="fictional-destination",
+            source_type="provider_archive",
+        )
+        before = destination.read_bytes()
+
+    with pytest.raises(ValueError, match="does not resolve inside the package"):
+        restore_export(invalid, destination, PASSPHRASE, migrate_destination=True)
+
+    if existing:
+        assert destination.read_bytes() == before
+        assert store.get_source_content(sentinel.id) == b"existing fictional blob"
+    else:
+        assert not destination.parent.exists()
 
 
 def test_chunked_source_round_trips_through_encrypted_export(tmp_path: Path) -> None:

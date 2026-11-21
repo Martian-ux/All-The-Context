@@ -85,19 +85,19 @@ publisher certificates. Releases must clearly disclose normal operating-system
 warnings and provide SHA-256 checksums, SBOM, provenance, and offline Ed25519
 update metadata.
 
-The immutable `0.1.0-beta.6` prerelease remains the current public downloadable
-release. Its Windows Defender incident remains unresolved; keep the installed
-helper quarantined as described above. The source metadata is now
-`0.1.0-beta.7` only for a private replacement-source/candidate slot. No beta.7
-candidate has been built, executed, scanned, submitted, approved, published,
-tagged, uploaded, or released. The private replacement workflow is
-artifact-only, exact-allowlist, and approval-gated; it is not publication,
-execution, or AV evidence. Future beta.7+ acceptance requires exact
-candidate-bound Microsoft closed no-malware reassessment evidence, and no such
-evidence exists. The initial release used the explicit six-gate
-`lean_public_beta_v1` profile; the unchanged 20-gate `certification_v1` matrix
-remains a visible hardening track. Lean publication does not claim that every
-client, provider, browser, 2 GB, privacy, recovery, or replacement cell passed.
+The immutable `0.1.0-beta.6` remains the current public downloadable
+prerelease, with its Windows Defender incident unresolved. `0.1.0-beta.7`
+is an occupied, unpublished quarantined draft for older source. The selected
+new source version is `0.1.0-beta.8`. Source preparation establishes neither
+publication nor live acceptance or completed external security reassessment.
+Acceptance requires exact candidate-bound Microsoft closed no-malware
+reassessment evidence and the applicable independent review and release gates.
+The private replacement workflow remains artifact-only, exact-allowlist and
+approval-gated; it is not publication, execution or antivirus evidence.
+The initial release used the explicit six-gate `lean_public_beta_v1` profile;
+the unchanged 20-gate `certification_v1` matrix remains a visible hardening
+track. Lean publication does not claim that every client, provider, browser,
+2 GB, privacy, recovery or replacement cell passed.
 
 The profile-aware Hermes integration described below is newer source-level
 work and is not present in the immutable beta.6 artifact. Its current evidence

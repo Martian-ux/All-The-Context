@@ -1130,6 +1130,7 @@ def verify_release_asset_set(
     expected_sha256: str | None = None,
     expected_targets: Iterable[ReleaseTarget] | None = None,
     expected_ota_targets: Iterable[ReleaseTarget] | None = None,
+    allowed_extra_names: Iterable[str] = (),
 ) -> list[Path]:
     """Verify and return the exact, explicitly uploadable release files."""
 
@@ -1144,17 +1145,20 @@ def verify_release_asset_set(
         expected_ota_targets=expected_ota_targets,
     )
     expected_names = expected_release_asset_names(candidate, stage=stage)
+    allowed_extras = set(allowed_extra_names)
+    if expected_names & allowed_extras:
+        raise ManifestError("allowed extra assets overlap the controlled inventory")
     entries = list(release_dir.iterdir())
     if any(path.is_symlink() or not path.is_file() for path in entries):
         raise ManifestError("release asset directory must contain only regular files")
     actual_names = {path.name for path in entries}
     if len(actual_names) != len({name.casefold() for name in actual_names}):
         raise ManifestError("release assets contain case-insensitive name collisions")
-    if actual_names != expected_names:
+    if actual_names - allowed_extras != expected_names:
         raise ManifestError(
             "release asset set differs from the controlled inventory "
             f"(missing={sorted(expected_names - actual_names)}, "
-            f"extra={sorted(actual_names - expected_names)})"
+            f"extra={sorted(actual_names - expected_names - allowed_extras)})"
         )
     _validate_sigstore_bundle(release_dir / CANDIDATE_PROVENANCE_FILE_NAME)
     return [release_dir / name for name in sorted(expected_names)]

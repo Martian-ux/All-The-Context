@@ -791,6 +791,22 @@ class ContextPackMetadata(StrictModel):
         return self
 
 
+class ProjectSearchEvidence(StrictModel):
+    """Partial literal-name search results; no project association or task coverage."""
+
+    schema_version: Literal["atc.project-search-evidence.v1"] = "atc.project-search-evidence.v1"
+    project_label: str
+    evidence_kind: Literal["partial_exact_name_content_matches"] = (
+        "partial_exact_name_content_matches"
+    )
+    establishes_membership: Literal[False] = False
+    complete_task_coverage: Literal[False] = False
+    items: list[ContextRecordOut]
+    used_chars: int
+    # Selection accounts for retained bootstrap preferences and these results together.
+    selection_metadata: ContextPackMetadata
+
+
 class BootstrapResponse(StrictModel):
     items: list[ContextRecordOut]
     context_mode: Literal["local_core"] = "local_core"

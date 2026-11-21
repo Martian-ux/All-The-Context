@@ -8,9 +8,11 @@ operator work outside this module.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
-import shutil
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -21,7 +23,6 @@ from .acceptance_receipt import (
     POST_PUBLICATION_GATES,
     RECEIPT_BUNDLE_FILE_NAME,
     candidate_inventory_digests,
-    load_receipt_bundle,
     missing_required_gates,
     publication_gates_for_policy,
     recompute_receipt_artifact_bindings,
@@ -30,6 +31,7 @@ from .acceptance_receipt import (
 from .exact_source_gate import load_matrix_evidence
 from .release_candidate import (
     CANDIDATE_FILE_NAME,
+    DECISION_ASSET_NAMES,
     MATRIX_EVIDENCE_FILE_NAME,
     PUBLICATION_GATE_RECORD_FILE_NAME,
     expected_release_asset_names,
@@ -126,6 +128,7 @@ def evaluate_publication_gate(
             release_dir,
             stage=pre_stage,
             expected_sha256=candidate_sha256,
+            allowed_extra_names=DECISION_ASSET_NAMES,
         )
     else:
         verify_release_asset_set(
@@ -135,7 +138,16 @@ def evaluate_publication_gate(
             expected_sha256=candidate_sha256,
         )
 
-    bundle = load_receipt_bundle(receipt_bundle_path)
+    try:
+        incoming_bundle = receipt_bundle_path.read_bytes()
+        bundle_value = json.loads(incoming_bundle.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ManifestError(
+            f"receipt bundle is not valid UTF-8 JSON: {receipt_bundle_path.name}"
+        ) from exc
+    if not isinstance(bundle_value, dict):
+        raise ManifestError("acceptance receipt bundle must be an object")
+    bundle = validate_receipt_bundle(bundle_value)
     if bundle["source_commit"] != source_commit:
         raise ManifestError("receipt bundle source_commit does not match publication input")
     if bundle["candidate_sha256"] != candidate_sha256:
@@ -264,15 +276,32 @@ def evaluate_publication_gate(
     if persist_decision_artifacts and asset_stage == "promotion":
         bundle_destination = release_dir / RECEIPT_BUNDLE_FILE_NAME
         record_destination = release_dir / PUBLICATION_GATE_RECORD_FILE_NAME
-        if receipt_bundle_path.resolve() != bundle_destination.resolve():
-            if bundle_destination.exists():
-                raise ManifestError(f"refusing to replace {bundle_destination.name}")
-            shutil.copyfile(receipt_bundle_path, bundle_destination)
-        validate_receipt_bundle(json.loads(bundle_destination.read_text(encoding="utf-8")))
-        bundle_digest, bundle_size = sha256_file(bundle_destination)
+        if bundle_destination.is_symlink():
+            raise ManifestError(f"refusing to replace {bundle_destination.name}")
+        if bundle_destination.exists():
+            existing_bundle = bundle_destination.read_bytes()
+            if existing_bundle != incoming_bundle:
+                raise ManifestError(
+                    f"existing {bundle_destination.name} conflicts with this decision"
+                )
+        bundle_digest = hashlib.sha256(incoming_bundle).hexdigest()
+        bundle_size = len(incoming_bundle)
         record["receipt_bundle_sha256"] = bundle_digest
         record["receipt_bundle_size"] = bundle_size
-        write_publication_record(record_destination, record)
+        if record_destination.is_symlink():
+            raise ManifestError(f"refusing to replace {record_destination.name}")
+        if record_destination.exists():
+            try:
+                existing_record = json.loads(record_destination.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ManifestError("existing publication record is invalid") from exc
+            if existing_record != record:
+                raise ManifestError("existing publication record conflicts with this decision")
+
+        if not bundle_destination.exists():
+            _atomic_create_file(bundle_destination, incoming_bundle)
+        if not record_destination.exists():
+            write_publication_record(record_destination, record)
         record_digest, record_size = sha256_file(record_destination)
         # Bind the record digest in the return value only; the on-disk record is
         # content-free and digest-stable without embedding its own hash.
@@ -294,16 +323,42 @@ def evaluate_publication_gate(
 
 def write_publication_record(path: Path, record: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
+    if path.exists() or path.is_symlink():
         raise ManifestError(f"refusing to replace publication record: {path.name}")
+    try:
+        _atomic_create_file(path, _publication_record_bytes(record))
+    except FileExistsError as exc:
+        raise ManifestError(f"refusing to replace publication record: {path.name}") from exc
+
+
+def _publication_record_bytes(record: Mapping[str, Any]) -> bytes:
     # Never persist self-referential digests that would force a rewrite loop.
     serializable = {
         key: value
         for key, value in record.items()
         if key not in {"publication_record_sha256", "publication_record_size"}
     }
-    path.write_text(
-        json.dumps(serializable, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
+    return (json.dumps(serializable, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _atomic_create_file(path: Path, contents: bytes) -> None:
+    """Create an immutable artifact atomically without replacing an existing path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".atc-new", dir=path.parent
     )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(contents)
+            output.flush()
+            os.fsync(output.fileno())
+        os.link(temporary, path)
+        if os.name != "nt":
+            directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)

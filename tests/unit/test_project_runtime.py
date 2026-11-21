@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
@@ -22,6 +26,7 @@ from allthecontext.models import (
 )
 from allthecontext.project_runtime import (
     ProjectRuntimeError,
+    _read_truth,
     activate_project_context,
     build_project_runtime,
 )
@@ -415,6 +420,118 @@ def test_runtime_excludes_lifecycle_unsafe_and_instruction_like_records() -> Non
     assert capsule.stable_json() == second.capsules[0].stable_json()
 
 
+def test_runtime_normalizes_anchor_expiry_before_discovery_and_assignment() -> None:
+    records = (
+        _truth_record(
+            "offset-expired-anchor",
+            kind="project",
+            content="Expired project anchor",
+            expires_at="2026-08-25T00:00:00Z",
+        ),
+        _truth_record("offset-unscoped-goal", kind="goal", content="Do not inherit expired scope."),
+    )
+
+    class FakeStore:
+        def vault_id(self) -> str:
+            return "vault-fixture"
+
+        def list_memory_truth(self, *, limit: int, offset: int) -> Any:
+            return SimpleNamespace(items=list(records[offset : offset + limit]), total=len(records))
+
+    snapshot = build_project_runtime(
+        FakeStore(), as_of="2026-08-24T20:00:00-04:00"
+    )
+    assert snapshot.projects == ()
+    goal = next(item for item in snapshot.assignments if item.evidence_id == "offset-unscoped-goal")
+    assert goal.outcome.value == "unresolved"
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_truth_runtime_pages_keep_one_sqlite_revision_during_a_concurrent_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scoped: bool,
+) -> None:
+    reader = ClientPrincipal("reader-client", "Reader", frozenset({"context:read"}))
+    expected_principal = reader if scoped else None
+    with CoreService.in_directory(tmp_path / "core") as service:
+        candidate = service.store.add_candidate(
+            CandidateInput(
+                kind="project",
+                content="Snapshot project anchor",
+                scopes=["general"],
+                explicit_user_statement=True,
+            )
+        )
+        service.store.approve_candidate(candidate.id, actor="synthetic-test")
+        with service.store.transaction() as connection:
+            base = connection.execute(
+                "SELECT * FROM context_records WHERE candidate_id=?", (candidate.id,)
+            ).fetchone()
+            assert base is not None
+            columns = list(base.keys())
+            insert_sql = (
+                "INSERT INTO context_records ("
+                + ",".join(f'"{column}"' for column in columns)
+                + ") VALUES("
+                + ",".join("?" for _ in columns)
+                + ")"
+            )
+            expected_ids = [str(base["id"])]
+            for index in range(500):
+                record_id = f"snapshot-record-{index:04d}"
+                content = f"snapshot evidence {index}"
+                clone = dict(base)
+                clone.update(
+                    {
+                        "id": record_id,
+                        "kind": "goal",
+                        "content": content,
+                        "content_hash": hashlib.sha256(content.encode()).hexdigest(),
+                    }
+                )
+                connection.execute(insert_sql, [clone[column] for column in columns])
+                expected_ids.append(record_id)
+        with service.store.connect() as connection:
+            moved_id = str(
+                connection.execute(
+                    "SELECT id FROM context_records ORDER BY updated_at DESC,id LIMIT 1 OFFSET 500"
+                ).fetchone()[0]
+            )
+
+        original_page_reader = service.store._truth_records_tx
+        initial_records = _read_truth(service.store, principal=expected_principal)
+        assert {record.record.id for record in initial_records} == set(expected_ids)
+        assert len(initial_records) == 501
+        wrote_between_pages = False
+
+        def write_after_first_page(connection, records, principal=None):  # type: ignore[no-untyped-def]
+            nonlocal wrote_between_pages
+            assert principal == expected_principal
+            result = original_page_reader(connection, records, principal=principal)
+            if not wrote_between_pages:
+                with sqlite3.connect(service.store.database_path) as writer:
+                    writer.execute(
+                        "UPDATE context_records SET updated_at=? WHERE id=?",
+                        ("9999-12-31T23:59:59Z", moved_id),
+                    )
+                wrote_between_pages = True
+            return result
+
+        monkeypatch.setattr(service.store, "_truth_records_tx", write_after_first_page)
+        records = _read_truth(service.store, principal=expected_principal)
+        snapshot = build_project_runtime(
+            service.store, as_of=AS_OF, principal=expected_principal
+        )
+        assert len(snapshot.assignments) == 501
+
+    observed_ids = [record.record.id for record in records]
+    assert wrote_between_pages is True
+    assert len(observed_ids) == len(expected_ids) == 501
+    assert len(set(observed_ids)) == 501
+    assert set(observed_ids) == set(expected_ids)
+
+
 def test_ambient_activation_uses_only_authorized_truth_and_opens_the_sole_project() -> None:
     reader = ClientPrincipal(
         id="reader-client",
@@ -442,8 +559,11 @@ def test_ambient_activation_uses_only_authorized_truth_and_opens_the_sole_projec
         def vault_id(self) -> str:
             return "vault-fixture"
 
-        def list_memory_truth(self, *, limit: int, offset: int) -> Any:
-            return SimpleNamespace(items=list(records[offset : offset + limit]), total=len(records))
+        def _memory_truth_snapshot(
+            self, *, page_size: int, max_records: int, principal: ClientPrincipal | None
+        ) -> tuple[tuple[MemoryTruthRecordOut, ...], int]:
+            assert principal == reader
+            return records, len(records)
 
     snapshot = build_project_runtime(FakeStore(), as_of=AS_OF, principal=reader)
     activation = activate_project_context(snapshot)
@@ -454,6 +574,52 @@ def test_ambient_activation_uses_only_authorized_truth_and_opens_the_sole_projec
     assert {item.text for item in activation.capsule.items} == {"Ship Atlas automatically."}
     assert "Hidden project" not in str(activation.to_dict())
     assert "Never expose this goal." not in str(activation.to_dict())
+
+
+def test_scoped_runtime_requires_an_authorized_snapshot() -> None:
+    class LegacyStore:
+        def list_memory_truth(self, *, limit: int, offset: int) -> Any:
+            raise AssertionError("unscoped evidence must not be read for a scoped projection")
+
+    reader = ClientPrincipal("reader-client", "Reader", frozenset({"context:read"}))
+    with pytest.raises(ProjectRuntimeError, match="authorized_truth_snapshot_unavailable"):
+        _read_truth(LegacyStore(), principal=reader)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("denied", [False, True])
+def test_truth_snapshot_applies_record_acl_before_its_bound(tmp_path: Path, denied: bool) -> None:
+    reader = ClientPrincipal("reader-client", "Reader", frozenset({"context:read"}))
+    with CoreService.in_directory(tmp_path / "core") as service:
+        visible = service.store.add_candidate(
+            CandidateInput(
+                kind="project",
+                content="Visible snapshot project",
+                entity_key="project:visible",
+                attribute_key="identity",
+                explicit_user_statement=True,
+            )
+        )
+        service.store.approve_candidate(visible.id, actor="synthetic-test")
+        hidden = service.store.add_candidate(
+            CandidateInput(
+                kind="project",
+                content="Hidden snapshot project",
+                entity_key="project:hidden",
+                attribute_key="identity",
+                allowed_clients=[] if denied else ["other-client"],
+                denied_clients=[reader.id] if denied else [],
+                explicit_user_statement=True,
+            )
+        )
+        service.store.approve_candidate(hidden.id, actor="synthetic-test")
+        records, total = service.store._memory_truth_snapshot(
+            page_size=1, max_records=1, principal=reader
+        )
+        assert total == len(records) == 1
+        assert records[0].record.content == "Visible snapshot project"
+        assert [item.observation_id for item in records[0].evidence] == [visible.id]
+        admin_records, admin_total = service.store._memory_truth_snapshot(page_size=1)
+        assert admin_total == len(admin_records) == 2
 
 
 def test_ambient_activation_matches_task_or_explicit_identity_and_abstains_on_ambiguity() -> None:

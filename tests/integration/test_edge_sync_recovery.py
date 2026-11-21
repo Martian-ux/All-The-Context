@@ -20,6 +20,7 @@ from allthecontext.edge_acceptance import (
 from allthecontext.edge_claim import EdgeClaimStore
 from allthecontext.edge_connection import EdgeConnectionStore, EdgeSyncManager
 from allthecontext.models import ApprovalRequest, Availability, CandidateInput
+from allthecontext.relay.app import _TokenAuthenticator
 from allthecontext.relay.app import create_app as create_edge_app
 from allthecontext.relay.forwarding import EdgeForwardingBroker
 from allthecontext.relay.oauth import EdgeOAuthProvider, EdgeOAuthStore
@@ -434,12 +435,87 @@ def test_public_key_claim_keeps_edge_inert_then_rotates_durable_credentials(
                 "/healthz", params={"challenge": "x" * 20, "vault_id": core.store.vault_id()}
             )
             assert "proof" not in probed.json()
-            connections.connect(PUBLIC_URL, client=client)
+            persisted_credentials = threading.Event()
+            permit_service_rotation = threading.Event()
+            service_rotated = threading.Event()
+            permit_authenticator_rotation = threading.Event()
+            authenticator_rotated = threading.Event()
+            permit_activation = threading.Event()
+            original_service_rotation = service.rotate_replication_secret
+            original_authenticator_rotation = _TokenAuthenticator.rotate_replication
+
+            def pause_service_rotation(secret: bytes) -> None:
+                credentials = claim_store.credentials()
+                assert credentials is not None
+                assert not claim_store.acknowledged()
+                persisted_credentials.set()
+                assert permit_service_rotation.wait(timeout=5)
+                original_service_rotation(secret)
+                service_rotated.set()
+                assert permit_authenticator_rotation.wait(timeout=5)
+
+            def pause_authenticator_rotation(authenticator, token):  # type: ignore[no-untyped-def]
+                original_authenticator_rotation(authenticator, token)
+                authenticator_rotated.set()
+                assert permit_activation.wait(timeout=5)
+
+            monkeypatch.setattr(service, "rotate_replication_secret", pause_service_rotation)
+            monkeypatch.setattr(
+                _TokenAuthenticator, "rotate_replication", pause_authenticator_rotation
+            )
+            connect_result: dict[str, BaseException] = {}
+
+            def connect() -> None:
+                try:
+                    connections.connect(PUBLIC_URL, client=client)
+                except BaseException as error:
+                    connect_result["error"] = error
+
+            connect_thread = threading.Thread(target=connect, daemon=True)
+            connect_thread.start()
+            assert persisted_credentials.wait(timeout=5)
+            new_credentials = claim_store.credentials()
+            assert new_credentials is not None
+            new_token = new_credentials[1]
+            assert new_token != placeholder_token
+            initial_token_ack = client.post(
+                "/v1/edge/claim/ack",
+                headers={"Authorization": f"Bearer {placeholder_token}"},
+            )
+            assert initial_token_ack.status_code == 401
+            assert not claim_store.acknowledged()
+
+            permit_service_rotation.set()
+            assert service_rotated.wait(timeout=5)
+            before_authenticator_rotation = client.post(
+                "/v1/edge/claim/ack",
+                headers={"Authorization": f"Bearer {new_token}"},
+            )
+            assert before_authenticator_rotation.status_code == 401
+            assert not claim_store.acknowledged()
+
+            permit_authenticator_rotation.set()
+            assert authenticator_rotated.wait(timeout=5)
+            before_activation_ready = client.post(
+                "/v1/edge/claim/ack",
+                headers={"Authorization": f"Bearer {new_token}"},
+            )
+            assert before_activation_ready.status_code == 409
+            assert not claim_store.acknowledged()
+
+            permit_activation.set()
+            connect_thread.join(timeout=5)
+            assert not connect_thread.is_alive()
+            assert "error" not in connect_result
             claimed = connections.material()
             assert claimed is not None
             assert claimed.claim_bundle is None
             assert prepared.bundle.replication_token != claimed.bundle.replication_token
             assert claim_store.acknowledged()
+            assert client.post(
+                "/v1/edge/claim/ack",
+                headers={"Authorization": f"Bearer {new_token}"},
+            ).status_code == 200
             manager = EdgeSyncManager(connections, core.store)
             assert manager.sync_now(http_client=client)["state"] == "ready"
             assert client.get("/about").status_code == 200
