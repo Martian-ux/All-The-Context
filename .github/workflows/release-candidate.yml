@@ -151,7 +151,7 @@ jobs:
             source: AllTheContextSetup.exe
             archive_source: dist/installed-component-package
             package_suffix: .exe
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             platform: linux
             architecture: x86_64
             source: all-the-context
