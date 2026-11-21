@@ -202,8 +202,8 @@ jobs:
 
   security:
     name: Repository security gates
-    # The dashboard matrix releases two hosted slots for these checks.
-    needs: dashboard
+    # Wait for both dashboard jobs before using their released slots.
+    needs: [dashboard, dashboard-node-20]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -241,11 +241,11 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        node: [20, 22]
-    defaults:
+        node: [22]
+    defaults: &dashboard_defaults
       run:
         working-directory: apps/dashboard
-    steps:
+    steps: &dashboard_steps
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # pin: actions/setup-node@v4
         with:
@@ -260,10 +260,22 @@ jobs:
         if: matrix.node == 22
         run: npm audit --audit-level=high
 
+  dashboard-node-20:
+    name: Dashboard - Node ${{ matrix.node }}
+    needs: dashboard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        node: [20]
+    defaults: *dashboard_defaults
+    steps: *dashboard_steps
+
   dashboard-parity:
     name: Dashboard production asset parity
-    # The dashboard matrix releases two hosted slots for these checks.
-    needs: dashboard
+    # Wait for both dashboard jobs before using their released slots.
+    needs: [dashboard, dashboard-node-20]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -291,7 +303,7 @@ jobs:
     # Keep these check names stable for branch protection.
     name: Desktop artifact - ${{ matrix.check_label }}
     runs-on: ${{ matrix.runner }}
-    permissions:
+    permissions: &desktop_package_permissions
       contents: read
       actions: read
     timeout-minutes: 30
@@ -304,12 +316,7 @@ jobs:
             platform: windows
             architecture: x86_64
             source: AllTheContextSetup.exe
-          - check_label: ubuntu-latest
-            runner: ubuntu-24.04
-            platform: linux
-            architecture: x86_64
-            source: all-the-context
-    steps:
+    steps: &desktop_package_steps
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -469,3 +476,22 @@ jobs:
             dist/native-build-provenance/**
           compression-level: ${{ runner.os == 'Windows' && github.event_name == 'pull_request' && '0' || '6' }}
           if-no-files-found: error
+
+  desktop-package-linux:
+    # Keep the required check name while deferring this runner until Node 22 exits.
+    name: Desktop artifact - ${{ matrix.check_label }}
+    runs-on: ${{ matrix.runner }}
+    permissions: *desktop_package_permissions
+    needs: dashboard
+    if: ${{ !cancelled() }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check_label: ubuntu-latest
+            runner: ubuntu-24.04
+            platform: linux
+            architecture: x86_64
+            source: all-the-context
+    steps: *desktop_package_steps

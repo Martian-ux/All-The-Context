@@ -84,7 +84,7 @@ def _job_bodies(text: str) -> dict[str, str]:
 
 
 def _step_blocks(job_body: str) -> list[str]:
-    header = re.search(r"^    steps:\s*$", job_body, re.MULTILINE)
+    header = re.search(r"^    steps:(?:[ \t]+&[\w-]+)?[ \t]*$", job_body, re.MULTILINE)
     assert header is not None
     section = job_body[header.end() + 1 :]
     starts = list(re.finditer(r"^      - ", section, re.MULTILINE))
@@ -240,11 +240,23 @@ def test_ci_windows_uses_fresh_locked_uv_and_pr_only_parallel_packaging() -> Non
 
 def test_ci_desktop_runner_pin_preserves_name_and_bounds_donor_pilot() -> None:
     text = _read(WORKFLOWS / "ci.yml")
-    desktop = _job_bodies(text)["desktop-package"]
-    assert "name: Desktop artifact - ${{ matrix.check_label }}" in desktop
-    assert "runs-on: ${{ matrix.runner }}" in desktop
-    assert "- check_label: ubuntu-latest\n            runner: ubuntu-24.04" in desktop
-    assert "- check_label: windows-latest\n            runner: windows-latest" in desktop
+    jobs = _job_bodies(text)
+    desktop = jobs["desktop-package"]
+    linux = jobs["desktop-package-linux"]
+    for block in (desktop, linux):
+        assert "name: Desktop artifact - ${{ matrix.check_label }}" in block
+        assert "runs-on: ${{ matrix.runner }}" in block
+    linux_runner = "- check_label: ubuntu-latest\n            runner: ubuntu-24.04"
+    windows_runner = "- check_label: windows-latest\n            runner: windows-latest"
+    assert linux_runner in linux and linux_runner not in desktop
+    assert windows_runner in desktop and windows_runner not in linux
+    assert "needs:" not in desktop
+    assert "needs: dashboard\n" in linux
+    assert "if: ${{ !cancelled() }}\n" in linux
+    assert "steps: &desktop_package_steps\n" in desktop
+    assert "steps: *desktop_package_steps\n" in linux
+    assert "permissions: &desktop_package_permissions\n" in desktop
+    assert "permissions: *desktop_package_permissions\n" in linux
     assert desktop.count("actions: read") == text.count("actions: read") == 1
     assert "pull_request_target" not in text
     assert "windows-ci-donor-pilot" in desktop
@@ -291,7 +303,18 @@ def test_ci_python_documentation_checks_have_full_history_and_pinned_actions() -
 
 
 def test_ci_dashboard_audit_runs_only_on_node_22() -> None:
-    dashboard = _job_bodies(_read(WORKFLOWS / "ci.yml"))["dashboard"]
+    jobs = _job_bodies(_read(WORKFLOWS / "ci.yml"))
+    dashboard = jobs["dashboard"]
+    node20 = jobs["dashboard-node-20"]
+    for block in (dashboard, node20):
+        assert "name: Dashboard - Node ${{ matrix.node }}" in block
+    assert "node: [22]\n" in dashboard and "needs:" not in dashboard
+    assert "node: [20]\n" in node20 and "needs: dashboard\n" in node20
+    assert "if: ${{ !cancelled() }}\n" in node20
+    assert "defaults: &dashboard_defaults\n" in dashboard
+    assert "defaults: *dashboard_defaults\n" in node20
+    assert "steps: &dashboard_steps\n" in dashboard
+    assert "steps: *dashboard_steps\n" in node20
     steps = _step_blocks(dashboard)
     audit_steps = [step for step in steps if "npm audit --audit-level=high" in step]
 

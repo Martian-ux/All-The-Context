@@ -351,7 +351,7 @@ def test_ci_starts_frozen_shards_without_a_planner_and_keeps_required_gates() ->
         assert f"shard: {indices}\n" in block
     for name in ("security", "dashboard-parity"):
         delayed = workflow.split(f"  {name}:\n", 1)[1].split("    steps:", 1)[0]
-        assert "    needs: dashboard\n" in delayed
+        assert "    needs: [dashboard, dashboard-node-20]\n" in delayed
         assert "    if: ${{ !cancelled() }}\n" in delayed
     assert "needs: python\n" in aggregates
     assert "needs: python-windows-shard\n" in aggregates
