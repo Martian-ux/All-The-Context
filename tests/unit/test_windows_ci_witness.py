@@ -927,7 +927,7 @@ WITNESS_OVERLAY_BLOBS = {
 CURRENT_WITNESS_UPDATES = {
     "scripts/check_test_collection.py": "01de4bf97745a53edddacdf9ef7fa2011ad56a8e",
     ".github/workflows/ci.yml": "5b6c9715c25f3a4392ca9984a5de2116f1cc5d36",
-    "scripts/windows_ci_pilot.py": "62786dfa8368728ef6f1525d34917e4c523a36a1",
+    "scripts/windows_ci_pilot.py": "66786c2ee977f1695c815e7d39957a3d2d3bc55e",
     "scripts/windows_ci_components.py": "5aa48eb7e2c0a4ff054d73b3a2ef6437a385e4c6",
 }
 
@@ -1190,6 +1190,33 @@ print(json.dumps(result))
             }
         assert event_file.read_bytes() == event_bytes
         assert provider_git("status", "--porcelain", "--untracked-files=normal") == ""
+        if case == "ci-only" and not producer:
+            pilot_process = process.replace(
+                "result = witness.admit_source(root, sys.argv[2], producer=sys.argv[3] == 'true')",
+                "from scripts import windows_ci_pilot; "
+                "windows_ci_pilot.admit_source(root, sys.argv[2]); "
+                "result = {'fixed_pilot': True}",
+            )
+            fixed = subprocess.run(
+                [sys.executable, "-I", "-B", "-c", pilot_process, str(root), merge, "false"],
+                env={
+                    **os.environ,
+                    "GITHUB_EVENT_PATH": str(event_file),
+                    "GITHUB_SHA": merge,
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "GITHUB_REF": "refs/pull/133/merge",
+                    "RUNNER_OS": "Windows",
+                    "GITHUB_REPOSITORY": pilot.REPOSITORY,
+                    "GITHUB_JOB": "desktop-package",
+                    "GITHUB_RUN_ID": "42",
+                    "GITHUB_RUN_ATTEMPT": "2",
+                },
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            assert json.loads(fixed.stdout) == {"fixed_pilot": True}
 
 
 @pytest.fixture
@@ -2010,6 +2037,8 @@ def rolling_provider(ordinary_checkout, monkeypatch):
         "marker",
         "step-order",
         "artifact-id",
+        "marker-log",
+        "ambiguous-marker",
         "name",
         "digest",
         "origin",
@@ -2021,7 +2050,7 @@ def rolling_provider(ordinary_checkout, monkeypatch):
     ],
 )
 def test_exact_protected_push_descriptor_fails_closed(rolling_provider, defect):
-    root, commit, workflow, run, job, artifact, listing, _jobs, _routes, calls = rolling_provider
+    root, commit, workflow, run, job, artifact, listing, _jobs, routes, calls = rolling_provider
     if defect == "workflow":
         workflow["id"] = 902
     elif defect == "repo":
@@ -2056,6 +2085,10 @@ def test_exact_protected_push_descriptor_fails_closed(rolling_provider, defect):
         job["steps"][0]["number"] = 10
     elif defect == "artifact-id":
         artifact["id"] = 85
+    elif defect == "marker-log":
+        routes["actions/jobs/83/steps/9/logs"] = b"unrelated log\n"
+    elif defect == "ambiguous-marker":
+        routes["actions/jobs/83/steps/9/logs"] *= 2
     elif defect == "name":
         artifact["name"] = "other"
     elif defect == "digest":

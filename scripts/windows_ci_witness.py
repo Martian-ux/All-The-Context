@@ -101,7 +101,7 @@ QUALIFIED_INPUT_BLOBS = {
     "scripts/verify_reproducible_build.py": "91a6c93381f1245a69e8c94d1f6d8fbf98c7b8d4",
     "scripts/windows_ci_components.py": "5aa48eb7e2c0a4ff054d73b3a2ef6437a385e4c6",
     "scripts/windows_ci_package_checks.py": "d2bbb50c719b19058faf4aef204a6d0a1235bf4f",
-    "scripts/windows_ci_pilot.py": "62786dfa8368728ef6f1525d34917e4c523a36a1",
+    "scripts/windows_ci_pilot.py": "66786c2ee977f1695c815e7d39957a3d2d3bc55e",
     "scripts/windows_ci_canonical.py": "5e47f71507e7ea9e36c3ee372361de08114a7d38",
 }
 MARKER_PATTERN = re.compile(
@@ -130,7 +130,7 @@ IMPLEMENTATION_FILES = {
 # SHA-256 of the reviewed inventory, with only existing shipped Python,
 # tests/docs content and this policy's own blob omitted. Names and modes remain
 # covered. Generated offline from the reviewed source, never from a PR claim.
-ROLLING_INVENTORY_SHA256 = "fb217ac3e01ec70ae8b0ea5437355d8a3c28201f5466e07ad3c1258bfae8b063"
+ROLLING_INVENTORY_SHA256 = "109411f333215767400f4d8cb66fe0eba30ca204049ed496132c5e65ff539227"
 POLICY = "scripts/windows_ci_witness.py"
 
 
@@ -826,8 +826,7 @@ def protected_donor(root: Path, commit: str) -> pilot.RollingDonor:
 
 
 def donor_runner(root: Path, commit: str, tools: dict, locks: dict):
-    paths = pilot.prepared_donor(tools, locks)
-    descriptor = pilot.prepared_descriptor()
+    paths, descriptor = pilot.prepared_donor_contract(tools, locks)
     if descriptor is None:
         return component_runner(root, commit, paths, witness_profile=True)
     return component_runner(root, commit, paths, witness_profile=True, donor_descriptor=descriptor)

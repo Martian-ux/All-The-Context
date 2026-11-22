@@ -622,6 +622,13 @@ def extract_donor(
             require(
                 not row.is_dir()
                 and not stat.S_ISLNK(row.external_attr >> 16)
+                and (
+                    descriptor is None
+                    or (
+                        stat.S_IFMT(row.external_attr >> 16) in (0, stat.S_IFREG)
+                        and not row.external_attr & 0x10
+                    )
+                )
                 and not row.flag_bits & 1
                 and row.compress_type in (0, 8)
                 and 0 <= row.header_offset < archive_size
@@ -658,8 +665,10 @@ def extract_donor(
     return paths
 
 
-def prepared_donor(toolchain: dict, locks: dict) -> dict[str, Path]:
-    """Recheck prepared bytes against the pinned provenance and current build inputs."""
+def prepared_donor_contract(
+    toolchain: dict, locks: dict
+) -> tuple[dict[str, Path], RollingDonor | None]:
+    """Return the exact immutable descriptor validated with this snapshot."""
     folder = download_directory()
     require_owned_directory(folder)
     marker = folder / "complete.json"
@@ -687,7 +696,12 @@ def prepared_donor(toolchain: dict, locks: dict) -> dict[str, Path]:
         doc["contract"]["locks"] == locks and doc["contract"]["toolchain"] == toolchain,
         "donor lock or toolchain mismatch",
     )
-    return paths
+    return paths, descriptor
+
+
+def prepared_donor(toolchain: dict, locks: dict) -> dict[str, Path]:
+    """Recheck prepared bytes against the pinned provenance and current build inputs."""
+    return prepared_donor_contract(toolchain, locks)[0]
 
 
 def pilot_runner(root: Path, source_commit: str, toolchain: dict, locks: dict):
