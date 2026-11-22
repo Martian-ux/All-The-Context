@@ -1033,7 +1033,7 @@ def protected_main_objects(tmp_path_factory):
     [
         ("original", "unreviewed ordinary base"),
         ("corrected", None),
-        ("private-base", "unreviewed ordinary base"),
+        ("private-base", "unsupported merge parents"),
         ("wrong-branch", "unsupported ordinary context"),
         ("fork", "unsupported ordinary context"),
         ("event-head", "unsupported merge parents"),
