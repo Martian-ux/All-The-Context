@@ -1033,7 +1033,10 @@ def protected_main_objects(tmp_path_factory):
     [
         ("original", "unreviewed ordinary base"),
         ("corrected", None),
-        ("private-base", "unsupported merge parents"),
+        # Preserve the frozen node ID while checking the current rejection boundary.
+        pytest.param(
+            "private-base", "unsupported merge parents", id="private-base-unreviewed ordinary base"
+        ),
         ("wrong-branch", "unsupported ordinary context"),
         ("fork", "unsupported ordinary context"),
         ("event-head", "unsupported merge parents"),
