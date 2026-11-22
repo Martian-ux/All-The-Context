@@ -251,14 +251,14 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
             for case in source_seconds
         }
     )
-    assert checker.WINDOWS_ROLLING_SCOPES == expected
+    assert expected == checker.WINDOWS_ROLLING_SCOPES
     old = [f"{witness_file}::test_old[{index}]" for index in range(164)]
     unknown = [
         f"{rolling}[none-3]",
         f"{rolling}[new-defect-1]",
         f"{rolling}[none-1-extra]",
         f"{rolling}_similar[none-1]",
-        f"tests/unit/test_other.py::test_rolling_successive_real_depth_two_events[none-1]",
+        "tests/unit/test_other.py::test_rolling_successive_real_depth_two_events[none-1]",
     ]
     cases = [
         *expected,
