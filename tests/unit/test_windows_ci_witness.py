@@ -1066,6 +1066,11 @@ def test_actual_protected_main_depth_two_both_participants(
     objects, git, branch, corrected, head, tree, ci_head, ci_tree = protected_main_objects
     if case == "original":
         head, tree = INTEGRATION, git("rev-parse", f"{INTEGRATION}^{{tree}}")
+    elif case == "corrected":
+        # Bind bootstrap acceptance to the entire clean candidate, alongside
+        # the separately pinned historical overlays and their negative controls.
+        head, tree = git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
+        assert git("merge-tree", "--write-tree", PROTECTED_MAIN, head) == tree
     elif case == "ci-only":
         head, tree = ci_head, ci_tree
     elif case == "prior-input":
