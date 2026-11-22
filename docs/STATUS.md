@@ -1,5 +1,91 @@
 # Project status
 
+## 2026-11-21 — bounded Windows witness acquisition recovery
+
+Ordinary Windows stock-witness acquisition shares four transient retries across
+the exact attempt, producer jobs, marker log, artifact metadata and archive
+routes. Immutable attempt metadata is validated once; producer polling keeps
+its existing 150-second limit. The receipt phase has at most eight seconds
+within that limit, with socket timeouts capped at five seconds and deadline
+checks between bounded reads. Only eligible transport/server failures and
+bounded indexing on identity-bound provider API routes can retry. A storage
+404, authorization rejection or invalid identity/evidence selects full fallback.
+
+Allowlisted codes distinguish acquisition rejection from candidate/retained
+role size and SHA-256 mismatches without provider text or credentials. All four
+raw roles, independent full stock production, retained A/B verification,
+concurrent real lifecycle checks and complete cold fallback remain required.
+A matching witness followed by a reached lifecycle failure fails the verifier
+without promotion or a success output. Windows/Linux payloads and existing test
+identities are preserved. Native validation and independent review remain
+required; the historical hosted miss is unresolved and only a fresh
+operator-owned hosted trial can establish the new elapsed time.
+
+## 2026-11-21 — ordinary Windows CI preparation and scheduling
+
+The Windows scheduler gives the existing whole-file witness test group a measured
+88.20-second weight. Node identities, group affinity, shard counts, independent
+canonical collection and required checks retain their existing contracts.
+Ordinary admission batches the candidate and protected-main tree reads while
+retaining Git's configured path quoting, exact literal names, regular blob modes,
+current input pins, ordered PR parents, fresh status and filesystem inventory.
+
+The existing background downloader now authenticates, verifies and extracts the
+fixed donor using only the standard library before dependency installation. It
+atomically publishes readiness after complete extraction and verification. Each
+consumer independently rechecks the pinned manifest, checksum, four file hashes
+and sizes, and current locked toolchain. Unavailable or invalid preparation uses
+the existing isolated cold route. Retained A/B builds, the independent full stock
+comparison, concurrent real lifecycle checks and publication joins remain required.
+
+Native CI delta validation and independent review remain downstream; the earlier
+full-app baseline is historical evidence. A new operator-owned ordinary PR trial
+must establish all current required statuses, both first-attempt workflow finals,
+complete Windows/Linux execution and exact Windows package parity before any
+180-second timing claim. Release and account holds remain unchanged.
+
+## 2026-11-21 — bounded ordinary Windows PR stock witness
+
+Same-repository synthetic PR merges against protected `main` at
+`e9bdaab8afcc6265802d690834fbb7fa60cd1a0e` can provisionally assemble two
+isolated retained arms for edits to existing shipped Python files. Packaging
+inputs and helper blobs remain pinned. A separate Windows VM builds the full
+stock graph with the same locked absolute packaging environment and PR-only
+marshal encoding. Publication requires the completed exact producer's upload
+and marker steps, its authenticated artifact ID/digest, and all four full-file
+names, lengths and SHA-256 values matching both retained arms.
+
+Admission uses the unmodified PR event and exact ordered immediate merge parents
+`[protected main, event PR head]`. The prior CI overlay ending at
+`2681c5ec9ced8aa15de77d82fcffc0730cf85731` and the witness overlay ending at
+`bcb67566232ca3e778fd39f2596522c813599da0` are separately reviewed inputs;
+their executable inputs retain exact current Git blob pins. The private prior
+CI commit is not a runtime dependency. Focused contracts cover the original
+base rejection and corrected admission for both participants in genuine local
+depth-two checkouts; maintained native execution and independent review remain
+downstream.
+
+All existing Windows lifecycle and direct-package checks run against provisional
+bytes. A witness or provisional miss drains work and selects the original cold
+double build and complete lifecycle in fresh roots; a proved candidate's genuine
+lifecycle failure remains required. The CI-only pilot, stock push/release routes,
+required names and canonical per-platform coverage remain in place. Windows
+discovery waits for Node 22 with `!cancelled()` to retain the initial runner cap.
+Native checks, independent review and hosted timing remain separate gates; this
+source change does not establish a 180-second result or release acceptance.
+
+## 2026-11-21 — four Linux pytest shards
+
+PR #128 reached Windows desktop at 160 seconds and Windows Python at
+176 seconds. Both Linux pytest shards were still running at 180 seconds.
+Use four Linux shards with four workers each and retain exact full collection,
+one terminal outcome per case, and the existing protected status. Linux
+placement uses measured work from PR #128 and reserves capacity on shard zero
+for its extra serial checks. Dashboard
+parity and repository security start after the two dashboard jobs finish,
+which keeps the initial hosted job count at 20 including CodeQL. Both
+checks still run after a dashboard failure when the workflow is active.
+
 ## 2026-11-21 — beta.8 source selection and release boundary
 
 The selected source version is `0.1.0-beta.8`; beta.6 remains the current public
@@ -225,6 +311,83 @@ Focused regression and injected-failure contracts use owned synthetic data.
 Exact-source independent review and maintained native final gates are required.
 Packaged dashboard assets remain part of the source contract, alongside existing
 release, disconnected-dogfood and spending constraints.
+
+## 2026-11-21 — bounded Windows CI donor pilot and supported Linux desktop image
+
+The Linux desktop CI matrix selects Ubuntu 24.04 while keeping the protected
+`Desktop artifact - ubuntu-latest` name and Python 3.12.10. Windows keeps its
+existing runner image. Fresh Windows uv environments omit bootstrap pip; the
+reviewed hash-locked install still supplies the requested environment.
+
+The Windows CI donor pilot is limited to same-repository synthetic PR merges
+against public base `e9bdaab8afcc6265802d690834fbb7fa60cd1a0e`, with CI-only
+changes and an unchanged product/dependency graph. It downloads only protected
+main push run 44945160616 / artifact 14723830372, checks the pinned full archive,
+selects the setup and provenance members, and verifies all four canonical role
+bytes, embedded helpers, stock provenance, locks and matched compression ABI.
+Graph changes, moved bases, unsupported events, forks and unavailable or untrusted
+donors retain the two cold-build fallback. Release workflows are unchanged.
+
+Two separate interpreters compile exact Git ATC source, rebuild identities and
+PE/PYZ/CArchive metadata, and link their own helpers in fresh roots while retaining
+the verified stock dependency closure. This is not a fresh dependency scan.
+The maintained four-role comparison, provenance and staging remain authoritative;
+divergence after admission fails the job. Download overlaps environment setup and
+locked installation. On admitted builds, the independent first-run install
+runs alongside the resource, credential, recovery and package preparation checks.
+On cold fallback, the original order of the lifecycle smokes is preserved.
+Both branches must pass before the canonical artifact upload.
+Original artifact paths, failure diagnostics and trust gates remain required.
+The Windows PR inventory can query the same local process provider through COM
+with the same executable-path and creation-time checks. The final PR upload stores
+already-compressed Windows payloads without a second compression pass.
+
+Function affinity now applies only to `test_updater.py` and
+`test_packet_h_retrieval.py`, keeping each parameter family together. The real
+226-case proof supplies their aggregate placement weights; all other grouping,
+canonical coverage, receipts and nine Windows / two Linux shards remain.
+Exact-source independent review, native checks and hosted timing remain separate
+gates. No three-minute result or release readiness is claimed.
+
+## 2026-11-21 — integrated protected CI candidate
+
+CI starts nine Windows and two Linux pytest jobs independently, retaining the
+stable aggregate check names and the separate security, dashboard, desktop and
+CodeQL gates. Each OS reducer checks exact source/run/job identity, independent
+full discovery, all real xdist workers, complete terminal protocols and a disjoint
+union of the same canonical node set. Live shard output streams while receipts
+and owned logs are retained. The Python dependency audit precedes Linux tests.
+
+The existing JSON artifacts retain each actual pytest phase's
+`duration_seconds` alongside outcome, worker and expected-failure evidence.
+Each invocation also records monotonic `process_elapsed_seconds` through process
+wait completion, including failed invocations and standalone retrieval. Timing
+is optional diagnostic evidence; older receipts keep the same coverage verdict.
+The small real-worker contract covers controlled phase delays, standalone timing,
+failure retention and receipts without profiling fields. Exact-source native and
+independent review gates remain required.
+
+Loadgroup preserves file fixture affinity except the exact audited Windows
+updater module (singleton nodes) and the eight exhaustive Packet A buckets.
+The full updater proof covered all 236 nodes: 235 passed and the existing symlink
+skip remained, across four loaded workers in 62.349 process seconds. Its archived
+236.066 work seconds seed placement; weights predict work, not elapsed job time.
+Unknown files retain the deterministic fallback. The retrieval module runs once
+per OS outside xdist with its shared four-process spawn pool, both complete
+reports and original assertions; its separate receipt joins the same full reducer.
+
+Windows test and packaging jobs use fresh run-owned Python 3.12.10 venvs and the
+opt-in pinned, configuration-isolated uv installer, retaining lock hashes, locked
+build backends and wheel-copy semantics. Redundant Windows pip cache staging is
+removed. Only PR Windows native reproducibility opts into independent clean A/B
+arms and parallel helper builds; byte comparisons and exact staging remain.
+Linux and release installer/build defaults, platform credential/startup checks,
+packaged lifecycle, artifacts and final acceptance gates remain required.
+
+This is local candidate behavior. The Windows CI timeline model remains about
+5m16s, not a demonstrated three-minute CI or merge result. Eleven test jobs plus
+fixed checks compete for the shared 20 standard runner slots; actual hosted
+capacity, timing and protected merge require their separate authorized evidence.
 
 ## 2026-09-30 — urllib3 correction for the PR118 combined candidate
 

@@ -1,5 +1,96 @@
 # Architecture decisions
 
+## Retry only bound Windows witness acquisition failures (2026-11-21)
+
+Use one four-retry budget for narrowly classified transient transport errors,
+HTTP 500/502/503/504 and temporary indexing on the expected provider API routes.
+Bind the immutable attempt before polling its jobs, the successful exact
+job/attempt and marker step before reading logs, the unique marker before
+artifact lookup, and artifact metadata before archive retrieval. Preserve the
+150-second producer wait and cap receipt acquisition at the remaining time or
+eight seconds. Cap each socket timeout at five seconds and check deadlines
+between bounded response reads; a blocked read may finish within its already
+assigned short socket timeout. Do not repeat successful immutable lookups.
+
+Indexing eligibility never transfers to redirected storage: a storage 404 is
+terminal. Keep the existing recognized HTTPS redirect and credential boundary.
+Authorization, unsupported redirects, malformed/ambiguous identity, archive or
+receipt failures do not retry. Emit only allowlisted acquisition or raw-role
+size/hash codes; never provider exception messages, signed URLs or raw data.
+Exact full-file equality against provisional and retained outputs remains the
+promotion prerequisite alongside every actual lifecycle check. Drain owned
+work before complete cold fallback; a proved candidate's lifecycle failure
+continues to fail the required job. No packaging, topology or product change
+follows from this acquisition correction. Hosted timing remains separate proof.
+
+## Overlap authenticated donor preparation with CI installation (2026-11-21)
+
+Use the existing credential-scoped background downloader for the same fixed donor
+verification and bounded extraction before locked dependencies are installed.
+Defer build-only imports until build execution; the early path launches no donor,
+compiler or smoke executable. Publish the existing run/attempt completion marker
+with a same-directory rename only after verified outputs are complete. Failed
+preparation publishes unavailability without private diagnostics.
+
+Readiness is a synchronization signal, not reusable verification authority.
+Both the CI-only pilot and ordinary consumer independently authenticate the exact
+extracted manifest/checksum and rehash all four regular role files, binding their
+sizes and current locks/toolchain before constructing a retained runner. Keep the
+complete cold double build on admission/preparation misses and the existing
+failure propagation after actual builds or proved lifecycle checks are reached.
+Retained A/B equality still requires the independent full-stock raw-byte join.
+
+Batch immutable ordinary-admission tree reads without disabling Git quoting or
+decoding quoted names. Exact unquoted delta names must match the returned tree
+names, regular blob mode/kind and current reviewed pins. Preserve the separate
+historical overlay mappings, graph recipe, fresh dirty check and covered checkout
+inventory. Change only the Windows whole-file witness scheduling weight to
+88.20 seconds; preserve Linux scheduling, collection identities and all gates.
+Ancillary relocation, compression memoization and product changes are excluded.
+
+## Independent stock authority for ordinary Windows PRs (2026-11-21)
+
+Retained A/B agreement cannot prove that an ordinary edit preserves the stock
+dependency graph. Restrict the first route to the fixed reviewed base, existing
+Python names and exact packaging inputs. Authenticate the existing protected
+donor, refresh lock-bound installed INSTALLER/RECORD destinations by exact archive
+member name, and use marshal format 2 only for the independent PR witness and
+retained PR arms. Keep release compression and normal stock discovery unchanged.
+Both independent VMs use `C:/atc-ci-package-<run>-<attempt>` so installed console
+launcher RECORD bytes bind the same absolute interpreter path.
+
+The reviewed base is the pilot's protected-main source `e9bdaab8`, with the exact
+`main` ref and unchanged event. Require the synthetic checkout SHA and ordered
+parents `[protected main, exact event head]`; never substitute the private
+`2681c5ec` implementation parent. Bind the prior CI overlay (`e9bdaab8` to
+`2681c5ec`) separately from the witness overlay (`2681c5ec` to `bcb67566`). Pin
+the additional prior-overlay inputs to their reviewed current Git blobs, retaining
+the existing witness pins and protected-main packager profile comparison. Only
+the admission module and existing enumerated passive checked tests/docs retain
+their reviewed exemption; a self-hash would be circular. No general script,
+benchmark, workflow or graph exception is granted. Admission must work with only
+the immediate parents available in a provider-style depth-two checkout.
+
+Authorize publication only through the exact run-attempt jobs endpoint, one
+successful completed producer job, successful upload and dedicated marker steps,
+and the authenticated log for that marker's verified step number. Bind the
+upload action's immutable artifact ID/digest to provider metadata, downloaded ZIP
+bytes, the bounded exact-source receipt and every full role file. A missing or
+unrecognized input selects complete stock fallback after provisional work drains.
+Keep provisional paths and outputs separate until all smokes pass; do not mask a
+real lifecycle failure after the stock join proves the candidate. Independent
+review, maintained native gates and release controls retain their authority.
+
+## Linux CI scheduling (2026-11-21)
+
+After the first hosted trial missed 180 seconds on Linux pytest, increase
+its matrix from two to four shards. Keep the same collection and execution
+receipt contract, scopes of fixtures and workers per shard. Use Linux-only
+historical weights from the first hosted attempt for the six heaviest files
+and existing Packet A groups. Leave fewer cases on shard zero to account for
+its extra serial checks. Release the two dashboard runner slots before starting parity and security.
+All required job names and acceptance checks retain their existing scope.
+
 ## Public beta.8 source boundary (2026-11-21)
 
 Project public-eligible bytes onto the public base without private ancestry or
@@ -274,6 +365,85 @@ callback operations, and assistant-first callbacks reuse the same stored state.
 Session-only callbacks retain their existing unpaired behavior. Dashboard operation
 ownership and request versions protect import progress, updater drafts and responses
 across asynchronous completion, actions and component unmount.
+
+## CI pilot decision — retain a pinned closure behind conservative admission (2026-11-21)
+
+Keep the reproducibility verifier's existing `build_runner` interface and its
+four-role byte comparison, canonical provenance and post-build staging. Admit
+retained Windows dependency payloads only for a bounded CI-only PR pilot against
+the exact public base, with unchanged graph inputs and the frozen reviewed
+packager. Pin the sole successful protected-main donor archive and stock manifest;
+verify safe archive bounds, embedded roles, locks, toolchain and compression ABI
+before use. Preserve raw encoded payloads only within their validated role,
+member name, type, method and decoded bytes. Recompile ATC code from the synthetic
+Git SHA and rebuild each arm's PE and archive identity with its own helper bytes.
+Keep closure reuse explicit; do not call it a new PyInstaller dependency scan.
+Admission misses use cold builds; admitted build failures never downgrade to a hit
+or silently retry through another route. No cache, credential, dependency, runner
+registration or global permission is added; only this job needs Actions read.
+
+Overlap the fixed donor download with setup/locked installation, publishing a
+completion marker only after the download closes. Overlap read-only built-byte
+package/archive preparation with the stock Windows PR lifecycle. An admitted
+reproducible build may start the isolated first-run install while the resource
+and recovery smokes run. Drain and require both branches before canonical upload.
+Preserve failure diagnostics and successful first-run diagnostics even if another
+check fails. The cold path keeps the original lifecycle order. Push, tag, Linux
+and release paths keep
+their existing build/lifecycle behavior.
+Use the same capped Windows process inventory via a bounded COM child only for
+Windows PRs. Retain the parent validation and diagnostics, and store the already
+compressed canonical Windows payload at ZIP compression level zero in those PRs.
+
+Use the real two-module 226-case function-affinity proof for exactly
+`test_updater.py` and `test_packet_h_retrieval.py`, including their measured
+aggregate work weights (48.143s and 23.409s). Keep parameter siblings together,
+unknown-file fallback and exact execution reducers. Bind only the Linux desktop
+runner to Ubuntu 24.04, independently of its historical required check name.
+
+## CI integration decision — preserve exact coverage and native gates (2026-11-21)
+
+Integrate the accepted exhaustive-workload, fanout, fixture-scheduling, isolated
+uv and parallel-packaging sources with fanout ancestry included once. Preserve
+the eleven protected contexts, including independent CodeQL contexts. Keep
+full OS discovery and fail-closed execution reducers rather than inferring
+coverage from green job conclusions. Validate canonical IDs before the exact
+approved loadgroup projection; literal parameter suffixes remain opaque and
+unknown scheduling suffixes are rejected. Keep useful streamed failure output.
+
+Retain pytest's actual per-phase duration in the existing receipt, and measure
+subprocess elapsed seconds with a monotonic clock from launch through wait
+completion. Keep both fields diagnostic and optional for receipt admission and
+verdicts, preserving old receipt compatibility. The same existing artifact paths
+and always-upload conditions retain profiles on success and failure, including
+the standalone retrieval run; timing adds no scheduling or release gate changes.
+
+Default to file affinity. The complete named-module proof-3db07e46 supports
+singleton groups for every node in test_windows_update_helper.py only; retire
+the earlier 44-case function allowlist. Use the full archived 236.066 seconds
+of updater work for placement without treating apportioned work as wall time.
+Packet A retains every semantic-leaf mutation/rebound rejection in eight complete,
+disjoint buckets. Unknown modules retain their file group and median weight.
+
+Run the retrieval module explicitly with -n 0 so its caller-owned four-process
+spawn pool can serve both full reports without nested xdist pools. Exclude its
+nodes only from xdist selection, retain them in independent full discovery and
+every worker's full collection, and require its source-bound terminal receipt in
+the same complete disjoint reducer. Missing, duplicate, foreign-source, failed
+or extra retrieval execution cannot satisfy the aggregate. Preserve serial
+benchmark defaults, result ordering, exception propagation and executor cleanup.
+
+Use reviewed Python 3.12.10 fresh disposable Windows venvs for locked uv installs.
+Reject reused environments; keep setup-uv pinned, hash enforcement, configuration
+isolation, locked backends and copy links. Remove unused Windows pip staging.
+Linux and release defaults remain pip/serial. Only pull-request Windows native
+reproducibility selects --parallel-windows, preserving clean isolated A/B roots,
+component comparison/staging and all authentic packaged lifecycle gates. Do not
+adopt the combined spec, RCDATA or same-node parallel smoke experiments.
+
+Local scheduling/build improvements do not establish end-to-end CI or merge
+latency. Preserve independent integrated-source review, native checks, hosted
+review and final release gates. No source change grants publication authority.
 
 ## Dependency lock decision — urllib3 audit remediation (2026-09-30)
 
