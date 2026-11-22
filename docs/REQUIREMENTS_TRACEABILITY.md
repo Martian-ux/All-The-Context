@@ -1,5 +1,15 @@
 # Requirements traceability
 
+### 2026-11-21 measured rolling Windows test affinity
+
+| Requirement | Source and regression contract |
+|---|---|
+| Minimal identical-checkout reuse | `test_rolling_successive_real_depth_two_events` uses the frozen checkout-reuse fixture for five event-only cases per successor. Each row writes a fresh event, calls both roles and verifies shallow transport, ordered parents, later main, no alternates and clean status. The 18 source/topology rows retain independent real checkouts and all prior assertions. |
+| Exact Windows scope and weight allowlist | `_case_scope`, `WINDOWS_ROLLING_SCOPES` and `WINDOWS_SCOPE_SECONDS`; the existing Windows tail contract checks all 28 exact scopes, measured weights, old group and conservative unknown IDs. No new pytest distribution or workflow mechanism. |
+| Real loadgroup reuse and canonical integrity | Existing generated small-suite and loadgroup contracts witness all five event siblings on one worker per successor, singleton scopes, retained file affinity, projected-ID round trips, worker attribution, disjoint assignment and receipt corruption rejection. Clean exact collection and archived PR 135 replay retain all 4,094 IDs; Linux scope and assignment equality remain required. |
+| Exact current and historical admission | Both-role e9 bootstrap and two real depth-two successor contracts retain source, topology and event rejection controls. Overlay binding retains historical Git blob assertions and independently pins the new scheduler; rolling inventory is compared against exact Git tree entries. All unrelated input pins remain fixed. |
+| Separate projections from acceptance | Frozen local timing and archived provider replay assumptions remain explicit. Six native checks and independent review apply to the exact clean committed source. Hosted CI/CodeQL timing, integration and release remain separately authorized gates. |
+
 ### 2026-11-21 rolling Windows protected-base donor qualification
 
 | Requirement | Source and regression contract |

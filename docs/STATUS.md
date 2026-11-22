@@ -1,5 +1,23 @@
 # Project status
 
+## 2026-11-21 — measured rolling Windows test affinity
+
+The existing Windows loadgroup scheduler separates only the 28 exact rolling
+depth-two cases: two groups of five event-only cases share one read-only real
+checkout per successor; 18 source/topology cases retain independent checkouts
+and singleton scopes. Each row writes its own event and calls both participants.
+The other 164 witness cases keep file affinity. Fixed measured scope weights
+retain canonical IDs, disjoint assignment and receipt validation. Linux scopes
+and assignment are unchanged. Exact scheduler and rolling inventory pins retain
+the historical overlay checks and all unrelated immutable inputs.
+
+The frozen sequential local comparison saved 36.780 seconds across the same
+28 passing IDs. PR 135 receipt replay projects a +161.0–167.7-second Windows
+reducer with the split, versus +254.9–335.4 seconds with reuse and file affinity,
+under the recorded fixed-overhead and local-cost assumptions. These projections
+do not establish hosted performance. Native checks, independent review and a
+separately authorized hosted timing trial remain required.
+
 ## 2026-11-21 — rolling protected-base Windows donors
 
 Ordinary same-repository Windows PRs may use a donor from their exact event

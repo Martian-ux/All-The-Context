@@ -109,6 +109,33 @@ WINDOWS_SINGLETON_NODE_IDS = frozenset(
     f"{PROJECT_MEMORY_TEST_FILE}::test_project_decision_correction_and_forget_survive_core_recreation[{acl}]"
     for acl in ("allow", "deny")
 )
+# Only these measured rolling cases have audited independent source fixtures or
+# identical read-only event checkouts. Unknown parameter IDs keep file affinity.
+WINDOWS_WITNESS_FILE = "tests/unit/test_windows_ci_witness.py"
+WINDOWS_ROLLING_FUNCTION = f"{WINDOWS_WITNESS_FILE}::test_rolling_successive_real_depth_two_events"
+WINDOWS_ROLLING_SCOPES = {
+    f"{WINDOWS_ROLLING_FUNCTION}[{case}-{successor}]": (
+        f"{WINDOWS_ROLLING_FUNCTION}::event-scope-{successor}"
+    )
+    for successor in (1, 2)
+    for case in ("none", "foreign-id", "fork", "non-main", "attempt")
+} | {
+    f"{WINDOWS_ROLLING_FUNCTION}[{case}-{successor}]": (
+        f"{WINDOWS_ROLLING_FUNCTION}[{case}-{successor}]"
+    )
+    for successor in (1, 2)
+    for case in (
+        "reversed",
+        "policy",
+        "inherited-recipe",
+        "recipe",
+        "lock",
+        "new-module",
+        "deleted-module",
+        "mode",
+        "no-product",
+    )
+}
 # Worker seconds from the authenticated Windows receipts for PRs 128-130.
 WINDOWS_FILE_SECONDS = {
     AGENT_CONTINUITY_TEST_FILE: 107.17,
@@ -140,6 +167,29 @@ WINDOWS_FILE_SECONDS = {
 }
 
 WINDOWS_SCOPE_SECONDS = {
+    # Fixed PR 135 old-group work and local checkout-reuse measurements. These
+    # placement weights are not empirical hosted completion times.
+    WINDOWS_WITNESS_FILE: 87.80,
+    f"{WINDOWS_ROLLING_FUNCTION}::event-scope-1": 9.70,
+    f"{WINDOWS_ROLLING_FUNCTION}::event-scope-2": 10.09,
+    f"{WINDOWS_ROLLING_FUNCTION}[reversed-1]": 5.87,
+    f"{WINDOWS_ROLLING_FUNCTION}[reversed-2]": 6.20,
+    f"{WINDOWS_ROLLING_FUNCTION}[policy-1]": 6.13,
+    f"{WINDOWS_ROLLING_FUNCTION}[policy-2]": 6.70,
+    f"{WINDOWS_ROLLING_FUNCTION}[inherited-recipe-1]": 6.29,
+    f"{WINDOWS_ROLLING_FUNCTION}[inherited-recipe-2]": 6.81,
+    f"{WINDOWS_ROLLING_FUNCTION}[recipe-1]": 6.16,
+    f"{WINDOWS_ROLLING_FUNCTION}[recipe-2]": 6.67,
+    f"{WINDOWS_ROLLING_FUNCTION}[lock-1]": 6.31,
+    f"{WINDOWS_ROLLING_FUNCTION}[lock-2]": 6.42,
+    f"{WINDOWS_ROLLING_FUNCTION}[new-module-1]": 6.16,
+    f"{WINDOWS_ROLLING_FUNCTION}[new-module-2]": 6.69,
+    f"{WINDOWS_ROLLING_FUNCTION}[deleted-module-1]": 5.99,
+    f"{WINDOWS_ROLLING_FUNCTION}[deleted-module-2]": 6.47,
+    f"{WINDOWS_ROLLING_FUNCTION}[mode-1]": 6.29,
+    f"{WINDOWS_ROLLING_FUNCTION}[mode-2]": 6.38,
+    f"{WINDOWS_ROLLING_FUNCTION}[no-product-1]": 6.27,
+    f"{WINDOWS_ROLLING_FUNCTION}[no-product-2]": 6.59,
     (
         f"{AGENT_CONTINUITY_TEST_FILE}::"
         "test_scripted_client_failure_finishes_public_journey_without_fallback"
@@ -177,6 +227,8 @@ WINDOWS_GATE_RESERVES = (140.0, 20.0)
 
 
 def _case_scope(nodeid: str, *, windows: bool = False) -> str:
+    if windows and nodeid in WINDOWS_ROLLING_SCOPES:
+        return WINDOWS_ROLLING_SCOPES[nodeid]
     path, _, test = nodeid.partition("::")
     function, parameter, _ = test.partition("[")
     if (

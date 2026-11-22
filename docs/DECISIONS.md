@@ -1,5 +1,26 @@
 # Architecture decisions
 
+## Split only measured independent rolling Windows cases (2026-11-21)
+
+Reuse the audited `_case_scope`, Windows scope-weight map and loadgroup runner.
+Allowlist the exact ten event-only rows into two successor groups, leaving
+fresh per-row event data and both participant calls. Their identical real
+depth-two Git objects may be shared within a successor. The 18 exact source
+and topology rows still construct independent real checkouts and schedule
+individually; all other witness rows retain file scope, including unknown or
+similarly named parameter IDs. Linux assignment and canonical receipt contracts
+remain unchanged. Pin the exact new scheduler blob and recompute the rolling
+inventory from Git tree entries while retaining independently pinned historical
+overlays and unrelated immutable inputs.
+
+Use the frozen measured weights: 87.80 worker-seconds for the old group,
+9.70/10.09 for the event groups and the individual 5.87–6.81-second source
+weights. The local comparison and PR 135 replay justify this bounded scheduling
+change, not a hosted timing claim. Replay holds setup/startup/collection/upload
+and reducer residuals fixed, scales local fixture costs by 0.70–1.25 and allows
+0 or 10 aggregate seconds for other unmeasured work. Workflow, distribution
+mechanism, runtime, packaging and release gates are unchanged.
+
 ## Qualify exact protected event bases conservatively (2026-11-21)
 
 Retain the fixed CI-only and reviewed e9 bootstrap routes. For rolling PRs,

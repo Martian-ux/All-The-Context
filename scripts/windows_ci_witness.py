@@ -85,7 +85,7 @@ QUALIFIED_INPUT_BLOBS = {
     # Contract tests retain historical mappings; reviewed follow-up pins bind
     # the scheduler weight and early donor preparation below.
     "bench/retrieval_m3_current_candidate.py": "c2dae5e8b9eb3914ea691b6fab079d2372e9389a",
-    "scripts/check_test_collection.py": "01de4bf97745a53edddacdf9ef7fa2011ad56a8e",
+    "scripts/check_test_collection.py": "fa87a31c5e0fd23a8cae570712ff94d8819d64ab",
     "scripts/install_locked_python.py": "04ae2b2ab8fef6b913a88f5c79a72598df39a920",
     "scripts/pytest_shard_receipt.py": "6df45981b5c323599d5926ceb447cc33ce9722e2",
     "scripts/run_test_shard.py": "520425b0af8f07dfa1bfb062a3608e9193777291",
@@ -130,7 +130,7 @@ IMPLEMENTATION_FILES = {
 # SHA-256 of the reviewed inventory, with only existing shipped Python,
 # tests/docs content and this policy's own blob omitted. Names and modes remain
 # covered. Generated offline from the reviewed source, never from a PR claim.
-ROLLING_INVENTORY_SHA256 = "f1b8fb3dde8db9ffcf2f6cd56ffa5773309b850896209d1f8ceee813a8d03842"
+ROLLING_INVENTORY_SHA256 = "d1dd6dbd52b921b788b0f9c037a0dcbcdce7d88647c2be73a21f74efdbbb3e87"
 POLICY = "scripts/windows_ci_witness.py"
 
 

@@ -226,6 +226,74 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
     positions = {node: index for index, (_, cases, _) in enumerate(weighted) for node in cases}
     assert positions[allow] < positions[deny] < positions[ordinary[0]]
 
+    rolling = f"{witness_file}::test_rolling_successive_real_depth_two_events"
+    event_cases = ("none", "foreign-id", "fork", "non-main", "attempt")
+    source_seconds = {
+        "reversed": (5.87, 6.20),
+        "policy": (6.13, 6.70),
+        "inherited-recipe": (6.29, 6.81),
+        "recipe": (6.16, 6.67),
+        "lock": (6.31, 6.42),
+        "new-module": (6.16, 6.69),
+        "deleted-module": (5.99, 6.47),
+        "mode": (6.29, 6.38),
+        "no-product": (6.27, 6.59),
+    }
+    expected = {
+        f"{rolling}[{case}-{successor}]": f"{rolling}::event-scope-{successor}"
+        for successor in (1, 2)
+        for case in event_cases
+    }
+    expected.update(
+        {
+            f"{rolling}[{case}-{successor}]": f"{rolling}[{case}-{successor}]"
+            for successor in (1, 2)
+            for case in source_seconds
+        }
+    )
+    assert checker.WINDOWS_ROLLING_SCOPES == expected
+    old = [f"{witness_file}::test_old[{index}]" for index in range(164)]
+    unknown = [
+        f"{rolling}[none-3]",
+        f"{rolling}[new-defect-1]",
+        f"{rolling}[none-1-extra]",
+        f"{rolling}_similar[none-1]",
+        f"tests/unit/test_other.py::test_rolling_successive_real_depth_two_events[none-1]",
+    ]
+    cases = [*expected, *old, *unknown]
+    windows = checker.test_case_groups(cases, platform="windows")
+    linux = checker.test_case_groups(cases, platform="linux")
+    linux_plan = checker.assign_test_cases(Counter(cases), shard_count=4, platform="linux")
+    assert sorted(Counter(windows[node] for node in expected).values()) == [1] * 18 + [5, 5]
+    assert len({windows[node] for node in old + unknown[:-1]}) == 1
+    assert not {windows[node] for node in expected} & {windows[node] for node in old}
+    for node, scope in expected.items():
+        assert checker._case_scope(node, windows=True) == scope
+        assert checker._case_scope(node) == witness_file
+    costs = {scope: seconds for scope, _, seconds in checker.windows_groups_by_runtime(cases)}
+    assert costs[witness_file] == 87.80
+    assert costs[f"{rolling}::event-scope-1"] == 9.70
+    assert costs[f"{rolling}::event-scope-2"] == 10.09
+    for case, seconds in source_seconds.items():
+        for successor in (1, 2):
+            assert costs[f"{rolling}[{case}-{successor}]"] == seconds[successor - 1]
+    placement = checker.assign_test_cases(Counter(cases), shard_count=10, platform="windows")
+    checker.verify_complete_disjoint_union(Counter(cases), placement)
+    assert placement == checker.assign_test_cases(
+        Counter(reversed(cases)), shard_count=10, platform="windows"
+    )
+    inverse = checker.projected_ids(windows)
+    assert Counter(inverse.values()) == Counter(cases)
+    for group in set(windows.values()):
+        members = {node for node in cases if windows[node] == group}
+        assert sum(members <= set(shard) for shard in placement) == 1
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(checker, "WINDOWS_ROLLING_SCOPES", {})
+        assert checker.test_case_groups(cases, platform="linux") == linux
+        assert (
+            checker.assign_test_cases(Counter(cases), shard_count=4, platform="linux") == linux_plan
+        )
+
 
 def test_exact_projection_preserves_literal_at_signs_and_rejects_collisions() -> None:
     checker = _load_collection_script()
@@ -474,6 +542,28 @@ def small_suite(tmp_path_factory):
         "def test_serial(value, serial):\n    time.sleep(0.02)\n    serial.append(value)\n",
         encoding="utf-8",
     )
+    (tests / "unit/test_windows_ci_witness.py").write_text(
+        "import json\nfrom pathlib import Path\nimport pytest\n"
+        "EVENTS = {'none', 'foreign-id', 'fork', 'non-main', 'attempt'}\n"
+        "@pytest.fixture(scope='module')\n"
+        "def event_checkouts(worker_id):\n"
+        "    seen = {}\n    yield seen\n"
+        "    for successor, cases in seen.items():\n"
+        "        assert set(cases) == EVENTS\n"
+        "        with Path(f'rolling-{successor}.json').open('x') as out:\n"
+        "            json.dump(dict(worker=worker_id, cases=sorted(cases)), out)\n"
+        "@pytest.mark.parametrize('successor', [1, 2])\n"
+        "@pytest.mark.parametrize('defect', ['none', 'reversed', 'policy', "
+        "'inherited-recipe', 'recipe', 'lock', 'new-module', 'deleted-module', "
+        "'mode', 'no-product', 'foreign-id', 'fork', 'non-main', 'attempt'])\n"
+        "def test_rolling_successive_real_depth_two_events(successor, defect, event_checkouts):\n"
+        "    if defect in EVENTS:\n"
+        "        seen = event_checkouts.setdefault(successor, [])\n"
+        "        assert defect not in seen\n        seen.append(defect)\n"
+        "@pytest.mark.parametrize('value', [1, 2])\n"
+        "def test_old(value): assert value in (1, 2)\n",
+        encoding="utf-8",
+    )
     checker = _load_collection_script()
     with pytest.MonkeyPatch.context() as patch:
         patch.syspath_prepend(str(ROOT / "scripts"))
@@ -700,12 +790,14 @@ def test_real_loadgroup_preserves_shared_fixtures_and_splits_audited_cases(small
                 worker_order = [ranks[inverse[node]] for node in worker_nodes]
                 assert worker_order == sorted(worker_order)
     homes = {}
+    placements = {}
     audited = []
     for shard, receipt in enumerate(receipts):
         for raw, reports in receipt["reports"].items():
             node = inverse[raw]
             worker = reports[0]["worker"]
             homes[node] = worker
+            placements[node] = (shard, worker)
             if node.startswith("tests/unit/test_windows_update_helper.py::"):
                 audited.append((shard, groups[node]))
         assert all(
@@ -715,6 +807,25 @@ def test_real_loadgroup_preserves_shared_fixtures_and_splits_audited_cases(small
     # The platform weights can divide the four independent groups unevenly.
     assert len(audited) == len({group for _, group in audited}) == 4
     assert {shard for shard, _ in audited} == {0, 1}
+    rolling = "tests/unit/test_windows_ci_witness.py::test_rolling_successive_real_depth_two_events"
+    for successor in (1, 2):
+        event_nodes = [
+            f"{rolling}[{case}-{successor}]"
+            for case in ("none", "foreign-id", "fork", "non-main", "attempt")
+        ]
+        witness = checker.read_receipt(root / f"rolling-{successor}.json")
+        assert len({placements[node] for node in event_nodes}) == 1
+        assert homes[event_nodes[0]] == witness["worker"]
+        assert witness["cases"] == ["attempt", "foreign-id", "fork", "non-main", "none"]
+    rolling_nodes = [node for node in cases if node.startswith(rolling + "[")]
+    assert len(rolling_nodes) == 28
+    assert len({groups[node] for node in rolling_nodes}) == (20 if platform == "windows" else 1)
+    old_nodes = [
+        node
+        for node in cases
+        if node.startswith("tests/unit/test_windows_ci_witness.py::test_old[")
+    ]
+    assert len(old_nodes) == 2 and len({placements[node] for node in old_nodes}) == 1
     witnesses = {letter: checker.read_receipt(root / f"witness-{letter}.json") for letter in "ab"}
     _verify_fixture_witnesses(homes, witnesses)
 
@@ -723,7 +834,9 @@ def test_real_loadgroup_preserves_shared_fixtures_and_splits_audited_cases(small
 def test_all_terminal_passes_cannot_replace_shared_fixture_witnesses(small_suite, corruption):
     checker, _, root, _, canonical, receipts = small_suite
     _verify_small(small_suite)
-    inverse = checker.projected_ids(checker.test_case_groups(canonical["collection"]))
+    inverse = checker.projected_ids(
+        checker.test_case_groups(canonical["collection"], platform=small_suite[3]["platform"])
+    )
     homes = {
         inverse[raw]: reports[0]["worker"]
         for receipt in receipts
@@ -820,7 +933,9 @@ def test_execution_receipts_reject_corrupted_real_evidence(small_suite, corrupti
         reports[-1]["worker"] = "gw99"
     elif corruption in {"missing suffix", "stacked suffix", "wrong group"}:
         checker = small_suite[0]
-        inverse = checker.projected_ids(checker.test_case_groups(canonical["collection"]))
+        inverse = checker.projected_ids(
+            checker.test_case_groups(canonical["collection"], platform=small_suite[3]["platform"])
+        )
         changed = {
             "missing suffix": inverse[node],
             "stacked suffix": node + "@atc-group-999999",

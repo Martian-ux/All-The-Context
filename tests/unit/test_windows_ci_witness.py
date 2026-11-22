@@ -16,6 +16,7 @@ import threading
 import urllib.error
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -924,11 +925,15 @@ WITNESS_OVERLAY_BLOBS = {
     "scripts/windows_ci_pilot.py": "a06c6f2b46f8bae744ccc61ede367aa1a37d54aa",
     "scripts/windows_ci_canonical.py": "5e47f71507e7ea9e36c3ee372361de08114a7d38",
 }
-CURRENT_WITNESS_UPDATES = {
+AFFINITY_BASE = "167ec74a6f3967690ee9fd85bab7adcade658632"
+PREVIOUS_WITNESS_UPDATES = {
     "scripts/check_test_collection.py": "01de4bf97745a53edddacdf9ef7fa2011ad56a8e",
     ".github/workflows/ci.yml": "5b6c9715c25f3a4392ca9984a5de2116f1cc5d36",
     "scripts/windows_ci_pilot.py": "7cec3559b00402a01bdf676575261774ffb224e2",
     "scripts/windows_ci_components.py": "eccc6705208166773e796fcb1e0312d0e6dec80d",
+}
+CURRENT_WITNESS_UPDATES = PREVIOUS_WITNESS_UPDATES | {
+    "scripts/check_test_collection.py": "fa87a31c5e0fd23a8cae570712ff94d8819d64ab",
 }
 
 
@@ -965,6 +970,7 @@ def test_protected_main_admission_binds_both_reviewed_overlays():
     for revision, pins in (
         (PRIOR_CI, PRIOR_OVERLAY_BLOBS),
         (REVIEWED_WITNESS, WITNESS_OVERLAY_BLOBS),
+        (AFFINITY_BASE, PREVIOUS_WITNESS_UPDATES),
         ("HEAD", witness.QUALIFIED_INPUT_BLOBS),
     ):
         for name, blob in pins.items():
@@ -972,6 +978,8 @@ def test_protected_main_admission_binds_both_reviewed_overlays():
     # The current witness must also retain every prior-overlay pin unchanged.
     for name, blob in PRIOR_OVERLAY_BLOBS.items():
         assert git("rev-parse", f"{REVIEWED_WITNESS}:{name}") == blob
+    files = witness._git_tree_files(ROOT, "HEAD")
+    assert witness.rolling_inventory(files) == witness.ROLLING_INVENTORY_SHA256
 
 
 @pytest.fixture(scope="module")
@@ -1735,28 +1743,7 @@ def test_early_source_qualification_import_needs_no_installed_dependencies():
     assert completed.returncode == 0, completed.stderr
 
 
-@pytest.mark.parametrize("successor", [1, 2])
-@pytest.mark.parametrize(
-    "defect",
-    [
-        "none",
-        "reversed",
-        "policy",
-        "inherited-recipe",
-        "recipe",
-        "lock",
-        "new-module",
-        "deleted-module",
-        "mode",
-        "no-product",
-        "foreign-id",
-        "fork",
-        "non-main",
-        "attempt",
-    ],
-)
-def test_rolling_successive_real_depth_two_events(tmp_path, monkeypatch, successor, defect):
-    """Real Git objects and shallow transport; synthetic provider events, no hosted claim."""
+def _rolling_depth_two_checkout(tmp_path, successor, defect):
     objects = tmp_path / "objects"
     subprocess.run(
         ["git", "clone", "--shared", "--no-checkout", str(ROOT), str(objects)],
@@ -1870,6 +1857,57 @@ def test_rolling_successive_real_depth_two_events(tmp_path, monkeypatch, success
         check=True,
         capture_output=True,
     )
+    return root, base, head, tree, merge, parents, later
+
+
+@pytest.fixture(scope="module")
+def rolling_ordinary_checkout(tmp_path_factory):
+    @cache
+    def prepare(successor):
+        scratch = tmp_path_factory.mktemp("rolling-ordinary")
+        return _rolling_depth_two_checkout(scratch, successor, "none")
+
+    return prepare
+
+
+@pytest.mark.parametrize("successor", [1, 2])
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "none",
+        "reversed",
+        "policy",
+        "inherited-recipe",
+        "recipe",
+        "lock",
+        "new-module",
+        "deleted-module",
+        "mode",
+        "no-product",
+        "foreign-id",
+        "fork",
+        "non-main",
+        "attempt",
+    ],
+)
+def test_rolling_successive_real_depth_two_events(
+    tmp_path, rolling_ordinary_checkout, successor, defect
+):
+    """Real Git objects and shallow transport; synthetic provider events, no hosted claim."""
+    if defect in {"none", "foreign-id", "fork", "non-main", "attempt"}:
+        # These cases vary the provider event or environment only. The prepared
+        # checkout is shared for the same synthetic merge and successor.
+        root, base, head, tree, merge, parents, later = rolling_ordinary_checkout(successor)
+    else:
+        root, base, head, tree, merge, parents, later = _rolling_depth_two_checkout(
+            tmp_path, successor, defect
+        )
+    assert pilot.git(root, "rev-parse", "--is-shallow-repository").strip() == b"true"
+    assert pilot.git(root, "rev-list", "--parents", "-n", "1", "HEAD").decode().split() == [
+        merge,
+        *parents,
+    ]
+    assert not (root / ".git" / "objects" / "info" / "alternates").exists()
     assert (
         pilot.git(root, "rev-parse", "refs/remotes/origin/main").decode().strip() == later != base
     )
