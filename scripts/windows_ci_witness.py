@@ -96,12 +96,12 @@ QUALIFIED_INPUT_BLOBS = {
     "tests/unit/test_packaged_first_run_diagnostics.py": "24779103a5896ca10726b845ddf8df6b0dda08b7",
     "tests/unit/test_retrieval_m3_current_candidate.py": "07f4453ad2b43a0afafb6681da41ce04153ad11d",
     # Current reviewed witness inputs (including its changes to prior CI files).
-    ".github/workflows/ci.yml": "c7e3ba2a64a3c8f02f06fd087431d1163e21a399",
+    ".github/workflows/ci.yml": "5b6c9715c25f3a4392ca9984a5de2116f1cc5d36",
     "scripts/build_desktop.py": "233b11b625c2f75aa17609cd8f7500d7d6930acf",
     "scripts/verify_reproducible_build.py": "91a6c93381f1245a69e8c94d1f6d8fbf98c7b8d4",
-    "scripts/windows_ci_components.py": "59339c5d2c56f2796b36b446e76605d337eaaa4b",
+    "scripts/windows_ci_components.py": "5aa48eb7e2c0a4ff054d73b3a2ef6437a385e4c6",
     "scripts/windows_ci_package_checks.py": "d2bbb50c719b19058faf4aef204a6d0a1235bf4f",
-    "scripts/windows_ci_pilot.py": "4bb68bd11c85b932debf4b4226de594aa17d777c",
+    "scripts/windows_ci_pilot.py": "62786dfa8368728ef6f1525d34917e4c523a36a1",
     "scripts/windows_ci_canonical.py": "5e47f71507e7ea9e36c3ee372361de08114a7d38",
 }
 MARKER_PATTERN = re.compile(
@@ -127,6 +127,36 @@ IMPLEMENTATION_FILES = {
     "docs/DECISIONS.md",
     "docs/REQUIREMENTS_TRACEABILITY.md",
 }
+# SHA-256 of the reviewed inventory, with only existing shipped Python,
+# tests/docs content and this policy's own blob omitted. Names and modes remain
+# covered. Generated offline from the reviewed source, never from a PR claim.
+ROLLING_INVENTORY_SHA256 = "fb217ac3e01ec70ae8b0ea5437355d8a3c28201f5466e07ad3c1258bfae8b063"
+POLICY = "scripts/windows_ci_witness.py"
+
+
+def ordinary_name(name: str) -> tuple[bool, bool]:
+    safe = re.fullmatch(r"[A-Za-z0-9_./-]+", name) is not None
+    product = (
+        safe
+        and name.startswith("packages/allthecontext/src/allthecontext/")
+        and name.endswith(".py")
+    )
+    supporting = safe and (
+        (name.startswith("tests/") and name.endswith(".py"))
+        or (name.startswith("docs/") and name.endswith(".md"))
+    )
+    return product, supporting
+
+
+def rolling_inventory(files: dict) -> str:
+    rows = []
+    for name, (mode, kind, blob) in sorted(files.items()):
+        text = name.decode("utf-8")
+        flexible = any(ordinary_name(text)) or text == POLICY
+        rows.append([text, mode.decode(), kind.decode(), "*" if flexible else blob.decode()])
+    return hashlib.sha256(provenance.canonical_json({"files": rows})).hexdigest()
+
+
 require = pilot.require
 git = pilot.git
 
@@ -199,8 +229,24 @@ def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
     pr = event.get("pull_request")
     require(isinstance(pr, dict), "not an ordinary PR")
     base = pr.get("base")
-    require(isinstance(base, dict) and base.get("sha") == BASE, "unreviewed ordinary base")
-    require(pilot.eligible_context(event, context), "unsupported ordinary context")
+    require(isinstance(base, dict), "unreviewed ordinary base")
+    event_base = base.get("sha")
+    require(
+        isinstance(event_base, str) and pilot.COMMIT_SHA.fullmatch(event_base),
+        "unreviewed ordinary base",
+    )
+    rolling = event_base != BASE
+    # Reuse the fixed context checks without changing the fixed pilot authority.
+    checked_event = {**event, "pull_request": {**pr, "base": {**base, "sha": pilot.SOURCE}}}
+    require(pilot.eligible_context(checked_event, context), "unsupported ordinary context")
+    if rolling:
+        for repo in (event["repository"], base["repo"], pr["head"]["repo"]):
+            require(
+                type(repo.get("id")) is int
+                and repo["id"] == pilot.REPOSITORY_ID
+                and repo.get("fork") is False,
+                "unsupported ordinary context",
+            )
     require(
         environment.get("GITHUB_JOB")
         == ("windows-stock-witness" if producer else "desktop-package"),
@@ -219,10 +265,27 @@ def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
             "unreviewed CI/native input",
         )
     parents = git(root, "rev-list", "--parents", "-n", "1", commit).decode().split()
-    require(parents == [commit, BASE, pr["head"]["sha"]], "unsupported merge parents")
-    base_files = _git_tree_files(root, BASE)
+    require(parents == [commit, event_base, pr["head"]["sha"]], "unsupported merge parents")
+    base_files = _git_tree_files(root, event_base)
+    if rolling:
+        require(
+            base_files.get(POLICY.encode()) == candidate_files.get(POLICY.encode())
+            and base_files.get(POLICY.encode(), ())[:2] == (b"100644", b"blob"),
+            "changed rolling policy",
+        )
+        for files in (base_files, candidate_files):
+            require(
+                rolling_inventory(files) == ROLLING_INVENTORY_SHA256, "unreviewed rolling inventory"
+            )
+            for name, blob in QUALIFIED_INPUT_BLOBS.items():
+                require(
+                    files.get(name.encode()) == (b"100644", b"blob", blob.encode()),
+                    "unreviewed CI/native input",
+                )
     rows = (
-        git(root, "diff", "--name-status", "--no-renames", "-z", BASE, commit).decode().split("\0")
+        git(root, "diff", "--name-status", "--no-renames", "-z", event_base, commit)
+        .decode()
+        .split("\0")
     )
     require(rows[-1] == "" and len(rows) % 2 == 1, "invalid source delta")
     ordinary = False
@@ -234,13 +297,23 @@ def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
                 entry is not None and entry[:2] == (b"100644", b"blob"),
                 "unsupported ordinary file",
             )
-        if name in IMPLEMENTATION_FILES or name in QUALIFIED_INPUT_BLOBS:
+        if not rolling and (name in IMPLEMENTATION_FILES or name in QUALIFIED_INPUT_BLOBS):
             continue
-        product = name.startswith("packages/allthecontext/src/allthecontext/") and name.endswith(
-            ".py"
-        )
-        supporting = (name.startswith("tests/") and name.endswith(".py")) or (
-            name.startswith("docs/") and name.endswith(".md")
+        if rolling:
+            require(
+                status == "M"
+                and base_files.get(name.encode())[:2] == candidate_files.get(name.encode())[:2],
+                "unsupported source delta",
+            )
+        product, supporting = (
+            ordinary_name(name)
+            if rolling
+            else (
+                name.startswith("packages/allthecontext/src/allthecontext/")
+                and name.endswith(".py"),
+                (name.startswith("tests/") and name.endswith(".py"))
+                or (name.startswith("docs/") and name.endswith(".md")),
+            )
         )
         require(status == "M" and (product or supporting), "uncovered ordinary input")
         ordinary |= product
@@ -262,8 +335,24 @@ def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
         require(
             relative in tracked and stat.S_ISREG(information.st_mode), "uncovered checkout input"
         )
+    if rolling:
+        for directory in ("scripts", "apps/dashboard/src", "apps/dashboard/public"):
+            for count, path in enumerate((root / directory).rglob("*")):
+                require(count < 10_000, "oversized recipe input inventory")
+                info = path.lstat()
+                require(
+                    not path.is_symlink() and not getattr(info, "st_file_attributes", 0) & 0x400,
+                    "linked recipe input",
+                )
+                if path.is_dir() or ("__pycache__" in path.parts and path.suffix == ".pyc"):
+                    continue
+                require(
+                    stat.S_ISREG(info.st_mode)
+                    and path.relative_to(root).as_posix().encode() in candidate_files,
+                    "uncovered recipe checkout input",
+                )
     require(
-        pilot.profile(git(root, "show", f"{BASE}:scripts/build_desktop.py"))
+        pilot.profile(git(root, "show", f"{event_base}:scripts/build_desktop.py"))
         == pilot.profile(git(root, "show", f"{commit}:scripts/build_desktop.py")),
         "packaging graph policy changed",
     )
@@ -396,7 +485,15 @@ def validate_attempt(run: dict, identity: dict) -> str:
     return provider_head
 
 
-def producer_job(jobs: dict, identity: dict, provider_head: str) -> dict | None:
+def producer_job(
+    jobs: dict,
+    identity: dict,
+    provider_head: str,
+    *,
+    job_name: str = JOB,
+    upload_name: str = UPLOAD,
+    marker_name: str = MARKER,
+) -> dict | None:
     """Find exactly one successful producer in the validated attempt."""
     rows = jobs.get("jobs")
     require(
@@ -405,7 +502,7 @@ def producer_job(jobs: dict, identity: dict, provider_head: str) -> dict | None:
         and jobs["total_count"] == len(rows) <= 100,
         "incomplete provider jobs",
     )
-    matches = [row for row in rows if isinstance(row, dict) and row.get("name") == JOB]
+    matches = [row for row in rows if isinstance(row, dict) and row.get("name") == job_name]
     require(len(matches) <= 1, "ambiguous producer job")
     if not matches:
         return None
@@ -439,7 +536,7 @@ def producer_job(jobs: dict, identity: dict, provider_head: str) -> dict | None:
         "invalid provider step numbers",
     )
     selected = []
-    for name in (UPLOAD, MARKER):
+    for name in (upload_name, marker_name):
         matching = [step for step in steps if step.get("name") == name]
         require(
             len(matching) == 1
@@ -449,7 +546,12 @@ def producer_job(jobs: dict, identity: dict, provider_head: str) -> dict | None:
         )
         selected.append(matching[0])
     require(selected[0]["number"] < selected[1]["number"], "invalid producer step order")
-    return {"id": job_id, "step": selected[1]["number"], "provider_head": provider_head}
+    return {
+        "id": job_id,
+        "step": selected[1]["number"],
+        "upload_step": selected[0]["number"],
+        "provider_head": provider_head,
+    }
 
 
 def validate_artifact(
@@ -591,9 +693,144 @@ def acquire(expected: dict) -> tuple:
         raise WitnessMiss(f"{stage}-invalid") from None
 
 
+DONOR_JOB = "Desktop artifact - windows-latest"
+DONOR_UPLOAD = "Upload desktop package"
+DONOR_MARKER = "Record Windows main donor upload identity"
+DONOR_PATTERN = re.compile(
+    r"^(?:\d{4}-\d\d-\d\dT[0-9:.]+Z )?"
+    r"ATC_WINDOWS_DONOR_V1 artifact_id=([1-9][0-9]{0,19}) digest=sha256:([0-9a-f]{64})$",
+    re.MULTILINE,
+)
+
+
+def protected_donor(root: Path, commit: str) -> pilot.RollingDonor:
+    """One bounded exact-base lookup; no ancestor search or indexing wait."""
+    admit_source(root, commit)
+    event = bounded_json(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes(), 1_000_000)
+    base = event["pull_request"]["base"]["sha"]
+    require(base != BASE, "fixed bootstrap donor required")
+    deadline = time.monotonic() + 20
+    workflow = api_json("actions/workflows/ci.yml", deadline=deadline)
+    workflow_id = workflow.get("id")
+    require(
+        type(workflow_id) is int
+        and workflow_id > 0
+        and workflow.get("path") == ".github/workflows/ci.yml"
+        and workflow.get("state") == "active"
+        and workflow.get("url")
+        == f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/workflows/{workflow_id}",
+        "wrong donor workflow",
+    )
+    runs = api_json(
+        f"actions/workflows/{workflow_id}/runs?event=push&branch=main&head_sha={base}&per_page=100",
+        deadline=deadline,
+    )
+    rows = runs.get("workflow_runs")
+    require(
+        isinstance(rows, list)
+        and type(runs.get("total_count")) is int
+        and runs["total_count"] == len(rows) <= 100,
+        "incomplete donor runs",
+    )
+    matches = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("head_sha") == base
+        and row.get("status") == "completed"
+        and row.get("conclusion") == "success"
+    ]
+    require(len(matches) == 1, "absent or ambiguous donor run")
+    selected = matches[0]
+    run_id, attempt = selected.get("id"), selected.get("run_attempt")
+    require(
+        type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0,
+        "invalid donor attempt",
+    )
+    route = f"actions/runs/{run_id}/attempts/{attempt}"
+    run = api_json(route, deadline=deadline)
+    for value in (selected, run):
+        require(
+            value.get("id") == run_id
+            and value.get("run_attempt") == attempt
+            and value.get("workflow_id") == workflow_id
+            and value.get("path") == ".github/workflows/ci.yml"
+            and value.get("event") == "push"
+            and value.get("head_branch") == "main"
+            and value.get("head_sha") == base
+            and value.get("status") == "completed"
+            and value.get("conclusion") == "success"
+            and value.get("url")
+            == f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/runs/{run_id}"
+            and all(
+                value.get(key, {}).get("id") == pilot.REPOSITORY_ID
+                and value.get(key, {}).get("full_name") == pilot.REPOSITORY
+                for key in ("repository", "head_repository")
+            ),
+            "wrong donor run",
+        )
+    job = producer_job(
+        api_json(f"{route}/jobs?per_page=100", deadline=deadline),
+        {"run_id": run_id, "run_attempt": attempt},
+        base,
+        job_name=DONOR_JOB,
+        upload_name=DONOR_UPLOAD,
+        marker_name=DONOR_MARKER,
+    )
+    require(job is not None, "missing successful donor job")
+    log = provider_bytes(
+        f"actions/jobs/{job['id']}/steps/{job['step']}/logs", 64_000, deadline=deadline
+    )
+    matches = DONOR_PATTERN.findall(log.decode("utf-8").replace("\r\n", "\n"))
+    require(len(matches) == 1, "missing exact donor marker")
+    artifact_id, digest = int(matches[0][0]), matches[0][1]
+    artifact = api_json(f"actions/artifacts/{artifact_id}", deadline=deadline)
+    origin = artifact.get("workflow_run", {})
+    expiry = artifact.get("expires_at")
+    pilot.require_future_expiry(expiry)
+    require(
+        artifact.get("id") == artifact_id
+        and artifact.get("name") == "all-the-context-windows-x86_64"
+        and artifact.get("expired") is False
+        and artifact.get("digest") == f"sha256:{digest}"
+        and type(artifact.get("size_in_bytes")) is int
+        and 0 < artifact["size_in_bytes"] <= pilot.MAX_ROLLING_ARCHIVE
+        and artifact.get("url")
+        == f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/artifacts/{artifact_id}"
+        and artifact.get("archive_download_url")
+        == f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/artifacts/{artifact_id}/zip"
+        and origin.get("id") == run_id
+        and origin.get("head_sha") == base
+        and origin.get("head_branch") == "main"
+        and origin.get("repository_id") == pilot.REPOSITORY_ID
+        and origin.get("head_repository_id") == pilot.REPOSITORY_ID,
+        "wrong donor artifact",
+    )
+    version = pilot.git(root, "show", f"{base}:pyproject.toml")
+    import tomllib
+
+    return pilot.RollingDonor(
+        source=base,
+        workflow_id=workflow_id,
+        run_id=run_id,
+        attempt=attempt,
+        job_id=job["id"],
+        upload_step=job["upload_step"],
+        marker_step=job["step"],
+        artifact_id=artifact_id,
+        size=artifact["size_in_bytes"],
+        digest=digest,
+        expires_at=expiry,
+        version=tomllib.loads(version.decode())["project"]["version"],
+    )
+
+
 def donor_runner(root: Path, commit: str, tools: dict, locks: dict):
     paths = pilot.prepared_donor(tools, locks)
-    return component_runner(root, commit, paths, witness_profile=True)
+    descriptor = pilot.prepared_descriptor()
+    if descriptor is None:
+        return component_runner(root, commit, paths, witness_profile=True)
+    return component_runner(root, commit, paths, witness_profile=True, donor_descriptor=descriptor)
 
 
 def require_components(witnessed: tuple, observed: tuple, stage: str) -> None:

@@ -926,8 +926,9 @@ WITNESS_OVERLAY_BLOBS = {
 }
 CURRENT_WITNESS_UPDATES = {
     "scripts/check_test_collection.py": "01de4bf97745a53edddacdf9ef7fa2011ad56a8e",
-    "scripts/windows_ci_components.py": "59339c5d2c56f2796b36b446e76605d337eaaa4b",
-    "scripts/windows_ci_pilot.py": "4bb68bd11c85b932debf4b4226de594aa17d777c",
+    ".github/workflows/ci.yml": "5b6c9715c25f3a4392ca9984a5de2116f1cc5d36",
+    "scripts/windows_ci_pilot.py": "62786dfa8368728ef6f1525d34917e4c523a36a1",
+    "scripts/windows_ci_components.py": "5aa48eb7e2c0a4ff054d73b3a2ef6437a385e4c6",
 }
 
 
@@ -1702,3 +1703,403 @@ def test_early_source_qualification_import_needs_no_installed_dependencies():
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("successor", [1, 2])
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "none",
+        "reversed",
+        "policy",
+        "inherited-recipe",
+        "recipe",
+        "lock",
+        "new-module",
+        "deleted-module",
+        "mode",
+        "no-product",
+        "foreign-id",
+        "fork",
+        "non-main",
+        "attempt",
+    ],
+)
+def test_rolling_successive_real_depth_two_events(tmp_path, monkeypatch, successor, defect):
+    """Real Git objects and shallow transport; synthetic provider events, no hosted claim."""
+    objects = tmp_path / "objects"
+    subprocess.run(
+        ["git", "clone", "--shared", "--no-checkout", str(ROOT), str(objects)],
+        check=True,
+        capture_output=True,
+    )
+    environment = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Rolling fixture",
+        "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "Rolling fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+    }
+
+    def git(*args, data=None):
+        return (
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", "-C", str(objects), *args],
+                input=data,
+                env=environment,
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
+
+    product = "packages/allthecontext/src/allthecontext/http_client.py"
+    policy = witness.POLICY
+    base = git(
+        "commit-tree",
+        git("rev-parse", "HEAD^{tree}"),
+        "-p",
+        PROTECTED_MAIN,
+        "-m",
+        "Synthetic protected deployment of clean candidate",
+    )
+    for number in range(1, successor + 1):
+        if number == successor and defect == "inherited-recipe":
+            git("read-tree", base)
+            blob = git("hash-object", "-w", "--stdin", data=b"unreviewed inherited recipe")
+            git("update-index", "--cacheinfo", f"100644,{blob},scripts/build_release_assets.py")
+            base = git("commit-tree", git("write-tree"), "-p", base, "-m", "Inherited drift")
+        git("read-tree", base)
+        edits = {
+            product: pilot.git(objects, "show", f"{base}:{product}")
+            + f"\n# ordinary {number}\n".encode()
+        }
+        if number == successor:
+            if defect == "no-product":
+                edits = {
+                    "docs/STATUS.md": pilot.git(objects, "show", f"{base}:docs/STATUS.md")
+                    + b"\nDoc edit\n"
+                }
+            for key, name in {
+                "policy": policy,
+                "recipe": "scripts/build_release_assets.py",
+                "lock": "uv.lock",
+                "new-module": product.replace("http_client", "unreviewed"),
+            }.items():
+                if defect == key:
+                    edits[name] = (
+                        pilot.git(objects, "show", f"{base}:{name}") + b"\n# drift\n"
+                        if key != "new-module"
+                        else b"pass\n"
+                    )
+        for name, raw in edits.items():
+            blob = git("hash-object", "-w", "--stdin", data=raw)
+            git("update-index", "--add", "--cacheinfo", f"100644,{blob},{name}")
+        if number == successor and defect == "deleted-module":
+            git("update-index", "--force-remove", product)
+        if number == successor and defect == "mode":
+            git("update-index", "--chmod=+x", product)
+        tree = git("write-tree")
+        head = git("commit-tree", tree, "-p", base, "-m", f"Ordinary shipped edit {number}")
+        parents = [base, head]
+        if number == successor and defect == "reversed":
+            parents.reverse()
+        merge = git(
+            "commit-tree", tree, "-p", parents[0], "-p", parents[1], "-m", "Synthetic PR merge"
+        )
+        if number < successor:
+            base = merge
+    # A later main tip must not replace the event base, even in a shallow checkout.
+    later = git("commit-tree", tree, "-p", base, "-m", "Protected main advanced after event")
+    root = tmp_path / "provider"
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+    for args in (
+        ("config", "core.autocrlf", "false"),
+        ("fetch", "--no-tags", "--depth=2", objects.as_uri(), merge),
+        ("checkout", "--detach", "FETCH_HEAD"),
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    assert pilot.git(root, "rev-parse", "--is-shallow-repository").strip() == b"true"
+    assert pilot.git(root, "rev-list", "--parents", "-n", "1", "HEAD").decode().split() == [
+        merge,
+        *parents,
+    ]
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "fetch",
+            "--no-tags",
+            "--depth=1",
+            objects.as_uri(),
+            f"{later}:refs/remotes/origin/main",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert (
+        pilot.git(root, "rev-parse", "refs/remotes/origin/main").decode().strip() == later != base
+    )
+    repo = {"id": pilot.REPOSITORY_ID, "full_name": pilot.REPOSITORY, "fork": False}
+    event = {
+        "number": 137,
+        "repository": repo,
+        "pull_request": {
+            "base": {"sha": base, "ref": "main", "repo": dict(repo)},
+            "head": {"sha": head, "repo": dict(repo)},
+            "merge_commit_sha": merge,
+        },
+    }
+    if defect == "foreign-id":
+        event["pull_request"]["head"]["repo"]["id"] += 1
+    if defect == "fork":
+        event["pull_request"]["head"]["repo"]["fork"] = True
+    if defect == "non-main":
+        event["pull_request"]["base"]["ref"] = "feature"
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    process = """
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1]); sys.path.insert(0, str(root))
+from scripts import windows_ci_witness as witness
+try:
+    result = witness.admit_source(root, sys.argv[2], producer=sys.argv[3] == 'true')
+except (ValueError, TypeError) as exc:
+    result = {'error': str(exc)}
+print(json.dumps(result))
+"""
+    for role, producer in (("desktop-package", False), ("windows-stock-witness", True)):
+        completed = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", process, str(root), merge, str(producer).lower()],
+            env={
+                **os.environ,
+                "GITHUB_EVENT_PATH": str(event_path),
+                "GITHUB_SHA": merge,
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_REF": "refs/pull/137/merge",
+                "RUNNER_OS": "Windows",
+                "GITHUB_REPOSITORY": pilot.REPOSITORY,
+                "GITHUB_JOB": role,
+                "GITHUB_RUN_ID": "43",
+                "GITHUB_RUN_ATTEMPT": "0" if defect == "attempt" else "3",
+            },
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = json.loads(completed.stdout)
+        if defect == "none":
+            assert result == {
+                "repository": pilot.REPOSITORY,
+                "run_id": 43,
+                "run_attempt": 3,
+                "head": merge,
+                "tree": tree,
+                "pr_head": head,
+            }
+        else:
+            assert "error" in result, (defect, role, result)
+        assert not pilot.git(root, "status", "--porcelain", "--untracked-files=normal")
+
+
+@pytest.fixture
+def rolling_provider(ordinary_checkout, monkeypatch):
+    root, commit, event, _event_path, _git = ordinary_checkout
+    base = event["pull_request"]["base"]["sha"]
+    monkeypatch.setattr(witness, "BASE", PROTECTED_MAIN)
+    monkeypatch.setattr(witness, "admit_source", lambda *_args: IDENTITY)
+    workflow = {
+        "id": 901,
+        "path": ".github/workflows/ci.yml",
+        "state": "active",
+        "url": f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/workflows/901",
+    }
+    repo = {"id": pilot.REPOSITORY_ID, "full_name": pilot.REPOSITORY}
+    run = {
+        "id": 82,
+        "run_attempt": 3,
+        "workflow_id": 901,
+        "head_sha": base,
+        "head_branch": "main",
+        "event": "push",
+        "status": "completed",
+        "conclusion": "success",
+        "path": workflow["path"],
+        "repository": repo,
+        "head_repository": dict(repo),
+        "url": f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/runs/82",
+    }
+    job = {
+        "id": 83,
+        "name": witness.DONOR_JOB,
+        "run_id": 82,
+        "run_attempt": 3,
+        "head_sha": base,
+        "status": "completed",
+        "conclusion": "success",
+        "url": f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/jobs/83",
+        "run_url": run["url"],
+        "steps": [
+            {"name": name, "number": number, "status": "completed", "conclusion": "success"}
+            for name, number in ((witness.DONOR_UPLOAD, 8), (witness.DONOR_MARKER, 9))
+        ],
+    }
+    artifact = {
+        "id": 84,
+        "name": "all-the-context-windows-x86_64",
+        "size_in_bytes": 1234,
+        "expired": False,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "digest": "sha256:" + "a" * 64,
+        "url": f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/artifacts/84",
+        "archive_download_url": f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/artifacts/84/zip",
+        "workflow_run": {
+            "id": 82,
+            "head_sha": base,
+            "head_branch": "main",
+            "repository_id": pilot.REPOSITORY_ID,
+            "head_repository_id": pilot.REPOSITORY_ID,
+        },
+    }
+    listing = {"total_count": 1, "workflow_runs": [run]}
+    jobs = {"total_count": 1, "jobs": [job]}
+    marker = b"ATC_WINDOWS_DONOR_V1 artifact_id=84 digest=sha256:" + b"a" * 64 + b"\n"
+    routes = {
+        "actions/workflows/ci.yml": workflow,
+        f"actions/workflows/901/runs?event=push&branch=main&head_sha={base}&per_page=100": listing,
+        "actions/runs/82/attempts/3": run,
+        "actions/runs/82/attempts/3/jobs?per_page=100": jobs,
+        "actions/artifacts/84": artifact,
+        "actions/jobs/83/steps/9/logs": marker,
+    }
+    calls = []
+
+    def fetch(route, *_args, **_kwargs):
+        calls.append(route)
+        return copy.deepcopy(routes[route])
+
+    monkeypatch.setattr(witness, "api_json", fetch)
+    monkeypatch.setattr(witness, "provider_bytes", fetch)
+    monkeypatch.setattr(pilot, "git", lambda *_args: b'[project]\nversion = "0.1.0-beta.8"\n')
+    return root, commit, workflow, run, job, artifact, listing, jobs, routes, calls
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "none",
+        "workflow",
+        "repo",
+        "head-repo",
+        "head",
+        "event",
+        "branch",
+        "running",
+        "failed",
+        "absent",
+        "ambiguous",
+        "incomplete",
+        "attempt",
+        "job",
+        "job-attempt",
+        "upload",
+        "marker",
+        "step-order",
+        "artifact-id",
+        "name",
+        "digest",
+        "origin",
+        "expired",
+        "expiry",
+        "size",
+        "url",
+        "archive-url",
+    ],
+)
+def test_exact_protected_push_descriptor_fails_closed(rolling_provider, defect):
+    root, commit, workflow, run, job, artifact, listing, _jobs, _routes, calls = rolling_provider
+    if defect == "workflow":
+        workflow["id"] = 902
+    elif defect == "repo":
+        run["repository"] = {"id": 1, "full_name": pilot.REPOSITORY}
+    elif defect == "head-repo":
+        run["head_repository"]["full_name"] = "foreign/repo"
+    elif defect in {"head", "event", "branch", "running", "failed"}:
+        field, value = {
+            "head": ("head_sha", "f" * 40),
+            "event": ("event", "pull_request"),
+            "branch": ("head_branch", "feature"),
+            "running": ("status", "in_progress"),
+            "failed": ("conclusion", "failure"),
+        }[defect]
+        run[field] = value
+    elif defect == "absent":
+        listing.update(total_count=0, workflow_runs=[])
+    elif defect == "ambiguous":
+        listing["workflow_runs"].append(dict(run))
+        listing["total_count"] = 2
+    elif defect == "incomplete":
+        listing["total_count"] = 101
+    elif defect == "attempt":
+        run["run_attempt"] = 0
+    elif defect == "job":
+        job["name"] = "unrelated"
+    elif defect == "job-attempt":
+        job["run_attempt"] = 2
+    elif defect in {"upload", "marker"}:
+        job["steps"][0 if defect == "upload" else 1]["conclusion"] = "skipped"
+    elif defect == "step-order":
+        job["steps"][0]["number"] = 10
+    elif defect == "artifact-id":
+        artifact["id"] = 85
+    elif defect == "name":
+        artifact["name"] = "other"
+    elif defect == "digest":
+        artifact["digest"] = "sha256:" + "b" * 64
+    elif defect == "origin":
+        artifact["workflow_run"]["head_sha"] = "f" * 40
+    elif defect == "expired":
+        artifact["expired"] = True
+    elif defect == "expiry":
+        artifact["expires_at"] = "2000-01-01T00:00:00Z"
+    elif defect == "size":
+        artifact["size_in_bytes"] = pilot.MAX_ROLLING_ARCHIVE + 1
+    elif defect in {"url", "archive-url"}:
+        artifact["url" if defect == "url" else "archive_download_url"] = (
+            "https://foreign.invalid/archive"
+        )
+    if defect == "none":
+        descriptor = witness.protected_donor(root, commit)
+        assert (
+            descriptor.run_id,
+            descriptor.attempt,
+            descriptor.job_id,
+            descriptor.upload_step,
+            descriptor.marker_step,
+            descriptor.artifact_id,
+        ) == (82, 3, 83, 8, 9, 84)
+        assert pilot.RollingDonor.parse(descriptor.raw()) == descriptor
+        assert calls[-1] == "actions/artifacts/84"
+    else:
+        with pytest.raises((ValueError, KeyError)):
+            witness.protected_donor(root, commit)
+
+
+def test_main_upload_marker_is_scoped_to_existing_stock_writer():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    marker = workflow.split("      - name: Record Windows main donor upload identity", 1)[1].split(
+        "\n  desktop-package-linux:", 1
+    )[0]
+    assert (
+        "runner.os == 'Windows' && github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        in marker
+    )
+    assert "steps.desktop_upload.outcome == 'success'" in marker
+    assert "steps.desktop_upload.outputs.artifact-id" in marker
+    assert "steps.desktop_upload.outputs.artifact-digest" in marker
+    assert "ATC_WINDOWS_DONOR_V1" in marker
+    assert workflow.count("id: desktop_upload") == 1

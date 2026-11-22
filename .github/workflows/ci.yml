@@ -564,7 +564,9 @@ jobs:
           --version ${{ steps.runtime-version.outputs.version }}
           --platform ${{ matrix.platform }}
           --architecture ${{ matrix.architecture }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+      - id: desktop_upload
+        name: Upload desktop package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
         with:
           name: all-the-context-${{ matrix.platform }}-${{ matrix.architecture }}
           path: |
@@ -573,6 +575,18 @@ jobs:
             dist/native-build-provenance/**
           compression-level: ${{ runner.os == 'Windows' && github.event_name == 'pull_request' && '0' || '6' }}
           if-no-files-found: error
+      - name: Record Windows main donor upload identity
+        if: runner.os == 'Windows' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.desktop_upload.outcome == 'success'
+        shell: pwsh
+        env:
+          DONOR_ARTIFACT_ID: ${{ steps.desktop_upload.outputs.artifact-id }}
+          DONOR_ARTIFACT_DIGEST: ${{ steps.desktop_upload.outputs.artifact-digest }}
+        run: |
+          if ($env:DONOR_ARTIFACT_ID -notmatch '^[1-9][0-9]{0,19}$' -or
+              $env:DONOR_ARTIFACT_DIGEST -notmatch '^[0-9a-f]{64}$') {
+            throw 'Invalid main donor upload identity'
+          }
+          Write-Output "ATC_WINDOWS_DONOR_V1 artifact_id=$env:DONOR_ARTIFACT_ID digest=sha256:$env:DONOR_ARTIFACT_DIGEST"
 
   desktop-package-linux:
     # Keep the required check name while deferring this runner until Node 22 exits.

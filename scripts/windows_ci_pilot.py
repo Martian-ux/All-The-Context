@@ -22,6 +22,8 @@ import urllib.parse
 import urllib.request
 import zipfile
 import zlib
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 if __package__:
@@ -110,6 +112,110 @@ CI_FILES = {
     "docs/DECISIONS.md",
     "docs/REQUIREMENTS_TRACEABILITY.md",
 }
+
+
+MAX_ROLLING_ARCHIVE = 220_000_000
+MAX_ROLLING_MEMBER = 110_000_000
+DESCRIPTOR = "rolling-donor-v1.json"
+
+
+def require_future_expiry(value: str) -> None:
+    require(
+        isinstance(value, str) and re.fullmatch(r"[0-9T:.+-]+Z", value) is not None,
+        "invalid donor expiry",
+    )
+    require(
+        datetime.fromisoformat(value.replace("Z", "+00:00")) > datetime.now(UTC),
+        "expired donor",
+    )
+
+
+@dataclass(frozen=True)
+class RollingDonor:
+    source: str
+    workflow_id: int
+    run_id: int
+    attempt: int
+    job_id: int
+    upload_step: int
+    marker_step: int
+    artifact_id: int
+    size: int
+    digest: str
+    expires_at: str
+    version: str
+    repository: str = REPOSITORY
+    repository_id: int = REPOSITORY_ID
+    workflow_path: str = ".github/workflows/ci.yml"
+    job_name: str = "Desktop artifact - windows-latest"
+    artifact_name: str = "all-the-context-windows-x86_64"
+    manifest_size: int = 0
+    manifest_digest: str = ""
+
+    def __post_init__(self):
+        require(
+            self.repository == REPOSITORY
+            and type(self.repository_id) is int
+            and self.repository_id == REPOSITORY_ID
+            and self.workflow_path == ".github/workflows/ci.yml"
+            and self.job_name == "Desktop artifact - windows-latest"
+            and self.artifact_name == "all-the-context-windows-x86_64",
+            "invalid donor origin",
+        )
+        require(COMMIT_SHA.fullmatch(self.source) is not None, "invalid donor source")
+        require(
+            all(
+                type(value) is int and 0 < value < 10**20
+                for value in (
+                    self.workflow_id,
+                    self.run_id,
+                    self.attempt,
+                    self.job_id,
+                    self.upload_step,
+                    self.marker_step,
+                    self.artifact_id,
+                )
+            ),
+            "invalid donor identity",
+        )
+        require(self.upload_step < self.marker_step, "invalid donor step order")
+        require(
+            type(self.size) is int and 0 < self.size <= MAX_ROLLING_ARCHIVE, "invalid donor size"
+        )
+        require(re.fullmatch(r"[0-9a-f]{64}", self.digest) is not None, "invalid donor digest")
+        require(
+            re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", self.version) is not None,
+            "invalid donor version",
+        )
+        require_future_expiry(self.expires_at)
+        require(
+            type(self.manifest_size) is int
+            and 0 <= self.manifest_size <= 32_768
+            and (
+                (self.manifest_size == 0 and self.manifest_digest == "")
+                or (self.manifest_size > 0 and re.fullmatch(r"[0-9a-f]{64}", self.manifest_digest))
+            ),
+            "invalid donor manifest descriptor",
+        )
+
+    def raw(self) -> bytes:
+        return provenance.canonical_json(asdict(self))
+
+    @classmethod
+    def parse(cls, raw: bytes):
+        require(len(raw) <= 4096, "oversized donor descriptor")
+        value = cls(**json.loads(raw))
+        require(value.raw() == raw, "noncanonical donor descriptor")
+        return value
+
+
+def prepared_descriptor() -> RollingDonor | None:
+    path = download_directory() / "verified" / DESCRIPTOR
+    if not path.exists():
+        return None
+    regular = provenance._regular_file(path, label="donor descriptor")
+    require(regular.stat().st_size <= 4096, "oversized donor descriptor")
+    return RollingDonor.parse(regular.read_bytes())
 
 
 def require(condition: bool, message: str) -> None:
@@ -290,6 +396,10 @@ def download() -> None:
     require_owned_directory(folder)
     available = False
     try:
+        if (folder / "rolling-request").exists():
+            download_rolling(folder, Path(__file__).resolve().parents[1])
+            available = True
+            return
         validate_remote(api_json(f"actions/runs/{RUN}"), api_json(f"actions/artifacts/{ARTIFACT}"))
         try:
             response = api_request(f"actions/artifacts/{ARTIFACT}/zip")
@@ -332,6 +442,7 @@ def download() -> None:
 
 
 def start_download(root: Path) -> None:
+    rolling = False
     try:
         try:
             admit_source(root, os.environ["GITHUB_SHA"])
@@ -341,8 +452,12 @@ def start_download(root: Path) -> None:
             else:
                 from windows_ci_witness import admit_source as admit_ordinary
             admit_ordinary(root, os.environ["GITHUB_SHA"])
+            event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+            rolling = event["pull_request"]["base"]["sha"] != SOURCE
         folder = download_directory()
         folder.mkdir(exist_ok=False)
+        if rolling:
+            (folder / "rolling-request").write_bytes(b"rolling-v1")
     except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError):
         print("Windows CI donor pilot: cold-build fallback")
         return
@@ -365,7 +480,9 @@ def donor_component_paths(destination: Path) -> dict[str, Path]:
     return {role: destination / name for role, _, name in provenance.COMPONENTS}
 
 
-def verify_donor(destination: Path, paths: dict[str, Path]) -> dict:
+def verify_donor(
+    destination: Path, paths: dict[str, Path], descriptor: RollingDonor | None = None
+) -> dict:
     require_owned_directory(destination)
     manifest = destination / Path(MANIFEST).name
     for name, path in (
@@ -374,44 +491,131 @@ def verify_donor(destination: Path, paths: dict[str, Path]) -> dict:
     ):
         require(
             provenance._regular_file(path, label="donor provenance").stat().st_size
-            == OUTER_SIZES[name],
+            == (
+                descriptor.manifest_size
+                if descriptor and name == MANIFEST
+                else 98
+                if descriptor
+                else OUTER_SIZES[name]
+            ),
             "donor provenance size mismatch",
         )
     require(
-        hashlib.sha256(manifest.read_bytes()).hexdigest() == MANIFEST_SHA256,
+        hashlib.sha256(manifest.read_bytes()).hexdigest()
+        == (descriptor.manifest_digest if descriptor else MANIFEST_SHA256),
         "donor provenance identity mismatch",
     )
     payload = provenance.verify_provenance(
-        manifest, paths, source_commit=SOURCE, version="0.1.0-beta.8"
+        manifest,
+        paths,
+        source_commit=descriptor.source if descriptor else SOURCE,
+        version=descriptor.version if descriptor else "0.1.0-beta.8",
     )
     require(
-        hashlib.sha256(provenance.canonical_json(payload)).hexdigest() == MANIFEST_SHA256,
+        hashlib.sha256(provenance.canonical_json(payload)).hexdigest()
+        == (descriptor.manifest_digest if descriptor else MANIFEST_SHA256),
         "donor provenance changed during verification",
     )
+    if descriptor:
+        if __package__:
+            from scripts.windows_ci_components import IDENTITY, Archive
+        else:
+            from windows_ci_components import IDENTITY, Archive
+        expected = {
+            "schema_version": 1,
+            "version": descriptor.version,
+            "channel": "beta" if "-" in descriptor.version else "stable",
+            "platform": "windows",
+            "architecture": "x86_64",
+            "source_commit": descriptor.source,
+        }
+        components = {row["role"]: row for row in payload["components"]}
+        for role, path in paths.items():
+            # verify_provenance hashes the full snapshot first. Stable own reads
+            # protect the parser too, including the worker's later verification.
+            digest, size = provenance._stable_hash(path, label="donor identity")
+            data = path.read_bytes()
+            require(
+                len(data) == size == components[role]["size"]
+                and hashlib.sha256(data).hexdigest() == digest == components[role]["sha256"],
+                "donor changed before identity parsing",
+            )
+            require(
+                json.loads(Archive(data).entries[IDENTITY].raw) == expected,
+                "donor embedded identity mismatch",
+            )
     return payload
 
 
-def extract_donor(bundle: Path, destination: Path) -> dict[str, Path]:
+def download_rolling(folder: Path, root: Path) -> None:
+    if __package__:
+        from scripts import windows_ci_witness as witness
+    else:
+        import windows_ci_witness as witness
+    descriptor = witness.protected_donor(root, os.environ["GITHUB_SHA"])
+    raw = witness.provider_bytes(
+        f"actions/artifacts/{descriptor.artifact_id}/zip",
+        descriptor.size,
+        deadline=time.monotonic() + 60,
+    )
+    require(
+        len(raw) == descriptor.size and hashlib.sha256(raw).hexdigest() == descriptor.digest,
+        "donor archive mismatch",
+    )
+    bundle = folder / "donor.zip"
+    with bundle.open("xb") as stream:
+        stream.write(raw)
+    extract_donor(bundle, folder / "verified", descriptor)
+
+
+def rolling_members(version: str) -> dict[str, int]:
+    stem = f"all-the-context-{version}-windows-x86_64"
+    installer = f"platform/{stem}-unsigned.exe"
+    return {
+        installer: MAX_ROLLING_MEMBER,
+        f"{installer}.sha256": 512,
+        f"platform/{stem}-unsigned.IMPORTANT-UNSIGNED.txt": 4096,
+        f"platform/{stem}-unsigned.package.json": 4096,
+        f"release/{stem}.zip": MAX_ROLLING_MEMBER,
+        f"release/{stem}.zip.sha256": 512,
+        f"release/{stem}.zip.spdx.json": 1_000_000,
+        MANIFEST: 32_768,
+        f"{MANIFEST}.sha256": 98,
+    }
+
+
+def extract_donor(
+    bundle: Path, destination: Path, descriptor: RollingDonor | None = None
+) -> dict[str, Path]:
     """Select only three known ZIP members, then the setup's three known helpers."""
     if __package__:
         from scripts.windows_ci_components import Archive
     else:
         from windows_ci_components import Archive
 
-    require(bundle.stat().st_size == ARCHIVE_SIZE, "donor archive size mismatch")
+    bundle = provenance._regular_file(bundle, label="donor archive")
+    archive_size = descriptor.size if descriptor else ARCHIVE_SIZE
+    archive_digest = descriptor.digest if descriptor else ARCHIVE_SHA256
+    require(bundle.stat().st_size == archive_size, "donor archive size mismatch")
+    before = provenance._stable_hash(bundle, label="donor archive")
     with bundle.open("rb") as stream:
         require(
-            hashlib.file_digest(stream, "sha256").hexdigest() == ARCHIVE_SHA256,
+            hashlib.file_digest(stream, "sha256").hexdigest() == archive_digest,
             "donor archive digest mismatch",
         )
+    limits = rolling_members(descriptor.version) if descriptor else OUTER_SIZES
+    installer = next(name for name in limits if name.endswith("-unsigned.exe"))
     destination.mkdir(exist_ok=False)
     paths = donor_component_paths(destination)
     manifest = destination / Path(MANIFEST).name
     with zipfile.ZipFile(bundle) as archive:
         rows = archive.infolist()
         require(
-            len(rows) == len(OUTER_SIZES)
-            and {row.filename: row.file_size for row in rows} == OUTER_SIZES,
+            len(rows) == len(limits)
+            and len({row.filename for row in rows}) == len(rows)
+            and {row.filename for row in rows} == set(limits)
+            and all(0 < row.file_size <= limits[row.filename] for row in rows)
+            and (descriptor is not None or {row.filename: row.file_size for row in rows} == limits),
             "donor ZIP inventory mismatch",
         )
         for row in rows:
@@ -420,17 +624,17 @@ def extract_donor(bundle: Path, destination: Path) -> dict[str, Path]:
                 and not stat.S_ISLNK(row.external_attr >> 16)
                 and not row.flag_bits & 1
                 and row.compress_type in (0, 8)
-                and 0 <= row.header_offset < ARCHIVE_SIZE
-                and 0 <= row.compress_size <= ARCHIVE_SIZE,
+                and 0 <= row.header_offset < archive_size
+                and 0 <= row.compress_size <= archive_size,
                 "unsafe donor ZIP entry",
             )
         for name, path in (
-            (INSTALLER, paths["main"]),
+            (installer, paths["main"]),
             (MANIFEST, manifest),
             (f"{MANIFEST}.sha256", manifest.with_suffix(".json.sha256")),
         ):
             data = archive.read(name)
-            require(len(data) == OUTER_SIZES[name], "donor member size mismatch")
+            require(len(data) == archive.getinfo(name).file_size, "donor member size mismatch")
             path.write_bytes(data)
     main = Archive(paths["main"].read_bytes())
     for role, path in paths.items():
@@ -438,7 +642,19 @@ def extract_donor(bundle: Path, destination: Path) -> dict[str, Path]:
             entry = main.entries[path.name]
             require(entry.kind == "b", "invalid embedded helper role")
             path.write_bytes(entry.raw)
-    verify_donor(destination, paths)
+    require(
+        provenance._stable_hash(bundle, label="donor archive") == before,
+        "donor archive changed during extraction",
+    )
+    if descriptor:
+        descriptor = replace(
+            descriptor,
+            manifest_size=manifest.stat().st_size,
+            manifest_digest=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        )
+    verify_donor(destination, paths, descriptor)
+    if descriptor:
+        (destination / DESCRIPTOR).write_bytes(descriptor.raw())
     return paths
 
 
@@ -455,7 +671,18 @@ def prepared_donor(toolchain: dict, locks: dict) -> dict[str, Path]:
         require(stream.read(len(COMPLETE) + 1) == COMPLETE, "donor unavailable")
     destination = folder / "verified"
     paths = donor_component_paths(destination)
-    doc = verify_donor(destination, paths)
+    descriptor = prepared_descriptor()
+    if descriptor:
+        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+        require(
+            descriptor.source == event["pull_request"]["base"]["sha"], "wrong prepared donor base"
+        )
+    else:
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        if event_path:
+            event = json.loads(Path(event_path).read_bytes())
+            require(event["pull_request"]["base"]["sha"] == SOURCE, "missing rolling descriptor")
+    doc = verify_donor(destination, paths, descriptor)
     require(
         doc["contract"]["locks"] == locks and doc["contract"]["toolchain"] == toolchain,
         "donor lock or toolchain mismatch",

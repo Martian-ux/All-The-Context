@@ -1,5 +1,28 @@
 # Project status
 
+## 2026-11-21 — rolling protected-base Windows donors
+
+Ordinary same-repository Windows PRs may use a donor from their exact event
+base after that protected base contains the reviewed rolling policy. Both jobs
+bind the real event, ordered shallow synthetic parents, clean source/tree and
+attempt. A fixed reviewed inventory covers shipped Python topology and modes
+and all other build input bytes; base and candidate must have the same policy.
+Only modifications to existing regular shipped Python and eligible tests/docs
+qualify, including at least one shipped Python edit. Advancing main does not
+replace the event base. The e9 bootstrap and fixed CI-only pilot remain separate.
+
+The existing Windows main-push desktop upload records an immutable ID/digest
+marker. Bounded exact-base discovery binds workflow, successful run/attempt,
+job, upload, marker, complete artifact metadata and origin before download.
+Archive inventory, canonical provenance, full raw roles, embedded identities,
+current locks and toolchain are verified before retained use and again in the
+workers. No downloaded executable is launched. Independent exact current stock,
+two fresh retained arms, real lifecycle and complete cold fallback remain
+mandatory. Static payload, Linux behavior and required checks are unchanged.
+Local synthetic events and tiny schema fixtures establish bounded source
+contracts; native and independent gates and two real succeeding-base hosted
+timing trials remain separate acceptance requirements.
+
 ## 2026-11-21 — bounded Windows witness acquisition recovery
 
 Ordinary Windows stock-witness acquisition shares four transient retries across

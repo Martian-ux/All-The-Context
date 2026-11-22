@@ -1,5 +1,15 @@
 # Requirements traceability
 
+### 2026-11-21 rolling Windows protected-base donor qualification
+
+| Requirement | Source and regression contract |
+|---|---|
+| Real ordinary event and ordered parents in both roles | `windows_ci_witness.admit_source`; real Git depth-two fixtures for two successive bases, both participants, and a later main tip. Reject wrong repository IDs, forks, branch, attempt, parents, source and merge identity. |
+| Independently reviewed inputs in both trees | Reviewed inventory fingerprint covers all tracked names/modes, shipped Python topology and fixed build bytes; unchanged regular policy and explicit recipe pins in both trees. Regressions reject inherited recipe drift, policy/lock changes, additions, deletion and mode changes; existing checkout inventory checks remain. |
+| Exact successful protected push and immutable artifact | `protected_donor` reuses bounded provider reads and validates approved workflow identity/path, exact base run/attempt, desktop job, ordered successful upload/marker steps, exact marker log and artifact size/digest/expiry/origin. Positive descriptor and malformed/absent/ambiguous provider fixtures exercise failure closure. |
+| Safe intake and current build compatibility | `windows_ci_pilot` verifies bounded archive bytes and unique version-consistent inventory, canonical checksummed manifest, source, full role hashes/sizes and embedded identities; current locks/toolchain remain mandatory. Rolling archive regressions include malformed ZIP/manifest, wrong base/role/identity and stale locks/toolchain. Workers receive an immutable descriptor and recheck their own bytes before parsing. |
+| Preserve stock, lifecycle, bootstrap and gates | Existing full four-role join, independent stock, clean retained arms, reached lifecycle failure and full fallback regressions remain. Exact e9 shallow fixtures and fixed pilot contracts retain their routes. The marker is gated to the existing Windows main push upload. No static payload, Linux jobs, test node identity or required check is removed. Native/independent and hosted timing acceptance remain separate. |
+
 ### 2026-11-21 Windows witness acquisition reliability
 
 These CI source contracts retain native validation, independent review and a

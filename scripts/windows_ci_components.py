@@ -29,9 +29,11 @@ from types import CodeType
 # Donor extraction uses Archive before the locked build dependencies are installed.
 if __package__:
     from scripts import native_build_provenance as provenance
+    from scripts import windows_ci_pilot as pilot
     from scripts.windows_ci_pilot import SOURCE, git, require
 else:
     import native_build_provenance as provenance
+    import windows_ci_pilot as pilot
     from windows_ci_pilot import SOURCE, git, require
 
 ROLE_NAMES = {
@@ -373,7 +375,14 @@ def read_source(root: Path, commit: str) -> dict[str, bytes]:
 
 
 def build_arm(
-    root: Path, commit: str, donor: Path, build: Path, dist: Path, *, witness_profile: bool = False
+    root: Path,
+    commit: str,
+    donor: Path,
+    build: Path,
+    dist: Path,
+    *,
+    witness_profile: bool = False,
+    donor_descriptor: pilot.RollingDonor | None = None,
 ) -> None:
     from PyInstaller.building.utils import replace_filename_in_code_object
     from PyInstaller.utils.win32 import versioninfo
@@ -404,14 +413,34 @@ def build_arm(
         architecture="x86_64",
     )
     outputs = build_desktop.component_paths(build_root=build, dist_root=dist)
+    donor_rows = None
+    if donor_descriptor:
+        require(witness_profile, "rolling donor requires current stock witness")
+        payload = pilot.verify_donor(donor, pilot.donor_component_paths(donor), donor_descriptor)
+        require(
+            payload["contract"]["locks"] == verifier.lock_digests(root)
+            and payload["contract"]["toolchain"] == verifier.current_toolchain(),
+            "donor lock or toolchain mismatch",
+        )
+        donor_rows = {row["role"]: row for row in payload["components"]}
     helpers = {}
     for role, filename in ROLE_NAMES.items():
-        data = (donor / filename).read_bytes()
-        require(hashlib.sha256(data).hexdigest() == DONOR_HASHES[role], "donor role bytes changed")
+        path = provenance._regular_file(donor / filename, label="worker donor")
+        data = path.read_bytes()
+        require(
+            hashlib.sha256(data).hexdigest()
+            == (donor_rows[role]["sha256"] if donor_rows else DONOR_HASHES[role])
+            and (donor_rows is None or len(data) == donor_rows[role]["size"]),
+            "donor role bytes changed",
+        )
         archive = Archive(data)
         old_identity = json.loads(archive.entries[IDENTITY].raw)
         require(
-            old_identity == {**identity.as_dict(), "source_commit": SOURCE},
+            old_identity
+            == {
+                **identity.as_dict(),
+                "source_commit": donor_descriptor.source if donor_descriptor else SOURCE,
+            },
             "donor identity mismatch",
         )
         entry = ENTRYPOINTS[role]
@@ -495,7 +524,12 @@ def verify_version_resource(path: Path, expected: bytes) -> None:
 
 
 def component_runner(
-    root: Path, commit: str, donor_paths: dict[str, Path], *, witness_profile: bool = False
+    root: Path,
+    commit: str,
+    donor_paths: dict[str, Path],
+    *,
+    witness_profile: bool = False,
+    donor_descriptor: pilot.RollingDonor | None = None,
 ):
     if __package__:
         from scripts import verify_reproducible_build as verifier
@@ -524,6 +558,8 @@ def component_runner(
         ]
         if witness_profile:
             command.append("--witness-profile")
+        if donor_descriptor:
+            command.extend(["--donor-descriptor", donor_descriptor.raw().decode("ascii")])
         completed = subprocess.run(
             command, cwd=root, check=False, env=verifier.reproducible_environment(config_root=build)
         )
@@ -542,6 +578,7 @@ def main() -> None:
         parser.add_argument(f"--{option}", type=Path, required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--witness-profile", action="store_true")
+    parser.add_argument("--donor-descriptor")
     args = parser.parse_args()
     build_arm(
         args.root,
@@ -550,6 +587,9 @@ def main() -> None:
         args.build,
         args.dist,
         witness_profile=args.witness_profile,
+        donor_descriptor=pilot.RollingDonor.parse(args.donor_descriptor.encode("ascii"))
+        if args.donor_descriptor
+        else None,
     )
 
 

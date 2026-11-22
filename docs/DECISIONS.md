@@ -1,5 +1,26 @@
 # Architecture decisions
 
+## Qualify exact protected event bases conservatively (2026-11-21)
+
+Retain the fixed CI-only and reviewed e9 bootstrap routes. For rolling PRs,
+require the protected base to contain the unchanged policy and verify both Git
+trees against an offline reviewed inventory. Pin topology/modes for existing
+shipped Python and exact blobs for other build inputs; permit only existing
+regular shipped Python/test/doc modifications. This deliberately falls back
+for new modules, recipe, lock, asset, policy and mode changes. Compatible source
+shape does not establish import-graph compatibility: exact independently built
+current stock must still match all four full raw retained outputs.
+
+Reuse the successful Windows main-push desktop job and existing provider
+transport, adding only a gated post-upload marker. Discover only the exact
+base push with one bounded query, require one successful attempt and bind its
+workflow/job/steps/artifact origin. Do not search ancestors or consult main's
+current tip. Carry the validated immutable descriptor through owned staging
+and worker arguments; verify archive bytes before ZIP parsing, schema-defined
+version-consistent members, canonical provenance and each worker's own role
+bytes before parsing. Missing or incompatible evidence selects the complete
+stock/lifecycle route. This grants no hosted, integration or release authority.
+
 ## Retry only bound Windows witness acquisition failures (2026-11-21)
 
 Use one four-retry budget for narrowly classified transient transport errors,

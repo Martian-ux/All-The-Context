@@ -666,3 +666,190 @@ def test_package_overlap_keeps_stock_commands_and_provenance(monkeypatch, overla
         "smoke_platform_package.py",
         "build_release_assets.py",
     }
+
+
+@pytest.fixture
+def rolling_bundle(tmp_path):
+    """Schema-shaped tiny archives with full raw role provenance and identities."""
+    root = tmp_path / "rolling-stock"
+    root.mkdir()
+    base = "a" * 40
+    version = "0.1.0-beta.8"
+    identity = {
+        "schema_version": 1,
+        "version": version,
+        "channel": "beta",
+        "platform": "windows",
+        "architecture": "x86_64",
+        "source_commit": base,
+    }
+    paths = {role: root / name for role, name in components.ROLE_NAMES.items()}
+    helpers = {}
+    for role, path in paths.items():
+        if role != "main":
+            helpers[path.name] = miniature_archive(
+                members={
+                    components.IDENTITY: json.dumps(identity).encode(),
+                    "dependency.dll": role.encode(),
+                }
+            )
+            path.write_bytes(helpers[path.name])
+    paths["main"].write_bytes(
+        miniature_archive(members={**helpers, components.IDENTITY: json.dumps(identity).encode()})
+    )
+    tools = {"python": "3.12.10", "pyinstaller": "6.21.0", "uv": "0.11.32"}
+    locks = {name: {"sha256": "0" * 64} for name in provenance.LOCK_FILE_NAMES}
+    snapshot = provenance.collect_snapshot(paths, label="clean-build-1")
+    payload = provenance.build_payload(
+        version=version,
+        source_commit=base,
+        toolchain=tools,
+        locks=locks,
+        first=snapshot,
+        second=provenance.BuildSnapshot("clean-build-2", snapshot.components),
+    )
+    manifest, checksum = provenance.write_provenance(root / Path(pilot.MANIFEST).name, payload)
+    names = pilot.rolling_members(version)
+    members = {name: b"schema fixture" for name in names}
+    installer = next(name for name in names if name.endswith("-unsigned.exe"))
+    members.update(
+        {
+            installer: paths["main"].read_bytes(),
+            pilot.MANIFEST: manifest.read_bytes(),
+            pilot.MANIFEST + ".sha256": checksum.read_bytes(),
+        }
+    )
+
+    def bundle(rows):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, data in rows:
+                archive.writestr(name, data)
+        return stream.getvalue()
+
+    raw = bundle(members.items())
+    descriptor = pilot.RollingDonor(
+        source=base,
+        workflow_id=10,
+        run_id=11,
+        attempt=2,
+        job_id=12,
+        upload_step=8,
+        marker_step=9,
+        artifact_id=13,
+        size=len(raw),
+        digest=hashlib.sha256(raw).hexdigest(),
+        expires_at="2099-01-01T00:00:00Z",
+        version=version,
+    )
+    return descriptor, members, bundle, paths, tools, locks
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "none",
+        "raw-size",
+        "raw-digest",
+        "invalid-zip",
+        "duplicate",
+        "unsafe-name",
+        "version-name",
+        "manifest",
+        "noncanonical",
+        "checksum",
+        "base",
+        "role",
+        "embedded-identity",
+        "lock",
+        "toolchain",
+    ],
+)
+def test_rolling_archive_and_prepared_snapshot_are_exact(
+    rolling_bundle, tmp_path, monkeypatch, defect
+):
+    from dataclasses import replace
+
+    descriptor, members, bundle, stock, tools, locks = rolling_bundle
+    if defect == "manifest":
+        members[pilot.MANIFEST] += b"x"
+    elif defect == "noncanonical":
+        members[pilot.MANIFEST] = json.dumps(json.loads(members[pilot.MANIFEST])).encode()
+        members[pilot.MANIFEST + ".sha256"] = (
+            hashlib.sha256(members[pilot.MANIFEST]).hexdigest()
+            + "  "
+            + Path(pilot.MANIFEST).name
+            + "\n"
+        ).encode()
+    elif defect == "checksum":
+        members[pilot.MANIFEST + ".sha256"] = b"x" * 98
+    elif defect == "base":
+        descriptor = replace(descriptor, source="b" * 40)
+    elif defect in {"unsafe-name", "version-name"}:
+        name = next(name for name in members if name.endswith("-unsigned.exe"))
+        members[
+            "../unsafe.exe" if defect == "unsafe-name" else name.replace("beta.8", "beta.9")
+        ] = members.pop(name)
+    rows = list(members.items())
+    if defect == "duplicate":
+        rows.append(rows[-1])
+    raw = b"invalid zip" if defect == "invalid-zip" else bundle(rows)
+    descriptor = replace(descriptor, size=len(raw), digest=hashlib.sha256(raw).hexdigest())
+    if defect == "raw-size":
+        descriptor = replace(descriptor, size=len(raw) + 1)
+    if defect == "raw-digest":
+        descriptor = replace(descriptor, digest="0" * 64)
+    folder = tmp_path / "download"
+    folder.mkdir()
+    archive = folder / "donor.zip"
+    archive.write_bytes(raw)
+    destination = folder / "verified"
+    if defect not in {"none", "role", "embedded-identity", "lock", "toolchain"}:
+        with pytest.raises((ValueError, zipfile.BadZipFile)):
+            pilot.extract_donor(archive, destination, descriptor)
+        assert not (destination / pilot.DESCRIPTOR).exists()
+        return
+    paths = pilot.extract_donor(archive, destination, descriptor)
+    pilot.record_completion(folder, True)
+    monkeypatch.setattr(pilot, "download_directory", lambda: folder)
+    event = tmp_path / "event.json"
+    event.write_text(
+        json.dumps({"pull_request": {"base": {"sha": descriptor.source}}}), encoding="utf-8"
+    )
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    if defect == "role":
+        paths["updater"].write_bytes(b"wrong role bytes")
+    elif defect == "embedded-identity":
+        # Preserve a valid manifest for altered bytes: embedded identity remains mandatory.
+        wrong = miniature_archive(members={components.IDENTITY: b"{}"})
+        paths["mcp"].write_bytes(wrong)
+        snapshot = provenance.collect_snapshot(paths)
+        changed = provenance.build_payload(
+            version=descriptor.version,
+            source_commit=descriptor.source,
+            toolchain=tools,
+            locks=locks,
+            first=snapshot,
+            second=provenance.BuildSnapshot("clean-build-2", snapshot.components),
+        )
+        manifest, _ = provenance.write_provenance(destination / Path(pilot.MANIFEST).name, changed)
+        saved = pilot.prepared_descriptor()
+        saved = replace(
+            saved,
+            manifest_size=manifest.stat().st_size,
+            manifest_digest=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        )
+        (destination / pilot.DESCRIPTOR).write_bytes(saved.raw())
+    elif defect == "lock":
+        locks = {name: {"sha256": "1" * 64} for name in locks}
+    elif defect == "toolchain":
+        tools = {**tools, "python": "3.12.11"}
+    if defect == "none":
+        assert pilot.prepared_donor(tools, locks) == paths
+        assert {role: path.read_bytes() for role, path in paths.items()} == {
+            role: path.read_bytes() for role, path in stock.items()
+        }
+        assert pilot.prepared_descriptor().manifest_size > 0
+    else:
+        with pytest.raises(ValueError):
+            pilot.prepared_donor(tools, locks)
