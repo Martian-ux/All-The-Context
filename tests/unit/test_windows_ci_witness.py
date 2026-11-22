@@ -1829,7 +1829,8 @@ def test_rolling_successive_real_depth_two_events(tmp_path, monkeypatch, success
         if number == successor and defect == "deleted-module":
             git("update-index", "--force-remove", product)
         if number == successor and defect == "mode":
-            git("update-index", "--chmod=+x", product)
+            indexed_blob = git("rev-parse", f":{product}")
+            git("update-index", "--cacheinfo", f"100755,{indexed_blob},{product}")
         tree = git("write-tree")
         head = git("commit-tree", tree, "-p", base, "-m", f"Ordinary shipped edit {number}")
         parents = [base, head]

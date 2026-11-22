@@ -823,7 +823,7 @@ def test_rolling_archive_and_prepared_snapshot_are_exact(
         # Preserve a valid manifest for altered bytes: embedded identity remains mandatory.
         wrong = miniature_archive(members={components.IDENTITY: b"{}"})
         paths["mcp"].write_bytes(wrong)
-        snapshot = provenance.collect_snapshot(paths)
+        snapshot = provenance.collect_snapshot(paths, label="clean-build-1")
         changed = provenance.build_payload(
             version=descriptor.version,
             source_commit=descriptor.source,
@@ -832,7 +832,11 @@ def test_rolling_archive_and_prepared_snapshot_are_exact(
             first=snapshot,
             second=provenance.BuildSnapshot("clean-build-2", snapshot.components),
         )
-        manifest, _ = provenance.write_provenance(destination / Path(pilot.MANIFEST).name, changed)
+        manifest, checksum = provenance.write_provenance(
+            tmp_path / "replacement-provenance" / Path(pilot.MANIFEST).name, changed
+        )
+        (destination / manifest.name).write_bytes(manifest.read_bytes())
+        (destination / checksum.name).write_bytes(checksum.read_bytes())
         saved = pilot.prepared_descriptor()
         saved = replace(
             saved,
@@ -851,5 +855,6 @@ def test_rolling_archive_and_prepared_snapshot_are_exact(
         }
         assert pilot.prepared_descriptor().manifest_size > 0
     else:
-        with pytest.raises(ValueError):
+        expected = "donor embedded identity mismatch" if defect == "embedded-identity" else None
+        with pytest.raises(ValueError, match=expected):
             pilot.prepared_donor(tools, locks)
