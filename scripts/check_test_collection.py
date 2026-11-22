@@ -14,20 +14,22 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 COLLECTION_PREFIX = "tests/"
+CI_SHARD_COUNTS = {"linux": 4, "windows": 10}
 DEFAULT_TEST_FILE_SECONDS = 0.859
 
 # The twenty slowest files in the exact d18b4b7 sequential JUnit receipt. These
-# bounded historical weights affect scheduling only. Unknown/new files receive
+# bounded historical weights (with the two-module update noted below) affect
+# scheduling only. Unknown/new files receive
 # the deterministic median default above and can never be omitted.
 HISTORICAL_TEST_FILE_SECONDS = {
-    "tests/unit/test_windows_update_helper.py": 95.737,
+    "tests/unit/test_windows_update_helper.py": 236.066,
     "tests/unit/test_memory_reliability_spec.py": 82.009,
     "tests/unit/test_retrieval_m3_current_candidate.py": 42.628,
     "tests/unit/test_import_operations.py": 32.825,
     "tests/integration/test_cross_client_memory_acceptance.py": 29.074,
-    "tests/unit/test_updater.py": 24.019,
+    "tests/unit/test_updater.py": 48.143,
     "tests/unit/test_export.py": 19.968,
-    "tests/unit/test_packet_h_retrieval.py": 19.613,
+    "tests/unit/test_packet_h_retrieval.py": 23.409,
     "tests/unit/test_recovery_admin.py": 19.221,
     "tests/integration/test_core_api.py": 19.190,
     "tests/unit/test_capture_runtime.py": 18.723,
@@ -41,6 +43,316 @@ HISTORICAL_TEST_FILE_SECONDS = {
     "tests/unit/test_windows_bootstrap_install.py": 11.590,
     "tests/unit/test_local_git_workspace_connector.py": 11.489,
 }
+
+# The complete 236-node proof-3db07e46 audit supports singleton groups only
+# for this exact module. Other files retain fixture affinity by default.
+RETRIEVAL_TEST_FILE = "tests/unit/test_retrieval_m3_current_candidate.py"
+WINDOWS_DISCOVERY_JOB = "python-windows-discovery"
+PACKET_A_TEST_FILE = "tests/unit/test_memory_reliability_spec.py"
+PACKET_A_BLOCK_FUNCTION = (
+    "test_packet_a_code_owned_digest_rejects_every_semantic_leaf_after_rebound"
+)
+PACKET_A_BUCKET_PREFIX = f"{PACKET_A_TEST_FILE}::{PACKET_A_BLOCK_FUNCTION}[bucket-"
+
+# Aggregate worker seconds from the two verified Linux shards of PR #128.
+LINUX_TEST_FILE_SECONDS = HISTORICAL_TEST_FILE_SECONDS | {
+    PACKET_A_TEST_FILE: 188.832224,
+    "tests/integration/test_project_first_read.py": 72.037753,
+    "tests/integration/test_agent_continuity_harness.py": 66.305963,
+    "tests/integration/test_project_memory_continuity.py": 49.546586,
+    "tests/unit/test_import_operations.py": 40.619605,
+    "tests/unit/test_windows_update_helper.py": 32.086386,
+}
+LINUX_PACKET_A_GROUP_SECONDS = {
+    PACKET_A_TEST_FILE: 14.195611,
+    f"{PACKET_A_BUCKET_PREFIX}01-of-08]": 24.841772,
+    f"{PACKET_A_BUCKET_PREFIX}02-of-08]": 24.432115,
+    f"{PACKET_A_BUCKET_PREFIX}03-of-08]": 25.203897,
+    f"{PACKET_A_BUCKET_PREFIX}04-of-08]": 24.382830,
+    f"{PACKET_A_BUCKET_PREFIX}05-of-08]": 24.938513,
+    f"{PACKET_A_BUCKET_PREFIX}06-of-08]": 17.619955,
+    f"{PACKET_A_BUCKET_PREFIX}07-of-08]": 19.316208,
+    f"{PACKET_A_BUCKET_PREFIX}08-of-08]": 13.901322,
+}
+# Shard zero handles extra serial checks. Reserve four workers times its
+# observed ~20 seconds of additional setup when assigning Linux work.
+LINUX_FIRST_SHARD_RESERVE = 80.0
+# Real four-worker proof-5abef068: 226 cases, identical terminal outcomes and
+# intentional skips. Keep parameter siblings together in these two modules.
+# Their measured aggregate work above is placement evidence, not hosted wall time.
+FUNCTION_AFFINITY_FILES = frozenset(
+    {
+        "tests/unit/test_updater.py",
+        "tests/unit/test_packet_h_retrieval.py",
+    }
+)
+
+
+AGENT_CONTINUITY_TEST_FILE = "tests/integration/test_agent_continuity_harness.py"
+PROJECT_FIRST_READ_TEST_FILE = "tests/integration/test_project_first_read.py"
+PROJECT_MEMORY_TEST_FILE = "tests/integration/test_project_memory_continuity.py"
+PACKET_H_TEST_FILE = "tests/unit/test_packet_h_retrieval.py"
+MEMORY_TRUTH_TEST_FILE = "tests/unit/test_memory_truth.py"
+
+# Windows fixture audits support group boundaries at test functions in these modules.
+WINDOWS_FUNCTION_AFFINITY_FILES = frozenset(
+    {
+        AGENT_CONTINUITY_TEST_FILE,
+        PROJECT_FIRST_READ_TEST_FILE,
+        "tests/unit/test_capture_runtime.py",
+        MEMORY_TRUTH_TEST_FILE,
+        "tests/unit/test_provider_ingestion.py",
+    }
+)
+# Those two observation-ACL journeys have independent vaults and instances.
+WINDOWS_SINGLETON_NODE_IDS = frozenset(
+    f"{PROJECT_MEMORY_TEST_FILE}::test_project_decision_correction_and_forget_survive_core_recreation[{acl}]"
+    for acl in ("allow", "deny")
+)
+# Worker seconds from the authenticated Windows receipts for PRs 128-130.
+WINDOWS_FILE_SECONDS = {
+    AGENT_CONTINUITY_TEST_FILE: 107.17,
+    "tests/integration/test_claude_code_memory_core_api.py": 39.52,
+    "tests/integration/test_core_api.py": 40.61,
+    "tests/integration/test_cross_client_memory_acceptance.py": 56.79,
+    PROJECT_FIRST_READ_TEST_FILE: 183.31,
+    PROJECT_MEMORY_TEST_FILE: 105.60,
+    "tests/security/test_edge_forwarding.py": 44.12,
+    "tests/unit/test_application_install.py": 47.03,
+    "tests/unit/test_capture.py": 84.59,
+    "tests/unit/test_capture_runtime.py": 90.42,
+    "tests/unit/test_capture_scheduler.py": 43.80,
+    "tests/unit/test_export.py": 38.71,
+    "tests/unit/test_import_operations.py": 38.30,
+    "tests/unit/test_local_git_workspace_connector.py": 32.40,
+    "tests/unit/test_memory_reliability_lab_e01b.py": 86.59,
+    "tests/unit/test_memory_reliability_lab_e02_wave4.py": 56.23,
+    PACKET_A_TEST_FILE: 127.46,
+    MEMORY_TRUTH_TEST_FILE: 81.27,
+    PACKET_H_TEST_FILE: 195.85,
+    "tests/unit/test_provider_ingestion.py": 90.35,
+    "tests/unit/test_registered_source_admission.py": 64.00,
+    "tests/unit/test_retrieval_bootstrap_composition.py": 46.02,
+    "tests/unit/test_updater.py": 38.50,
+    "tests/unit/test_windows_ci_witness.py": 88.20,
+    "tests/unit/test_windows_update_helper.py": 55.39,
+    "tests/unit/test_zero_dashboard_harness.py": 38.15,
+}
+
+WINDOWS_SCOPE_SECONDS = {
+    (
+        f"{AGENT_CONTINUITY_TEST_FILE}::"
+        "test_scripted_client_failure_finishes_public_journey_without_fallback"
+    ): 64.79,
+    (
+        f"{AGENT_CONTINUITY_TEST_FILE}::test_scripted_source_process_public_http_and_mcp_journey"
+    ): 38.63,
+    (
+        f"{PROJECT_FIRST_READ_TEST_FILE}::test_bounded_pool_and_total_item_limit_are_deterministic"
+    ): 42.33,
+    f"{PROJECT_FIRST_READ_TEST_FILE}::test_fallback_requires_one_safe_explicit_named_signal": 42.38,
+    (
+        f"{PROJECT_FIRST_READ_TEST_FILE}::"
+        "test_named_first_read_returns_useful_partial_evidence_without_activation"
+    ): 28.29,
+    (
+        f"{PROJECT_MEMORY_TEST_FILE}::"
+        "test_project_decision_correction_and_forget_survive_core_recreation[allow]"
+    ): 58.42,
+    (
+        f"{PROJECT_MEMORY_TEST_FILE}::"
+        "test_project_decision_correction_and_forget_survive_core_recreation[deny]"
+    ): 47.18,
+    f"{PACKET_A_BUCKET_PREFIX}01-of-08]": 15.93,
+    f"{PACKET_A_BUCKET_PREFIX}02-of-08]": 18.39,
+    f"{PACKET_A_BUCKET_PREFIX}04-of-08]": 15.04,
+    f"{PACKET_A_BUCKET_PREFIX}07-of-08]": 17.55,
+    f"{PACKET_H_TEST_FILE}::test_packet_h_c_h_a_validator_rejects_unhashable_status_values": 30.36,
+    f"{PACKET_H_TEST_FILE}::test_packet_h_c_module_cli_uses_repository_root": 34.06,
+    f"{PACKET_H_TEST_FILE}::test_packet_h_c_refuses_wrong_h_a_replay_state": 43.96,
+}
+# Shard zero runs lint, type checks, docs, and a Python build. Shard one builds too.
+# Reserve four workers' worth of extra wall time for those gate roles.
+WINDOWS_GATE_RESERVES = (140.0, 20.0)
+
+
+def _case_scope(nodeid: str, *, windows: bool = False) -> str:
+    path, _, test = nodeid.partition("::")
+    function, parameter, _ = test.partition("[")
+    if (
+        path == "tests/unit/test_windows_update_helper.py"
+        or (
+            path == PACKET_A_TEST_FILE
+            and function == PACKET_A_BLOCK_FUNCTION
+            and bool(parameter)
+            and test.endswith("]")
+        )
+        or (windows and nodeid in WINDOWS_SINGLETON_NODE_IDS)
+    ):
+        return nodeid
+    if path in FUNCTION_AFFINITY_FILES or (windows and path in WINDOWS_FUNCTION_AFFINITY_FILES):
+        return f"{path}::{function}"
+    return path
+
+
+def test_case_groups(nodeids: Sequence[str], *, platform: str | None = None) -> dict[str, str]:
+    """Default to file locality; split only audited independent exact cases."""
+
+    receipt_collection(list(nodeids))
+    files = {test_file_for_nodeid(node) for node in nodeids}
+    require(
+        len({path.casefold() for path in files}) == len(files),
+        "test file list contains duplicate normalized paths",
+    )
+    original = {node: _case_scope(node) for node in nodeids}
+    scopes = (
+        {node: _case_scope(node, windows=True) for node in nodeids}
+        if platform == "windows"
+        else original
+    )
+    # Append Windows scopes so unaffected nodes retain their projected IDs.
+    original_keys = set(original.values())
+    order = sorted(original_keys) + sorted(set(scopes.values()) - original_keys)
+    names = {key: f"atc-group-{index:06d}" for index, key in enumerate(order)}
+    return {node: names[scope] for node, scope in scopes.items()}
+
+
+def projected_ids(canonical_to_group: dict[str, str]) -> dict[str, str]:
+    """Return an exact inverse, never parse or strip an opaque parameter suffix."""
+
+    receipt_collection(list(canonical_to_group))
+    require(
+        all(re.fullmatch(r"atc-group-[0-9]{6,9}", group) for group in canonical_to_group.values()),
+        "malformed scheduling group",
+    )
+    inverse = {f"{node}@{group}": node for node, group in canonical_to_group.items()}
+    require(len(inverse) == len(canonical_to_group), "projected scheduling-ID collision")
+    require(not inverse.keys() & canonical_to_group.keys(), "canonical/scheduling-ID collision")
+    return inverse
+
+
+def windows_groups_by_runtime(
+    nodeids: Sequence[str],
+) -> list[tuple[str, list[str], float]]:
+    """Order whole fixture groups by measured Windows worker time."""
+
+    members: dict[str, list[str]] = {}
+    file_counts = Counter(test_file_for_nodeid(node) for node in nodeids)
+    for node in nodeids:
+        members.setdefault(_case_scope(node, windows=True), []).append(node)
+
+    measured_counts: Counter[str] = Counter()
+    measured_costs: dict[str, float] = {}
+    for scope in sorted(members.keys() & WINDOWS_SCOPE_SECONDS.keys()):
+        path = test_file_for_nodeid(members[scope][0])
+        measured_counts[path] += len(members[scope])
+        measured_costs[path] = measured_costs.get(path, 0.0) + WINDOWS_SCOPE_SECONDS[scope]
+
+    weighted = []
+    for scope, nodes in members.items():
+        path = test_file_for_nodeid(nodes[0])
+        seconds = WINDOWS_SCOPE_SECONDS.get(scope)
+        if seconds is None:
+            file_seconds = WINDOWS_FILE_SECONDS.get(
+                path, HISTORICAL_TEST_FILE_SECONDS.get(path, DEFAULT_TEST_FILE_SECONDS)
+            )
+            remaining = max(0.05, file_seconds - measured_costs.get(path, 0.0))
+            seconds = remaining * len(nodes) / (file_counts[path] - measured_counts[path])
+        weighted.append((scope, nodes, seconds))
+    return sorted(weighted, key=lambda group: (-group[2], group[0]))
+
+
+def _assign_windows_cases(complete: Counter[str], shard_count: int) -> tuple[Counter[str], ...]:
+    ordered = windows_groups_by_runtime(list(complete))
+    require(0 < shard_count <= len(ordered), "shard count exceeds collected work groups")
+    shards: tuple[Counter[str], ...] = tuple(Counter() for _ in range(shard_count))
+    group_counts = [0] * shard_count
+    totals = [0.0] * shard_count
+    if shard_count == CI_SHARD_COUNTS["windows"]:
+        totals[:2] = WINDOWS_GATE_RESERVES
+    unassigned = set(range(shard_count))
+    continuity_shard = None
+    for offset, (scope, nodes, seconds) in enumerate(ordered):
+        allowed = unassigned if len(ordered) - offset == len(unassigned) else range(shard_count)
+        eligible = (
+            [index for index in allowed if index != continuity_shard]
+            if shard_count > 1 and scope in WINDOWS_SINGLETON_NODE_IDS
+            else allowed
+        )
+        shard = min(eligible, key=lambda index: (totals[index], group_counts[index], index))
+        shards[shard].update(nodes)
+        group_counts[shard] += 1
+        totals[shard] += seconds
+        unassigned.discard(shard)
+        if scope in WINDOWS_SINGLETON_NODE_IDS:
+            continuity_shard = shard
+    verify_complete_disjoint_union(complete, shards)
+    return shards
+
+
+def assign_test_cases(
+    complete: Counter[str], *, shard_count: int, platform: str | None = None
+) -> tuple[Counter[str], ...]:
+    """Partition actual canonical cases without breaking their approved groups."""
+
+    require(
+        all(type(count) is int and count == 1 for count in complete.values()),
+        "duplicate or invalid canonical counts",
+    )
+    if platform == "windows":
+        return _assign_windows_cases(complete, shard_count)
+    groups = test_case_groups(list(complete))
+    members: dict[str, list[str]] = {}
+    file_counts = Counter(test_file_for_nodeid(node) for node in complete)
+    for node, group in groups.items():
+        members.setdefault(group, []).append(node)
+    require(0 < shard_count <= len(members), "shard count exceeds collected work groups")
+    # File totals are historical aggregate work, not per-case or group wall time.
+    # Apportion them equally within a file; unknown files keep the median default.
+    linux = platform == "linux"
+    file_seconds = LINUX_TEST_FILE_SECONDS if linux else HISTORICAL_TEST_FILE_SECONDS
+    weights = {}
+    for group, nodes in members.items():
+        path = test_file_for_nodeid(nodes[0])
+        file_work = file_seconds.get(path, DEFAULT_TEST_FILE_SECONDS)
+        # Preserve the Windows floating-point operation order used for placement.
+        seconds = (
+            file_work * len(nodes) / file_counts[path]
+            if linux
+            else sum(file_work / file_counts[path] for _ in nodes)
+        )
+        if linux and path == PACKET_A_TEST_FILE:
+            key = nodes[0] if nodes[0].startswith(PACKET_A_BUCKET_PREFIX) else path
+            seconds = LINUX_PACKET_A_GROUP_SECONDS.get(key, seconds)
+        weights[group] = seconds
+    shards: tuple[Counter[str], ...] = tuple(Counter() for _ in range(shard_count))
+    totals = [0.0] * shard_count
+    if linux:
+        totals[0] = LINUX_FIRST_SHARD_RESERVE
+    ordered = sorted(members, key=lambda value: (-weights[value], value))
+    unassigned = set(range(shard_count))
+    for offset, group in enumerate(ordered):
+        eligible = (
+            unassigned if linux and len(ordered) - offset == len(unassigned) else range(shard_count)
+        )
+        shard = min(eligible, key=lambda index: (totals[index], len(shards[index]), index))
+        shards[shard].update(members[group])
+        totals[shard] += weights[group]
+        unassigned.discard(shard)
+    verify_complete_disjoint_union(complete, shards)
+    return shards
+
+
+def xdist_collection(complete: Counter[str]) -> Counter[str]:
+    """Reserve the retrieval module for its explicit non-xdist process pool."""
+
+    return Counter(
+        {
+            node: count
+            for node, count in complete.items()
+            if test_file_for_nodeid(node) != RETRIEVAL_TEST_FILE
+        }
+    )
 
 
 def normalize_test_file(path: str) -> str:
@@ -74,10 +386,19 @@ def parse_collection(output: str) -> Counter[str]:
 
     nodeids: Counter[str] = Counter()
     for line in output.splitlines():
-        normalized = line.strip().replace("\\", "/")
-        if normalized.startswith(COLLECTION_PREFIX) and "::" in normalized:
-            nodeids[normalized] += 1
+        raw = line.strip()
+        if raw.startswith((COLLECTION_PREFIX, "tests\\")) and "::" in raw:
+            nodeids[normalize_nodeid(raw)] += 1
     return nodeids
+
+
+def normalize_nodeid(nodeid: str) -> str:
+    """Normalize only the owned path; parameter/class suffixes are opaque."""
+
+    path, separator, suffix = nodeid.partition("::")
+    if not separator or not suffix:
+        raise ValueError(f"invalid pytest nodeid: {nodeid!r}")
+    return normalize_test_file(path) + separator + suffix
 
 
 def collect(*, workers: int | None, targets: Sequence[str] = ()) -> Counter[str]:
@@ -379,6 +700,250 @@ def require_successful_shards(
     return 1
 
 
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise ValueError(message)
+
+
+def unique_json(entries: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in entries:
+        require(key not in result, f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def read_receipt(path: Path) -> dict:
+    payload = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_json)
+    require(isinstance(payload, dict), "receipt must be a JSON object")
+    return payload
+
+
+def source_identity(root: Path = REPOSITORY_ROOT) -> dict[str, str]:
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
+
+    require(not git("status", "--porcelain", "--untracked-files=no"), "tracked source is dirty")
+    untracked = git("ls-files", "--others", "--exclude-standard", "-z").split("\0")
+    require(
+        all(not path or path.startswith(".test-runs/") for path in untracked),
+        "untracked files outside owned test scratch",
+    )
+    return {"head": git("rev-parse", "HEAD"), "tree": git("rev-parse", "HEAD^{tree}")}
+
+
+def receipt_collection(values: list[str]) -> Counter[str]:
+    require(isinstance(values, list) and bool(values), "missing or empty collection")
+    require(all(isinstance(value, str) for value in values), "invalid node IDs")
+    require(all(normalize_nodeid(value) == value for value in values), "noncanonical node IDs")
+    counted = Counter(values)
+    require(all(count == 1 for count in counted.values()), "duplicate collection node IDs")
+    return counted
+
+
+def terminal_outcome(reports: list[dict]) -> str:
+    """Attest the complete pytest protocol, including setup/teardown errors."""
+
+    require(isinstance(reports, list) and bool(reports), "missing terminal reports")
+    for report in reports:
+        require(report["outcome"] in {"passed", "skipped", "failed"}, "invalid report outcome")
+        require(type(report["xfail"]) is bool, "invalid xfail evidence")
+    expected = (
+        ["setup", "call", "teardown"]
+        if reports[0]["outcome"] == "passed"
+        else ["setup", "teardown"]
+    )
+    require([report["phase"] for report in reports] == expected, "incomplete or duplicate phases")
+    if any(report["outcome"] == "failed" for report in reports):
+        return "failed"
+    require(reports[-1]["outcome"] == "passed", "teardown did not pass")
+    decisive = reports[-2]
+    if decisive["outcome"] == "passed":
+        return "xpassed" if decisive["xfail"] else "passed"
+    return "xfailed" if decisive["xfail"] else "skipped"
+
+
+def verify_execution_receipts(
+    canonical: dict,
+    receipts: Sequence[dict],
+    *,
+    identity: dict,
+    shard_count: int,
+    workers: int,
+    job: str,
+    retrieval: dict | None = None,
+    discovery_job: str | None = None,
+) -> dict[str, str]:
+    """Compare every real worker and terminal node against independent discovery."""
+
+    require(shard_count > 0 and workers > 0, "invalid schedule")
+    base = dict(identity, schema=1, shard_count=shard_count, workers=workers)
+
+    def check_identity(receipt: dict, *, mode: str, shard: int, producer: str) -> None:
+        expected = dict(base, mode=mode, shard=shard, job=f"{producer}/{shard}")
+        require(
+            all(
+                type(receipt.get(key)) is type(value) and receipt[key] == value
+                for key, value in expected.items()
+            ),
+            "wrong source, OS, run, job or invocation identity",
+        )
+        require(type(receipt.get("exit")) is int and receipt["exit"] == 0, "pytest did not succeed")
+        require(
+            type(receipt.get("process_exit")) is int and receipt["process_exit"] == 0,
+            "pytest subprocess did not succeed",
+        )
+
+    discovery_producer = job if discovery_job is None else discovery_job
+    check_identity(canonical, mode="canonical", shard=0, producer=discovery_producer)
+    complete = receipt_collection(canonical["collection"])
+    require(canonical["collection_digest"] == collection_digest(complete), "bad collection digest")
+    groups = test_case_groups(list(complete), platform=identity.get("platform"))
+    inverse = projected_ids(groups)
+    parallel = xdist_collection(complete)
+    expected = assign_test_cases(
+        parallel, shard_count=shard_count, platform=identity.get("platform")
+    )
+    require(len(receipts) == shard_count, "missing or extra shard receipts")
+    by_shard = {receipt["shard"]: receipt for receipt in receipts}
+    require(set(by_shard) == set(range(shard_count)), "duplicate or wrong shard receipts")
+    statuses: dict[str, str] = {}
+    executed: list[Counter[str]] = []
+    for shard, nodes in enumerate(expected):
+        receipt = by_shard[shard]
+        check_identity(receipt, mode="shard", shard=shard, producer=job)
+        worker_ids = {f"gw{index}" for index in range(workers)}
+        require(set(receipt["collections"]) == worker_ids, "missing or extra real workers")
+        require(set(receipt["worker_full"]) == worker_ids, "missing full worker discovery")
+        require(set(receipt["worker_schedule"]) == worker_ids, "missing worker scheduling flags")
+        require(not receipt["worker_errors"], "worker crashed")
+        projected = Counter({f"{node}@{groups[node]}": count for node, count in nodes.items()})
+        order = None
+        for worker in sorted(worker_ids):
+            selected = receipt["collections"][worker]
+            require(receipt_collection(selected) == projected, "worker selection differs")
+            flags = receipt["worker_schedule"][worker]
+            require(
+                isinstance(flags, dict)
+                and flags == {"loadgroup": True, "dist": "no"}
+                and flags["loadgroup"] is True,
+                "worker did not use real loadgroup scheduling",
+            )
+            require(
+                receipt_collection(receipt["worker_full"][worker]) == complete,
+                "full worker discovery differs from canonical collection",
+            )
+            require(order is None or selected == order, "worker collection orders differ")
+            order = selected
+        for name in ("started", "finished"):
+            counts = receipt[name]
+            require(
+                all(type(count) is int and count == 1 for count in counts.values()),
+                f"duplicate or invalid {name} counts",
+            )
+            require(Counter(counts) == projected, f"missing or extra {name} nodes")
+        require(Counter(receipt["reports"].keys()) == projected, "missing or extra terminal nodes")
+        group_workers: dict[str, str] = {}
+        for raw_nodeid, reports in receipt["reports"].items():
+            nodeid = inverse[raw_nodeid]
+            require(bool(reports), "missing terminal reports")
+            actual_workers = {report["worker"] for report in reports}
+            require(
+                len(actual_workers) == 1 and actual_workers <= worker_ids,
+                "terminal reports have wrong worker identity",
+            )
+            worker = next(iter(actual_workers))
+            group = groups[nodeid]
+            require(
+                group_workers.setdefault(group, worker) == worker,
+                "scheduling group split across workers",
+            )
+            outcome = terminal_outcome(reports)
+            require(outcome != "failed", f"test failed: {nodeid}")
+            statuses[nodeid] = outcome
+        executed.append(Counter(inverse[node] for node in receipt["reports"]))
+    standalone = complete - parallel
+    require((retrieval is not None) == bool(standalone), "missing or extra retrieval receipt")
+    if retrieval is not None:
+        check_identity(retrieval, mode="retrieval", shard=0, producer=discovery_producer)
+        require(
+            receipt_collection(retrieval["collection"]) == standalone,
+            "retrieval collection differs",
+        )
+        for name in ("started", "finished"):
+            counts = retrieval[name]
+            require(
+                all(type(count) is int and count == 1 for count in counts.values()),
+                f"duplicate or invalid retrieval {name} counts",
+            )
+            require(Counter(counts) == standalone, f"missing or extra retrieval {name} nodes")
+        require(
+            Counter(retrieval["reports"].keys()) == standalone, "retrieval terminal nodes differ"
+        )
+        for nodeid, reports in retrieval["reports"].items():
+            require(all(report["worker"] is None for report in reports), "retrieval used xdist")
+            outcome = terminal_outcome(reports)
+            require(outcome != "failed", f"test failed: {nodeid}")
+            statuses[nodeid] = outcome
+        executed.append(Counter(retrieval["reports"].keys()))
+    verify_complete_disjoint_union(complete, executed)
+    return statuses
+
+
+def verify_receipt_directory(
+    directory: Path,
+    *,
+    platform: str,
+    run_id: str,
+    run_attempt: str,
+    shard_result: str,
+    discovery_result: str | None = None,
+) -> None:
+    """Validate current-run artifacts and their producers' actual job conclusions."""
+
+    require(shard_result == "success", f"pytest matrix did not succeed: {shard_result}")
+    require(run_id.isdecimal() and run_attempt.isdecimal(), "invalid run identity")
+    count = CI_SHARD_COUNTS[platform]
+    job = "python" if platform == "linux" else "python-windows-shard"
+    discovery_job = WINDOWS_DISCOVERY_JOB if platform == "windows" else None
+    stem = f"pytest-{run_id}-{run_attempt}-{platform}"
+    discovery_directory = f"{stem}-0"
+    if discovery_job is not None:
+        require(
+            discovery_result == "success", f"pytest discovery did not succeed: {discovery_result}"
+        )
+        discovery_directory = f"{stem}-discovery"
+    shard_paths = [f"{stem}-{shard}/shard.json" for shard in range(count)]
+    expected_paths = set(shard_paths)
+    canonical = f"{discovery_directory}/canonical.json"
+    expected_paths.add(canonical)
+    require((directory / canonical).is_file(), "missing canonical receipt artifact")
+    canonical_receipt = read_receipt(directory / canonical)
+    has_retrieval = discovery_job is not None or any(
+        test_file_for_nodeid(node) == RETRIEVAL_TEST_FILE
+        for node in receipt_collection(canonical_receipt["collection"])
+    )
+    retrieval_path = f"{discovery_directory}/retrieval.json"
+    if has_retrieval:
+        expected_paths.add(retrieval_path)
+    actual_paths = {
+        path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()
+    }
+    require(actual_paths == expected_paths, "missing, extra or ambiguous receipt artifacts")
+    identity = dict(source_identity(), platform=platform, run_id=run_id, run_attempt=run_attempt)
+    verify_execution_receipts(
+        canonical_receipt,
+        [read_receipt(directory / path) for path in shard_paths],
+        identity=identity,
+        shard_count=count,
+        workers=4,
+        job=job,
+        retrieval=read_receipt(directory / retrieval_path) if has_retrieval else None,
+        discovery_job=discovery_job,
+    )
+    print(f"{platform} canonical collection and {count} real-worker execution receipts passed")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workers", type=int)
@@ -392,8 +957,28 @@ def main() -> int:
     parser.add_argument("--require-plan-result")
     parser.add_argument("--require-complete-digest")
     parser.add_argument("--require-shard-targets-json", action="append", default=[])
+    parser.add_argument("--verify-receipts", type=Path)
+    parser.add_argument("--platform", choices=("linux", "windows"))
+    parser.add_argument("--run-id")
+    parser.add_argument("--run-attempt")
+    parser.add_argument("--shard-result")
+    parser.add_argument("--discovery-result")
     arguments = parser.parse_args()
     try:
+        if arguments.verify_receipts is not None:
+            require(
+                all((arguments.platform, arguments.run_id, arguments.run_attempt)),
+                "receipt verification requires platform and run identity",
+            )
+            verify_receipt_directory(
+                arguments.verify_receipts,
+                platform=arguments.platform,
+                run_id=arguments.run_id,
+                run_attempt=arguments.run_attempt,
+                shard_result=arguments.shard_result,
+                discovery_result=arguments.discovery_result,
+            )
+            return 0
         if arguments.require_shard_result is not None:
             if any(
                 value is not None
@@ -425,7 +1010,7 @@ def main() -> int:
             canonical_complete_digest=arguments.canonical_complete_digest,
             canonical_targets_json=arguments.canonical_targets_json,
         )
-    except (json.JSONDecodeError, OSError, RuntimeError, ValueError) as exc:
+    except (KeyError, TypeError, json.JSONDecodeError, OSError, RuntimeError, ValueError) as exc:
         print(f"pytest collection contract error: {exc}", file=sys.stderr)
         return 1
 
