@@ -24,6 +24,11 @@ import zipfile
 import zlib
 from pathlib import Path
 
+if __package__:
+    from scripts import native_build_provenance as provenance
+else:
+    import native_build_provenance as provenance
+
 COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
 REPOSITORY = "Martian-ux/All-The-Context"
 REPOSITORY_ID = 1307248106
@@ -39,6 +44,7 @@ ARCHIVE_SIZE = 198_230_093
 STEM = "all-the-context-0.1.0-beta.8-windows-x86_64"
 INSTALLER = f"platform/{STEM}-unsigned.exe"
 MANIFEST = "native-build-provenance/native-build-provenance-v1.json"
+COMPLETE = b'{"available": true}'
 OUTER_SIZES = {
     INSTALLER: 99_434_301,
     f"{INSTALLER}.sha256": 123,
@@ -207,6 +213,22 @@ def download_directory() -> Path:
     return Path(os.environ["RUNNER_TEMP"]) / f"atc-ci-donor-{run}-{attempt}"
 
 
+def require_owned_directory(path: Path) -> None:
+    info = path.lstat()
+    require(
+        stat.S_ISDIR(info.st_mode)
+        and not getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT,
+        "unsafe donor directory",
+    )
+
+
+def record_completion(folder: Path, available: bool) -> None:
+    marker = folder / "complete.part"
+    with marker.open("xb") as stream:
+        stream.write(COMPLETE if available else b'{"available": false}')
+    marker.rename(folder / "complete.json")
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -261,10 +283,11 @@ def validate_remote(run: dict, artifact: dict) -> None:
 
 
 def download() -> None:
-    """Use only fixed API routes. Never forward the token to artifact storage."""
+    """Prepare the donor before publishing readiness. Keep the token on fixed API routes."""
     import urllib.error
 
     folder = download_directory()
+    require_owned_directory(folder)
     available = False
     try:
         validate_remote(api_json(f"actions/runs/{RUN}"), api_json(f"actions/artifacts/{ARTIFACT}"))
@@ -299,14 +322,13 @@ def download() -> None:
             size == ARCHIVE_SIZE and digest.hexdigest() == ARCHIVE_SHA256, "donor archive mismatch"
         )
         (folder / "donor.zip.part").rename(folder / "donor.zip")
+        extract_donor(folder / "donor.zip", folder / "verified")
         available = True
     except Exception:
         # Network errors can contain signed URLs. Record only availability.
         pass
     finally:
-        marker = folder / "complete.part"
-        marker.write_text(json.dumps({"available": available}), encoding="utf-8")
-        marker.rename(folder / "complete.json")
+        record_completion(folder, available)
 
 
 def start_download(root: Path) -> None:
@@ -327,7 +349,7 @@ def start_download(root: Path) -> None:
     try:
         with (folder / "download.log").open("xb") as log:
             subprocess.Popen(
-                [sys.executable, str(Path(__file__).resolve()), "download"],
+                [sys.executable, "-B", "-S", str(Path(__file__).resolve()), "download"],
                 cwd=root,
                 stdin=subprocess.DEVNULL,
                 stdout=log,
@@ -335,18 +357,46 @@ def start_download(root: Path) -> None:
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
     except OSError:
-        (folder / "complete.json").write_text('{"available": false}', encoding="utf-8")
+        record_completion(folder, False)
         print("Windows CI donor pilot: cold-build fallback")
+
+
+def donor_component_paths(destination: Path) -> dict[str, Path]:
+    return {role: destination / name for role, _, name in provenance.COMPONENTS}
+
+
+def verify_donor(destination: Path, paths: dict[str, Path]) -> dict:
+    require_owned_directory(destination)
+    manifest = destination / Path(MANIFEST).name
+    for name, path in (
+        (MANIFEST, manifest),
+        (f"{MANIFEST}.sha256", manifest.with_suffix(".json.sha256")),
+    ):
+        require(
+            provenance._regular_file(path, label="donor provenance").stat().st_size
+            == OUTER_SIZES[name],
+            "donor provenance size mismatch",
+        )
+    require(
+        hashlib.sha256(manifest.read_bytes()).hexdigest() == MANIFEST_SHA256,
+        "donor provenance identity mismatch",
+    )
+    payload = provenance.verify_provenance(
+        manifest, paths, source_commit=SOURCE, version="0.1.0-beta.8"
+    )
+    require(
+        hashlib.sha256(provenance.canonical_json(payload)).hexdigest() == MANIFEST_SHA256,
+        "donor provenance changed during verification",
+    )
+    return payload
 
 
 def extract_donor(bundle: Path, destination: Path) -> dict[str, Path]:
     """Select only three known ZIP members, then the setup's three known helpers."""
     if __package__:
-        from scripts import native_build_provenance as provenance
-        from scripts.windows_ci_components import ROLE_NAMES, Archive
+        from scripts.windows_ci_components import Archive
     else:
-        import native_build_provenance as provenance
-        from windows_ci_components import ROLE_NAMES, Archive
+        from windows_ci_components import Archive
 
     require(bundle.stat().st_size == ARCHIVE_SIZE, "donor archive size mismatch")
     with bundle.open("rb") as stream:
@@ -355,7 +405,7 @@ def extract_donor(bundle: Path, destination: Path) -> dict[str, Path]:
             "donor archive digest mismatch",
         )
     destination.mkdir(exist_ok=False)
-    paths = {role: destination / name for role, name in ROLE_NAMES.items()}
+    paths = donor_component_paths(destination)
     manifest = destination / Path(MANIFEST).name
     with zipfile.ZipFile(bundle) as archive:
         rows = archive.infolist()
@@ -382,17 +432,34 @@ def extract_donor(bundle: Path, destination: Path) -> dict[str, Path]:
             data = archive.read(name)
             require(len(data) == OUTER_SIZES[name], "donor member size mismatch")
             path.write_bytes(data)
-    require(
-        hashlib.sha256(manifest.read_bytes()).hexdigest() == MANIFEST_SHA256,
-        "donor provenance identity mismatch",
-    )
     main = Archive(paths["main"].read_bytes())
     for role, path in paths.items():
         if role != "main":
             entry = main.entries[path.name]
             require(entry.kind == "b", "invalid embedded helper role")
             path.write_bytes(entry.raw)
-    provenance.verify_provenance(manifest, paths, source_commit=SOURCE, version="0.1.0-beta.8")
+    verify_donor(destination, paths)
+    return paths
+
+
+def prepared_donor(toolchain: dict, locks: dict) -> dict[str, Path]:
+    """Recheck prepared bytes against the pinned provenance and current build inputs."""
+    folder = download_directory()
+    require_owned_directory(folder)
+    marker = folder / "complete.json"
+    deadline = time.monotonic() + 125
+    while not marker.exists():
+        require(folder.is_dir() and time.monotonic() < deadline, "donor unavailable")
+        time.sleep(0.1)
+    with provenance._regular_file(marker, label="donor completion").open("rb") as stream:
+        require(stream.read(len(COMPLETE) + 1) == COMPLETE, "donor unavailable")
+    destination = folder / "verified"
+    paths = donor_component_paths(destination)
+    doc = verify_donor(destination, paths)
+    require(
+        doc["contract"]["locks"] == locks and doc["contract"]["toolchain"] == toolchain,
+        "donor lock or toolchain mismatch",
+    )
     return paths
 
 
@@ -402,29 +469,12 @@ def pilot_runner(root: Path, source_commit: str, toolchain: dict, locks: dict):
     try:
         admit_source(root, source_commit)
         require(platform.machine().lower() in {"amd64", "x86_64"}, "unsupported pilot architecture")
-        stage = "donor download"
-        folder = download_directory()
-        deadline = time.monotonic() + 125
-        while not (folder / "complete.json").is_file():
-            require(folder.is_dir() and time.monotonic() < deadline, "donor unavailable")
-            time.sleep(0.1)
-        require(
-            json.loads((folder / "complete.json").read_bytes()) == {"available": True},
-            "donor unavailable",
-        )
-        stage = "donor archive verification"
-        paths = extract_donor(folder / "donor.zip", folder / "verified")
+        stage = "donor verification"
+        paths = prepared_donor(toolchain, locks)
         if __package__:
-            from scripts import native_build_provenance as provenance
             from scripts.windows_ci_components import component_runner
         else:
-            import native_build_provenance as provenance
             from windows_ci_components import component_runner
-        doc = provenance.load_provenance(folder / "verified" / Path(MANIFEST).name)
-        require(
-            doc["contract"]["locks"] == locks and doc["contract"]["toolchain"] == toolchain,
-            "donor lock or toolchain mismatch",
-        )
         stage = "local toolchain compatibility"
         runner = component_runner(root, source_commit, paths)
     except (

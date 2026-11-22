@@ -26,15 +26,12 @@ from itertools import pairwise
 from pathlib import Path
 from types import CodeType
 
+# Donor extraction uses Archive before the locked build dependencies are installed.
 if __package__:
-    from scripts import build_desktop
     from scripts import native_build_provenance as provenance
-    from scripts import verify_reproducible_build as verifier
     from scripts.windows_ci_pilot import SOURCE, git, require
 else:
-    import build_desktop
     import native_build_provenance as provenance
-    import verify_reproducible_build as verifier
     from windows_ci_pilot import SOURCE, git, require
 
 ROLE_NAMES = {
@@ -381,6 +378,12 @@ def build_arm(
     from PyInstaller.building.utils import replace_filename_in_code_object
     from PyInstaller.utils.win32 import versioninfo
 
+    if __package__:
+        from scripts import verify_reproducible_build as verifier
+    else:
+        import verify_reproducible_build as verifier
+
+    build_desktop = verifier.build_desktop
     validate_abi(root)
     if witness_profile:
         if __package__:
@@ -494,6 +497,11 @@ def verify_version_resource(path: Path, expected: bytes) -> None:
 def component_runner(
     root: Path, commit: str, donor_paths: dict[str, Path], *, witness_profile: bool = False
 ):
+    if __package__:
+        from scripts import verify_reproducible_build as verifier
+    else:
+        import verify_reproducible_build as verifier
+
     validate_abi(root)
     donor = donor_paths["main"].parent
 
@@ -521,7 +529,8 @@ def component_runner(
         )
         require(completed.returncode == 0, "admitted Windows CI component build failed")
         return provenance.collect_snapshot(
-            build_desktop.component_paths(build_root=build, dist_root=dist), label="pilot-build"
+            verifier.build_desktop.component_paths(build_root=build, dist_root=dist),
+            label="pilot-build",
         )
 
     return run

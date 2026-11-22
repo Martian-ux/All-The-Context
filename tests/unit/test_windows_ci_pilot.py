@@ -15,9 +15,11 @@ from pathlib import Path
 import pytest
 
 from scripts import native_build_provenance as provenance
+from scripts import verify_reproducible_build as verifier
 from scripts import windows_ci_components as components
 from scripts import windows_ci_package_checks as package_checks
 from scripts import windows_ci_pilot as pilot
+from scripts import windows_ci_witness as witness
 
 
 def context():
@@ -294,30 +296,59 @@ def test_selective_intake_verifies_all_four_roles_and_sidecar(donor_bundle, tmp_
     }
 
 
-@pytest.mark.parametrize("defect", ["archive", "provenance", "lock", "pending", "failed"])
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "archive",
+        "main",
+        "mcp",
+        "recovery",
+        "updater",
+        "provenance",
+        "hardlinked-role",
+        "lock",
+        "toolchain",
+        "pending",
+        "failed",
+    ],
+)
 def test_unavailable_or_incompatible_donor_falls_back(donor_bundle, tmp_path, monkeypatch, defect):
     bundle, _, tools, locks = donor_bundle
     folder = tmp_path / "download"
     folder.mkdir()
-    (folder / "donor.zip").write_bytes(bundle.read_bytes())
-    (folder / "complete.json").write_text('{"available": true}', encoding="utf-8")
+    if defect == "archive":
+        raw = bundle.read_bytes()
+        bundle.write_bytes(raw[:-1] + bytes([raw[-1] ^ 1]))
+        with pytest.raises(ValueError, match="digest mismatch"):
+            pilot.extract_donor(bundle, folder / "verified")
+        paths = {}
+        pilot.record_completion(folder, False)
+    else:
+        paths = pilot.extract_donor(bundle, folder / "verified")
+        pilot.record_completion(folder, True)
     monkeypatch.setattr(pilot, "admit_source", lambda *_args: None)
     monkeypatch.setattr(pilot.platform, "machine", lambda: "AMD64")
     monkeypatch.setattr(pilot, "download_directory", lambda: folder)
-    if defect == "archive":
-        data = bytearray(bundle.read_bytes())
+    monkeypatch.setattr(components, "component_runner", lambda *_args: pytest.fail("invalid donor"))
+    if defect in paths:
+        data = bytearray(paths[defect].read_bytes())
         data[10] ^= 1
-        (folder / "donor.zip").write_bytes(data)
+        paths[defect].write_bytes(data)
     elif defect == "provenance":
         monkeypatch.setattr(pilot, "MANIFEST_SHA256", "0" * 64)
+    elif defect == "hardlinked-role":
+        (tmp_path / "hardlinked.exe").hardlink_to(paths["mcp"])
     elif defect == "lock":
         locks = {name: {"sha256": "1" * 64} for name in locks}
+    elif defect == "toolchain":
+        tools = {**tools, "python": "3.12.11"}
     elif defect == "pending":
         (folder / "complete.json").unlink()
         times = iter([0, 126])
         monkeypatch.setattr(pilot.time, "monotonic", lambda: next(times))
-    else:
-        (folder / "complete.json").write_text('{"available": false}', encoding="utf-8")
+    elif defect == "failed":
+        (folder / "complete.json").unlink()
+        pilot.record_completion(folder, False)
     assert pilot.pilot_runner(tmp_path, "a" * 40, tools, locks) is None
 
 
@@ -325,8 +356,8 @@ def test_admitted_build_failure_is_not_a_fallback(donor_bundle, tmp_path, monkey
     bundle, _, tools, locks = donor_bundle
     folder = tmp_path / "download"
     folder.mkdir()
-    (folder / "donor.zip").write_bytes(bundle.read_bytes())
-    (folder / "complete.json").write_text('{"available": true}', encoding="utf-8")
+    pilot.extract_donor(bundle, folder / "verified")
+    pilot.record_completion(folder, True)
     monkeypatch.setattr(pilot, "admit_source", lambda *_args: None)
     monkeypatch.setattr(pilot.platform, "machine", lambda: "AMD64")
     monkeypatch.setattr(pilot, "download_directory", lambda: folder)
@@ -344,26 +375,249 @@ def test_admitted_build_failure_is_not_a_fallback(donor_bundle, tmp_path, monkey
         runner(None, None, None)
 
 
-def test_download_completion_is_written_after_archive_closes(tmp_path, monkeypatch):
+def test_download_completion_is_written_after_archive_closes(donor_bundle, tmp_path, monkeypatch):
+    _download_completion_case(donor_bundle, tmp_path, monkeypatch, None)
+
+
+@pytest.mark.parametrize("defect", ["archive", "provenance", "extraction"])
+def test_failed_preparation_never_publishes_ready(donor_bundle, tmp_path, monkeypatch, defect):
+    _download_completion_case(donor_bundle, tmp_path, monkeypatch, defect)
+
+
+def _download_completion_case(donor_bundle, tmp_path, monkeypatch, defect):
+    bundle, stock, tools, locks = donor_bundle
     run, artifact = remote_metadata()
-    raw = b"bounded artifact bytes"
-    monkeypatch.setattr(pilot, "ARCHIVE_SIZE", len(raw))
-    monkeypatch.setattr(pilot, "ARCHIVE_SHA256", hashlib.sha256(raw).hexdigest())
-    artifact.update(size_in_bytes=len(raw), digest=f"sha256:{pilot.ARCHIVE_SHA256}")
-    monkeypatch.setattr(pilot, "download_directory", lambda: tmp_path)
+    raw = bundle.read_bytes()
+    if defect == "archive":
+        raw = raw[:-1] + bytes([raw[-1] ^ 1])
+    if defect == "provenance":
+        monkeypatch.setattr(pilot, "MANIFEST_SHA256", "0" * 64)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    folder = pilot.download_directory()
+    folder.mkdir()
     monkeypatch.setattr(pilot, "api_json", lambda route: run if "/runs/" in route else artifact)
+
+    def extract(bundle, destination):
+        assert response.closed
+        assert not (folder / "complete.json").exists()
+        if defect == "extraction":
+            destination.mkdir()
+            (destination / "partial").write_bytes(b"incomplete")
+            raise OSError("private diagnostic must not escape")
+        result = real_extract(bundle, destination)
+        assert not (folder / "complete.json").exists()
+        return result
 
     class Response(io.BytesIO):
         def read(self, size=-1):
-            assert not (tmp_path / "complete.json").exists()
+            assert not (folder / "complete.json").exists()
             return super().read(size)
 
     response = Response(raw)
+    real_extract = pilot.extract_donor
     monkeypatch.setattr(pilot, "api_request", lambda _route: response)
-    pilot.download()
+    monkeypatch.setattr(pilot, "extract_donor", extract)
+    monkeypatch.setattr("sys.argv", ["windows_ci_pilot.py", "download"])
+    pilot.main()
     assert response.closed
-    assert json.loads((tmp_path / "complete.json").read_bytes()) == {"available": True}
-    assert (tmp_path / "donor.zip").read_bytes() == raw
+    assert json.loads((folder / "complete.json").read_bytes()) == {"available": defect is None}
+    assert not (folder / "complete.part").exists()
+    if defect is None:
+        assert (folder / "donor.zip").read_bytes() == raw
+        consumed = pilot.prepared_donor(tools, locks)
+        assert {role: path.read_bytes() for role, path in consumed.items()} == {
+            role: path.read_bytes() for role, path in stock.items()
+        }
+        monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+        with pytest.raises(FileNotFoundError):
+            pilot.prepared_donor(tools, locks)
+    else:
+        with pytest.raises(ValueError, match="donor unavailable"):
+            pilot.prepared_donor(tools, locks)
+
+
+@pytest.mark.parametrize("first", ["pilot", "ordinary"])
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "ready",
+        "main",
+        "mcp",
+        "recovery",
+        "updater",
+        "manifest",
+        "checksum",
+        "size",
+        "missing-role",
+        "lock",
+        "toolchain",
+        "incomplete",
+        "failed",
+        "malformed",
+    ],
+)
+def test_both_consumers_revalidate_prepared_bytes(
+    donor_bundle, tmp_path, monkeypatch, first, defect
+):
+    bundle, stock, tools, locks = donor_bundle
+    folder = tmp_path / "download"
+    folder.mkdir()
+    paths = pilot.extract_donor(bundle, folder / "verified")
+    pilot.record_completion(folder, True)
+    monkeypatch.setattr(pilot, "download_directory", lambda: folder)
+    monkeypatch.setattr(pilot, "admit_source", lambda *_args: None)
+    monkeypatch.setattr(pilot.platform, "machine", lambda: "AMD64")
+    calls = []
+
+    def runner(_root, _commit, received, **options):
+        assert {role: path.read_bytes() for role, path in received.items()} == {
+            role: path.read_bytes() for role, path in stock.items()
+        }
+        calls.append(options)
+        return sentinel
+
+    sentinel = object()
+    monkeypatch.setattr(components, "component_runner", runner)
+    consumers = {
+        "pilot": pilot.pilot_runner,
+        "ordinary": witness.donor_runner,
+    }
+    assert consumers[first](tmp_path, "a" * 40, tools, locks) is sentinel
+    assert calls == ([{}] if first == "pilot" else [{"witness_profile": True}])
+    if defect in paths:
+        raw = paths[defect].read_bytes()
+        paths[defect].write_bytes(raw[:-1] + bytes([raw[-1] ^ 1]))
+    elif defect in {"manifest", "checksum"}:
+        name = Path(pilot.MANIFEST).name + (".sha256" if defect == "checksum" else "")
+        path = folder / "verified" / name
+        raw = path.read_bytes()
+        path.write_bytes(raw[:-1] + b"!")
+    elif defect == "size":
+        paths["main"].write_bytes(paths["main"].read_bytes() + b"extra")
+    elif defect == "missing-role":
+        paths["updater"].unlink()
+    elif defect == "lock":
+        locks = {name: {"sha256": "1" * 64} for name in locks}
+    elif defect == "toolchain":
+        tools = {**tools, "python": "3.12.11"}
+    elif defect == "incomplete":
+        (folder / "complete.json").unlink()
+        times = iter([0, 126])
+        monkeypatch.setattr(pilot.time, "monotonic", lambda: next(times))
+    elif defect in {"failed", "malformed"}:
+        (folder / "complete.json").write_bytes(
+            b'{"available": false}' if defect == "failed" else b'{"available": true}trailing'
+        )
+    second = "ordinary" if first == "pilot" else "pilot"
+    if defect == "ready":
+        assert consumers[second](tmp_path, "a" * 40, tools, locks) is sentinel
+        assert len(calls) == 2
+    elif second == "pilot":
+        assert consumers[second](tmp_path, "a" * 40, tools, locks) is None
+        assert len(calls) == 1
+    else:
+        with pytest.raises((ValueError, OSError)):
+            consumers[second](tmp_path, "a" * 40, tools, locks)
+        assert len(calls) == 1
+
+
+@pytest.mark.parametrize("ordinary", [False, True])
+@pytest.mark.parametrize("ready", [False, True])
+def test_public_verifier_uses_ready_donor_or_complete_cold_builds(
+    donor_bundle, tmp_path, monkeypatch, ordinary, ready
+):
+    bundle, stock, tools, locks = donor_bundle
+    folder = tmp_path / "download"
+    folder.mkdir()
+    paths = pilot.extract_donor(bundle, folder / "verified")
+    pilot.record_completion(folder, True)
+    if not ready:
+        paths["mcp"].write_bytes(b"altered")
+    monkeypatch.setattr(pilot, "download_directory", lambda: folder)
+    monkeypatch.setattr(pilot, "admit_source", lambda *_args: None)
+    monkeypatch.setattr(pilot.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(verifier.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(verifier, "project_version", lambda _root: "0.1.0-beta.8")
+    monkeypatch.setattr(verifier, "checked_out_commit", lambda _root: "a" * 40)
+    monkeypatch.setattr(verifier, "current_toolchain", lambda: tools)
+    monkeypatch.setattr(verifier, "lock_digests", lambda _root: locks)
+
+    def admission(*_args):
+        if not ordinary:
+            raise ValueError("not an ordinary product edit")
+        return {"head": "a" * 40}
+
+    monkeypatch.setattr(witness, "admit_source", admission)
+    monkeypatch.setattr(witness, "expected_receipt", lambda *_args: {})
+    snapshot = provenance.collect_snapshot(stock, label="stock")
+    monkeypatch.setattr(witness, "acquire", lambda _expected: snapshot.components)
+
+    def checks(_root, candidate):
+        for name in ("platform", "release"):
+            (candidate / "dist" / name).mkdir()
+        return 0
+
+    monkeypatch.setattr(witness, "provisional_checks", checks)
+    builds = []
+
+    def build(_root, build, dist, *, retained=False, **_options):
+        build.mkdir(parents=True)
+        dist.mkdir(parents=True)
+        outputs = verifier.build_desktop.component_paths(build_root=build, dist_root=dist)
+        for role, path in outputs.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(stock[role].read_bytes())
+        builds.append((retained, build, dist))
+        return provenance.collect_snapshot(outputs, label="build")
+
+    def retained(_root, _commit, received, **options):
+        assert options == ({"witness_profile": True} if ordinary else {})
+        assert {role: path.read_bytes() for role, path in received.items()} == {
+            role: path.read_bytes() for role, path in stock.items()
+        }
+        return lambda root, build_root, dist_root: build(root, build_root, dist_root, retained=True)
+
+    monkeypatch.setattr(components, "component_runner", retained)
+    monkeypatch.setattr(verifier, "_run_clean_build", build)
+    output = tmp_path / "result"
+    github_output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "verify_reproducible_build.py",
+            "--repository-root",
+            str(tmp_path),
+            "--source-commit",
+            "a" * 40,
+            "--windows-ci-donor-pilot",
+            "--build-root",
+            str(output / "build/desktop"),
+            "--dist-root",
+            str(output / "dist/desktop"),
+            "--output-dir",
+            str(output / "dist/native-build-provenance"),
+        ],
+    )
+    assert verifier.main() == 0
+    assert len(builds) == 2 and all(retained == ready for retained, _, _ in builds)
+    assert builds[0][1] != builds[1][1] and builds[0][2] != builds[1][2]
+    assert not any(build.exists() or dist.exists() for _, build, dist in builds)
+    route = "witnessed" if ready and ordinary else "retained" if ready else "cold"
+    assert github_output.read_text() == f"route={route}\n" + (
+        "lifecycle_success=true\n" if route == "witnessed" else ""
+    )
+    final = verifier.build_desktop.component_paths(
+        build_root=output / "build/desktop", dist_root=output / "dist/desktop"
+    )
+    provenance.verify_provenance(
+        output / "dist/native-build-provenance" / provenance.PROVENANCE_FILE_NAME,
+        final,
+        version="0.1.0-beta.8",
+        source_commit="a" * 40,
+    )
 
 
 @pytest.mark.parametrize("overlap_first_run", [False, True])

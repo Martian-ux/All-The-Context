@@ -1,5 +1,28 @@
 # Project status
 
+## 2026-11-21 — ordinary Windows CI preparation and scheduling
+
+The Windows scheduler gives the existing whole-file witness test group a measured
+88.20-second weight. Node identities, group affinity, shard counts, independent
+canonical collection and required checks retain their existing contracts.
+Ordinary admission batches the candidate and protected-main tree reads while
+retaining Git's configured path quoting, exact literal names, regular blob modes,
+current input pins, ordered PR parents, fresh status and filesystem inventory.
+
+The existing background downloader now authenticates, verifies and extracts the
+fixed donor using only the standard library before dependency installation. It
+atomically publishes readiness after complete extraction and verification. Each
+consumer independently rechecks the pinned manifest, checksum, four file hashes
+and sizes, and current locked toolchain. Unavailable or invalid preparation uses
+the existing isolated cold route. Retained A/B builds, the independent full stock
+comparison, concurrent real lifecycle checks and publication joins remain required.
+
+Native CI delta validation and independent review remain downstream; the earlier
+full-app baseline is historical evidence. A new operator-owned ordinary PR trial
+must establish all current required statuses, both first-attempt workflow finals,
+complete Windows/Linux execution and exact Windows package parity before any
+180-second timing claim. Release and account holds remain unchanged.
+
 ## 2026-11-21 — bounded ordinary Windows PR stock witness
 
 Same-repository synthetic PR merges against protected `main` at

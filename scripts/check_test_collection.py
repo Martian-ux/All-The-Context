@@ -134,6 +134,7 @@ WINDOWS_FILE_SECONDS = {
     "tests/unit/test_registered_source_admission.py": 64.00,
     "tests/unit/test_retrieval_bootstrap_composition.py": 46.02,
     "tests/unit/test_updater.py": 38.50,
+    "tests/unit/test_windows_ci_witness.py": 88.20,
     "tests/unit/test_windows_update_helper.py": 55.39,
     "tests/unit/test_zero_dashboard_harness.py": 38.15,
 }

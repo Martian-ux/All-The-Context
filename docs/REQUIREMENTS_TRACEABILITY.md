@@ -1,5 +1,18 @@
 # Requirements traceability
 
+### 2026-11-21 ordinary Windows CI preparation and scheduling
+
+These source contracts require maintained native CI delta validation and
+independent review. Hosted timing and artifact parity remain operator-owned.
+
+| Requirement | Source and verification contract |
+|---|---|
+| Reweight only the existing Windows witness group | `check_test_collection.py` uses 88.20 seconds; collection contracts retain whole-file affinity, disjoint complete unions, Windows/Linux shard counts, reducers and canonical receipts. Existing node IDs remain present. |
+| Batch exact immutable Git admission | `windows_ci_witness.py` reads both trees with configured Git quoting and exact mode/kind/path/blob lookups; actual depth-two event tests bind both participants to protected main and reject historical scheduler pins. Literal quoted-path equivalence and both-role quoting tests preserve the prior boundary. Fresh status, filesystem inventory and graph checks remain required. |
+| Prepare only the fixed authenticated donor early | `windows_ci_pilot.py` verifies existing API identity, exact archive digest/size, bounded inventory, installer/helpers and four provenance descriptors in the background downloader before atomic readiness. Real miniature ZIP/CArchive/provenance fixtures cover ready, failed and partial preparation through the download entrypoint. |
+| Revalidate independently before either consumer reuses files | Each call verifies pinned manifest/checksum, four role hashes/sizes and current locks/toolchain. Both-consumer contracts alter evidence after the first admission and require the second to reject it. Missing/incomplete/failed/malformed preparation and changed role or manifest bytes cannot authorize reuse. |
+| Preserve complete fallback and actual gates | Public verifier contracts exercise both ready routes and isolated cold A/B fallback with real provenance verification. Existing full stock joins, lifecycle/failure contracts, process/credential isolation, workflow payloads, per-platform collection and release checks remain required. No hosted timing or package parity is inferred from local source contracts. |
+
 ### 2026-11-21 bounded Windows stock witness
 
 | Requirement | Implementation | Verification |

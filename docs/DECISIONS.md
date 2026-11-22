@@ -1,5 +1,30 @@
 # Architecture decisions
 
+## Overlap authenticated donor preparation with CI installation (2026-11-21)
+
+Use the existing credential-scoped background downloader for the same fixed donor
+verification and bounded extraction before locked dependencies are installed.
+Defer build-only imports until build execution; the early path launches no donor,
+compiler or smoke executable. Publish the existing run/attempt completion marker
+with a same-directory rename only after verified outputs are complete. Failed
+preparation publishes unavailability without private diagnostics.
+
+Readiness is a synchronization signal, not reusable verification authority.
+Both the CI-only pilot and ordinary consumer independently authenticate the exact
+extracted manifest/checksum and rehash all four regular role files, binding their
+sizes and current locks/toolchain before constructing a retained runner. Keep the
+complete cold double build on admission/preparation misses and the existing
+failure propagation after actual builds or proved lifecycle checks are reached.
+Retained A/B equality still requires the independent full-stock raw-byte join.
+
+Batch immutable ordinary-admission tree reads without disabling Git quoting or
+decoding quoted names. Exact unquoted delta names must match the returned tree
+names, regular blob mode/kind and current reviewed pins. Preserve the separate
+historical overlay mappings, graph recipe, fresh dirty check and covered checkout
+inventory. Change only the Windows whole-file witness scheduling weight to
+88.20 seconds; preserve Linux scheduling, collection identities and all gates.
+Ancillary relocation, compression memoization and product changes are excluded.
+
 ## Independent stock authority for ordinary Windows PRs (2026-11-21)
 
 Retained A/B agreement cannot prove that an ordinary edit preserves the stock

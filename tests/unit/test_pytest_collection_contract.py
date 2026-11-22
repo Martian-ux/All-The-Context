@@ -168,6 +168,20 @@ def test_exact_case_schedule_defaults_to_files_and_admits_new_nodes() -> None:
 
 def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
     checker = _load_collection_script()
+    witness_file = "tests/unit/test_windows_ci_witness.py"
+    assert checker.WINDOWS_FILE_SECONDS[witness_file] == 88.20
+    witness_nodes = [f"{witness_file}::test_case[{case}]" for case in ("first", "second")]
+    weighted_collection = Counter(
+        witness_nodes + [f"tests/unit/test_weight_filler_{i}.py::test_case" for i in range(30)]
+    )
+    for platform in ("windows", "linux"):
+        groups = checker.test_case_groups(witness_nodes, platform=platform)
+        assert len(set(groups.values())) == 1
+        shards = checker.assign_test_cases(
+            weighted_collection, shard_count=checker.CI_SHARD_COUNTS[platform], platform=platform
+        )
+        checker.verify_complete_disjoint_union(weighted_collection, shards)
+        assert any(set(witness_nodes) <= set(shard) for shard in shards)
     split_files = (
         "tests/integration/test_agent_continuity_harness.py",
         "tests/integration/test_project_first_read.py",

@@ -354,6 +354,7 @@ def ordinary_checkout(tmp_path, monkeypatch):
         "packages/allthecontext/src/allthecontext/client.py": "value = 1\n",
         "tests/unit/test_client.py": "def test_client(): pass\n",
         "docs/fixture.md": "Fixture\n",
+        "docs/café.md": "Quoted fixture\n",
         "uv.lock": "frozen\n",
     }
     for name, contents in files.items():
@@ -416,6 +417,131 @@ def test_real_ordinary_merge_qualifies_only_existing_checked_names(ordinary_chec
     )
     with pytest.raises(ValueError, match="dirty"):
         witness.admit_source(root, commit)
+
+
+@pytest.mark.parametrize("quote_path", ["true", "false"])
+def test_ordinary_admission_preserves_configured_git_quoting(
+    ordinary_checkout, monkeypatch, quote_path
+):
+    root, _, event, event_file, git = ordinary_checkout
+    git("config", "core.quotePath", quote_path)
+    (root / "docs/café.md").write_text("Modified supporting doc\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "--amend", "--no-edit")
+    commit = git("rev-parse", "HEAD")
+    event["pull_request"]["merge_commit_sha"] = commit
+    event_file.write_text(json.dumps(event), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_SHA", commit)
+    original = pilot.git(root, "ls-tree", commit, "--", "docs/café.md")
+    accepted = original.startswith(b"100644 blob ") and original.endswith(
+        "\tdocs/café.md\n".encode()
+    )
+    assert accepted == (quote_path == "false")
+    for job, producer in (("desktop-package", False), ("windows-stock-witness", True)):
+        monkeypatch.setenv("GITHUB_JOB", job)
+        if accepted:
+            assert witness.admit_source(root, commit, producer=producer)["head"] == commit
+        else:
+            with pytest.raises(ValueError, match="unsupported ordinary file"):
+                witness.admit_source(root, commit, producer=producer)
+
+
+@pytest.mark.parametrize("quote_path", ["true", "false"])
+def test_batched_tree_matches_original_literal_path_mode_and_quoting(tmp_path, quote_path):
+    # Git objects permit quoted names even when the host cannot check them out.
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "core.quotePath", quote_path], check=True)
+
+    def git_input(arguments, raw):
+        return subprocess.run(
+            ["git", "-C", str(tmp_path), *arguments],
+            input=raw,
+            check=True,
+            capture_output=True,
+        ).stdout.strip()
+
+    blob = git_input(["hash-object", "-w", "--stdin"], b"fixture\n")
+    names = [
+        "plain.md",
+        "with space.md",
+        'double"quote.md',
+        "back\\slash.md",
+        "tab\tname.md",
+        "line\nname.md",
+        "café.md",
+        "[literal].md",
+        "star*.md",
+    ]
+    rows = [b"100644 blob " + blob + b"\t" + name.encode() + b"\0" for name in names]
+    rows += [
+        mode + b" blob " + blob + b"\t" + name + b"\0"
+        for mode, name in (
+            (b"100755", b"executable.md"),
+            (b"120000", b"linked.md"),
+        )
+    ]
+    subtree = git_input(["mktree", "-z"], b"".join(rows))
+    tree = git_input(["mktree", "-z"], b"040000 tree " + subtree + b"\tdocs\0").decode()
+    files = witness._git_tree_files(tmp_path, tree)
+    for name in [
+        *(f"docs/{name}" for name in names),
+        "docs/executable.md",
+        "docs/linked.md",
+        "docs",
+        "doc",
+        "docs/plain.md/child",
+        "docs/plain",
+        "docs/missing.md",
+    ]:
+        original = pilot.git(tmp_path, "ls-tree", tree, "--", name)
+        accepted = original.startswith(b"100644 blob ") and original.endswith(
+            b"\t" + name.encode() + b"\n"
+        )
+        entry = files.get(name.encode())
+        assert (entry is not None and entry[:2] == (b"100644", b"blob")) == accepted, name
+        if accepted:
+            assert entry == (b"100644", b"blob", blob)
+
+
+@pytest.mark.parametrize("launch_error", [False, True])
+def test_ordinary_start_prepares_only_fresh_background_downloader(
+    ordinary_checkout, tmp_path, monkeypatch, launch_error
+):
+    root, _, _, _, _ = ordinary_checkout
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setattr(pilot.subprocess, "CREATE_NO_WINDOW", 0, raising=False)
+    launches = []
+    real_launch = subprocess.Popen
+
+    def launch(command, **options):
+        if command[0] != sys.executable:
+            return real_launch(command, **options)
+        assert command == [
+            sys.executable,
+            "-B",
+            "-S",
+            str(Path(pilot.__file__).resolve()),
+            "download",
+        ]
+        assert options["cwd"] == root and options["stdin"] == subprocess.DEVNULL
+        assert options["stdout"] is options["stderr"]
+        assert not (pilot.download_directory() / "complete.json").exists()
+        launches.append(command)
+        if launch_error:
+            raise OSError("launch unavailable")
+
+    monkeypatch.setattr(pilot.subprocess, "Popen", launch)
+    pilot.start_download(root)
+    folder = pilot.download_directory()
+    assert len(launches) == 1 and folder.is_dir()
+    assert not (folder / "complete.part").exists()
+    if launch_error:
+        assert (folder / "complete.json").read_bytes() == b'{"available": false}'
+    else:
+        assert not (folder / "complete.json").exists()
+    # The same run/attempt never reuses a prior preparation directory.
+    pilot.start_download(root)
+    assert len(launches) == 1
 
 
 @pytest.mark.parametrize(
@@ -494,6 +620,11 @@ WITNESS_OVERLAY_BLOBS = {
     "scripts/windows_ci_pilot.py": "a06c6f2b46f8bae744ccc61ede367aa1a37d54aa",
     "scripts/windows_ci_canonical.py": "5e47f71507e7ea9e36c3ee372361de08114a7d38",
 }
+CURRENT_WITNESS_UPDATES = {
+    "scripts/check_test_collection.py": "01de4bf97745a53edddacdf9ef7fa2011ad56a8e",
+    "scripts/windows_ci_components.py": "59339c5d2c56f2796b36b446e76605d337eaaa4b",
+    "scripts/windows_ci_pilot.py": "4bb68bd11c85b932debf4b4226de594aa17d777c",
+}
 
 
 def test_protected_main_admission_binds_both_reviewed_overlays():
@@ -509,7 +640,9 @@ def test_protected_main_admission_binds_both_reviewed_overlays():
     prior_paths = set(git("diff", "--name-only", PROTECTED_MAIN, PRIOR_CI).splitlines())
     witness_paths = set(git("diff", "--name-only", PRIOR_CI, REVIEWED_WITNESS).splitlines())
     assert prior_paths - witness.IMPLEMENTATION_FILES == PRIOR_OVERLAY_BLOBS.keys()
-    assert witness.QUALIFIED_INPUT_BLOBS == PRIOR_OVERLAY_BLOBS | WITNESS_OVERLAY_BLOBS
+    assert witness.QUALIFIED_INPUT_BLOBS == (
+        PRIOR_OVERLAY_BLOBS | WITNESS_OVERLAY_BLOBS | CURRENT_WITNESS_UPDATES
+    )
     # Only the policy module and the existing passive checked test/doc paths
     # have no blob pin. Do not silently expand this exemption to executable inputs.
     unpinned = (prior_paths | witness_paths) - witness.QUALIFIED_INPUT_BLOBS.keys()
@@ -581,7 +714,10 @@ def protected_main_objects(tmp_path_factory):
     assert git("rev-parse", f"{INTEGRATION}:{policy}") == git(
         "rev-parse", f"{REVIEWED_WITNESS}:{policy}"
     )
-    corrected = {policy: (ROOT / policy).read_bytes()}
+    corrected = {
+        name: subprocess.check_output(["git", "-C", str(ROOT), "show", f"HEAD:{name}"])
+        for name in (policy, *CURRENT_WITNESS_UPDATES)
+    }
     head, tree = branch(INTEGRATION, corrected)
     ci_head, ci_tree = branch(REVIEWED_WITNESS, corrected)
     return root, git, branch, corrected, head, tree, ci_head, ci_tree
@@ -616,9 +752,12 @@ def test_actual_protected_main_depth_two_both_participants(
         head, tree = INTEGRATION, git("rev-parse", f"{INTEGRATION}^{{tree}}")
     elif case == "ci-only":
         head, tree = ci_head, ci_tree
-    elif case in {"prior-input", "witness-input", "new-module", "dashboard", "history"}:
+    elif case == "prior-input":
+        name = "scripts/check_test_collection.py"
+        contents = pilot.git(ROOT, "show", f"{PRIOR_CI}:{name}")
+        head, tree = branch(INTEGRATION, {**corrected, name: contents})
+    elif case in {"witness-input", "new-module", "dashboard", "history"}:
         name = {
-            "prior-input": "scripts/check_test_collection.py",
             "witness-input": "scripts/build_desktop.py",
             "new-module": "packages/allthecontext/src/allthecontext/unreviewed.py",
             "dashboard": "apps/dashboard/unreviewed.txt",
@@ -1117,7 +1256,8 @@ def test_early_source_qualification_import_needs_no_installed_dependencies():
             sys.executable,
             "-S",
             "-c",
-            "import sys; import scripts.windows_ci_witness; "
+            "import sys; import scripts.windows_ci_witness; import scripts.windows_ci_components; "
+            "assert 'scripts.build_desktop' not in sys.modules; "
             "assert 'scripts.verify_reproducible_build' not in sys.modules; "
             "assert 'cryptography' not in sys.modules",
         ],

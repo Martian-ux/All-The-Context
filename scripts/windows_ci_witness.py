@@ -45,10 +45,11 @@ API_VERSION = "2026-03-10"
 # admitted CI/native implementation inputs are fixed Git blobs, not a broad
 # permission to change the packaging recipe on an ordinary PR.
 QUALIFIED_INPUT_BLOBS = {
-    # Additional inputs from the separately reviewed protected-main -> prior CI
-    # overlay. These exact blobs remain present in the current witness overlay.
+    # Inputs from the separately reviewed protected-main -> prior CI overlay.
+    # Contract tests retain historical mappings; reviewed follow-up pins bind
+    # the scheduler weight and early donor preparation below.
     "bench/retrieval_m3_current_candidate.py": "c2dae5e8b9eb3914ea691b6fab079d2372e9389a",
-    "scripts/check_test_collection.py": "8841cf2e6d4947008aca2208cdab599c2becc5e2",
+    "scripts/check_test_collection.py": "01de4bf97745a53edddacdf9ef7fa2011ad56a8e",
     "scripts/install_locked_python.py": "04ae2b2ab8fef6b913a88f5c79a72598df39a920",
     "scripts/pytest_shard_receipt.py": "6df45981b5c323599d5926ceb447cc33ce9722e2",
     "scripts/run_test_shard.py": "520425b0af8f07dfa1bfb062a3608e9193777291",
@@ -62,9 +63,9 @@ QUALIFIED_INPUT_BLOBS = {
     ".github/workflows/ci.yml": "c7e3ba2a64a3c8f02f06fd087431d1163e21a399",
     "scripts/build_desktop.py": "233b11b625c2f75aa17609cd8f7500d7d6930acf",
     "scripts/verify_reproducible_build.py": "91a6c93381f1245a69e8c94d1f6d8fbf98c7b8d4",
-    "scripts/windows_ci_components.py": "f98c18518c68c0505317d19981daa1611341d320",
+    "scripts/windows_ci_components.py": "59339c5d2c56f2796b36b446e76605d337eaaa4b",
     "scripts/windows_ci_package_checks.py": "d2bbb50c719b19058faf4aef204a6d0a1235bf4f",
-    "scripts/windows_ci_pilot.py": "a06c6f2b46f8bae744ccc61ede367aa1a37d54aa",
+    "scripts/windows_ci_pilot.py": "4bb68bd11c85b932debf4b4226de594aa17d777c",
     "scripts/windows_ci_canonical.py": "5e47f71507e7ea9e36c3ee372361de08114a7d38",
 }
 MARKER_PATTERN = re.compile(
@@ -139,6 +140,20 @@ def packaging_venv(environment: dict[str, str]) -> str:
     return f"C:/atc-ci-package-{run}-{attempt}"
 
 
+def _git_tree_files(root: Path, revision: str) -> dict[bytes, tuple[bytes, bytes, bytes]]:
+    # Keep Git's configured quoting, just as the original per-path ls-tree did.
+    # Delta names are unquoted: a quoted tree name must still fail exact lookup.
+    records = git(root, "ls-tree", "-r", "--full-tree", revision).split(b"\n")
+    require(records[-1] == b"", "invalid source tree")
+    files = {}
+    for record in records[:-1]:
+        header, name = record.split(b"\t", 1)
+        mode, kind, object_id = header.split(b" ")
+        require(name not in files, "duplicate source tree path")
+        files[name] = (mode, kind, object_id)
+    return files
+
+
 def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
     environment = dict(os.environ)
     event = bounded_json(Path(environment["GITHUB_EVENT_PATH"]).read_bytes(), 1_000_000)
@@ -161,13 +176,15 @@ def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
         "ordinary source mismatch",
     )
     require(not git(root, "status", "--porcelain", "--untracked-files=normal"), "dirty source")
+    candidate_files = _git_tree_files(root, commit)
     for name, blob in QUALIFIED_INPUT_BLOBS.items():
         require(
-            git(root, "rev-parse", f"{commit}:{name}").decode().strip() == blob,
+            candidate_files.get(name.encode()) == (b"100644", b"blob", blob.encode()),
             "unreviewed CI/native input",
         )
     parents = git(root, "rev-list", "--parents", "-n", "1", commit).decode().split()
     require(parents == [commit, BASE, pr["head"]["sha"]], "unsupported merge parents")
+    base_files = _git_tree_files(root, BASE)
     rows = (
         git(root, "diff", "--name-status", "--no-renames", "-z", BASE, commit).decode().split("\0")
     )
@@ -175,10 +192,10 @@ def admit_source(root: Path, commit: str, *, producer: bool = False) -> dict:
     ordinary = False
     for status, name in zip(rows[:-1:2], rows[1:-1:2], strict=True):
         require(status in {"A", "M"}, "unsupported source delta")
-        for revision in (BASE, commit) if status == "M" else (commit,):
-            row = git(root, "ls-tree", revision, "--", name).decode()
+        for files in (base_files, candidate_files) if status == "M" else (candidate_files,):
+            entry = files.get(name.encode())
             require(
-                row.startswith("100644 blob ") and row.endswith(f"\t{name}\n"),
+                entry is not None and entry[:2] == (b"100644", b"blob"),
                 "unsupported ordinary file",
             )
         if name in IMPLEMENTATION_FILES or name in QUALIFIED_INPUT_BLOBS:
@@ -432,21 +449,7 @@ def acquire(expected: dict) -> tuple:
 
 
 def donor_runner(root: Path, commit: str, tools: dict, locks: dict):
-    folder = pilot.download_directory()
-    deadline = time.monotonic() + 125
-    while not (folder / "complete.json").is_file():
-        require(folder.is_dir() and time.monotonic() < deadline, "donor unavailable")
-        time.sleep(0.1)
-    require(
-        bounded_json((folder / "complete.json").read_bytes()) == {"available": True},
-        "donor unavailable",
-    )
-    paths = pilot.extract_donor(folder / "donor.zip", folder / "ordinary-verified")
-    doc = provenance.load_provenance(folder / "ordinary-verified" / Path(pilot.MANIFEST).name)
-    require(
-        doc["contract"]["locks"] == locks and doc["contract"]["toolchain"] == tools,
-        "donor inputs changed",
-    )
+    paths = pilot.prepared_donor(tools, locks)
     return component_runner(root, commit, paths, witness_profile=True)
 
 
