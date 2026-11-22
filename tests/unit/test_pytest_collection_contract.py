@@ -260,7 +260,12 @@ def test_windows_tail_preserves_placement_and_parameter_affinity() -> None:
         f"{rolling}_similar[none-1]",
         f"tests/unit/test_other.py::test_rolling_successive_real_depth_two_events[none-1]",
     ]
-    cases = [*expected, *old, *unknown]
+    cases = [
+        *expected,
+        *old,
+        *unknown,
+        *(f"tests/unit/test_scope_control_{index}.py::test_other" for index in range(4)),
+    ]
     windows = checker.test_case_groups(cases, platform="windows")
     linux = checker.test_case_groups(cases, platform="linux")
     linux_plan = checker.assign_test_cases(Counter(cases), shard_count=4, platform="linux")
@@ -947,9 +952,10 @@ def test_execution_receipts_reject_corrupted_real_evidence(small_suite, corrupti
         other = next(value for value in receipt["reports"] if value != node)
         receipt["reports"][other].extend(receipt["reports"].pop(node))
     elif corruption == "split shared group":
-        shared = next(
-            value
-            for value in receipt["reports"]
+        receipt, shared = next(
+            (source, value)
+            for source in receipts
+            for value in source["reports"]
             if "::test_parameter[" in value or "::test_shared[" in value
         )
         for report in receipt["reports"][shared]:
