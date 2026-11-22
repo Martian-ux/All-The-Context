@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -354,6 +355,8 @@ def build(
     version: str = __version__,
     source_commit: str | None = None,
     architecture: str | None = None,
+    parallel_windows: bool = False,
+    ci_witness: bool = False,
 ) -> Path:
     try:
         import PyInstaller.__main__
@@ -391,67 +394,91 @@ def build(
     helper: Path | None = None
     update_helper: Path | None = None
     recovery_helper: Path | None = None
-    if active_system in {"Windows", "Darwin"}:
-        helper_stem = "AllTheContextMCP" if active_system == "Windows" else "all-the-context-mcp"
-        helper = build_root / "helper-dist" / executable_name(helper_stem, active_system)
-        PyInstaller.__main__.run(
-            helper_arguments(
-                active_system,
-                source_root=source_root,
-                build_root=build_root,
-                identity_path=identity_path,
-                version_file=(
-                    _windows_version_file(
-                        build_root=build_root, identity=identity, component="AllTheContextMCP"
-                    )
-                    if active_system == "Windows"
-                    else None
-                ),
-            )
+    parallel = parallel_windows and active_system == "Windows"
+
+    def package(arguments: list[str]) -> None:
+        if not parallel and not ci_witness:
+            PyInstaller.__main__.run(arguments)
+            return
+        # PyInstaller has process-global state and a mutable configuration cache.
+        # Each role keeps its own cache/spec root as well as its existing work/dist.
+        name = arguments[arguments.index("--name") + 1]
+        config_root = build_root / "pyinstaller" / name
+        spec_root = config_root / "spec"
+        spec_root.mkdir(parents=True, exist_ok=True)
+        arguments = list(arguments)
+        arguments[arguments.index("--specpath") + 1] = str(spec_root)
+        environment = dict(os.environ)
+        environment["PYINSTALLER_CONFIG_DIR"] = str(config_root / "config")
+        compiler = (
+            [sys.executable, str(ROOT / "scripts" / "windows_ci_canonical.py")]
+            if ci_witness and active_system == "Windows"
+            else [sys.executable, "-m", "PyInstaller"]
         )
-        if not helper.is_file():
-            raise RuntimeError(f"MCP helper was not produced at {helper}")
-        recovery_stem = (
-            "AllTheContextRecovery" if active_system == "Windows" else "all-the-context-recovery"
+        subprocess.run(
+            [*compiler, *arguments],
+            cwd=ROOT,
+            env=environment,
+            check=True,
         )
-        recovery_helper = (
-            build_root / "recovery-helper-dist" / executable_name(recovery_stem, active_system)
+
+    def build_helper(request: tuple[list[str], Path]) -> None:
+        arguments, output = request
+        package(arguments)
+        if not output.is_file():
+            raise RuntimeError(f"Native helper was not produced at {output}")
+
+    helpers: list[tuple[list[str], Path]] = []
+    for systems, stem, directory, generate in (
+        ({"Windows", "Darwin"}, "AllTheContextMCP", "helper-dist", helper_arguments),
+        (
+            {"Windows", "Darwin"},
+            "AllTheContextRecovery",
+            "recovery-helper-dist",
+            recovery_helper_arguments,
+        ),
+        ({"Windows"}, "AllTheContextUpdater", "update-helper-dist", update_helper_arguments),
+    ):
+        if active_system not in systems:
+            continue
+        name = (
+            {
+                "AllTheContextMCP": "all-the-context-mcp",
+                "AllTheContextRecovery": "all-the-context-recovery",
+            }.get(stem, stem)
+            if active_system == "Darwin"
+            else stem
         )
-        PyInstaller.__main__.run(
-            recovery_helper_arguments(
-                active_system,
-                source_root=source_root,
-                build_root=build_root,
-                identity_path=identity_path,
-                version_file=(
-                    _windows_version_file(
-                        build_root=build_root,
-                        identity=identity,
-                        component="AllTheContextRecovery",
-                    )
-                    if active_system == "Windows"
-                    else None
-                ),
-            )
+        output = build_root / directory / executable_name(name, active_system)
+        arguments = generate(
+            active_system,
+            source_root=source_root,
+            build_root=build_root,
+            identity_path=identity_path,
+            version_file=(
+                _windows_version_file(build_root=build_root, identity=identity, component=stem)
+                if active_system == "Windows"
+                else None
+            ),
         )
-        if not recovery_helper.is_file():
-            raise RuntimeError(f"Recovery helper was not produced at {recovery_helper}")
-    if active_system == "Windows":
-        update_helper = build_root / "update-helper-dist" / "AllTheContextUpdater.exe"
-        PyInstaller.__main__.run(
-            update_helper_arguments(
-                active_system,
-                source_root=source_root,
-                build_root=build_root,
-                identity_path=identity_path,
-                version_file=_windows_version_file(
-                    build_root=build_root, identity=identity, component="AllTheContextUpdater"
-                ),
-            )
-        )
-        if not update_helper.is_file():
-            raise RuntimeError(f"Update helper was not produced at {update_helper}")
-    PyInstaller.__main__.run(
+        if parallel:
+            helpers.append((arguments, output))
+        else:
+            build_helper((arguments, output))
+        if stem == "AllTheContextMCP":
+            helper = output
+        elif stem == "AllTheContextRecovery":
+            recovery_helper = output
+        else:
+            update_helper = output
+    if parallel:
+        # Drain all running children on failure/interruption before roots can be
+        # cleaned up. Setup must never consume incomplete helper outputs.
+        with ThreadPoolExecutor(max_workers=3) as workers:
+            futures = [workers.submit(build_helper, request) for request in helpers]
+            for future in futures:
+                future.result()
+    package(
         desktop_arguments(
             active_system,
             helper,
@@ -508,6 +535,12 @@ def main() -> int:
     parser.add_argument("--version", default=__version__)
     parser.add_argument("--source-commit")
     parser.add_argument("--architecture", choices=("x86_64", "arm64"))
+    parser.add_argument("--ci-witness", action="store_true")
+    parser.add_argument(
+        "--parallel-windows",
+        action="store_true",
+        help="Build Windows helpers concurrently in isolated PyInstaller subprocesses.",
+    )
     arguments = parser.parse_args()
     artifact = build(
         system=arguments.system,
@@ -517,6 +550,8 @@ def main() -> int:
         version=arguments.version,
         source_commit=arguments.source_commit,
         architecture=arguments.architecture,
+        parallel_windows=arguments.parallel_windows,
+        ci_witness=arguments.ci_witness,
     )
     print(artifact)
     return 0

@@ -1,5 +1,70 @@
 # Requirements traceability
 
+### 2026-11-21 measured rolling Windows test affinity
+
+| Requirement | Source and regression contract |
+|---|---|
+| Minimal identical-checkout reuse | `test_rolling_successive_real_depth_two_events` uses the frozen checkout-reuse fixture for five event-only cases per successor. Each row writes a fresh event, calls both roles and verifies shallow transport, ordered parents, later main, no alternates and clean status. The 18 source/topology rows retain independent real checkouts and all prior assertions. |
+| Exact Windows scope and weight allowlist | `_case_scope`, `WINDOWS_ROLLING_SCOPES` and `WINDOWS_SCOPE_SECONDS`; the existing Windows tail contract checks all 28 exact scopes, measured weights, old group and conservative unknown IDs. No new pytest distribution or workflow mechanism. |
+| Real loadgroup reuse and canonical integrity | Existing generated small-suite and loadgroup contracts witness all five event siblings on one worker per successor, singleton scopes, retained file affinity, projected-ID round trips, worker attribution, disjoint assignment and receipt corruption rejection. Clean exact collection and archived PR 135 replay retain all 4,094 IDs; Linux scope and assignment equality remain required. |
+| Exact current and historical admission | Both-role e9 bootstrap and two real depth-two successor contracts retain source, topology and event rejection controls. Overlay binding retains historical Git blob assertions and independently pins the new scheduler; rolling inventory is compared against exact Git tree entries. All unrelated input pins remain fixed. |
+| Separate projections from acceptance | Frozen local timing and archived provider replay assumptions remain explicit. Six native checks and independent review apply to the exact clean committed source. Hosted CI/CodeQL timing, integration and release remain separately authorized gates. |
+
+### 2026-11-21 rolling Windows protected-base donor qualification
+
+| Requirement | Source and regression contract |
+|---|---|
+| Real ordinary event and ordered parents in both roles | `windows_ci_witness.admit_source`; real Git depth-two fixtures for two successive bases, both participants, and a later main tip. Reject wrong repository IDs, forks, branch, attempt, parents, source and merge identity. |
+| Independently reviewed inputs in both trees | Reviewed inventory fingerprint covers all tracked names/modes, shipped Python topology and fixed build bytes; unchanged regular policy and explicit recipe pins in both trees. Regressions reject inherited recipe drift, policy/lock changes, additions, deletion and mode changes; existing checkout inventory checks remain. |
+| Exact successful protected push and immutable artifact | `protected_donor` reuses bounded provider reads and validates approved workflow identity/path, exact base run/attempt, desktop job, ordered successful upload/marker steps, exact marker log and artifact size/digest/expiry/origin. Positive descriptor and malformed/absent/ambiguous provider fixtures exercise failure closure. |
+| Safe intake and current build compatibility | `windows_ci_pilot` verifies bounded archive bytes and unique version-consistent inventory, canonical checksummed manifest, source, full role hashes/sizes and embedded identities; current locks/toolchain remain mandatory. Rolling archive regressions include malformed ZIP/manifest, wrong base/role/identity and stale locks/toolchain. Workers receive an immutable descriptor and recheck their own bytes before parsing. |
+| Preserve stock, lifecycle, bootstrap and gates | Existing full four-role join, independent stock, clean retained arms, reached lifecycle failure and full fallback regressions remain. Exact e9 shallow fixtures and fixed pilot contracts retain their routes. The marker is gated to the existing Windows main push upload. No static payload, Linux jobs, test node identity or required check is removed. Native/independent and hosted timing acceptance remain separate. |
+
+### 2026-11-21 Windows witness acquisition reliability
+
+These CI source contracts retain native validation, independent review and a
+fresh operator-owned hosted trial as separate gates.
+
+| Requirement | Source and regression contract |
+|---|---|
+| Recover eligible transient failures on exact routes | `windows_ci_witness.py` validates immutable attempt metadata once, then binds jobs, successful job attempt/steps, marker, artifact and receipt. Exact-receipt recovery tests inject reset/timeout/aborted/incomplete-read/temporary-DNS and provider indexing/server failures. |
+| Bound retries and elapsed acquisition | One shared four-retry budget, existing 150-second producer polling, at-most-eight-second receipt phase, five-second socket cap and deadline checks between bounded reads. Shared-budget, late-response, slow-read closure and request-timeout contracts retain exhaustion/fallback. |
+| Reject permanent or unbound evidence immediately | Terminal authorization/HTTP/TLS and redirected-storage-404 contracts; existing wrong source/attempt/job, marker, artifact/archive and receipt negatives. Provider indexing cannot authorize an unrelated storage location. |
+| Emit fixed safe acquisition and role mismatch codes | Allowlist at exception construction and fallback output; provider-error/unknown-code tests and candidate/retained size/hash mismatch cases. No exception text, credential, signed URL or arbitrary path is emitted. |
+| Preserve genuine lifecycle failure and complete fallback | Existing full four-role join, independent full-stock producer and cold double-build/lifecycle contracts; public verifier regression reaches the maintained candidate-check coordinator with a failed first-run subprocess boundary, drains ancillary work, fails proved candidates without publication, and permits fresh complete stock fallback for unproved bytes. Native executable lifecycle proof remains downstream. |
+| Preserve app bytes, platforms and gates | Only acquisition helper/tests and stable CI documentation change; normal Windows/Linux payloads, workflow topology, executable pins, canonical collection and prior test IDs remain intact. No fresh timing or release acceptance is inferred. |
+
+### 2026-11-21 ordinary Windows CI preparation and scheduling
+
+These source contracts require maintained native CI delta validation and
+independent review. Hosted timing and artifact parity remain operator-owned.
+
+| Requirement | Source and verification contract |
+|---|---|
+| Reweight only the existing Windows witness group | `check_test_collection.py` uses 88.20 seconds; collection contracts retain whole-file affinity, disjoint complete unions, Windows/Linux shard counts, reducers and canonical receipts. Existing node IDs remain present. |
+| Batch exact immutable Git admission | `windows_ci_witness.py` reads both trees with configured Git quoting and exact mode/kind/path/blob lookups; actual depth-two event tests bind both participants to protected main and reject historical scheduler pins. Literal quoted-path equivalence and both-role quoting tests preserve the prior boundary. Fresh status, filesystem inventory and graph checks remain required. |
+| Prepare only the fixed authenticated donor early | `windows_ci_pilot.py` verifies existing API identity, exact archive digest/size, bounded inventory, installer/helpers and four provenance descriptors in the background downloader before atomic readiness. Real miniature ZIP/CArchive/provenance fixtures cover ready, failed and partial preparation through the download entrypoint. |
+| Revalidate independently before either consumer reuses files | Each call verifies pinned manifest/checksum, four role hashes/sizes and current locks/toolchain. Both-consumer contracts alter evidence after the first admission and require the second to reject it. Missing/incomplete/failed/malformed preparation and changed role or manifest bytes cannot authorize reuse. |
+| Preserve complete fallback and actual gates | Public verifier contracts exercise both ready routes and isolated cold A/B fallback with real provenance verification. Existing full stock joins, lifecycle/failure contracts, process/credential isolation, workflow payloads, per-platform collection and release checks remain required. No hosted timing or package parity is inferred from local source contracts. |
+
+### 2026-11-21 bounded Windows stock witness
+
+| Requirement | Implementation | Verification |
+|---|---|---|
+| Restrict ordinary retained builds to reviewed inputs | Protected-main base/ref and unmodified event, exact ordered base/head merge parents, existing modified Python/test/doc names, covered checkout inventory and separately bound prior-CI/current-witness blob pins; original CI-only route retained | `tests/unit/test_windows_ci_witness.py` overlay binding and actual depth-two topology contracts for both roles, plus existing pilot contracts; native execution downstream |
+| Admit the actual protected-main topology without private history | Use the existing protected-main constant, current synthetic merge SHA and immediate event head; retain profile comparison against protected main | Local shallow checkout contracts reproduce the original rejection, cover corrected admission, and reject wrong base/ref/head/merge, reversed/extra parents, forks, changed prior/witness inputs, new modules, Dashboard/history inputs and CI-only deltas |
+| Authenticate one completed same-run/attempt stock producer | Exact attempt jobs, immutable job ID, successful upload and marker steps, exact marker-step log, artifact ID/digest, bounded ZIP and receipt | Provider custody, unrelated-marker, wrong identity/digest/archive and unavailable-provider contract cases |
+| Compare actual complete stock and both retained arms | Independent full stock graph; shared absolute locked venv; exact metadata member refresh; four raw role names/sizes/SHA-256 values | Full-file join, changed-role/graph rejection and installed metadata contracts; native byte proof remains required |
+| Preserve lifecycle failure and complete fallback | Provisional smokes/packages in isolated roots; drain before stock cold double build and full existing lifecycle; promote only proved passing bytes | Production control-flow fixture, cold fallback, lifecycle failure and explicit artifact-root contracts |
+| Preserve required gates and capacity | Stable reducers and required names, full Windows discovery after Node 22 with `!cancelled()`, independent optional witness | Existing collection/workflow contracts and new witness workflow contract; hosted measurement downstream |
+
+### 2026-11-21 Linux CI timing follow-up
+
+| Requirement | Implementation | Verification |
+|---|---|---|
+| Run every Linux case across four shards with the same required check | CI matrix and shared producer/reducer shard counts retain the exact canonical receipt union and original test outcomes | Collection, workflow and native receipt tests. Hosted timing follows separately |
+| Keep the same initial runner capacity | Dashboard parity and security wait for the two dashboard jobs, and still run on active failed-dashboard workflows | Workflow contract and pinned Actions parser |
+
 "Implemented" means exercised by repository tests. Protected-main CI and
 CodeQL evidence is credited only when bound to an exact SHA; exact artifact,
 live/private client/provider, and release acceptance remain separate gates.
@@ -124,6 +189,27 @@ Independent review and maintained exact-source final validation remain pending.
 | Cancellation races preserve the winning import transition and telemetry | `storage.py`, upload-claim race and exact terminal-row preservation in `tests/unit/test_import_operations.py` |
 | Proposal protection rotation preserves queued payload readability and failure state | `relay/service.py`, pending, empty, restart, failure and concurrent proposal tests in `tests/unit/test_relay_proposal_protection.py` |
 | Same-turn lifecycle callbacks share one serialized state | `lifecycle_runtime.py`, interleaved user/assistant capture and stable-turn retry tests in `tests/unit/test_lifecycle_runtime.py` |
+
+### 2026-11-21 bounded CI donor pilot
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Repair pinned Python availability without renaming a protected desktop context | CI matrix separates `check_label` (status name) from `runner`; Linux desktop uses Ubuntu 24.04; workflow contract | Source handoff; exact-source native and hosted gates pending |
+| Reuse only the frozen trusted Windows closure on eligible CI-only PRs | `windows_ci_pilot.py`: exact base/context/source/graph/packager admission, pinned run/artifact/archive/manifest, bounded selective intake, stock four-role provenance and locks; `test_windows_ci_pilot.py` | Admission misses use cold builds; no release or cache expansion |
+| Fresh exact-source ATC arms retain full byte/provenance checks | `windows_ci_components.py`: bounded lossless retained encodings, fresh Git compilation, matched ABI, new PE/PYZ/CArchive identity and own helpers; existing verifier runner hook, snapshots, equality and staging | Retained dependency closure, not a fresh dependency scan; admitted divergence fails |
+| Overlap work while preserving all package/lifecycle gates | Early fixed donor download with closed-file completion marker; `windows_ci_package_checks.py` drains stock lifecycle and noninterfering built-file package/archive checks; original outputs and diagnostics | Windows PR CI only; fail-closed join; native execution remains downstream |
+| Preserve scheduling coverage and fixture affinity outside the audited change | `test_case_groups` uses function families only for the two audited modules; existing real-worker fixture now includes both names and parameter siblings; frozen 9 Windows / 2 Linux shards and reducers | Real proof-5abef068: 226 cases with matching outcomes/skips; local timing does not establish hosted timing |
+
+### 2026-11-21 integrated protected CI candidate
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Preserve complete OS coverage, stable protected contexts and real worker evidence | `.github/workflows/ci.yml`, `scripts/run_test_shard.py`, `scripts/pytest_shard_receipt.py`, `scripts/check_test_collection.py`; independent full collection, exact identity and complete/disjoint terminal reducer; existing security/dashboard/desktop/CodeQL jobs | Local source contract; exact integrated native, independent and hosted gates remain separate |
+| Retain actual full-suite timing in existing artifacts without changing verdicts | `pytest_shard_receipt.py` stores `report.duration` as `duration_seconds`; `run_test_shard.py` records monotonic `process_elapsed_seconds` through wait completion; `test_pytest_collection_contract.py` covers real controlled phase delays, standalone retrieval, failed invocation retention and old receipts without profiling keys | Optional diagnostic fields; existing artifact upload, admission, source binding and outcome checks preserved; exact-source native execution and independent review owned downstream |
+| Preserve fixture lifetimes while exposing audited work | `test_case_groups`, `assign_test_cases`; default file affinity, exact updater-module singletons, Packet A bucket singletons; named-module proof-3db07e46 covered 236 nodes on four workers; 236.066s archived work weight and unknown-file fallback | Named-module evidence only; no total-suite or hosted timing claim |
+| Retain exhaustive semantic mutations and both retrieval reports | `tests/unit/test_memory_reliability_spec.py`, `bench/retrieval_m3_current_candidate.py`, `tests/unit/test_retrieval_m3_current_candidate.py`; explicit non-xdist invocation and required retrieval receipt in full union; `test_pytest_collection_contract.py` covers shared fixtures, terminal failures and receipt corruption | Original mutation/report assertions retained; native execution owned downstream |
+| Restrict locked uv to fresh Windows venvs | CI Python 3.12.10 venvs under runner temp; `scripts/install_locked_python.py` validates freshness, hashes, pinned uv, isolated configuration/backends and copy links; existing exact-lock tests plus workflow wiring contract | Windows only; Linux/release defaults and lock unchanged |
+| Keep real native/package/recovery gates while parallelizing PR Windows builds | `scripts/build_desktop.py`, `scripts/verify_reproducible_build.py`; PR-only Windows switch, independent clean A/B arms, failure draining, byte validation and exact staging; native provenance and workflow contracts | Authentic package/platform/credential/update/rollback/uninstall and release acceptance still required |
 
 ### 2026-09-22 ZF010 loaded-worker observation correction
 

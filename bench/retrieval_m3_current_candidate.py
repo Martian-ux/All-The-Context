@@ -23,6 +23,7 @@ import re
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
+from concurrent.futures import Executor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -573,25 +574,42 @@ def _content_free_case(score: CaseScore) -> dict[str, Any]:
     }
 
 
-def run(work_dir: Path, *, fixture_path: Path = FIXTURES) -> dict[str, Any]:
-    """Run the current-candidate lane in one disposable vault per case."""
+def _evaluate_in_fresh_vault(
+    parent: Path, fixture: Mapping[str, Any], case: Mapping[str, Any]
+) -> _CaseEvaluation:
+    """Evaluate one case with no live store crossing a process boundary."""
+
+    with tempfile.TemporaryDirectory(prefix="atc-m3-current-candidate-", dir=parent) as vault:
+        store = CoreStore(Path(vault) / "core.sqlite3")
+        try:
+            store.initialize_vault("Synthetic Milestone 3 Current Candidate", "UTC")
+            return _evaluate_case(store, fixture, case)
+        finally:
+            store.close()
+
+
+def run(
+    work_dir: Path, *, fixture_path: Path = FIXTURES, case_executor: Executor | None = None
+) -> dict[str, Any]:
+    """Run in disposable per-case vaults, serially unless an executor is supplied."""
 
     fixture_path = fixture_path.expanduser().resolve()
     fixture = load_fixture(fixture_path)
     parent = _isolated_parent(work_dir)
-    evaluations: list[_CaseEvaluation] = []
     cases = fixture["cases"]
     assert isinstance(cases, list)
     for case in cases:
         if not isinstance(case, dict):
             raise CurrentCandidateEvaluationError("case entries must be objects")
-        with tempfile.TemporaryDirectory(prefix="atc-m3-current-candidate-", dir=parent) as vault:
-            store = CoreStore(Path(vault) / "core.sqlite3")
-            try:
-                store.initialize_vault("Synthetic Milestone 3 Current Candidate", "UTC")
-                evaluations.append(_evaluate_case(store, fixture, case))
-            finally:
-                store.close()
+    if case_executor is None:
+        evaluations = [_evaluate_in_fresh_vault(parent, fixture, case) for case in cases]
+    else:
+        # Start the larger noise cases first, but consume results in fixture order.
+        jobs = {
+            str(case["id"]): case_executor.submit(_evaluate_in_fresh_vault, parent, fixture, case)
+            for case in sorted(cases, key=lambda row: ("noise_profile" not in row, row["id"]))
+        }
+        evaluations = [jobs[str(case["id"])].result() for case in cases]
 
     by_id = {evaluation.score.case_id: evaluation for evaluation in evaluations}
     updated: list[_CaseEvaluation] = []
