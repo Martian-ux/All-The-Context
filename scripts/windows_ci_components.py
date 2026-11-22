@@ -426,7 +426,12 @@ def build_arm(
     helpers = {}
     for role, filename in ROLE_NAMES.items():
         path = provenance._regular_file(donor / filename, label="worker donor")
-        data = path.read_bytes()
+        limit = donor_rows[role]["size"] if donor_rows else pilot.MAX_ROLLING_MEMBER
+        require(
+            0 < path.stat().st_size <= limit <= pilot.MAX_ROLLING_MEMBER, "donor role size changed"
+        )
+        with path.open("rb") as stream:
+            data = stream.read(limit + 1)
         require(
             hashlib.sha256(data).hexdigest()
             == (donor_rows[role]["sha256"] if donor_rows else DONOR_HASHES[role])

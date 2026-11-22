@@ -927,8 +927,8 @@ WITNESS_OVERLAY_BLOBS = {
 CURRENT_WITNESS_UPDATES = {
     "scripts/check_test_collection.py": "01de4bf97745a53edddacdf9ef7fa2011ad56a8e",
     ".github/workflows/ci.yml": "5b6c9715c25f3a4392ca9984a5de2116f1cc5d36",
-    "scripts/windows_ci_pilot.py": "66786c2ee977f1695c815e7d39957a3d2d3bc55e",
-    "scripts/windows_ci_components.py": "5aa48eb7e2c0a4ff054d73b3a2ef6437a385e4c6",
+    "scripts/windows_ci_pilot.py": "7cec3559b00402a01bdf676575261774ffb224e2",
+    "scripts/windows_ci_components.py": "eccc6705208166773e796fcb1e0312d0e6dec80d",
 }
 
 

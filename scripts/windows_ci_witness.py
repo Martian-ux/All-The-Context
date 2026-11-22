@@ -99,9 +99,9 @@ QUALIFIED_INPUT_BLOBS = {
     ".github/workflows/ci.yml": "5b6c9715c25f3a4392ca9984a5de2116f1cc5d36",
     "scripts/build_desktop.py": "233b11b625c2f75aa17609cd8f7500d7d6930acf",
     "scripts/verify_reproducible_build.py": "91a6c93381f1245a69e8c94d1f6d8fbf98c7b8d4",
-    "scripts/windows_ci_components.py": "5aa48eb7e2c0a4ff054d73b3a2ef6437a385e4c6",
+    "scripts/windows_ci_components.py": "eccc6705208166773e796fcb1e0312d0e6dec80d",
     "scripts/windows_ci_package_checks.py": "d2bbb50c719b19058faf4aef204a6d0a1235bf4f",
-    "scripts/windows_ci_pilot.py": "66786c2ee977f1695c815e7d39957a3d2d3bc55e",
+    "scripts/windows_ci_pilot.py": "7cec3559b00402a01bdf676575261774ffb224e2",
     "scripts/windows_ci_canonical.py": "5e47f71507e7ea9e36c3ee372361de08114a7d38",
 }
 MARKER_PATTERN = re.compile(
@@ -130,7 +130,7 @@ IMPLEMENTATION_FILES = {
 # SHA-256 of the reviewed inventory, with only existing shipped Python,
 # tests/docs content and this policy's own blob omitted. Names and modes remain
 # covered. Generated offline from the reviewed source, never from a PR claim.
-ROLLING_INVENTORY_SHA256 = "109411f333215767400f4d8cb66fe0eba30ca204049ed496132c5e65ff539227"
+ROLLING_INVENTORY_SHA256 = "f1b8fb3dde8db9ffcf2f6cd56ffa5773309b850896209d1f8ceee813a8d03842"
 POLICY = "scripts/windows_ci_witness.py"
 
 

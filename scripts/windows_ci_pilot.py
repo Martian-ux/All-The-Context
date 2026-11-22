@@ -534,7 +534,12 @@ def verify_donor(
             # verify_provenance hashes the full snapshot first. Stable own reads
             # protect the parser too, including the worker's later verification.
             digest, size = provenance._stable_hash(path, label="donor identity")
-            data = path.read_bytes()
+            require(
+                0 < size == components[role]["size"] <= MAX_ROLLING_MEMBER,
+                "donor identity size mismatch",
+            )
+            with path.open("rb") as stream:
+                data = stream.read(size + 1)
             require(
                 len(data) == size == components[role]["size"]
                 and hashlib.sha256(data).hexdigest() == digest == components[role]["sha256"],
