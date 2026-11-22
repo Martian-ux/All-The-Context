@@ -1,5 +1,19 @@
 # Requirements traceability
 
+### 2026-11-21 Windows witness acquisition reliability
+
+These CI source contracts retain native validation, independent review and a
+fresh operator-owned hosted trial as separate gates.
+
+| Requirement | Source and regression contract |
+|---|---|
+| Recover eligible transient failures on exact routes | `windows_ci_witness.py` validates immutable attempt metadata once, then binds jobs, successful job attempt/steps, marker, artifact and receipt. Exact-receipt recovery tests inject reset/timeout/aborted/incomplete-read/temporary-DNS and provider indexing/server failures. |
+| Bound retries and elapsed acquisition | One shared four-retry budget, existing 150-second producer polling, at-most-eight-second receipt phase, five-second socket cap and deadline checks between bounded reads. Shared-budget, late-response, slow-read closure and request-timeout contracts retain exhaustion/fallback. |
+| Reject permanent or unbound evidence immediately | Terminal authorization/HTTP/TLS and redirected-storage-404 contracts; existing wrong source/attempt/job, marker, artifact/archive and receipt negatives. Provider indexing cannot authorize an unrelated storage location. |
+| Emit fixed safe acquisition and role mismatch codes | Allowlist at exception construction and fallback output; provider-error/unknown-code tests and candidate/retained size/hash mismatch cases. No exception text, credential, signed URL or arbitrary path is emitted. |
+| Preserve genuine lifecycle failure and complete fallback | Existing full four-role join, independent full-stock producer and cold double-build/lifecycle contracts; public verifier regression reaches the maintained candidate-check coordinator with a failed first-run subprocess boundary, drains ancillary work, fails proved candidates without publication, and permits fresh complete stock fallback for unproved bytes. Native executable lifecycle proof remains downstream. |
+| Preserve app bytes, platforms and gates | Only acquisition helper/tests and stable CI documentation change; normal Windows/Linux payloads, workflow topology, executable pins, canonical collection and prior test IDs remain intact. No fresh timing or release acceptance is inferred. |
+
 ### 2026-11-21 ordinary Windows CI preparation and scheduling
 
 These source contracts require maintained native CI delta validation and

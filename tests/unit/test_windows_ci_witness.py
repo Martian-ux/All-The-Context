@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import http.client
 import io
 import json
 import os
+import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -89,6 +92,7 @@ def provider(monkeypatch):
     job = {
         "id": 73,
         "run_id": 42,
+        "run_attempt": 2,
         "head_sha": IDENTITY["pr_head"],
         "name": witness.JOB,
         "status": "completed",
@@ -124,9 +128,10 @@ def provider(monkeypatch):
         "log": log.encode(),
         "receipt": receipt,
         "calls": [],
+        "provider_bytes": witness.provider_bytes,
     }
 
-    def api(route):
+    def api(route, *, deadline):
         data["calls"].append(route)
         return {
             "actions/runs/42/attempts/2": run,
@@ -134,7 +139,7 @@ def provider(monkeypatch):
             "actions/artifacts/99": artifact,
         }[route]
 
-    def fetch(route, _limit):
+    def fetch(route, _limit, *, deadline):
         data["calls"].append(route)
         return {
             "actions/jobs/73/steps/9/logs": data["log"],
@@ -193,6 +198,7 @@ def test_receipt_is_bound_to_every_input(field):
         "head",
         "path",
         "job-run",
+        "job-attempt",
         "job-head",
         "job-url",
         "failed",
@@ -214,7 +220,14 @@ def test_provider_custody_rejects_wrong_or_incomplete_identity(provider, defect)
     elif defect == "repository":
         run["repository"]["id"] += 1
     elif defect.startswith("job-"):
-        job[{"job-run": "run_id", "job-head": "head_sha", "job-url": "url"}[defect]] = "wrong"
+        job[
+            {
+                "job-run": "run_id",
+                "job-attempt": "run_attempt",
+                "job-head": "head_sha",
+                "job-url": "url",
+            }[defect]
+        ] = "wrong"
     elif defect == "failed":
         job["conclusion"] = "failure"
     elif defect in {"upload", "marker"}:
@@ -235,12 +248,264 @@ def test_provider_custody_rejects_wrong_or_incomplete_identity(provider, defect)
     with pytest.raises(ValueError):
         witness.acquire(expected())
     assert not any("/logs" in route for route in provider["calls"])
+    if defect in {"run", "attempt", "repository", "head", "path"}:
+        assert provider["calls"] == ["actions/runs/42/attempts/2"]
+    else:
+        assert provider["calls"] == [
+            "actions/runs/42/attempts/2",
+            "actions/runs/42/attempts/2/jobs?per_page=100",
+        ]
 
 
 @pytest.mark.parametrize("state", ["queued", "in_progress", "waiting"])
 def test_unfinished_producer_never_authorizes_upload(provider, state):
     provider["job"]["status"] = state
-    assert witness.producer_job(provider["run"], provider["jobs"], IDENTITY) is None
+    head = witness.validate_attempt(provider["run"], IDENTITY)
+    assert witness.producer_job(provider["jobs"], IDENTITY, head) is None
+
+
+@pytest.fixture
+def witness_clock(monkeypatch):
+    current = [0]
+
+    def advance(seconds):
+        current[0] += seconds
+
+    monkeypatch.setattr(witness.time, "monotonic", lambda: current[0])
+    monkeypatch.setattr(witness.time, "sleep", advance)
+    return current
+
+
+def provider_error(status):
+    return urllib.error.HTTPError(
+        "https://example.invalid/private?signature=secret", status, "private", {}, None
+    )
+
+
+def test_transient_acquisition_recovers_across_exact_provider_endpoints(
+    provider, witness_clock, monkeypatch
+):
+    attempt = "actions/runs/42/attempts/2"
+    jobs = f"{attempt}/jobs?per_page=100"
+    marker = "actions/jobs/73/steps/9/logs"
+    artifact = "actions/artifacts/99"
+    failures = {
+        attempt: urllib.error.URLError(ConnectionResetError("private")),
+        jobs: provider_error(404),
+        marker: provider_error(503),
+        artifact: provider_error(404),
+    }
+    attempts = []
+    original_json = witness.api_json
+    original_bytes = witness.provider_bytes
+
+    def try_route(operation, route, *arguments, deadline):
+        attempts.append((route, deadline))
+        if route in failures:
+            raise failures.pop(route)
+        if route == jobs and attempts.count((route, deadline)) == 2:
+            return {"jobs": [], "total_count": 0}
+        return operation(route, *arguments, deadline=deadline)
+
+    monkeypatch.setattr(
+        witness, "api_json", lambda *args, **kwargs: try_route(original_json, *args, **kwargs)
+    )
+    monkeypatch.setattr(
+        witness,
+        "provider_bytes",
+        lambda *args, **kwargs: try_route(original_bytes, *args, **kwargs),
+    )
+    assert witness.acquire(expected()) == provenance._validate_components(rows())
+    assert attempts == [
+        (attempt, 150),
+        (attempt, 150),
+        (jobs, 150),
+        (jobs, 150),
+        (jobs, 150),
+        (marker, 12),
+        (marker, 12),
+        (artifact, 12),
+        (artifact, 12),
+        (f"{artifact}/zip", 12),
+    ]
+    assert witness_clock == [6]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "error", "reason"),
+    [
+        ("attempt", provider_error(404), "attempt-http"),
+        ("jobs", provider_error(403), "jobs-authorization"),
+        ("marker", provider_error(401), "marker-authorization"),
+        ("marker", provider_error(429), "marker-http"),
+        (
+            "marker",
+            urllib.error.URLError(ssl.SSLCertVerificationError("private")),
+            "marker-transport",
+        ),
+    ],
+)
+def test_terminal_provider_errors_stop_at_first_response(
+    provider, witness_clock, monkeypatch, endpoint, error, reason
+):
+    targets = {
+        "attempt": "actions/runs/42/attempts/2",
+        "jobs": "actions/runs/42/attempts/2/jobs?per_page=100",
+        "marker": "actions/jobs/73/steps/9/logs",
+    }
+    failed = []
+    original_json = witness.api_json
+    original_bytes = witness.provider_bytes
+
+    def fail_at_route(operation, route, *arguments, deadline):
+        if route == targets[endpoint]:
+            failed.append(route)
+            raise error
+        return operation(route, *arguments, deadline=deadline)
+
+    monkeypatch.setattr(
+        witness, "api_json", lambda *args, **kwargs: fail_at_route(original_json, *args, **kwargs)
+    )
+    monkeypatch.setattr(
+        witness,
+        "provider_bytes",
+        lambda *args, **kwargs: fail_at_route(original_bytes, *args, **kwargs),
+    )
+    with pytest.raises(witness.WitnessMiss, match=f"^{reason}$"):
+        witness.acquire(expected())
+    assert failed == [targets[endpoint]] and witness_clock == [0]
+
+
+def test_transient_budget_is_shared_between_routes(provider, witness_clock, monkeypatch):
+    original = witness.api_json
+    errors = []
+
+    def flaky(route, *, deadline):
+        if "/jobs?" in route and len(errors) < 3:
+            errors.append(route)
+            raise provider_error(502)
+        return original(route, deadline=deadline)
+
+    def not_indexed(route, _limit, *, deadline):
+        errors.append(route)
+        raise provider_error(404)
+
+    monkeypatch.setattr(witness, "api_json", flaky)
+    monkeypatch.setattr(witness, "provider_bytes", not_indexed)
+    with pytest.raises(witness.WitnessMiss, match=r"^marker-indexing-exhausted$"):
+        witness.acquire(expected())
+    assert len(errors) == 5 and witness_clock == [4]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("private"),
+        ConnectionAbortedError("private"),
+        http.client.IncompleteRead(b"private"),
+        urllib.error.URLError(socket.gaierror(socket.EAI_AGAIN, "private")),
+    ],
+    ids=["timeout", "aborted", "incomplete-read", "temporary-dns"],
+)
+def test_eligible_transport_recovers_exact_receipt(provider, witness_clock, monkeypatch, error):
+    original = witness.api_json
+    failed = []
+
+    def transient(route, *, deadline):
+        if not failed:
+            failed.append(route)
+            raise error
+        return original(route, deadline=deadline)
+
+    monkeypatch.setattr(witness, "api_json", transient)
+    assert witness.acquire(expected()) == provenance._validate_components(rows())
+    assert failed == ["actions/runs/42/attempts/2"] and witness_clock == [1]
+
+
+@pytest.mark.parametrize("endpoint", ["marker", "archive"])
+def test_storage_404_is_terminal_not_provider_indexing(
+    provider, witness_clock, monkeypatch, endpoint
+):
+    storage = "https://productionresultssa14.blob.core.windows.net/private?signature=secret"
+    target = "actions/jobs/73/steps/9/logs" if endpoint == "marker" else "actions/artifacts/99/zip"
+    calls = []
+    closed = io.BytesIO(b"private provider error")
+
+    def request(route, *, timeout):
+        calls.append(route)
+        assert 0 < timeout <= 5
+        if route == target:
+            raise urllib.error.HTTPError("private", 302, "private", {"Location": storage}, None)
+        return io.BytesIO(provider["log"])
+
+    class Storage:
+        def open(self, location, *, timeout):
+            assert location == storage
+            calls.append("storage")
+            raise urllib.error.HTTPError(storage, 404, "private", {}, closed)
+
+    monkeypatch.setattr(witness, "api_request", request)
+    monkeypatch.setattr(witness.urllib.request, "build_opener", lambda *_args: Storage())
+    monkeypatch.setattr(witness, "provider_bytes", provider["provider_bytes"])
+    with pytest.raises(witness.WitnessMiss, match=f"^{endpoint}-invalid$"):
+        witness.acquire(expected())
+    assert calls.count(target) == 1 and calls.count("storage") == 1
+    assert witness_clock == [0] and closed.closed
+
+
+def test_slow_provider_read_closes_owned_response_at_deadline(witness_clock, monkeypatch):
+    class Trickle(io.BytesIO):
+        def read1(self, size):
+            witness_clock[0] += 1
+            return super().read1(min(size, 1))
+
+    response = Trickle(b'{"private":"slow response"}')
+    monkeypatch.setattr(witness, "api_request", lambda *_args, **_kwargs: response)
+    with pytest.raises(TimeoutError):
+        witness.api_json("actions/runs/42/attempts/2", deadline=2)
+    assert response.closed and witness_clock == [2]
+
+
+def test_request_deadline_is_capped_and_expiry_prevents_open(witness_clock, monkeypatch):
+    calls = []
+
+    class Opener:
+        def open(self, request, *, timeout):
+            calls.append(timeout)
+            return io.BytesIO(b"{}")
+
+    monkeypatch.setenv("GH_TOKEN", "fictional-secret")
+    monkeypatch.setattr(witness.urllib.request, "build_opener", lambda *_args: Opener())
+    assert witness.api_json("actions/runs/42/attempts/2", deadline=0.25) == {}
+    with pytest.raises(TimeoutError):
+        witness.api_json("actions/runs/42/attempts/2", deadline=0)
+    assert calls == [0.25]
+
+
+@pytest.mark.parametrize("mode", ["producer-pending", "slow-receipt"])
+def test_witness_deadlines_skip_further_provider_reads(provider, witness_clock, monkeypatch, mode):
+    original_json = witness.api_json
+    original_bytes = witness.provider_bytes
+
+    def slow_json(route, *, deadline):
+        result = original_json(route, deadline=deadline)
+        if "/jobs?" in route and mode == "producer-pending":
+            witness_clock[0] = deadline - 1
+            result = {"jobs": [], "total_count": 0}
+        return result
+
+    def slow_marker(route, limit, *, deadline):
+        result = original_bytes(route, limit, deadline=deadline)
+        assert deadline == 8
+        witness_clock[0] = deadline
+        return result
+
+    monkeypatch.setattr(witness, "api_json", slow_json)
+    monkeypatch.setattr(witness, "provider_bytes", slow_marker)
+    stage = "jobs" if mode == "producer-pending" else "marker"
+    with pytest.raises(witness.WitnessMiss, match=f"^{stage}-deadline$"):
+        witness.acquire(expected())
+    assert len(provider["calls"]) == (2 if stage == "jobs" else 3)
 
 
 @pytest.mark.parametrize(
@@ -255,6 +520,7 @@ def test_unfinished_producer_never_authorizes_upload(provider, state):
         "wrong-artifact-run",
         "expired",
         "archive",
+        "archive-size",
     ],
 )
 def test_upload_identity_and_downloaded_bytes_are_jointly_required(provider, defect):
@@ -274,10 +540,40 @@ def test_upload_identity_and_downloaded_bytes_are_jointly_required(provider, def
         provider["artifact"]["workflow_run"]["id"] = 43
     elif defect == "expired":
         provider["artifact"]["expired"] = True
+    elif defect == "archive-size":
+        provider["raw"] += b"!"
     else:
         provider["raw"] = provider["raw"][:-1] + b"!"
-    with pytest.raises(ValueError):
+    with pytest.raises(witness.WitnessMiss):
         witness.acquire(expected())
+    assert (
+        len(provider["calls"])
+        == {
+            "absent": 3,
+            "duplicate": 3,
+            "echo": 3,
+            "wrong-digest": 3,
+            "wrong-id": 4,
+            "metadata-digest": 4,
+            "wrong-artifact-run": 4,
+            "expired": 4,
+            "archive": 5,
+            "archive-size": 5,
+        }[defect]
+    )
+
+
+@pytest.mark.parametrize("field", ["head", "run_attempt"])
+def test_downloaded_receipt_source_or_attempt_mismatch_is_terminal(provider, witness_clock, field):
+    provider["receipt"][field] = "f" * 40 if field == "head" else 3
+    provider["raw"] = archive(provider["receipt"])
+    digest = hashlib.sha256(provider["raw"]).hexdigest()
+    provider["log"] = f"ATC_WINDOWS_STOCK_V1 artifact_id=99 digest=sha256:{digest}\n".encode()
+    provider["artifact"]["size_in_bytes"] = len(provider["raw"])
+    provider["artifact"]["digest"] = f"sha256:{digest}"
+    with pytest.raises(witness.WitnessMiss, match=r"^receipt-invalid$"):
+        witness.acquire(expected())
+    assert len(provider["calls"]) == 5 and witness_clock == [0]
 
 
 @pytest.mark.parametrize("defect", ["extra", "duplicate", "path", "oversized", "not-zip"])
@@ -304,32 +600,40 @@ def test_only_bounded_exact_receipt_archive_member_is_read(defect):
     ],
 )
 def test_unrecognized_redirects_cannot_receive_credentials(monkeypatch, location):
-    def request(_route):
+    def request(_route, *, timeout):
         raise urllib.error.HTTPError(
             "https://api.github.com/private", 302, "redirect", {"Location": location}, None
         )
 
     monkeypatch.setattr(witness, "api_request", request)
     with pytest.raises(ValueError, match="redirect"):
-        witness.provider_bytes("actions/jobs/73/steps/9/logs", 100)
+        witness.provider_bytes(
+            "actions/jobs/73/steps/9/logs", 100, deadline=witness.time.monotonic() + 6
+        )
 
 
 def test_storage_redirect_has_no_authorization_header(monkeypatch):
     location = "https://productionresultssa14.blob.core.windows.net/private?signed=private"
 
-    def request(_route):
+    def request(_route, *, timeout):
+        assert timeout == 5
         raise urllib.error.HTTPError(
             "https://api.github.com/private", 302, "redirect", {"Location": location}, None
         )
 
     class Opener:
         def open(self, target, *, timeout):
-            assert target == location and isinstance(target, str) and timeout == 20
+            assert target == location and isinstance(target, str) and timeout == 5
             return io.BytesIO(b"exact step bytes")
 
     monkeypatch.setattr(witness, "api_request", request)
     monkeypatch.setattr(witness.urllib.request, "build_opener", lambda *_args: Opener())
-    assert witness.provider_bytes("actions/jobs/73/steps/9/logs", 100) == b"exact step bytes"
+    assert (
+        witness.provider_bytes(
+            "actions/jobs/73/steps/9/logs", 100, deadline=witness.time.monotonic() + 6
+        )
+        == b"exact step bytes"
+    )
 
 
 @pytest.fixture
@@ -951,13 +1255,13 @@ def test_full_four_role_join_promotes_only_smoked_candidate(candidate_flow):
     "miss", ["provider", "one-role", "one-size", "graph", "donor", "retained-build"]
 )
 def test_provisional_miss_drains_then_runs_original_complete_stock_route(
-    candidate_flow, monkeypatch, miss
+    candidate_flow, monkeypatch, capsys, miss
 ):
     state, args = candidate_flow
     if miss == "provider":
 
         def acquire(_expected):
-            raise OSError("provider unavailable")
+            raise witness.WitnessMiss("marker-indexing-exhausted") from OSError("private")
 
         monkeypatch.setattr(witness, "acquire", acquire)
     elif miss in {"one-role", "one-size", "graph"}:
@@ -979,6 +1283,17 @@ def test_provisional_miss_drains_then_runs_original_complete_stock_route(
         else:
             monkeypatch.setattr(witness, "donor_runner", lambda *_args: fail)
     assert witness.try_ordinary(**args) is None
+    emitted = capsys.readouterr().out
+    reason = {
+        "provider": "marker-indexing-exhausted",
+        "one-role": "candidate-updater-sha256",
+        "one-size": "candidate-recovery-size",
+        "graph": "candidate-main-sha256",
+        "donor": "provisional miss",
+        "retained-build": "provisional miss",
+    }[miss]
+    assert f"Windows ordinary witness: complete stock fallback ({reason})" in emitted
+    assert "private" not in emitted
     assert not args["build"].exists() and not args["dist"].exists()
     assert not args["output"].exists()
     if miss not in {"donor", "retained-build"}:
@@ -1044,6 +1359,126 @@ def test_matching_witness_preserves_genuine_lifecycle_failure(candidate_flow):
     with pytest.raises(ValueError, match="lifecycle failed"):
         witness.try_ordinary(**args)
     assert state["drained"].is_set() and not args["dist"].exists()
+
+
+@pytest.mark.parametrize("matching", [True, False], ids=["proved-failure", "unproved-fallback"])
+def test_public_verifier_preserves_reached_lifecycle_failure_and_fallback(
+    candidate_flow, monkeypatch, capsys, matching
+):
+    state, args = candidate_flow
+    calls = []
+    github_output = args["root"] / "github-output"
+
+    def lifecycle_command(script, *arguments):
+        calls.append((script, arguments))
+        if script == "smoke_packaged_first_run.py" and arguments[1] != ".":
+            raise subprocess.CalledProcessError(1, [script])
+
+    def reached_checks(_root, candidate):
+        state["smokes"].append(candidate)
+        result = checks.candidate_checks(candidate)
+        state["drained"].set()
+        return result
+
+    def stock(_root, build, dist, **kwargs):
+        assert kwargs["parallel_windows"] and not kwargs.get("ci_witness")
+        state["stock"].append(build)
+        paths = verifier.build_desktop.component_paths(build_root=build, dist_root=dist)
+        for role, path in paths.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"cold-" + role.encode())
+        return provenance.collect_snapshot(paths)
+
+    monkeypatch.setattr(checks, "run", lifecycle_command)
+    monkeypatch.setattr(checks, "project_version", lambda _root: "0.1.0-beta.8")
+    monkeypatch.setattr(witness, "provisional_checks", reached_checks)
+    monkeypatch.setattr(verifier.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(verifier, "checked_out_commit", lambda _root: IDENTITY["head"])
+    monkeypatch.setattr(verifier, "current_toolchain", lambda: TOOLS)
+    monkeypatch.setattr(verifier, "lock_digests", lambda _root: LOCKS)
+    monkeypatch.setattr(witness, "admit_source", lambda *_args: IDENTITY)
+    monkeypatch.setattr(verifier, "_run_clean_build", stock)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+    if not matching:
+        changed = rows()
+        changed[0]["sha256"] = "f" * 64
+        monkeypatch.setattr(
+            witness, "acquire", lambda _expected: provenance._validate_components(changed)
+        )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify",
+            "--repository-root",
+            str(args["root"]),
+            "--source-commit",
+            IDENTITY["head"],
+            "--build-root",
+            str(args["build"]),
+            "--dist-root",
+            str(args["dist"]),
+            "--output-dir",
+            str(args["output"]),
+            "--windows-ci-donor-pilot",
+            "--parallel-windows",
+        ],
+    )
+    assert verifier.main() == (1 if matching else 0)
+    assert state["drained"].is_set() and not state["smokes"][0].exists()
+    # The real candidate-check coordinator drained both branches after the
+    # first-run command failed at the subprocess boundary. No fake return code.
+    assert {script for script, _ in calls} == {
+        "smoke_packaged_first_run.py",
+        "smoke_desktop_artifact.py",
+        "smoke_packaged_recovery.py",
+        "package_desktop.py",
+        "smoke_platform_package.py",
+        "build_release_assets.py",
+    }
+    if matching:
+        assert not state["stock"] and not github_output.exists()
+        assert not any(args[key].exists() for key in ("build", "dist", "output"))
+        assert "proved Windows candidate lifecycle failed" in capsys.readouterr().err
+    else:
+        assert len(state["stock"]) == 2 and not set(state["stock"]) & set(state["arms"])
+        assert github_output.read_text() == "route=cold\n"
+        calls.clear()
+        assert checks.main(overlap_first_run=True) == 0
+        assert len(calls) == 6
+        assert (args["dist"] / "AllTheContextSetup.exe").read_bytes() == b"cold-main"
+
+
+@pytest.mark.parametrize("typed", [True, False], ids=["unknown-code", "raw-provider-error"])
+def test_fallback_output_never_echoes_untrusted_errors(candidate_flow, monkeypatch, capsys, typed):
+    _state, args = candidate_flow
+
+    def unavailable(_expected):
+        error = "https://private.invalid/path?credential=fictional-secret"
+        raise witness.WitnessMiss(error) if typed else OSError(error)
+
+    monkeypatch.setattr(witness, "acquire", unavailable)
+    assert witness.try_ordinary(**args) is None
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "Windows ordinary witness: complete stock fallback (acquisition-invalid)"
+    )
+
+
+def test_retained_output_mismatch_has_fixed_role_code(candidate_flow, monkeypatch, capsys):
+    _state, args = candidate_flow
+    original = verifier.generate_provenance
+
+    def changed_retained(**kwargs):
+        payload, paths = original(**kwargs)
+        payload["components"][1]["sha256"] = "f" * 64
+        return payload, paths
+
+    monkeypatch.setattr(verifier, "generate_provenance", changed_retained)
+    assert witness.try_ordinary(**args) is None
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "Windows ordinary witness: complete stock fallback (retained-mcp-sha256)"
+    )
+    assert not args["dist"].exists()
 
 
 def test_witness_miss_waits_for_running_smoke_before_scratch_disposal(candidate_flow, monkeypatch):

@@ -1,5 +1,28 @@
 # Architecture decisions
 
+## Retry only bound Windows witness acquisition failures (2026-11-21)
+
+Use one four-retry budget for narrowly classified transient transport errors,
+HTTP 500/502/503/504 and temporary indexing on the expected provider API routes.
+Bind the immutable attempt before polling its jobs, the successful exact
+job/attempt and marker step before reading logs, the unique marker before
+artifact lookup, and artifact metadata before archive retrieval. Preserve the
+150-second producer wait and cap receipt acquisition at the remaining time or
+eight seconds. Cap each socket timeout at five seconds and check deadlines
+between bounded response reads; a blocked read may finish within its already
+assigned short socket timeout. Do not repeat successful immutable lookups.
+
+Indexing eligibility never transfers to redirected storage: a storage 404 is
+terminal. Keep the existing recognized HTTPS redirect and credential boundary.
+Authorization, unsupported redirects, malformed/ambiguous identity, archive or
+receipt failures do not retry. Emit only allowlisted acquisition or raw-role
+size/hash codes; never provider exception messages, signed URLs or raw data.
+Exact full-file equality against provisional and retained outputs remains the
+promotion prerequisite alongside every actual lifecycle check. Drain owned
+work before complete cold fallback; a proved candidate's lifecycle failure
+continues to fail the required job. No packaging, topology or product change
+follows from this acquisition correction. Hosted timing remains separate proof.
+
 ## Overlap authenticated donor preparation with CI installation (2026-11-21)
 
 Use the existing credential-scoped background downloader for the same fixed donor

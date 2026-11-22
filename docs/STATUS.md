@@ -1,5 +1,26 @@
 # Project status
 
+## 2026-11-21 — bounded Windows witness acquisition recovery
+
+Ordinary Windows stock-witness acquisition shares four transient retries across
+the exact attempt, producer jobs, marker log, artifact metadata and archive
+routes. Immutable attempt metadata is validated once; producer polling keeps
+its existing 150-second limit. The receipt phase has at most eight seconds
+within that limit, with socket timeouts capped at five seconds and deadline
+checks between bounded reads. Only eligible transport/server failures and
+bounded indexing on identity-bound provider API routes can retry. A storage
+404, authorization rejection or invalid identity/evidence selects full fallback.
+
+Allowlisted codes distinguish acquisition rejection from candidate/retained
+role size and SHA-256 mismatches without provider text or credentials. All four
+raw roles, independent full stock production, retained A/B verification,
+concurrent real lifecycle checks and complete cold fallback remain required.
+A matching witness followed by a reached lifecycle failure fails the verifier
+without promotion or a success output. Windows/Linux payloads and existing test
+identities are preserved. Native validation and independent review remain
+required; the historical hosted miss is unresolved and only a fresh
+operator-owned hosted trial can establish the new elapsed time.
+
 ## 2026-11-21 — ordinary Windows CI preparation and scheduling
 
 The Windows scheduler gives the existing whole-file witness test group a measured

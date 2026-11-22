@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import importlib
 import io
 import json
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -41,6 +43,40 @@ MARKER = "Record Windows stock witness upload identity"
 RECEIPT = "windows-stock-witness-v1.json"
 MAX_RECEIPT = 32_768
 API_VERSION = "2026-03-10"
+PRODUCER_WAIT = 150
+RECEIPT_WAIT = 8
+IO_TIMEOUT = 5
+PROVIDER_RETRIES = 4
+TRANSIENT_HTTP = {500, 502, 503, 504}
+ACQUISITION_STAGES = ("attempt", "jobs", "marker", "artifact", "archive", "receipt")
+MISS_CODES = (
+    frozenset(
+        f"{stage}-{reason}"
+        for stage in ACQUISITION_STAGES
+        for reason in (
+            "deadline",
+            "authorization",
+            "http",
+            "transport",
+            "invalid",
+            "indexing-exhausted",
+            "server-exhausted",
+            "transport-exhausted",
+        )
+    )
+    | {"acquisition-invalid", "archive-size-or-sha256"}
+    | frozenset(
+        f"{stage}-{role}-{reason}"
+        for stage in ("candidate", "retained")
+        for role, _, _ in provenance.COMPONENTS
+        for reason in ("size", "sha256", "size-sha256", "identity")
+    )
+    | frozenset(
+        f"{stage}-{reason}"
+        for stage in ("candidate", "retained")
+        for reason in ("invalid", "inventory")
+    )
+)
 # The qualification policy itself is reviewed with this module. All other
 # admitted CI/native implementation inputs are fixed Git blobs, not a broad
 # permission to change the packaging recipe on an ordinary PR.
@@ -266,7 +302,14 @@ def artifact_name(identity: dict) -> str:
     return f"windows-stock-witness-{identity['run_id']}-{identity['run_attempt']}"
 
 
-def api_request(route: str):
+class WitnessMiss(ValueError):
+    """A bounded diagnostic code, with no provider data or credentials."""
+
+    def __init__(self, code: str):
+        super().__init__(code if code in MISS_CODES else "acquisition-invalid")
+
+
+def api_request(route: str, *, timeout: float):
     request = urllib.request.Request(
         f"https://api.github.com/repos/{pilot.REPOSITORY}/{route}",
         headers={
@@ -275,16 +318,18 @@ def api_request(route: str):
             "X-GitHub-Api-Version": API_VERSION,
         },
     )
-    return urllib.request.build_opener(pilot.NoRedirect).open(request, timeout=20)
+    return urllib.request.build_opener(pilot.NoRedirect).open(request, timeout=timeout)
 
 
-def provider_bytes(route: str, limit: int) -> bytes:
+def provider_bytes(route: str, limit: int, *, deadline: float) -> bytes:
     """Follow one recognized provider storage redirect without forwarding credentials."""
     try:
-        response = api_request(route)
+        response = api_request(route, timeout=io_timeout(deadline))
     except urllib.error.HTTPError as redirect:
-        require(redirect.code == 302, "provider evidence unavailable")
-        location = redirect.headers.get("Location", "")
+        if redirect.code != 302:
+            raise
+        with redirect:
+            location = redirect.headers.get("Location", "")
         parsed = urllib.parse.urlsplit(location)
         require(
             parsed.scheme == "https"
@@ -296,24 +341,50 @@ def provider_bytes(route: str, limit: int) -> bytes:
             and not parsed.fragment,
             "unrecognized provider redirect",
         )
-        response = urllib.request.build_opener(pilot.NoRedirect).open(location, timeout=20)
+        try:
+            response = urllib.request.build_opener(pilot.NoRedirect).open(
+                location, timeout=io_timeout(deadline)
+            )
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                # Only the bound API endpoint can be temporarily unindexed.
+                # A storage miss must not spend the provider indexing budget.
+                with error:
+                    raise ValueError("storage evidence unavailable") from None
+            raise
     with response:
-        raw = response.read(limit + 1)
-    require(len(raw) <= limit, "oversized provider evidence")
+        raw = read_provider(response, limit, deadline=deadline)
     return raw
 
 
-def api_json(route: str) -> dict:
-    with api_request(route) as response:
-        return bounded_json(response.read(1_000_001), 1_000_000)
+def api_json(route: str, *, deadline: float) -> dict:
+    with api_request(route, timeout=io_timeout(deadline)) as response:
+        return bounded_json(read_provider(response, 1_000_000, deadline=deadline), 1_000_000)
 
 
-def producer_job(run: dict, jobs: dict, identity: dict) -> dict | None:
-    """Require the exact attempt endpoint and one immutable, successful producer."""
+def read_provider(response, limit: int, *, deadline: float) -> bytes:
+    # read1 performs at most one underlying socket read. Recheck between reads
+    # so a trickle cannot extend read-all indefinitely; each read retains the
+    # short socket timeout established by the owned request.
+    raw = bytearray()
+    while len(raw) <= limit:
+        io_timeout(deadline)
+        chunk = response.read1(min(65_536, limit + 1 - len(raw)))
+        io_timeout(deadline)
+        if not chunk:
+            return bytes(raw)
+        raw.extend(chunk)
+    raise ValueError("oversized provider evidence")
+
+
+def validate_attempt(run: dict, identity: dict) -> str:
+    """Bind the attempt before asking for any producer evidence."""
     provider_head = run.get("head_sha")
     require(
-        run.get("id") == identity["run_id"]
-        and run.get("run_attempt") == identity["run_attempt"]
+        type(run.get("id")) is int
+        and run["id"] == identity["run_id"]
+        and type(run.get("run_attempt")) is int
+        and run["run_attempt"] == identity["run_attempt"]
         and run.get("event") == "pull_request"
         and run.get("path") == ".github/workflows/ci.yml"
         and provider_head in {identity["head"], identity["pr_head"]}
@@ -322,6 +393,11 @@ def producer_job(run: dict, jobs: dict, identity: dict) -> dict | None:
         and run.get("head_repository", {}).get("id") == pilot.REPOSITORY_ID,
         "wrong provider run",
     )
+    return provider_head
+
+
+def producer_job(jobs: dict, identity: dict, provider_head: str) -> dict | None:
+    """Find exactly one successful producer in the validated attempt."""
     rows = jobs.get("jobs")
     require(
         isinstance(rows, list)
@@ -338,7 +414,10 @@ def producer_job(run: dict, jobs: dict, identity: dict) -> dict | None:
     require(
         type(job_id) is int
         and job_id > 0
-        and job.get("run_id") == identity["run_id"]
+        and type(job.get("run_id")) is int
+        and job["run_id"] == identity["run_id"]
+        and type(job.get("run_attempt")) is int
+        and job["run_attempt"] == identity["run_attempt"]
         and job.get("head_sha") == provider_head
         and job.get("url")
         == f"https://api.github.com/repos/{pilot.REPOSITORY}/actions/jobs/{job_id}"
@@ -419,33 +498,97 @@ def validate_receipt(value: dict, expected: dict) -> tuple:
     return provenance._validate_components(value["components"])
 
 
+def io_timeout(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError
+    return min(IO_TIMEOUT, remaining)
+
+
+def transient_transport(error: Exception) -> bool:
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+    return isinstance(
+        error,
+        (TimeoutError, ConnectionResetError, ConnectionAbortedError, http.client.IncompleteRead),
+    ) or (isinstance(error, socket.gaierror) and error.errno == socket.EAI_AGAIN)
+
+
 def acquire(expected: dict) -> tuple:
-    identity = expected
-    run, attempt = identity["run_id"], identity["run_attempt"]
-    deadline = time.monotonic() + 150
-    while True:
-        job = producer_job(
-            api_json(f"actions/runs/{run}/attempts/{attempt}"),
-            api_json(f"actions/runs/{run}/attempts/{attempt}/jobs?per_page=100"),
-            identity,
+    attempt_route = f"actions/runs/{expected['run_id']}/attempts/{expected['run_attempt']}"
+    deadline = time.monotonic() + PRODUCER_WAIT
+    retries = PROVIDER_RETRIES
+    stage = "attempt"
+
+    def wait(delay):
+        remaining = deadline - time.monotonic()
+        if remaining <= delay:
+            raise WitnessMiss(f"{stage}-deadline")
+        time.sleep(delay)
+
+    def fetch(operation, *arguments, indexing=False):
+        nonlocal retries
+        while time.monotonic() < deadline:
+            try:
+                value = operation(*arguments, deadline=deadline)
+            except urllib.error.HTTPError as error:
+                with error:
+                    status = error.code
+                if status in (401, 403):
+                    raise WitnessMiss(f"{stage}-authorization") from None
+                if status not in TRANSIENT_HTTP and (status != 404 or not indexing):
+                    raise WitnessMiss(f"{stage}-http") from None
+                outcome = "indexing" if status == 404 else "server"
+            except (OSError, http.client.HTTPException) as error:
+                if not transient_transport(error):
+                    raise WitnessMiss(f"{stage}-transport") from None
+                outcome = "transport"
+            else:
+                if time.monotonic() < deadline:
+                    return value
+                break
+            if retries == 0:
+                raise WitnessMiss(f"{stage}-{outcome}-exhausted")
+            retries -= 1
+            wait(1)
+        raise WitnessMiss(f"{stage}-deadline")
+
+    try:
+        provider_head = validate_attempt(fetch(api_json, attempt_route), expected)
+        stage = "jobs"
+        while True:
+            # A missing endpoint can reflect indexing only after verifying the attempt.
+            jobs = fetch(api_json, f"{attempt_route}/jobs?per_page=100", indexing=True)
+            job = producer_job(jobs, expected, provider_head)
+            if job is not None:
+                break
+            wait(2)
+        deadline = min(deadline, time.monotonic() + RECEIPT_WAIT)
+        stage = "marker"
+        # Never search the complete job log or other steps for upload identity.
+        log = fetch(
+            provider_bytes,
+            f"actions/jobs/{job['id']}/steps/{job['step']}/logs",
+            64_000,
+            indexing=True,
         )
-        if job is not None:
-            break
-        require(time.monotonic() < deadline, "stock witness unavailable")
-        time.sleep(2)
-    # Never read full job logs or search arbitrary step output for identity.
-    log = provider_bytes(f"actions/jobs/{job['id']}/steps/{job['step']}/logs", 64_000)
-    matches = MARKER_PATTERN.findall(log.decode("utf-8").replace("\r\n", "\n"))
-    require(len(matches) == 1, "missing or ambiguous exact-step marker")
-    artifact_id, digest = int(matches[0][0]), matches[0][1]
-    artifact = api_json(f"actions/artifacts/{artifact_id}")
-    validate_artifact(artifact, identity, job, artifact_id, digest)
-    raw = provider_bytes(f"actions/artifacts/{artifact_id}/zip", MAX_RECEIPT + 4096)
-    require(
-        len(raw) == artifact["size_in_bytes"] and hashlib.sha256(raw).hexdigest() == digest,
-        "witness archive digest mismatch",
-    )
-    return validate_receipt(receipt_from_archive(raw), expected)
+        matches = MARKER_PATTERN.findall(log.decode("utf-8").replace("\r\n", "\n"))
+        require(len(matches) == 1, "missing or ambiguous exact-step marker")
+        artifact_id, digest = int(matches[0][0]), matches[0][1]
+        stage = "artifact"
+        artifact_route = f"actions/artifacts/{artifact_id}"
+        artifact = fetch(api_json, artifact_route, indexing=True)
+        validate_artifact(artifact, expected, job, artifact_id, digest)
+        stage = "archive"
+        raw = fetch(provider_bytes, f"{artifact_route}/zip", MAX_RECEIPT + 4096, indexing=True)
+        if len(raw) != artifact["size_in_bytes"] or hashlib.sha256(raw).hexdigest() != digest:
+            raise WitnessMiss("archive-size-or-sha256")
+        stage = "receipt"
+        return validate_receipt(receipt_from_archive(raw), expected)
+    except WitnessMiss:
+        raise
+    except Exception:
+        raise WitnessMiss(f"{stage}-invalid") from None
 
 
 def donor_runner(root: Path, commit: str, tools: dict, locks: dict):
@@ -453,9 +596,21 @@ def donor_runner(root: Path, commit: str, tools: dict, locks: dict):
     return component_runner(root, commit, paths, witness_profile=True)
 
 
-def same_components(left: tuple, right: tuple) -> bool:
-    # ComponentDigest includes role and both exact names as well as full-file size/SHA.
-    return left == right
+def require_components(witnessed: tuple, observed: tuple, stage: str) -> None:
+    # Equality includes both names, the role and exact full-file size and SHA.
+    if witnessed == observed:
+        return
+    for (role, _, _), expected, actual in zip(
+        provenance.COMPONENTS, witnessed, observed, strict=False
+    ):
+        if expected != actual:
+            fields = "-".join(
+                field
+                for field in ("size", "sha256")
+                if getattr(expected, field) != getattr(actual, field)
+            )
+            raise WitnessMiss(f"{stage}-{role}-{fields or 'identity'}")
+    raise WitnessMiss(f"{stage}-inventory")
 
 
 def provisional_checks(root: Path, candidate: Path) -> int:
@@ -526,20 +681,25 @@ def try_ordinary(
         with ThreadPoolExecutor(max_workers=2) as pool:
             smoke = pool.submit(provisional_checks, root, candidate)
             witness = pool.submit(acquire, expected)
+            reason = "acquisition-invalid"
             try:
                 components = witness.result()
+                reason = "candidate-invalid"
                 observed = provenance.collect_snapshot(paths, label="provisional")
-                require(same_components(components, observed.components), "stock role mismatch")
+                require_components(components, observed.components, "candidate")
                 # Provenance validated the isolated A/B join; recheck its exact rows too.
-                require(
-                    same_components(
-                        components, provenance._validate_components(payload["components"])
-                    ),
-                    "retained arm mismatch",
+                reason = "retained-invalid"
+                require_components(
+                    components, provenance._validate_components(payload["components"]), "retained"
                 )
+            except WitnessMiss as miss:
+                # Reapply the allowlist at the output boundary as well.
+                reason = str(WitnessMiss(str(miss)))
+                print(f"Windows ordinary witness: complete stock fallback ({reason})")
+                return None
             except Exception:
                 # The context manager waits for all actual lifecycle work before disposal.
-                print("Windows ordinary witness: complete stock fallback (witness miss)")
+                print(f"Windows ordinary witness: complete stock fallback ({reason})")
                 return None
             # A proved candidate's real lifecycle failure remains a required failure.
             require(smoke.result() == 0, "proved Windows candidate lifecycle failed")
